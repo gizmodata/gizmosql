@@ -1,20 +1,20 @@
 import os
 from time import sleep
 import pyarrow
-from adbc_driver_flightsql import dbapi as sqlflite, DatabaseOptions
+from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
 
 
 # Setup variables
 max_attempts: int = 10
 sleep_interval: int = 10
-sqlflite_password = os.environ["SQLFLITE_PASSWORD"]
+gizmosql_password = os.environ["GIZMOSQL_PASSWORD"]
 
 def main():
     for attempt in range(max_attempts):
         try:
-            with sqlflite.connect(uri="grpc+tls://localhost:31337",
-                                  db_kwargs={"username": "sqlflite_username",
-                                               "password": sqlflite_password,
+            with gizmosql.connect(uri="grpc+tls://localhost:31337",
+                                  db_kwargs={"username": "gizmosql_username",
+                                               "password": gizmosql_password,
                                                # Not needed if you use a trusted CA-signed TLS cert
                                                DatabaseOptions.TLS_SKIP_VERIFY.value: "true"
                                                }

@@ -30,7 +30,7 @@
 using arrow::Status;
 using duckdb::QueryResult;
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType duckdb_type) {
@@ -179,4 +179,4 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const
   return return_value;
 }
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

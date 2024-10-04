@@ -68,7 +68,7 @@
     break;                                                                           \
   }
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 // Batch size for SQLite statement results
 static constexpr int32_t kMaxBatchSize = 16384;
@@ -214,4 +214,4 @@ arrow::Status SqliteStatementBatchReader::ReadNext(
 #undef INT_BUILDER_CASE
 #undef FLOAT_BUILDER_CASE
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

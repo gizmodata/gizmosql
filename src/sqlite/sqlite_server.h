@@ -30,7 +30,7 @@
 #include "arrow/result.h"
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 /// \brief Convert a column type to a ArrowType.
 /// \param sqlite_type the sqlite type.
@@ -173,4 +173,4 @@ class SQLiteFlightSqlServer : public flight::sql::FlightSqlServerBase {
   explicit SQLiteFlightSqlServer(std::shared_ptr<Impl> impl);
 };
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

@@ -1,5 +1,5 @@
-sqlFliteServer:
-  hostName: sqlflite.example.com
+gizmoSQLServer:
+  hostName: gizmosql.example.com
   replicaCount: 1
 
   config:
@@ -7,7 +7,7 @@ sqlFliteServer:
     DATABASE_FILENAME: data/TPC-H-small.duckdb
 
   image:
-    repository: voltrondata/sqlflite
+    repository: gizmodata/gizmosql
     pullPolicy: Always
     # Overrides the image tag whose default is the chart appVersion.
     tag: latest

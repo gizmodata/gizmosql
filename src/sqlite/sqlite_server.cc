@@ -42,7 +42,7 @@
 
 using arrow::Status;
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 namespace {
 
@@ -1040,4 +1040,4 @@ Status SQLiteFlightSqlServer::EndTransaction(
   return impl_->EndTransaction(context, request);
 }
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

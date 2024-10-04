@@ -26,7 +26,7 @@
 
 #include "duckdb_statement.h"
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 // Batch size for SQLite statement results
 static constexpr int kMaxBatchSize = 1024;
@@ -73,4 +73,4 @@ arrow::Status DuckDBStatementBatchReader::ReadNext(
   return arrow::Status::OK();
 }
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

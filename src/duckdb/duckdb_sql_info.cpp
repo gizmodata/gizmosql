@@ -26,7 +26,7 @@
 
 namespace sql = flight::sql;
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 // clang-format off
 /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
@@ -38,7 +38,7 @@ sql::SqlInfoResultMap GetSqlInfoResultMap() {
 
   return {
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_NAME,
-       SqlInfoResult(std::string("sqlflite"))},
+       SqlInfoResult(std::string("gizmosql"))},
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_VERSION,
        SqlInfoResult(std::string("duckdb " + std::string(duckdb_library_version())))},
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_ARROW_VERSION,
@@ -660,4 +660,4 @@ sql::SqlInfoResultMap GetSqlInfoResultMap() {
 }
 // clang-format on
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

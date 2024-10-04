@@ -15,17 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "include/sqlflite_security.h"
+#include "include/gizmosql_security.h"
 
 namespace fs = std::filesystem;
 
 using arrow::Status;
 
-namespace sqlflite {
+namespace gizmosql {
 
-const std::string kJWTIssuer = "sqlflite";
+const std::string kJWTIssuer = "gizmosql";
 const int kJWTExpiration = 24 * 3600;
-const std::string kValidUsername = "sqlflite_username";
+const std::string kValidUsername = "gizmosql_username";
 const std::string kBasicPrefix = "Basic ";
 const std::string kBearerPrefix = "Bearer ";
 const std::string kAuthHeader = "authorization";
@@ -145,7 +145,7 @@ std::string HeaderAuthServerMiddleware::CreateJWTToken() const {
   auto token = jwt::create()
                    .set_issuer(std::string(kJWTIssuer))
                    .set_type("JWT")
-                   .set_id("sqlflite-server-" +
+                   .set_id("gizmosql-server-" +
                            boost::uuids::to_string(boost::uuids::random_generator()()))
                    .set_issued_at(std::chrono::system_clock::now())
                    .set_expires_at(std::chrono::system_clock::now() +
@@ -255,4 +255,4 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
 
 std::optional<bool> BearerAuthServerMiddlewareFactory::GetIsValid() { return isValid_; }
 
-}  // namespace sqlflite
+}  // namespace gizmosql

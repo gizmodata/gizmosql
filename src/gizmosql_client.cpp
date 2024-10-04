@@ -37,7 +37,7 @@
 
 using arrow::Status;
 
-namespace sqlflite {
+namespace gizmosql {
 
 DEFINE_string(host, "localhost", "Host to connect to");
 DEFINE_int32(port, 31337, "Port to connect to");
@@ -230,12 +230,12 @@ Status RunMain() {
   return print_status;
 }
 
-}  // namespace sqlflite
+}  // namespace gizmosql
 
 int main(int argc, char **argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-  Status st = sqlflite::RunMain();
+  Status st = gizmosql::RunMain();
   if (!st.ok()) {
     std::cerr << st << std::endl;
     return 1;

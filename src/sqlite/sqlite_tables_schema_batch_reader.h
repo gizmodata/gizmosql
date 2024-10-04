@@ -26,7 +26,7 @@
 #include "sqlite_statement_batch_reader.h"
 #include "arrow/record_batch.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 class SqliteTablesWithSchemaBatchReader : public arrow::RecordBatchReader {
  private:
@@ -49,4 +49,4 @@ class SqliteTablesWithSchemaBatchReader : public arrow::RecordBatchReader {
   arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) override;
 };
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

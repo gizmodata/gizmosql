@@ -30,7 +30,7 @@
 #include <boost/uuid/uuid_io.hpp>
 #include "flight_sql_fwd.h"
 
-namespace sqlflite {
+namespace gizmosql {
 
 class SecurityUtilities {
  public:
@@ -120,4 +120,4 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
   std::string secret_key_;
 };
 
-}  // namespace sqlflite
+}  // namespace gizmosql

@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sqlflite.fullname" . }}
+  name: {{ include "gizmosql.fullname" . }}
   labels:
-    {{- include "sqlflite.labels" . | nindent 4 }}
+    {{- include "gizmosql.labels" . | nindent 4 }}
 spec:
-  type: {{ .Values.sqlFliteServer.service.type }}
+  type: {{ .Values.gizmoSQLServer.service.type }}
   ports:
-    - port: {{ .Values.sqlFliteServer.service.port }}
-      targetPort: sqlflite-port
+    - port: {{ .Values.gizmoSQLServer.service.port }}
+      targetPort: gizmosql-port
       protocol: TCP
-      name: sqlflite-port
+      name: gizmosql-port
   selector:
-    {{- include "sqlflite.selectorLabels" . | nindent 4 }}
-    app: sqlflite-server
+    {{- include "gizmosql.selectorLabels" . | nindent 4 }}
+    app: gizmosql-server

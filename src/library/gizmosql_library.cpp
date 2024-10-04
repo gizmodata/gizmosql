@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "include/sqlflite_library.h"
+#include "include/gizmosql_library.h"
 
 #include <cstdlib>
 #include <csignal>
@@ -34,11 +34,11 @@
 #include "sqlite_server.h"
 #include "duckdb_server.h"
 #include "include/flight_sql_fwd.h"
-#include "include/sqlflite_security.h"
+#include "include/gizmosql_security.h"
 
 namespace fs = std::filesystem;
 
-namespace sqlflite {
+namespace gizmosql {
 
 const int port = 31337;
 
@@ -77,18 +77,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   flight::FlightServerOptions options(location);
 
   if (!tls_cert_path.empty() && !tls_key_path.empty()) {
-    ARROW_CHECK_OK(sqlflite::SecurityUtilities::FlightServerTlsCertificates(
+    ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerTlsCertificates(
         tls_cert_path, tls_key_path, &options.tls_certificates));
   } else {
-    std::cout << "WARNING - TLS is disabled for the SQLFlite server - this is insecure."
+    std::cout << "WARNING - TLS is disabled for the GizmoSQL server - this is insecure."
               << std::endl;
   }
 
   // Setup authentication middleware (using the same TLS certificate keypair)
-  auto header_middleware = std::make_shared<sqlflite::HeaderAuthServerMiddlewareFactory>(
+  auto header_middleware = std::make_shared<gizmosql::HeaderAuthServerMiddlewareFactory>(
       username, password, secret_key);
   auto bearer_middleware =
-      std::make_shared<sqlflite::BearerAuthServerMiddlewareFactory>(secret_key);
+      std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(secret_key);
 
   options.auth_handler = std::make_unique<flight::NoOpAuthHandler>();
   options.middleware.push_back({"header-auth-server", header_middleware});
@@ -96,7 +96,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
   if (!mtls_ca_cert_path.empty()) {
     std::cout << "Using mTLS CA certificate: " << mtls_ca_cert_path << std::endl;
-    ARROW_CHECK_OK(sqlflite::SecurityUtilities::FlightServerMtlsCACertificate(
+    ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerMtlsCACertificate(
         mtls_ca_cert_path, &options.root_certificates));
     options.verify_client = true;
   }
@@ -106,16 +106,16 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   std::string db_type = "";
   if (backend == BackendType::sqlite) {
     db_type = "SQLite";
-    std::shared_ptr<sqlflite::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
-    ARROW_ASSIGN_OR_RAISE(sqlite_server, sqlflite::sqlite::SQLiteFlightSqlServer::Create(
+    std::shared_ptr<gizmosql::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
+    ARROW_ASSIGN_OR_RAISE(sqlite_server, gizmosql::sqlite::SQLiteFlightSqlServer::Create(
                                              database_filename));
     RUN_INIT_COMMANDS(sqlite_server, init_sql_commands);
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
     db_type = "DuckDB";
-    std::shared_ptr<sqlflite::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
+    std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
     duckdb::DBConfig config;
-    ARROW_ASSIGN_OR_RAISE(duckdb_server, sqlflite::ddb::DuckDBFlightSqlServer::Create(
+    ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
                                              database_filename, config, print_queries))
     // Run additional commands (first) for the DuckDB back-end...
     auto duckdb_init_sql_commands =
@@ -136,13 +136,13 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Exit with a clean error code (0) on SIGTERM
     ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM}));
 
-    std::cout << "SQLFlite server version: " << SQLFLITE_SERVER_VERSION
+    std::cout << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
               << " - with engine: " << db_type << " - will listen on "
               << server->location().ToString() << std::endl;
 
     return server;
   } else {
-    std::string err_msg = "Unable to create the SQLFlite Server";
+    std::string err_msg = "Unable to create the GizmoSQL Server";
     return arrow::Status::Invalid(err_msg);
   }
 }
@@ -171,24 +171,24 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   }
 
   if (hostname.empty()) {
-    hostname = SafeGetEnvVarValue("SQLFLITE_HOSTNAME");
+    hostname = SafeGetEnvVarValue("GIZMOSQL_HOSTNAME");
     if (hostname.empty()) {
-      hostname = DEFAULT_SQLFLITE_HOSTNAME;
+      hostname = DEFAULT_GIZMOSQL_HOSTNAME;
     }
   }
 
   if (username.empty()) {
-    username = SafeGetEnvVarValue("SQLFLITE_USERNAME");
+    username = SafeGetEnvVarValue("GIZMOSQL_USERNAME");
     if (username.empty()) {
-      username = DEFAULT_SQLFLITE_USERNAME;
+      username = DEFAULT_GIZMOSQL_USERNAME;
     }
   }
 
   if (password.empty()) {
-    password = SafeGetEnvVarValue("SQLFLITE_PASSWORD");
+    password = SafeGetEnvVarValue("GIZMOSQL_PASSWORD");
     if (password.empty()) {
       return arrow::Status::Invalid(
-          "The SQLFlite Server password is empty and env var: 'SQLFLITE_PASSWORD' is not "
+          "The GizmoSQL Server password is empty and env var: 'GIZMOSQL_PASSWORD' is not "
           "set.  Pass a value to this argument to secure the server.");
     }
   }
@@ -259,7 +259,7 @@ arrow::Status StartFlightSQLServer(
   return arrow::Status::OK();
 }
 
-}  // namespace sqlflite
+}  // namespace gizmosql
 
 extern "C" {
 
@@ -269,14 +269,14 @@ int RunFlightSQLServer(const BackendType backend, fs::path &database_filename,
                        fs::path tls_cert_path, fs::path tls_key_path,
                        fs::path mtls_ca_cert_path, std::string init_sql_commands,
                        fs::path init_sql_commands_file, const bool &print_queries) {
-  auto create_server_result = sqlflite::CreateFlightSQLServer(
+  auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
-    std::cout << "SQLFlite server - started" << std::endl;
+    std::cout << "GizmoSQL server - started" << std::endl;
     ARROW_CHECK_OK(server_ptr->Serve());
     return EXIT_SUCCESS;
   } else {

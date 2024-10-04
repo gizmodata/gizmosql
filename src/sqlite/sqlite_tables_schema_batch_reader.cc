@@ -31,7 +31,7 @@
 
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 std::shared_ptr<arrow::Schema> SqliteTablesWithSchemaBatchReader::schema() const {
   return flight::sql::SqlSchema::GetTablesSchemaWithIncludedSchema();
@@ -80,10 +80,10 @@ arrow::Status SqliteTablesWithSchemaBatchReader::ReadNext(
         int nullable = sqlite3_column_int(schema_statement->GetSqlite3Stmt(), 3);
 
         const flight::sql::ColumnMetadata& column_metadata =
-            GetColumnMetadata(sqlflite::sqlite::GetSqlTypeFromTypeName(column_type),
+            GetColumnMetadata(gizmosql::sqlite::GetSqlTypeFromTypeName(column_type),
                               sqlite_table_name.c_str());
         std::shared_ptr<arrow::DataType> arrow_type;
-        auto status = sqlflite::sqlite::GetArrowType(column_type).Value(&arrow_type);
+        auto status = gizmosql::sqlite::GetArrowType(column_type).Value(&arrow_type);
         if (!status.ok()) {
           return arrow::Status::NotImplemented("Unknown SQLite type '", column_type,
                                                "' for column '", column_name,
@@ -108,4 +108,4 @@ arrow::Status SqliteTablesWithSchemaBatchReader::ReadNext(
   return arrow::Status::OK();
 }
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

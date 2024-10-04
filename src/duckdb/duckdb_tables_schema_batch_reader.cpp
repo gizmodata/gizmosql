@@ -31,7 +31,7 @@
 
 using arrow::Status;
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 std::shared_ptr<arrow::Schema> DuckDBTablesWithSchemaBatchReader::schema() const {
   return flight::sql::SqlSchema::GetTablesSchemaWithIncludedSchema();
@@ -96,4 +96,4 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
   }
 }
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

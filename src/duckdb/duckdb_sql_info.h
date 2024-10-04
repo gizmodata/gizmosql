@@ -20,10 +20,10 @@
 #include <arrow/flight/sql/types.h>
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
 /// \return the cache.
 flight::sql::SqlInfoResultMap GetSqlInfoResultMap();
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

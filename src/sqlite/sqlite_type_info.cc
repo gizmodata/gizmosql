@@ -29,7 +29,7 @@
 
 namespace sql = flight::sql;
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DoGetTypeInfoResult() {
   auto schema = sql::SqlSchema::GetXdbcTypeInfoSchema();
@@ -213,4 +213,4 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DoGetTypeInfoResult(
                              pair.second - pair.first);
 }
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

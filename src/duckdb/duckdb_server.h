@@ -26,7 +26,7 @@
 #include <arrow/flight/sql/server.h>
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 /// \brief Convert a column type to a ArrowType.
 /// \param duckdb_type the duckdb type.
@@ -168,4 +168,4 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
   explicit DuckDBFlightSqlServer(std::shared_ptr<Impl> impl);
 };
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

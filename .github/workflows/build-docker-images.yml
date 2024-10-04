@@ -5,7 +5,7 @@ on:
   push:
 
 env:
-  DOCKER_IMAGE_NAME: voltrondata/sqlflite
+  DOCKER_IMAGE_NAME: gizmodata/gizmosql
 
 jobs:
   build-project-macos:
@@ -21,7 +21,7 @@ jobs:
             runner: macos-13-xlarge
     runs-on: ${{ matrix.runner }}
     env:
-      zip_file_name: sqlflite_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
+      zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.1
@@ -46,7 +46,7 @@ jobs:
           username: ${{ secrets.APPLE_ID_USERNAME }}
           password: ${{ secrets.APPLE_ID_PASSWORD }}
           apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          app-path: build/sqlflite_server
+          app-path: build/gizmosql_server
           entitlements-path: macos/entitlements.plist
 
       - name: Sign and notarize the server release build
@@ -57,12 +57,12 @@ jobs:
           username: ${{ secrets.APPLE_ID_USERNAME }}
           password: ${{ secrets.APPLE_ID_PASSWORD }}
           apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          app-path: build/sqlflite_client
+          app-path: build/gizmosql_client
 
       - name: Zip artifacts
         run: |
-          mv build/sqlflite_server build/sqlflite_client .
-          zip -j ${{ env.zip_file_name }} sqlflite_server sqlflite_client
+          mv build/gizmosql_server build/gizmosql_client .
+          zip -j ${{ env.zip_file_name }} gizmosql_server gizmosql_client
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -84,7 +84,7 @@ jobs:
             runner: buildjet-8vcpu-ubuntu-2204-arm
     runs-on: ${{ matrix.runner }}
     env:
-      zip_file_name: sqlflite_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
+      zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
     steps:
       - name: Checkout
         uses: actions/checkout@v4.1.1
@@ -112,8 +112,8 @@ jobs:
 
       - name: Zip artifacts
         run: |
-          mv build/sqlflite_server build/sqlflite_client .
-          zip -j ${{ env.zip_file_name }} sqlflite_server sqlflite_client
+          mv build/gizmosql_server build/gizmosql_client .
+          zip -j ${{ env.zip_file_name }} gizmosql_server gizmosql_client
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -167,14 +167,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: sqlflite_cli_*.zip
+          pattern: gizmosql_cli_*.zip
           merge-multiple: true
 
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/sqlflite_cli_*.zip
+            artifacts/gizmosql_cli_*.zip
             LICENSE
 
   update-image-manifest:

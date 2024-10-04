@@ -24,7 +24,7 @@
 #include "sqlite_statement.h"
 #include "arrow/record_batch.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 class SqliteStatementBatchReader : public arrow::RecordBatchReader {
  public:
@@ -60,4 +60,4 @@ class SqliteStatementBatchReader : public arrow::RecordBatchReader {
                              std::shared_ptr<arrow::Schema> schema);
 };
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

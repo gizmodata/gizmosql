@@ -20,7 +20,7 @@ RUN apt-get update && \
 # Create an application user
 RUN useradd app_user --create-home
 
-ARG APP_DIR=/opt/sqlflite
+ARG APP_DIR=/opt/gizmosql
 
 RUN mkdir --parents ${APP_DIR} && \
     chown app_user:app_user ${APP_DIR} && \
@@ -34,12 +34,12 @@ WORKDIR ${APP_DIR}
 # Copy the scripts directory into the image (we copy directory-by-directory in order to maximize Docker caching)
 COPY --chown=app_user:app_user scripts scripts
 
-COPY --chown=app_user:app_user sqlflite_server /usr/local/bin/sqlflite_server
-RUN chmod +x /usr/local/bin/sqlflite_server
+COPY --chown=app_user:app_user gizmosql_server /usr/local/bin/gizmosql_server
+RUN chmod +x /usr/local/bin/gizmosql_server
 
-COPY --chown=app_user:app_user sqlflite_client /usr/local/bin/sqlflite_client
-RUN chmod +x /usr/local/bin/sqlflite_client
+COPY --chown=app_user:app_user gizmosql_client /usr/local/bin/gizmosql_client
+RUN chmod +x /usr/local/bin/gizmosql_client
 
 EXPOSE 31337
 
-ENTRYPOINT scripts/start_sqlflite_slim.sh
+ENTRYPOINT scripts/start_gizmosql_slim.sh

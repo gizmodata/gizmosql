@@ -33,7 +33,7 @@
 #include "arrow/util/checked_cast.h"
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 using arrow::internal::checked_cast;
 
@@ -127,11 +127,11 @@ arrow::Result<std::shared_ptr<arrow::Schema>> SqliteStatement::GetSchema() const
       // Try to retrieve column type from sqlite3_column_decltype
       const char* column_decltype = sqlite3_column_decltype(stmt_, i);
       if (column_decltype != NULLPTR) {
-        ARROW_ASSIGN_OR_RAISE(data_type, sqlflite::sqlite::GetArrowType(column_decltype));
+        ARROW_ASSIGN_OR_RAISE(data_type, gizmosql::sqlite::GetArrowType(column_decltype));
       } else {
         // If it cannot determine the actual column type, return a dense_union type
         // covering any type SQLite supports.
-        data_type = sqlflite::sqlite::GetUnknownColumnDataType();
+        data_type = gizmosql::sqlite::GetUnknownColumnDataType();
       }
     }
     flight::sql::ColumnMetadata column_metadata = GetColumnMetadata(column_type, table);
@@ -266,4 +266,4 @@ arrow::Status SqliteStatement::Bind(size_t batch_index, int64_t row_index) {
   return arrow::Status::OK();
 }
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

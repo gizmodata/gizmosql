@@ -23,7 +23,7 @@
 #include "duckdb_statement.h"
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 class DuckDBStatementBatchReader : public arrow::RecordBatchReader {
  public:
@@ -56,4 +56,4 @@ class DuckDBStatementBatchReader : public arrow::RecordBatchReader {
                              std::shared_ptr<arrow::Schema> schema);
 };
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

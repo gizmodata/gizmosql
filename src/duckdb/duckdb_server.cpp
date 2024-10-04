@@ -44,7 +44,7 @@ using arrow::Status;
 
 namespace sql = flight::sql;
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 namespace {
 
 std::string PrepareQueryForGetTables(const sql::GetTables &command) {
@@ -839,4 +839,4 @@ Status DuckDBFlightSqlServer::EndTransaction(
   return impl_->EndTransaction(context, request);
 }
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

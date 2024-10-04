@@ -26,7 +26,7 @@
 #include "duckdb_statement_batch_reader.h"
 #include "arrow/record_batch.h"
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 class DuckDBTablesWithSchemaBatchReader : public arrow::RecordBatchReader {
  private:
@@ -53,4 +53,4 @@ class DuckDBTablesWithSchemaBatchReader : public arrow::RecordBatchReader {
   arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) override;
 };
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

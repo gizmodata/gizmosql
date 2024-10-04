@@ -1,14 +1,15 @@
-# SQLFlite
+# GizmoSQL
 
 ## An [Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with [DuckDB](https://duckdb.org) or [SQLite](https://sqlite.org) back-end execution engines
 
-[<img src="https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker">](https://hub.docker.com/r/voltrondata/sqlflite)
+**Note**: This project was forked (and renamed) from: https://github.com/voltrondata/sqlflite
+
+[<img src="https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker">](https://hub.docker.com/r/gizmodata/gizmosql)
 [<img src="https://img.shields.io/badge/Documentation-dev-yellow.svg?logo=">](https://arrow.apache.org/docs/format/FlightSql.html)
-[<img src="https://img.shields.io/badge/GitHub-voltrondata%2Fsqlflite-blue.svg?logo=Github">](https://github.com/voltrondata/sqlflite)
+[<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github">](https://github.com/gizmodata/gizmosql)
 [<img src="https://img.shields.io/badge/Arrow%20JDBC%20Driver-download%20artifact-red?logo=Apache%20Maven">](https://search.maven.org/search?q=a:flight-sql-jdbc-driver)
 [<img src="https://img.shields.io/badge/PyPI-Arrow%20ADBC%20Flight%20SQL%20driver-blue?logo=PyPI">](https://pypi.org/project/adbc-driver-flightsql/)
-[<img src="https://img.shields.io/badge/PyPI-SQLFlite%20Ibis%20Backend-blue?logo=PyPI">](https://pypi.org/project/ibis-sqlflite/)
-[<img src="https://img.shields.io/badge/PyPI-SQLFlite%20SQLAlchemy%20Dialect-blue?logo=PyPI">](https://pypi.org/project/sqlalchemy-sqlflite-adbc-dialect/)
+[<img src="https://img.shields.io/badge/PyPI-GizmoSQL%20SQLAlchemy%20Dialect-blue?logo=PyPI">](https://pypi.org/project/sqlalchemy-gizmosql-adbc-dialect/)
 
 ## Description
 
@@ -23,17 +24,17 @@ For more information about Apache Arrow Flight SQL - please see this [article](h
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
 
 ```bash
-docker run --name sqlflite \
+docker run --name gizmosql \
            --detach \
            --rm \
            --tty \
            --init \
            --publish 31337:31337 \
            --env TLS_ENABLED="1" \
-           --env SQLFLITE_PASSWORD="sqlflite_password" \
+           --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --pull missing \
-           voltrondata/sqlflite:latest
+           gizmodata/gizmosql:latest
 ```
 
 The above command will automatically mount a very small TPC-H DuckDB database file.
@@ -66,19 +67,19 @@ LOAD tpch;
 CALL dbgen(sf=1);
 EOF
 
-# Run the sqlflite docker container image - and mount the host's DuckDB database file created above inside the container
-docker run --name sqlflite \
+# Run the gizmosql docker container image - and mount the host's DuckDB database file created above inside the container
+docker run --name gizmosql \
            --detach \
            --rm \
            --tty \
            --init \
            --publish 31337:31337 \
            --env TLS_ENABLED="1" \
-           --env SQLFLITE_PASSWORD="sqlflite_password" \
+           --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --pull missing \
-           --mount type=bind,source=$(pwd),target=/opt/sqlflite/data \
+           --mount type=bind,source=$(pwd),target=/opt/gizmosql/data \
            --env DATABASE_FILENAME="data/tpch_sf1.duckdb" \
-           voltrondata/sqlflite:latest
+           gizmodata/gizmosql:latest
 ```
 
 ### Running initialization SQL commands
@@ -88,18 +89,18 @@ You can now run initialization commands upon container startup by setting enviro
 
 Here is a full example of running the Docker image with initialization SQL commands:
 ```bash
-docker run --name sqlflite \
+docker run --name gizmosql \
            --detach \
            --rm \
            --tty \
            --init \
            --publish 31337:31337 \
            --env TLS_ENABLED="1" \
-           --env SQLFLITE_PASSWORD="sqlflite_password" \
+           --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --env INIT_SQL_COMMANDS="SET threads = 1; SET memory_limit = '1GB';" \
            --pull missing \
-           voltrondata/sqlflite:latest
+           gizmodata/gizmosql:latest
 ```
 
 You can also specify a file containing initialization SQL commands by setting environment variable: `INIT_SQL_COMMANDS_FILE` to the path of the file containing the SQL commands - example value: `/tmp/init.sql`.  The file must be mounted inside the container.   
@@ -114,14 +115,14 @@ You can also specify a file containing initialization SQL commands by setting en
 ### Connecting to the server via JDBC
 Download the [Apache Arrow Flight SQL JDBC driver](https://search.maven.org/search?q=a:flight-sql-jdbc-driver)
 
-You can then use the JDBC driver to connect from your host computer to the locally running Docker Flight SQL server with this JDBC string (change the password value to match the value specified for the SQLFLITE_PASSWORD environment variable if you changed it from the example above):
+You can then use the JDBC driver to connect from your host computer to the locally running Docker Flight SQL server with this JDBC string (change the password value to match the value specified for the GIZMOSQL_PASSWORD environment variable if you changed it from the example above):
 ```bash
-jdbc:arrow-flight-sql://localhost:31337?useEncryption=true&user=sqlflite_username&password=sqlflite_password&disableCertificateVerification=true
+jdbc:arrow-flight-sql://localhost:31337?useEncryption=true&user=gizmosql_username&password=gizmosql_password&disableCertificateVerification=true
 ```
 
 For instructions on setting up the JDBC driver in popular Database IDE tool: [DBeaver Community Edition](https://dbeaver.io) - see this [repo](https://github.com/voltrondata/setup-arrow-jdbc-driver-in-dbeaver).
 
-**Note** - if you stop/restart the Flight SQL Docker container, and attempt to connect via JDBC with the same password - you could get error: "Invalid bearer token provided. Detail: Unauthenticated".  This is because the client JDBC driver caches the bearer token signed with the previous instance's secret key.  Just change the password in the new container by changing the "SQLFLITE_PASSWORD" env var setting - and then use that to connect via JDBC.  
+**Note** - if you stop/restart the Flight SQL Docker container, and attempt to connect via JDBC with the same password - you could get error: "Invalid bearer token provided. Detail: Unauthenticated".  This is because the client JDBC driver caches the bearer token signed with the previous instance's secret key.  Just change the password in the new container by changing the "GIZMOSQL_PASSWORD" env var setting - and then use that to connect via JDBC.  
 
 ### Connecting to the server via the new [ADBC Python Flight SQL driver](https://pypi.org/project/adbc-driver-flightsql/)
 
@@ -148,12 +149,12 @@ python
 In the Python shell - you can then run:
 ```python
 import os
-from adbc_driver_flightsql import dbapi as sqlflite, DatabaseOptions
+from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
 
 
-with sqlflite.connect(uri="grpc+tls://localhost:31337",
-                        db_kwargs={"username": os.getenv("SQLFLITE_USERNAME", "sqlflite_username"),
-                                   "password": os.getenv("SQLFLITE_PASSWORD", "sqlflite_password"),
+with gizmosql.connect(uri="grpc+tls://localhost:31337",
+                        db_kwargs={"username": os.getenv("GIZMOSQL_USERNAME", "gizmosql_username"),
+                                   "password": os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
                                    DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Not needed if you use a trusted CA-signed TLS cert
                                    }
                         ) as conn:
@@ -175,17 +176,17 @@ n_nationkey: [[24]]
 n_name: [["UNITED STATES"]]
 ```
 
-### Connecting via the new `sqlflite_client` CLI tool
-You can also use the new `sqlflite_client` CLI tool to connect to the Flight SQL server, and then run a single command.  This tool is built into the Docker image, and is also available as a standalone executable for Linux and MacOS.   
+### Connecting via the new `gizmosql_client` CLI tool
+You can also use the new `gizmosql_client` CLI tool to connect to the Flight SQL server, and then run a single command.  This tool is built into the Docker image, and is also available as a standalone executable for Linux and MacOS.   
 
 Example (run from the host computer's terminal):
 ```bash
-sqlflite_client \
+gizmosql_client \
   --command Execute \
   --host "localhost" \
   --port 31337 \
-  --username "sqlflite_username" \
-  --password "sqlflite_password" \
+  --username "gizmosql_username" \
+  --password "gizmosql_password" \
   --query "SELECT version()" \
   --use-tls \
   --tls-skip-verify
@@ -205,34 +206,31 @@ version():   [
 Total: 1
 ```
 
-### Connecting via [Ibis](https://ibis-project.org)
-See: https://github.com/ibis-project/ibis-sqlflite
-
 ### Connecting via [SQLAlchemy](https://www.sqlalchemy.org)
-See: https://github.com/prmoore77/sqlalchemy-sqlflite-adbc-dialect
+See: https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect
 
 ### Tear-down
 Stop the docker image with:
 ```bash
-docker stop sqlflite
+docker stop gizmosql
 ```
 
-## Option 2 - Download and run the sqlflite CLI executable
+## Option 2 - Download and run the gizmosql CLI executable
 
-Download (and unzip) the latest release of the **sqlflite_server** CLI executable from these currently supported platforms:   
-[Linux x86-64](https://github.com/voltrondata/sqlflite/releases/latest/download/sqlflite_cli_linux_amd64.zip)   
-[Linux arm64](https://github.com/voltrondata/sqlflite/releases/latest/download/sqlflite_cli_linux_arm64.zip)   
-[MacOS x86-64](https://github.com/voltrondata/sqlflite/releases/latest/download/sqlflite_cli_macos_amd64.zip)   
-[MacOS arm64](https://github.com/voltrondata/sqlflite/releases/latest/download/sqlflite_cli_macos_arm64.zip)   
+Download (and unzip) the latest release of the **gizmosql_server** CLI executable from these currently supported platforms:   
+[Linux x86-64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_amd64.zip)   
+[Linux arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_arm64.zip)   
+[MacOS x86-64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_macos_amd64.zip)   
+[MacOS arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_macos_arm64.zip)   
 
 Then from a terminal - you can run:
 ```bash
-SQLFLITE_PASSWORD="sqlflite_password" sqlflite_server --database-filename data/some_db.duckdb --print-queries
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/some_db.duckdb --print-queries
 ```
 
 To see all program options - run:
 ```bash
-sqlflite_server --help
+gizmosql_server --help
 ```
 
 ## Option 3 - Steps to build the solution manually
@@ -242,8 +240,8 @@ Follow these steps to do so (thanks to David Li!).
 
 1. Clone the repo and build the static library and executable
 ```bash
-git clone https://github.com/voltrondata/sqlflite --recurse-submodules
-cd sqlflite
+git clone https://github.com/gizmodata/gizmosql --recurse-submodules
+cd gizmosql
 
 # Build and install the static library and executable
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local
@@ -281,81 +279,81 @@ popd
 
 6. Start the Flight SQL server (and print client SQL commands as they run using the --print-queries option)
 ```bash
-SQLFLITE_PASSWORD="sqlflite_password" sqlflite_server --database-filename data/TPC-H-small.duckdb --print-queries
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/TPC-H-small.duckdb --print-queries
 ```
 
 ## Selecting different backends
 This option allows choosing from two backends: SQLite and DuckDB. It defaults to DuckDB.
 
 ```bash
-$ SQLFLITE_PASSWORD="sqlflite_password" sqlflite_server --database-filename data/TPC-H-small.duckdb
+$ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/TPC-H-small.duckdb
 Apache Arrow version: 17.0.0
-WARNING - TLS is disabled for the SQLFlite server - this is insecure.
+WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.1.1
 Running Init SQL command: 
 SET autoinstall_known_extensions = true;
 Running Init SQL command: 
  SET autoload_known_extensions = true;
-Using database file: "/opt/sqlflite/data/TPC-H-small.duckdb"
+Using database file: "/opt/gizmosql/data/TPC-H-small.duckdb"
 Print Queries option is set to: false
-SQLFlite server - with engine: DuckDB - will listen on grpc+tcp://0.0.0.0:31337
-SQLFlite server - started
+GizmoSQL server - with engine: DuckDB - will listen on grpc+tcp://0.0.0.0:31337
+GizmoSQL server - started
 ```
 
-The above call is equivalent to running `sqlflite_server -B duckdb` or `sqlflite --backend duckdb`. To select SQLite run
+The above call is equivalent to running `gizmosql_server -B duckdb` or `gizmosql --backend duckdb`. To select SQLite run
 
 ```bash
-SQLFLITE_PASSWORD="sqlflite_password" sqlflite_server -B sqlite -D data/TPC-H-small.sqlite 
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server -B sqlite -D data/TPC-H-small.sqlite 
 ```
 or 
 ```bash
-SQLFLITE_PASSWORD="sqlflite_password" sqlflite_server --backend sqlite --database-filename data/TPC-H-small.sqlite
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --backend sqlite --database-filename data/TPC-H-small.sqlite
 ```
 The above will produce the following:
 
 ```bash
 Apache Arrow version: 17.0.0
-WARNING - TLS is disabled for the SQLFlite server - this is insecure.
+WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.45.0
-Using database file: "/opt/sqlflite/data/TPC-H-small.sqlite"
+Using database file: "/opt/gizmosql/data/TPC-H-small.sqlite"
 Print Queries option is set to: false
-SQLFlite server - with engine: SQLite - will listen on grpc+tcp://0.0.0.0:31337
-SQLFlite server - started
+GizmoSQL server - with engine: SQLite - will listen on grpc+tcp://0.0.0.0:31337
+GizmoSQL server - started
 ```
 
 ## Print help
-To see all the available options run `sqlflite_server --help`.
+To see all the available options run `gizmosql_server --help`.
 
 ```bash
-sqlflite_server --help
+gizmosql_server --help
 Allowed options:
   --help                              produce this help message
   --version                           Print the version and exit
   -B [ --backend ] arg (=duckdb)      Specify the database backend. Allowed 
                                       options: duckdb, sqlite.
   -H [ --hostname ] arg               Specify the hostname to listen on for the
-                                      SQLFlite Server.  If not set, we will use
-                                      env var: 'SQLFLITE_HOSTNAME'.  If that 
+                                      GizmoSQL Server.  If not set, we will use
+                                      env var: 'GIZMOSQL_HOSTNAME'.  If that 
                                       isn't set, we will use the default of: 
                                       '0.0.0.0'.
   -R [ --port ] arg (=31337)          Specify the port to listen on for the 
-                                      SQLFlite Server.
+                                      GizmoSQL Server.
   -D [ --database-filename ] arg      Specify the database filename (absolute 
                                       or relative to the current working 
                                       directory)
   -U [ --username ] arg               Specify the username to allow to connect 
-                                      to the SQLFlite Server for clients.  If 
+                                      to the GizmoSQL Server for clients.  If 
                                       not set, we will use env var: 
-                                      'SQLFLITE_USERNAME'.  If that isn't set, 
+                                      'GIZMOSQL_USERNAME'.  If that isn't set, 
                                       we will use the default of: 
-                                      'sqlflite_username'.
+                                      'gizmosql_username'.
   -P [ --password ] arg               Specify the password to set on the 
-                                      SQLFlite Server for clients to connect 
+                                      GizmoSQL Server for clients to connect 
                                       with.  If not set, we will use env var: 
-                                      'SQLFLITE_PASSWORD'.  If that isn't set, 
+                                      'GIZMOSQL_PASSWORD'.  If that isn't set, 
                                       the server will exit with failure.
   -S [ --secret-key ] arg             Specify the secret key used to sign JWTs 
-                                      issued by the SQLFlite Server. If it 
+                                      issued by the GizmoSQL Server. If it 
                                       isn't set, we use env var: 'SECRET_KEY'. 
                                       If that isn't set, the server will create
                                       a random secret key.
@@ -379,7 +377,7 @@ There is now a slim docker image available, without Python, tls certificate gene
 
 You must supply the following environment variables to the slim image:
 - `DATABASE_FILENAME` - the path to the database file to use
-- `SQLFLITE_PASSWORD` - the password to use for the SQLFlite server
+- `GIZMOSQL_PASSWORD` - the password to use for the GizmoSQL server
 
 You can optionally supply the following environment variables:
 - `TLS_ENABLED` - set to "1" to enable TLS (default is "0" - disabled)
@@ -388,7 +386,7 @@ You can optionally supply the following environment variables:
 
 To run that image - use the following command:
 ```bash
-docker run --name sqlflite-slim \
+docker run --name gizmosql-slim \
            --detach \
            --rm \
            --tty \
@@ -396,10 +394,10 @@ docker run --name sqlflite-slim \
            --publish 31337:31337 \
            --env DATABASE_FILENAME="data/some_database.duckdb" \
            --env TLS_ENABLED="0" \
-           --env SQLFLITE_PASSWORD="sqlflite_password" \
+           --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --pull missing \
-           voltrondata/sqlflite:latest-slim
+           gizmodata/gizmosql:latest-slim
 ```
 
-See [start_sqlflite_slim.sh](scripts/start_sqlflite_slim.sh) - the container's entrypoint script for more details.
+See [start_gizmosql_slim.sh](scripts/start_gizmosql_slim.sh) - the container's entrypoint script for more details.

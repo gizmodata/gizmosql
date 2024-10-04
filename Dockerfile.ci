@@ -35,7 +35,7 @@ RUN case ${TARGETPLATFORM} in \
 # Create an application user
 RUN useradd app_user --create-home
 
-ARG APP_DIR=/opt/sqlflite
+ARG APP_DIR=/opt/gizmosql
 
 RUN mkdir --parents ${APP_DIR} && \
     chown app_user:app_user ${APP_DIR} && \
@@ -72,11 +72,11 @@ RUN python "scripts/create_duckdb_database_file.py" \
            --overwrite-file=true \
            --scale-factor=0.01
 
-COPY --chown=app_user:app_user sqlflite_server /usr/local/bin/sqlflite_server
-RUN chmod +x /usr/local/bin/sqlflite_server
+COPY --chown=app_user:app_user gizmosql_server /usr/local/bin/gizmosql_server
+RUN chmod +x /usr/local/bin/gizmosql_server
 
-COPY --chown=app_user:app_user sqlflite_client /usr/local/bin/sqlflite_client
-RUN chmod +x /usr/local/bin/sqlflite_client
+COPY --chown=app_user:app_user gizmosql_client /usr/local/bin/gizmosql_client
+RUN chmod +x /usr/local/bin/gizmosql_client
 
 COPY --chown=app_user:app_user tls tls
 
@@ -94,6 +94,6 @@ RUN case ${TARGETPLATFORM} in \
 EXPOSE 31337
 
 # Run a test to ensure that the server works...
-RUN scripts/test_sqlflite.sh
+RUN scripts/test_gizmosql.sh
 
-ENTRYPOINT scripts/start_sqlflite.sh
+ENTRYPOINT scripts/start_gizmosql.sh

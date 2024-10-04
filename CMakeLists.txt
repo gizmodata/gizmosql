@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(sqlflite)
+project(gizmosql)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -120,7 +120,7 @@ find_package(Threads REQUIRED)
 set(Boost_USE_STATIC_LIBS ON)
 find_package(Boost COMPONENTS program_options REQUIRED)
 
-set(SQLFLITE_SQLITE_SERVER_SRCS
+set(GIZMOSQL_SQLITE_SERVER_SRCS
         src/sqlite/sqlite_sql_info.cc
         src/sqlite/sqlite_type_info.cc
         src/sqlite/sqlite_statement.cc
@@ -129,7 +129,7 @@ set(SQLFLITE_SQLITE_SERVER_SRCS
         src/sqlite/sqlite_tables_schema_batch_reader.cc)
 
 
-set(SQLFLITE_DUCKDB_SERVER_SRCS
+set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_sql_info.cpp
         src/duckdb/duckdb_statement.cpp
         src/duckdb/duckdb_statement_batch_reader.cpp
@@ -137,19 +137,19 @@ set(SQLFLITE_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_tables_schema_batch_reader.cpp)
 
 # Add header file
-set(HEADER_FILES src/library/include/sqlflite_library.h)
+set(HEADER_FILES src/library/include/gizmosql_library.h)
 
 # Add a library target
-add_library(sqlfliteserver STATIC
-        src/library/sqlflite_library.cpp
-        src/library/sqlflite_security.cpp
-        ${SQLFLITE_SQLITE_SERVER_SRCS}
-        ${SQLFLITE_DUCKDB_SERVER_SRCS}
+add_library(gizmosqlserver STATIC
+        src/library/gizmosql_library.cpp
+        src/library/gizmosql_security.cpp
+        ${GIZMOSQL_SQLITE_SERVER_SRCS}
+        ${GIZMOSQL_DUCKDB_SERVER_SRCS}
 )
 
-set_target_properties(sqlfliteserver PROPERTIES PUBLIC_HEADER ${HEADER_FILES})
+set_target_properties(gizmosqlserver PROPERTIES PUBLIC_HEADER ${HEADER_FILES})
 
-target_include_directories(sqlfliteserver PRIVATE
+target_include_directories(gizmosqlserver PRIVATE
         src/sqlite
         src/duckdb
         src/library/include
@@ -158,7 +158,7 @@ target_include_directories(sqlfliteserver PRIVATE
         ${JWT_CPP_INCLUDE_DIR}
 )
 
-target_link_libraries(sqlfliteserver
+target_link_libraries(gizmosqlserver
         PRIVATE
         Threads::Threads
         ArrowFlightSql::arrow_flight_sql_static
@@ -170,39 +170,39 @@ target_link_libraries(sqlfliteserver
 
 if (APPLE)
     # macOS-specific libraries and options
-    target_link_libraries(sqlfliteserver PRIVATE "-framework CoreFoundation")
+    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation")
 elseif (UNIX AND NOT APPLE)
-    target_link_libraries(sqlfliteserver PRIVATE "-lssl -lcrypto")
+    target_link_libraries(gizmosqlserver PRIVATE "-lssl -lcrypto")
 endif ()
 
 # Specify the installation directory for the library
-install(TARGETS sqlfliteserver
+install(TARGETS gizmosqlserver
         LIBRARY DESTINATION lib
         PUBLIC_HEADER DESTINATION include
 )
 
 # ------------ Server Executable section ------------
-add_executable(sqlflite_server
-        src/sqlflite_server.cpp
+add_executable(gizmosql_server
+        src/gizmosql_server.cpp
 )
 
-target_link_libraries(sqlflite_server PRIVATE
-        sqlfliteserver
+target_link_libraries(gizmosql_server PRIVATE
+        gizmosqlserver
         ${Boost_LIBRARIES}
 )
 
-target_compile_options(sqlflite_server PRIVATE "-static")
+target_compile_options(gizmosql_server PRIVATE "-static")
 
-install(TARGETS sqlflite_server
+install(TARGETS gizmosql_server
         DESTINATION bin
 )
 
 # ------------ Client Executable section ------------
-add_executable(sqlflite_client
-        src/sqlflite_client.cpp
+add_executable(gizmosql_client
+        src/gizmosql_client.cpp
 )
 
-target_link_libraries(sqlflite_client PRIVATE
+target_link_libraries(gizmosql_client PRIVATE
         Threads::Threads
         ArrowFlightSql::arrow_flight_sql_static
         ${Boost_LIBRARIES}
@@ -211,13 +211,13 @@ target_link_libraries(sqlflite_client PRIVATE
 
 if (APPLE)
     # macOS-specific libraries and options
-    target_link_libraries(sqlflite_client PRIVATE "-framework CoreFoundation")
+    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation")
 elseif (UNIX AND NOT APPLE)
-    target_link_libraries(sqlflite_client PRIVATE "-lssl -lcrypto")
+    target_link_libraries(gizmosql_client PRIVATE "-lssl -lcrypto")
 endif ()
 
-target_compile_options(sqlflite_client PRIVATE "-static")
+target_compile_options(gizmosql_client PRIVATE "-static")
 
-install(TARGETS sqlflite_client
+install(TARGETS gizmosql_client
         DESTINATION bin
 )

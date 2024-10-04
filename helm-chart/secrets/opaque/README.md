@@ -1,6 +1,6 @@
 # Needed files to support the helm chart
 Create the following files in this folder with the EXACT names shown (no extensions):
-1. SQLFLITE_PASSWORD
+1. GIZMOSQL_PASSWORD
 
 You may set the contents of the files however you choose.
 

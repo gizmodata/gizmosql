@@ -21,7 +21,7 @@
 #include "arrow/util/config.h"
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
 /// \return the cache.
@@ -30,7 +30,7 @@ flight::sql::SqlInfoResultMap GetSqlInfoResultMap() {
   using SqlInfoResult = flight::sql::SqlInfoResult;
   return {
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_NAME,
-       SqlInfoResult(std::string("sqlflite"))},
+       SqlInfoResult(std::string("gizmosql"))},
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_VERSION,
        SqlInfoResult(std::string("sqlite 3"))},
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_ARROW_VERSION,
@@ -224,4 +224,4 @@ flight::sql::SqlInfoResultMap GetSqlInfoResultMap() {
                  {SqlInfoOptions::SqlSupportsConvert::SQL_CONVERT_INTEGER})}}))}};
 }
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

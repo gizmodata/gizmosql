@@ -19,10 +19,10 @@
 
 #include "arrow/flight/sql/types.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
 /// \return the cache.
 arrow::flight::sql::SqlInfoResultMap GetSqlInfoResultMap();
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

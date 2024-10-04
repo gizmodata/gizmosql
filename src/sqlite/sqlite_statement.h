@@ -25,7 +25,7 @@
 #include "arrow/flight/sql/column_metadata.h"
 #include "arrow/type_fwd.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 /// \brief Create an object ColumnMetadata using the column type and
 ///        table name.
@@ -82,4 +82,4 @@ class SqliteStatement {
   SqliteStatement(sqlite3* db, sqlite3_stmt* stmt) : db_(db), stmt_(stmt) {}
 };
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

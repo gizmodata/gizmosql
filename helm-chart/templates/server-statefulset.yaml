@@ -1,34 +1,34 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "sqlflite.fullname" . }}-server
+  name: {{ include "gizmosql.fullname" . }}-server
   labels:
-    {{- include "sqlflite.labels" . | nindent 4 }}
-    app: sqlflite-server
+    {{- include "gizmosql.labels" . | nindent 4 }}
+    app: gizmosql-server
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "sqlflite.selectorLabels" . | nindent 6 }}
-      app: sqlflite-server
-  serviceName: sqlflite
+      {{- include "gizmosql.selectorLabels" . | nindent 6 }}
+      app: gizmosql-server
+  serviceName: gizmosql
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/global-secret.yaml") . | sha256sum }}
-        {{- with .Values.sqlFliteServer.podAnnotations }}
+        {{- with .Values.gizmoSQLServer.podAnnotations }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "sqlflite.selectorLabels" . | nindent 8 }}
-        app: sqlflite-server
+        {{- include "gizmosql.selectorLabels" . | nindent 8 }}
+        app: gizmosql-server
     spec:
-      {{- with .Values.sqlFliteServer.imagePullSecrets }}
+      {{- with .Values.gizmoSQLServer.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.sqlFliteServer.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.gizmoSQLServer.podSecurityContext | nindent 8 }}
       volumes:
 # See: https://aws.amazon.com/blogs/containers/eks-persistent-volumes-for-instance-store/ for details on using local NVMe for supported nodes
 # Uncomment the following lines to mount the local NVMe disk as a data volume
@@ -40,7 +40,7 @@ spec:
 #            type: Directory
         - name: tls-volume
           secret:
-            secretName: {{ include "sqlflite.fullname" . }}-tls-secret
+            secretName: {{ include "gizmosql.fullname" . }}-tls-secret
             optional: true
 # Uncomment the following lines to mount the local NVMe disk as a data volume
 #      initContainers:
@@ -51,56 +51,56 @@ spec:
 #            - name: nvme-volume
 #              mountPath: /data
       containers:
-        - name: sqlflite
+        - name: gizmosql
           volumeMounts:
 # Uncomment the following lines to mount the local NVMe disk as a data volume
 #            - name: nvme-volume
-#              mountPath: /opt/sqlflite/data
+#              mountPath: /opt/gizmosql/data
             - name: tls-volume
-              mountPath: /opt/sqlflite/tls
+              mountPath: /opt/gizmosql/tls
               readOnly: true
           env:
             - name: DATABASE_BACKEND
               value: duckdb
             - name: DATABASE_FILENAME
-              value: {{ .Values.sqlFliteServer.config.DATABASE_FILENAME }}
-            - name: SQLFLITE_PASSWORD
+              value: {{ .Values.gizmoSQLServer.config.DATABASE_FILENAME }}
+            - name: GIZMOSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sqlflite.fullname" . }}-secret
-                  key: SQLFLITE_PASSWORD
+                  name: {{ include "gizmosql.fullname" . }}-secret
+                  key: GIZMOSQL_PASSWORD
                   optional: false
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sqlflite.fullname" . }}-secret
+                  name: {{ include "gizmosql.fullname" . }}-secret
                   key: AWS_ACCESS_KEY_ID
                   optional: true
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sqlflite.fullname" . }}-secret
+                  name: {{ include "gizmosql.fullname" . }}-secret
                   key: AWS_SECRET_ACCESS_KEY
                   optional: true
             - name: AWS_SESSION_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sqlflite.fullname" . }}-secret
+                  name: {{ include "gizmosql.fullname" . }}-secret
                   key: AWS_SESSION_TOKEN
                   optional: true
             - name: AWS_DEFAULT_REGION
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "sqlflite.fullname" . }}-secret
+                  name: {{ include "gizmosql.fullname" . }}-secret
                   key: AWS_DEFAULT_REGION
                   optional: true
           securityContext:
-            {{- toYaml .Values.sqlFliteServer.securityContext | nindent 12 }}
-          image: "{{ .Values.sqlFliteServer.image.repository }}:{{ .Values.sqlFliteServer.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.sqlFliteServer.image.pullPolicy }}
+            {{- toYaml .Values.gizmoSQLServer.securityContext | nindent 12 }}
+          image: "{{ .Values.gizmoSQLServer.image.repository }}:{{ .Values.gizmoSQLServer.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.gizmoSQLServer.image.pullPolicy }}
           ports:
-            - name: sqlflite-port
-              containerPort: {{ .Values.sqlFliteServer.service.port }}
+            - name: gizmosql-port
+              containerPort: {{ .Values.gizmoSQLServer.service.port }}
               protocol: TCP
 #          livenessProbe:
 #            httpGet:
@@ -111,16 +111,16 @@ spec:
 #              path: /
 #              port: http
           resources:
-            {{- toYaml .Values.sqlFliteServer.resources | nindent 12 }}
-      {{- with .Values.sqlFliteServer.nodeSelector }}
+            {{- toYaml .Values.gizmoSQLServer.resources | nindent 12 }}
+      {{- with .Values.gizmoSQLServer.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.sqlFliteServer.affinity }}
+      {{- with .Values.gizmoSQLServer.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.sqlFliteServer.tolerations }}
+      {{- with .Values.gizmoSQLServer.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}

@@ -19,7 +19,7 @@
 
 #include "arrow/record_batch.h"
 
-namespace sqlflite::sqlite {
+namespace gizmosql::sqlite {
 
 /// \brief Gets the hard-coded type info from Sqlite for all data types.
 /// \return A record batch.
@@ -31,4 +31,4 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DoGetTypeInfoResult();
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DoGetTypeInfoResult(
     int data_type_filter);
 
-}  // namespace sqlflite::sqlite
+}  // namespace gizmosql::sqlite

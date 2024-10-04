@@ -27,7 +27,7 @@
 
 #include "flight_sql_fwd.h"
 
-namespace sqlflite::ddb {
+namespace gizmosql::ddb {
 
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType duckdb_type);
@@ -78,4 +78,4 @@ class DuckDBStatement {
   }
 };
 
-}  // namespace sqlflite::ddb
+}  // namespace gizmosql::ddb

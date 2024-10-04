@@ -2,10 +2,10 @@
 
 set -e
 
-kubectl config set-context --current --namespace=sqlflite
+kubectl config set-context --current --namespace=gizmosql
 
 helm upgrade demo \
      --install . \
-     --namespace sqlflite \
+     --namespace gizmosql \
      --create-namespace \
      --values values.yaml

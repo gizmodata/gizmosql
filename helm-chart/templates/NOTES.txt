@@ -1,9 +1,9 @@
-SQLFlite has been installed.
+GizmoSQL has been installed.
 
 1. Get the JDBC URL and ADBC URI by running these commands:
 
 ```bash
-export SERVICE_NAME={{ include "sqlflite.fullname" . }}
+export SERVICE_NAME={{ include "gizmosql.fullname" . }}
 export NAMESPACE={{ .Release.Namespace }}
 
 # Wait for the external IP to be allocated
