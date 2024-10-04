@@ -39,7 +39,7 @@ jobs:
           run-build: true
 
       - name: Sign and notarize the server release build
-        uses: prmoore77/action-macos-sign-notarize@b0f525e0d98a47b0884558b786f21453889a04d7
+        uses: toitlang/action-macos-sign-notarize@v1.2.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -50,7 +50,7 @@ jobs:
           entitlements-path: macos/entitlements.plist
 
       - name: Sign and notarize the server release build
-        uses: prmoore77/action-macos-sign-notarize@b0f525e0d98a47b0884558b786f21453889a04d7
+        uses: toitlang/action-macos-sign-notarize@v1.2.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
