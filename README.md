@@ -206,6 +206,9 @@ version():   [
 Total: 1
 ```
 
+### Connecting via [Ibis](https://ibis-project.org)
+See: https://github.com/gizmodata/ibis-gizmosql
+
 ### Connecting via [SQLAlchemy](https://www.sqlalchemy.org)
 See: https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect
 
