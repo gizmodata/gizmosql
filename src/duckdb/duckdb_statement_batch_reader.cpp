@@ -65,9 +65,10 @@ DuckDBStatementBatchReader::Create(const std::shared_ptr<DuckDBStatement>& state
 arrow::Status DuckDBStatementBatchReader::ReadNext(
     std::shared_ptr<arrow::RecordBatch>* out) {
   if (!already_executed_) {
-    ARROW_ASSIGN_OR_RAISE(rc_, statement_->Execute());
+    ARROW_RETURN_NOT_OK(statement_->Execute());
     already_executed_ = true;
   }
+
   ARROW_ASSIGN_OR_RAISE(*out, statement_->FetchResult());
 
   return arrow::Status::OK();

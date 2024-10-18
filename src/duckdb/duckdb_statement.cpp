@@ -125,6 +125,10 @@ DuckDBStatement::~DuckDBStatement() {}
 arrow::Result<int> DuckDBStatement::Execute() {
   query_result_ = stmt_->Execute(bind_parameters);
 
+  if (query_result_->HasError()) {
+    return arrow::Status::ExecutionError("An execution error has occurred: ",
+                                             query_result_->GetError());
+  }
   return 0;
 }
 
@@ -142,7 +146,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   duckdb::ErrorData fetch_error;
   auto fetch_success = query_result_->TryFetch(data_chunk, fetch_error);
   if (!fetch_success) {
-    ARROW_RETURN_NOT_OK(arrow::Status::ExecutionError(fetch_error.Message()));
+    return arrow::Status::ExecutionError(fetch_error.Message());
   }
 
   if (data_chunk != nullptr) {
