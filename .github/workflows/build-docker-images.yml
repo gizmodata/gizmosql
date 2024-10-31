@@ -32,11 +32,8 @@ jobs:
         run: |
           brew install automake boost gflags
 
-      - name: Setup Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
-
       - name: Configure Project
-        uses: threeal/cmake-action@v2.0.0
+        uses: threeal/cmake-action@v1.3.0
         with:
           generator: Ninja
           run-build: true
@@ -107,11 +104,8 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Setup Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
-
       - name: Configure Project
-        uses: threeal/cmake-action@v2.0.0
+        uses: threeal/cmake-action@v1.3.0
         with:
           generator: Ninja
           run-build: true
