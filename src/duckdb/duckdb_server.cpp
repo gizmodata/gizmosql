@@ -126,7 +126,7 @@ Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
     const flight::FlightDescriptor &descriptor,
     const std::shared_ptr<arrow::Schema> &schema) {
   std::vector<flight::FlightEndpoint> endpoints{
-      flight::FlightEndpoint{{descriptor.cmd}, {}}};
+      flight::FlightEndpoint{flight::Ticket{descriptor.cmd}, {}, std::nullopt, ""}};
   ARROW_ASSIGN_OR_RAISE(auto result,
                         flight::FlightInfo::Make(*schema, descriptor, endpoints, -1, -1))
 
@@ -255,7 +255,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto ticket,
                           EncodeTransactionQuery(query, command.transaction_id))
     std::vector<flight::FlightEndpoint> endpoints{
-        flight::FlightEndpoint{std::move(ticket), {}}};
+        flight::FlightEndpoint{std::move(ticket), {}, std::nullopt, ""}};
     ARROW_ASSIGN_OR_RAISE(
         auto result, flight::FlightInfo::Make(*schema, descriptor, endpoints, -1, -1))
     return std::make_unique<flight::FlightInfo>(result);
@@ -461,7 +461,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context, const sql::GetTables &command,
       const flight::FlightDescriptor &descriptor) {
     std::vector<flight::FlightEndpoint> endpoints{
-        flight::FlightEndpoint{{descriptor.cmd}, {}}};
+        flight::FlightEndpoint{flight::Ticket{descriptor.cmd}, {}, std::nullopt, ""}};
 
     bool include_schema = command.include_schema;
 

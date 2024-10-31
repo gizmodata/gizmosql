@@ -5,7 +5,7 @@ on:
   push:
 
 env:
-  DOCKER_IMAGE_NAME: gizmodata/gizmosql
+  DOCKER_IMAGE_NAME: ghcr.io/gizmodata/gizmosql
 
 jobs:
   build-project-macos:
@@ -24,7 +24,7 @@ jobs:
       zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@v4
 
       - name: Install build requirements
         env:
@@ -33,7 +33,7 @@ jobs:
           brew install automake boost gflags
 
       - name: Configure Project
-        uses: threeal/cmake-action@v1.3.0
+        uses: threeal/cmake-action@v2.0.0
         with:
           generator: Ninja
           run-build: true
@@ -87,7 +87,7 @@ jobs:
       zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@v4
 
       - name: Install build requirements
         run: |
@@ -105,7 +105,7 @@ jobs:
           sudo rm -rf /var/lib/apt/lists/*
 
       - name: Configure Project
-        uses: threeal/cmake-action@v1.3.0
+        uses: threeal/cmake-action@v2.0.0
         with:
           generator: Ninja
           run-build: true
@@ -122,14 +122,15 @@ jobs:
           path: |
             ${{ env.zip_file_name }}
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push full Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/${{ matrix.platform }}
@@ -142,7 +143,7 @@ jobs:
           provenance: false
 
       - name: Build and push slim Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/${{ matrix.platform }}
@@ -161,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@v4
 
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
@@ -171,7 +172,7 @@ jobs:
           merge-multiple: true
 
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/gizmosql_cli_*.zip
@@ -183,11 +184,12 @@ jobs:
     needs: build-project-linux
     runs-on: ubuntu-latest
     steps:
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push full manifest images
         uses: Noelware/docker-manifest-action@master # or use a pinned version in the Releases tab
