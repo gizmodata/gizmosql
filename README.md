@@ -4,7 +4,7 @@
 
 **Note**: This project was forked (and renamed) from: https://github.com/voltrondata/sqlflite
 
-[<img src="https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker">](https://hub.docker.com/r/gizmodata/gizmosql)
+[<img src="https://img.shields.io/badge/github--package-container--image-green.svg?logo=Docker">](https://github.com/gizmodata/gizmosql/pkgs/container/gizmosql)
 [<img src="https://img.shields.io/badge/Documentation-dev-yellow.svg?logo=">](https://arrow.apache.org/docs/format/FlightSql.html)
 [<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github">](https://github.com/gizmodata/gizmosql)
 [<img src="https://img.shields.io/badge/Arrow%20JDBC%20Driver-download%20artifact-red?logo=Apache%20Maven">](https://search.maven.org/search?q=a:flight-sql-jdbc-driver)
@@ -21,9 +21,15 @@ For more information about Apache Arrow Flight SQL - please see this [article](h
 
 ## Option 1 - Running from the published Docker image
 
+**Note** - this assumes that you have your Github Access Token stored as an env var named `GITHUB_ACCESS_TOKEN`.  See: [Creating a personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token) for more information.
+
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
 
 ```bash
+# Authenticate to Github Docker Registry - replace USERNAME with your Github username
+echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+# Pull and run the Docker image 
 docker run --name gizmosql \
            --detach \
            --rm \
@@ -34,7 +40,7 @@ docker run --name gizmosql \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --pull missing \
-           gizmodata/gizmosql:latest
+           ghcr.io/gizmodata/gizmosql:latest
 ```
 
 The above command will automatically mount a very small TPC-H DuckDB database file.
@@ -67,6 +73,9 @@ LOAD tpch;
 CALL dbgen(sf=1);
 EOF
 
+# Authenticate to Github Docker Registry - replace USERNAME with your Github username
+echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
 # Run the gizmosql docker container image - and mount the host's DuckDB database file created above inside the container
 docker run --name gizmosql \
            --detach \
@@ -79,7 +88,7 @@ docker run --name gizmosql \
            --pull missing \
            --mount type=bind,source=$(pwd),target=/opt/gizmosql/data \
            --env DATABASE_FILENAME="data/tpch_sf1.duckdb" \
-           gizmodata/gizmosql:latest
+           ghcr.io/gizmodata/gizmosql:latest
 ```
 
 ### Running initialization SQL commands
@@ -89,6 +98,10 @@ You can now run initialization commands upon container startup by setting enviro
 
 Here is a full example of running the Docker image with initialization SQL commands:
 ```bash
+# Authenticate to Github Docker Registry - replace USERNAME with your Github username
+echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+# Pull and run the Docker image 
 docker run --name gizmosql \
            --detach \
            --rm \
@@ -100,7 +113,7 @@ docker run --name gizmosql \
            --env PRINT_QUERIES="1" \
            --env INIT_SQL_COMMANDS="SET threads = 1; SET memory_limit = '1GB';" \
            --pull missing \
-           gizmodata/gizmosql:latest
+           ghcr.io/gizmodata/gizmosql:latest
 ```
 
 You can also specify a file containing initialization SQL commands by setting environment variable: `INIT_SQL_COMMANDS_FILE` to the path of the file containing the SQL commands - example value: `/tmp/init.sql`.  The file must be mounted inside the container.   
@@ -389,6 +402,10 @@ You can optionally supply the following environment variables:
 
 To run that image - use the following command:
 ```bash
+# Authenticate to Github Docker Registry - replace USERNAME with your Github username
+echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+# Pull and run the Docker image 
 docker run --name gizmosql-slim \
            --detach \
            --rm \
@@ -400,7 +417,7 @@ docker run --name gizmosql-slim \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --pull missing \
-           gizmodata/gizmosql:latest-slim
+           ghcr.io/gizmodata/gizmosql:latest-slim
 ```
 
 See [start_gizmosql_slim.sh](scripts/start_gizmosql_slim.sh) - the container's entrypoint script for more details.

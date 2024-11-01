@@ -7,12 +7,24 @@ gizmoSQLServer:
     DATABASE_FILENAME: data/TPC-H-small.duckdb
 
   image:
-    repository: gizmodata/gizmosql
+    repository: ghcr.io/gizmodata/gizmosql
     pullPolicy: Always
     # Overrides the image tag whose default is the chart appVersion.
     tag: latest
 
-  imagePullSecrets: []
+# For Github packages - Create a K8s pull secret - using instructions from: https://dev.to/asizikov/using-github-container-registry-with-kubernetes-38fb - like this:
+#  kind: Secret
+#  type: kubernetes.io/dockerconfigjson
+#  apiVersion: v1
+#  metadata:
+#    name: dockerconfigjson-github-com
+#    labels:
+#      app: sidewinder
+#  data:
+#    .dockerconfigjson: XXXYYYZZZ
+  imagePullSecrets:
+    - name: dockerconfigjson-github-com
+
   nameOverride: ""
   fullnameOverride: ""
 
