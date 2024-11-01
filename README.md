@@ -21,13 +21,13 @@ For more information about Apache Arrow Flight SQL - please see this [article](h
 
 ## Option 1 - Running from the published Docker image
 
-**Note** - this assumes that you have your Github Access Token stored as an env var named `GITHUB_ACCESS_TOKEN`.  See: [Creating a personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token) for more information.
+**Note** - this assumes that you have your Github Access Token stored as an env var named `{GITHUB_ACCESS_TOKEN}`.  See: [Creating a personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token) for more information.
 
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
 
 ```bash
 # Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u USERNAME --password-stdin
 
 # Pull and run the Docker image 
 docker run --name gizmosql \
@@ -74,7 +74,7 @@ CALL dbgen(sf=1);
 EOF
 
 # Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u USERNAME --password-stdin
 
 # Run the gizmosql docker container image - and mount the host's DuckDB database file created above inside the container
 docker run --name gizmosql \
@@ -99,7 +99,7 @@ You can now run initialization commands upon container startup by setting enviro
 Here is a full example of running the Docker image with initialization SQL commands:
 ```bash
 # Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u USERNAME --password-stdin
 
 # Pull and run the Docker image 
 docker run --name gizmosql \
@@ -403,7 +403,7 @@ You can optionally supply the following environment variables:
 To run that image - use the following command:
 ```bash
 # Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo $GITHUB_ACCESS_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u USERNAME --password-stdin
 
 # Pull and run the Docker image 
 docker run --name gizmosql-slim \
