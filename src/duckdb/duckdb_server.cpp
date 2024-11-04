@@ -110,11 +110,11 @@ Status SetParametersOnDuckDBStatement(std::shared_ptr<DuckDBStatement> stmt,
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
-    std::shared_ptr<duckdb::Connection> db, const std::string &query,
+    std::shared_ptr<duckdb::Connection> connection, const std::string &query,
     const std::shared_ptr<arrow::Schema> &schema) {
   std::shared_ptr<DuckDBStatement> statement;
 
-  ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(db, query))
+  ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, query))
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
   ARROW_ASSIGN_OR_RAISE(reader, DuckDBStatementBatchReader::Create(statement, schema))
@@ -165,7 +165,6 @@ std::string PrepareQueryForGetImportedOrExportedKeys(const std::string &filter) 
 class DuckDBFlightSqlServer::Impl {
  private:
   std::shared_ptr<duckdb::DuckDB> db_instance_;
-  std::shared_ptr<duckdb::Connection> db_conn_;
   bool print_queries_;
   std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
   std::unordered_map<std::string, std::shared_ptr<duckdb::Connection>> open_transactions_;
@@ -183,8 +182,11 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::shared_ptr<duckdb::Connection>> GetConnection(
-      const std::string &transaction_id) {
-    if (transaction_id.empty()) return db_conn_;
+      const std::string &transaction_id = "") {
+    if (transaction_id.empty()) {
+      std::shared_ptr<duckdb::Connection> connection = std::make_shared<duckdb::Connection>(*db_instance_);
+      return connection;
+    }
 
     std::scoped_lock guard(mutex_);
     auto it = open_transactions_.find(transaction_id);
@@ -218,10 +220,8 @@ class DuckDBFlightSqlServer::Impl {
 
  public:
   explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance,
-                std::shared_ptr<duckdb::Connection> db_connection,
                 const bool &print_queries)
       : db_instance_(std::move(db_instance)),
-        db_conn_(std::move(db_connection)),
         print_queries_(print_queries) {}
 
   ~Impl() = default;
@@ -286,7 +286,8 @@ class DuckDBFlightSqlServer::Impl {
         "SELECT DISTINCT catalog_name FROM information_schema.schemata ORDER BY "
         "catalog_name";
 
-    return DoGetDuckDBQuery(db_conn_, query, sql::SqlSchema::GetCatalogsSchema());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection())
+    return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetCatalogsSchema());
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoSchemas(
@@ -310,7 +311,8 @@ class DuckDBFlightSqlServer::Impl {
     }
     query << " ORDER BY catalog_name, db_schema_name";
 
-    return DoGetDuckDBQuery(db_conn_, query.str(), sql::SqlSchema::GetDbSchemasSchema());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    return DoGetDuckDBQuery(connection, query.str(), sql::SqlSchema::GetDbSchemasSchema());
   }
 
   Result<sql::ActionCreatePreparedStatementResult> CreatePreparedStatement(
@@ -318,7 +320,8 @@ class DuckDBFlightSqlServer::Impl {
       const sql::ActionCreatePreparedStatementRequest &request) {
     std::scoped_lock guard(mutex_);
     std::shared_ptr<DuckDBStatement> statement;
-    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(db_conn_, request.query))
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, request.query))
     const std::string handle = GenerateRandomString();
     prepared_statements_[handle] = statement;
 
@@ -435,14 +438,15 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context, const sql::GetTables &command) {
     std::string query = PrepareQueryForGetTables(command);
     std::shared_ptr<DuckDBStatement> statement;
-    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(db_conn_, query))
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, query))
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
                                            statement, sql::SqlSchema::GetTablesSchema()))
 
     if (command.include_schema) {
       auto table_schema_reader =
-          std::make_shared<DuckDBTablesWithSchemaBatchReader>(reader, query, db_conn_);
+          std::make_shared<DuckDBTablesWithSchemaBatchReader>(reader, query, connection);
       return std::make_unique<flight::RecordBatchStream>(table_schema_reader);
     } else {
       return std::make_unique<flight::RecordBatchStream>(reader);
@@ -452,8 +456,8 @@ class DuckDBFlightSqlServer::Impl {
   Result<int64_t> DoPutCommandStatementUpdate(const flight::ServerCallContext &context,
                                               const sql::StatementUpdate &command) {
     const std::string &sql = command.query;
-    ARROW_ASSIGN_OR_RAISE(auto db, GetConnection(command.transaction_id))
-    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(db, sql))
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(command.transaction_id))
+    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, sql))
     return statement->ExecuteUpdate();
   }
 
@@ -485,7 +489,8 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context) {
     std::string query = "SELECT DISTINCT table_type FROM information_schema.tables";
 
-    return DoGetDuckDBQuery(db_conn_, query, sql::SqlSchema::GetTableTypesSchema());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetTableTypesSchema());
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoPrimaryKeys(
@@ -525,7 +530,8 @@ class DuckDBFlightSqlServer::Impl {
 
     table_query << " and table_name LIKE '" << table_ref.table << "'";
 
-    return DoGetDuckDBQuery(db_conn_, table_query.str(),
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    return DoGetDuckDBQuery(connection, table_query.str(),
                             sql::SqlSchema::GetPrimaryKeysSchema());
   }
 
@@ -548,7 +554,8 @@ class DuckDBFlightSqlServer::Impl {
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
-    return DoGetDuckDBQuery(db_conn_, query, sql::SqlSchema::GetImportedKeysSchema());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetImportedKeysSchema());
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoExportedKeys(
@@ -569,7 +576,8 @@ class DuckDBFlightSqlServer::Impl {
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
-    return DoGetDuckDBQuery(db_conn_, query, sql::SqlSchema::GetExportedKeysSchema());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetExportedKeysSchema());
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoCrossReference(
@@ -599,7 +607,8 @@ class DuckDBFlightSqlServer::Impl {
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
-    return DoGetDuckDBQuery(db_conn_, query, sql::SqlSchema::GetCrossReferenceSchema());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetCrossReferenceSchema());
   }
 
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
@@ -637,10 +646,13 @@ class DuckDBFlightSqlServer::Impl {
     return status;
   }
 
-  Status ExecuteSql(const std::string &sql) { return ExecuteSql(db_conn_, sql); }
+  Status ExecuteSql(const std::string &sql) {
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    return ExecuteSql(connection, sql);
+  }
 
-  Status ExecuteSql(std::shared_ptr<duckdb::Connection> db_conn, const std::string &sql) {
-    if (std::unique_ptr<duckdb::MaterializedQueryResult> result = db_conn->Query(sql);
+  Status ExecuteSql(std::shared_ptr<duckdb::Connection> connection, const std::string &sql) {
+    if (std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
         result->HasError()) {
       return Status::Invalid(result->GetError());
     }
@@ -656,12 +668,10 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   std::cout << "DuckDB version: " << duckdb_library_version() << std::endl;
 
   std::shared_ptr<duckdb::DuckDB> db;
-  std::shared_ptr<duckdb::Connection> con;
 
   db = std::make_shared<duckdb::DuckDB>(path);
-  con = std::make_shared<duckdb::Connection>(*db);
 
-  auto impl = std::make_shared<Impl>(db, con, print_queries);
+  auto impl = std::make_shared<Impl>(db, print_queries);
   std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
 
   for (const auto &id_to_result : GetSqlInfoResultMap()) {
