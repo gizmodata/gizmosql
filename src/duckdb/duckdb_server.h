@@ -160,6 +160,9 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
       const flight::ServerCallContext &context,
       const flight::sql::ActionEndTransactionRequest &request) override;
 
+  arrow::Result<flight::CloseSessionResult> CloseSession(
+          const flight::ServerCallContext& context, const flight::CloseSessionRequest& request) override;
+
  private:
   class Impl;
 

@@ -42,7 +42,7 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
       uint8_t width = 0;
       uint8_t scale = 0;
       bool dec_properties = duckdb_type.GetDecimalProperties(width, scale);
-      return arrow::decimal(scale, width);
+      return arrow::smallest_decimal(scale, width);
     }
     case duckdb::LogicalTypeId::FLOAT:
       return arrow::float32();

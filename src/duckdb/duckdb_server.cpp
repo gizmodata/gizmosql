@@ -38,6 +38,7 @@
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
 #include "flight_sql_fwd.h"
+#include <jwt-cpp/jwt.h>
 
 using arrow::Result;
 using arrow::Status;
@@ -85,7 +86,7 @@ std::string PrepareQueryForGetTables(const sql::GetTables &command) {
   return table_query.str();
 }
 
-Status SetParametersOnDuckDBStatement(std::shared_ptr<DuckDBStatement> stmt,
+Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement> &stmt,
                                       flight::FlightMessageReader *reader) {
   while (true) {
     ARROW_ASSIGN_OR_RAISE(flight::FlightStreamChunk chunk, reader->Next())
@@ -110,7 +111,7 @@ Status SetParametersOnDuckDBStatement(std::shared_ptr<DuckDBStatement> stmt,
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
-    std::shared_ptr<duckdb::Connection> connection, const std::string &query,
+    const std::shared_ptr<duckdb::Connection> &connection, const std::string &query,
     const std::shared_ptr<arrow::Schema> &schema) {
   std::shared_ptr<DuckDBStatement> statement;
 
@@ -167,7 +168,8 @@ class DuckDBFlightSqlServer::Impl {
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   bool print_queries_;
   std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
-  std::unordered_map<std::string, std::shared_ptr<duckdb::Connection>> open_transactions_;
+  std::unordered_map<std::string, std::shared_ptr<duckdb::Connection>> open_sessions_;
+  std::unordered_map<std::string, std::string> open_transactions_;
   std::default_random_engine gen_;
   std::mutex mutex_;
 
@@ -181,24 +183,74 @@ class DuckDBFlightSqlServer::Impl {
     return search->second;
   }
 
-  Result<std::shared_ptr<duckdb::Connection>> GetConnection(
-      const std::string &transaction_id = "") {
-    if (transaction_id.empty()) {
-      std::shared_ptr<duckdb::Connection> connection = std::make_shared<duckdb::Connection>(*db_instance_);
-      return connection;
+  // A function to get the auth token from the context
+  static Result<std::string> GetAuthToken(const flight::ServerCallContext &context) {
+    auto incoming_headers = context.incoming_headers();
+    auto it = incoming_headers.find("authorization");
+    if (it == incoming_headers.end()) {
+      return Status::KeyError("Authorization header not found");
     }
 
-    std::scoped_lock guard(mutex_);
-    auto it = open_transactions_.find(transaction_id);
-    if (it == open_transactions_.end()) {
-      return Status::KeyError("Unknown transaction ID: ", transaction_id);
+    auto auth_header = it->second;
+    std::vector<std::string> parts;
+    boost::split(parts, auth_header, boost::is_any_of(" "));
+    if (parts.size() != 2) {
+      return Status::Invalid("Malformed authorization header");
     }
-    return it->second;
+
+    return parts[1];
+  }
+
+  // A function to get the JSON from the decoded auth token
+  static Result<std::string> GetAuthTokenKeyValue(const std::string &auth_token,
+                                                  const std::string &key) {
+    try {
+      auto decoded = jwt::decode(auth_token);
+
+      for (auto &e : decoded.get_payload_json()) {
+        if (e.first == key) {
+          return e.second.to_str();
+        }
+      }
+      return Status::KeyError("Key: '", key, "' not found in token");
+    } catch (const std::exception &e) {
+      return Status::Invalid("Error decoding JWT token: ", e.what());
+    }
+  }
+
+  static Result<std::string> GetSessionID(const flight::ServerCallContext &context) {
+    auto auth_token = GetAuthToken(context);
+    if (!auth_token.ok()) {
+      return auth_token.status();
+    }
+
+    auto session_id = GetAuthTokenKeyValue(auth_token.ValueOrDie(), "session_id");
+    if (!session_id.ok()) {
+      return session_id.status();
+    }
+
+    return session_id.ValueOrDie();
+  }
+
+  // We get a new session per thread to be thread-safe...
+  Result<std::shared_ptr<duckdb::Connection>> GetConnection(
+      const flight::ServerCallContext &context) {
+    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
+
+    std::scoped_lock guard(mutex_);
+    auto it = open_sessions_.find(session_id);
+    if (it != open_sessions_.end()) {
+      return it->second;
+    } else {
+      auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+      open_sessions_[session_id] = connection;
+      return connection;
+    }
   }
 
   // Create a Ticket that combines a query and a transaction ID.
-  Result<flight::Ticket> EncodeTransactionQuery(const std::string &query,
-                                                const std::string &transaction_id) {
+  static Result<flight::Ticket> EncodeTransactionQuery(
+      const std::string &query, const std::string &transaction_id) {
     std::string transaction_query = transaction_id;
     transaction_query += ':';
     transaction_query += query;
@@ -207,7 +259,7 @@ class DuckDBFlightSqlServer::Impl {
     return flight::Ticket{std::move(ticket_string)};
   }
 
-  Result<std::pair<std::string, std::string>> DecodeTransactionQuery(
+  static Result<std::pair<std::string, std::string>> DecodeTransactionQuery(
       const std::string &ticket) {
     auto divider = ticket.find(':');
     if (divider == std::string::npos) {
@@ -219,14 +271,12 @@ class DuckDBFlightSqlServer::Impl {
   }
 
  public:
-  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance,
-                const bool &print_queries)
-      : db_instance_(std::move(db_instance)),
-        print_queries_(print_queries) {}
+  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool &print_queries)
+      : db_instance_(std::move(db_instance)), print_queries_(print_queries) {}
 
   ~Impl() = default;
 
-  std::string GenerateRandomString(int length = 16) const {
+  static std::string GenerateRandomString(int length = 16) {
     const char charset[] =
         "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const int charsetLength = sizeof(charset) - 1;
@@ -249,8 +299,8 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context, const sql::StatementQuery &command,
       const flight::FlightDescriptor &descriptor) {
     const std::string &query = command.query;
-    ARROW_ASSIGN_OR_RAISE(auto db, GetConnection(command.transaction_id))
-    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(db, query))
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
+    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, query))
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
                           EncodeTransactionQuery(query, command.transaction_id))
@@ -267,8 +317,8 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto pair, DecodeTransactionQuery(command.statement_handle))
     const std::string &sql = pair.first;
     const std::string transaction_id = pair.second;
-    ARROW_ASSIGN_OR_RAISE(auto db, GetConnection(transaction_id))
-    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(db, sql))
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
+    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, sql))
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
     return std::make_unique<flight::RecordBatchStream>(reader);
@@ -286,7 +336,7 @@ class DuckDBFlightSqlServer::Impl {
         "SELECT DISTINCT catalog_name FROM information_schema.schemata ORDER BY "
         "catalog_name";
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection())
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
     return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetCatalogsSchema());
   }
 
@@ -311,17 +361,19 @@ class DuckDBFlightSqlServer::Impl {
     }
     query << " ORDER BY catalog_name, db_schema_name";
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
-    return DoGetDuckDBQuery(connection, query.str(), sql::SqlSchema::GetDbSchemasSchema());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
+    return DoGetDuckDBQuery(connection, query.str(),
+                            sql::SqlSchema::GetDbSchemasSchema());
   }
 
   Result<sql::ActionCreatePreparedStatementResult> CreatePreparedStatement(
       const flight::ServerCallContext &context,
       const sql::ActionCreatePreparedStatementRequest &request) {
-    std::scoped_lock guard(mutex_);
     std::shared_ptr<DuckDBStatement> statement;
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, request.query))
+    std::scoped_lock guard(mutex_);
     const std::string handle = GenerateRandomString();
     prepared_statements_[handle] = statement;
 
@@ -438,7 +490,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context, const sql::GetTables &command) {
     std::string query = PrepareQueryForGetTables(command);
     std::shared_ptr<DuckDBStatement> statement;
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, query))
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
@@ -456,7 +508,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<int64_t> DoPutCommandStatementUpdate(const flight::ServerCallContext &context,
                                               const sql::StatementUpdate &command) {
     const std::string &sql = command.query;
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(command.transaction_id))
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
     ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, sql))
     return statement->ExecuteUpdate();
   }
@@ -489,7 +541,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context) {
     std::string query = "SELECT DISTINCT table_type FROM information_schema.tables";
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetTableTypesSchema());
   }
 
@@ -530,7 +582,7 @@ class DuckDBFlightSqlServer::Impl {
 
     table_query << " and table_name LIKE '" << table_ref.table << "'";
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     return DoGetDuckDBQuery(connection, table_query.str(),
                             sql::SqlSchema::GetPrimaryKeysSchema());
   }
@@ -554,7 +606,7 @@ class DuckDBFlightSqlServer::Impl {
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetImportedKeysSchema());
   }
 
@@ -576,7 +628,7 @@ class DuckDBFlightSqlServer::Impl {
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetExportedKeysSchema());
   }
 
@@ -607,7 +659,7 @@ class DuckDBFlightSqlServer::Impl {
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     return DoGetDuckDBQuery(connection, query, sql::SqlSchema::GetCrossReferenceSchema());
   }
 
@@ -615,48 +667,57 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context,
       const sql::ActionBeginTransactionRequest &request) {
     std::string handle = GenerateRandomString();
-    auto new_db = std::make_shared<duckdb::Connection>(*db_instance_);
-    ARROW_RETURN_NOT_OK(ExecuteSql(new_db, "BEGIN TRANSACTION"));
-
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     std::scoped_lock guard(mutex_);
-    open_transactions_[handle] = new_db;
+    open_transactions_[handle] = "";
+
+    ARROW_RETURN_NOT_OK(ExecuteSql(connection, "BEGIN TRANSACTION"));
+
     return sql::ActionBeginTransactionResult{std::move(handle)};
   }
 
   Status EndTransaction(const flight::ServerCallContext &context,
                         const sql::ActionEndTransactionRequest &request) {
     Status status;
-    std::shared_ptr<duckdb::Connection> transaction = nullptr;
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     {
-      std::scoped_lock guard(mutex_);
-      auto it = open_transactions_.find(request.transaction_id);
-      if (it == open_transactions_.end()) {
-        return Status::KeyError("Unknown transaction ID: ", request.transaction_id);
-      }
-
       if (request.action == sql::ActionEndTransactionRequest::kCommit) {
-        status = ExecuteSql(it->second, "COMMIT");
+        status = ExecuteSql(connection, "COMMIT");
       } else {
-        status = ExecuteSql(it->second, "ROLLBACK");
+        status = ExecuteSql(connection, "ROLLBACK");
       }
-      transaction = it->second;
-      open_transactions_.erase(it);
+      open_transactions_.erase(request.transaction_id);
     }
-    transaction.reset();
     return status;
   }
 
-  Status ExecuteSql(const std::string &sql) {
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection());
-    return ExecuteSql(connection, sql);
+  Result<flight::CloseSessionResult> CloseSession(
+      const flight::ServerCallContext &context,
+      const flight::CloseSessionRequest &request) {
+    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
+    auto it = open_sessions_.find(session_id);
+    if (it != open_sessions_.end()) {
+      it->second.reset();
+      open_sessions_.erase(it);
+      return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
+    } else {
+      return Status::KeyError("Session: '" + session_id + "' not found");
+    }
   }
 
-  Status ExecuteSql(std::shared_ptr<duckdb::Connection> connection, const std::string &sql) {
+  static Status ExecuteSql(const std::shared_ptr<duckdb::Connection> &connection,
+                           const std::string &sql) {
     if (std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
         result->HasError()) {
       return Status::Invalid(result->GetError());
     }
     return Status::OK();
+  }
+
+  Status ExecuteSql(const std::string &sql) {
+    // We do not have a call context, so just grab a new connection to the instance
+    auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    return ExecuteSql(connection, sql);
   }
 };
 
@@ -847,6 +908,12 @@ Status DuckDBFlightSqlServer::EndTransaction(
     const flight::ServerCallContext &context,
     const sql::ActionEndTransactionRequest &request) {
   return impl_->EndTransaction(context, request);
+}
+
+Result<flight::CloseSessionResult> DuckDBFlightSqlServer::CloseSession(
+    const flight::ServerCallContext &context,
+    const flight::CloseSessionRequest &request) {
+  return impl_->CloseSession(context, request);
 }
 
 }  // namespace gizmosql::ddb

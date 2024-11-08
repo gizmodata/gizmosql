@@ -151,6 +151,7 @@ std::string HeaderAuthServerMiddleware::CreateJWTToken() const {
                    .set_expires_at(std::chrono::system_clock::now() +
                                    std::chrono::seconds{kJWTExpiration})
                    .set_payload_claim("username", jwt::claim(username_))
+                   .set_payload_claim("session_id", jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
                    .sign(jwt::algorithm::hs256{secret_key_});
 
   return token;
@@ -196,6 +197,8 @@ void BearerAuthServerMiddleware::SendingHeaders(
       incoming_headers_, kAuthHeader, kBearerPrefix);
   *isValid_ = (VerifyToken(bearer_token));
 }
+
+
 
 void BearerAuthServerMiddleware::CallCompleted(const Status &status) {}
 
