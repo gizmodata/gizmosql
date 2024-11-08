@@ -277,9 +277,9 @@ class DuckDBFlightSqlServer::Impl {
   ~Impl() = default;
 
   static std::string GenerateRandomString(int length = 16) {
-    const char charset[] =
+    constexpr char charset[] =
         "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const int charsetLength = sizeof(charset) - 1;
+    constexpr int charsetLength = sizeof(charset) - 1;
 
     std::random_device rd;   // Create a random device to seed the generator
     std::mt19937 gen(rd());  // Create a Mersenne Twister generator
@@ -728,9 +728,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string &path, const duckdb::DBConfig &config, const bool &print_queries) {
   std::cout << "DuckDB version: " << duckdb_library_version() << std::endl;
 
-  std::shared_ptr<duckdb::DuckDB> db;
-
-  db = std::make_shared<duckdb::DuckDB>(path);
+  auto db = std::make_shared<duckdb::DuckDB>(path);
 
   auto impl = std::make_shared<Impl>(db, print_queries);
   std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
@@ -743,7 +741,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 
 DuckDBFlightSqlServer::~DuckDBFlightSqlServer() = default;
 
-Status DuckDBFlightSqlServer::ExecuteSql(const std::string &sql) {
+Status DuckDBFlightSqlServer::ExecuteSql(const std::string &sql) const {
   return impl_->ExecuteSql(sql);
 }
 
