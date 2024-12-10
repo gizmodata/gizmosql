@@ -1,4 +1,4 @@
-FROM python:3.12.7
+FROM python:3.12.8
 
 ARG TARGETPLATFORM
 ARG TARGETARCH
@@ -21,6 +21,7 @@ RUN apt-get update && \
     ninja-build \
     libboost-all-dev \
     libgflags-dev \
+    numactl \
     sqlite3 \
     vim && \
     apt-get clean && \

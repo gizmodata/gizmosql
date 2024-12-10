@@ -1,4 +1,4 @@
-FROM python:3.12.7
+FROM python:3.12.8
 
 ARG TARGETPLATFORM
 ARG TARGETARCH
@@ -16,6 +16,7 @@ RUN apt-get update && \
     wget \
     gcc \
     git \
+    numactl \
     sqlite3 \
     vim \
     zip && \
