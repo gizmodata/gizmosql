@@ -36,6 +36,16 @@ RUN case ${TARGETPLATFORM} in \
 # Setup Azure Client (so we can copy Azure files to the container if needed)
 RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
+# Install AZCopy
+RUN case ${TARGETPLATFORM} in \
+         "linux/amd64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux  ;; \
+         "linux/arm64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux-arm64  ;; \
+    esac && \
+    curl "${AZCOPY_FILE}" -o "azcopy.tar.gz" && \
+    tar -xvf azcopy.tar.gz && \
+    mv azcopy_linux_*/azcopy /usr/bin/azcopy && \
+    rm -rf azcopy_linux_* azcopy.tar.gz
+
 # Create an application user
 RUN useradd app_user --create-home
 
