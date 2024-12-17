@@ -9,7 +9,7 @@ ExternalProject_Add(
     arrow_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/apache/arrow.git
-    GIT_TAG apache-arrow-18.0.0
+    GIT_TAG apache-arrow-18.1.0
     SOURCE_SUBDIR cpp
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/arrow
