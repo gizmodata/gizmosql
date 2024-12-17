@@ -41,7 +41,7 @@ RUN case ${TARGETPLATFORM} in \
          "linux/amd64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux  ;; \
          "linux/arm64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux-arm64  ;; \
     esac && \
-    curl "${AZCOPY_FILE}" -o "azcopy.tar.gz" && \
+    curl --location "${AZCOPY_FILE}" -o "azcopy.tar.gz" && \
     tar -xvf azcopy.tar.gz && \
     mv azcopy_linux_*/azcopy /usr/bin/azcopy && \
     rm -rf azcopy_linux_* azcopy.tar.gz
