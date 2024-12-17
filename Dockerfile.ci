@@ -33,6 +33,9 @@ RUN case ${TARGETPLATFORM} in \
     aws/install && \
     rm -f awscliv2.zip
 
+# Setup Azure Client (so we can copy Azure files to the container if needed)
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
 # Create an application user
 RUN useradd app_user --create-home
 
