@@ -1,0 +1,8 @@
+// license_validation.h.in
+// This file is used by CMake to generate license_validation.h
+#ifndef LICENSE_PUBLIC_KEY_H
+#define LICENSE_PUBLIC_KEY_H
+
+constexpr char LICENSE_PUBLIC_KEY[] = R"(@LICENSE_PUBLIC_KEY@)";
+
+#endif // LICENSE_PUBLIC_KEY_H

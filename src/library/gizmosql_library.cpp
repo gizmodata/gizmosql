@@ -35,6 +35,7 @@
 #include "duckdb_server.h"
 #include "include/flight_sql_fwd.h"
 #include "include/gizmosql_security.h"
+#include "include/license_validation.h"
 
 namespace fs = std::filesystem;
 
@@ -72,6 +73,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                             ? flight::Location::ForGrpcTls(hostname, port)
                             : flight::Location::ForGrpcTcp(hostname, port));
 
+  std::cout << "----------------------------------------------" << std::endl;
   std::cout << "Apache Arrow version: " << ARROW_VERSION_STRING << std::endl;
 
   flight::FlightServerOptions options(location);
@@ -161,7 +163,24 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const int &port, std::string username, std::string password, std::string secret_key,
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
-    const bool &print_queries) {
+    const bool &print_queries, std::string license_key_filename) {
+  // Validate the license key file
+  if (license_key_filename.empty()) {
+    license_key_filename = SafeGetEnvVarValue("LICENSE_KEY_FILENAME");
+  }
+
+  if (license_key_filename.empty()) {
+    return arrow::Status::Invalid("No license key file was provided - exiting.");
+  } else {
+    if (!fs::exists(license_key_filename)) {
+      return arrow::Status::Invalid("License key file does not exist: " +
+                                    license_key_filename);
+    } else {
+      ARROW_CHECK_OK(
+          gizmosql::LicenseFileVerifier::ValidateLicenseKey(license_key_filename));
+    }
+  }
+
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     return arrow::Status::Invalid("The database filename was not provided!");
@@ -268,11 +287,20 @@ int RunFlightSQLServer(const BackendType backend, fs::path &database_filename,
                        std::string password, std::string secret_key,
                        fs::path tls_cert_path, fs::path tls_key_path,
                        fs::path mtls_ca_cert_path, std::string init_sql_commands,
-                       fs::path init_sql_commands_file, const bool &print_queries) {
+                       fs::path init_sql_commands_file, const bool &print_queries,
+                       std::string license_key_filename) {
+  auto now = std::chrono::system_clock::now();
+  std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
+  std::tm *localTime = std::localtime(&currentTime);
+
+  std::cout << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
+            << " Gizmo Data LLC - All Rights Reserved" << std::endl;
+  std::cout << "----------------------------------------------" << std::endl;
+
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
-      init_sql_commands_file, print_queries);
+      init_sql_commands_file, print_queries, license_key_filename);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
