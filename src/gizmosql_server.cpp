@@ -60,7 +60,10 @@ int main(int argc, char **argv) {
              "If not set, we will use env var: 'INIT_SQL_COMMANDS_FILE'.")
             ("mtls-ca-cert-filename,M", po::value<std::string>()->default_value(""),
              "Specify an optional mTLS CA certificate path used to verify clients.  The certificate MUST be in PEM format.")
-            ("print-queries,Q", po::bool_switch()->default_value(false), "Print queries run by clients to stdout");
+            ("print-queries,Q", po::bool_switch()->default_value(false), "Print queries run by clients to stdout")
+            ("license-key-filename,L", po::value<std::string>()->default_value(""),
+              "Specify the license key file path.  "
+              "If not set, we will use env var: 'LICENSE_KEY_FILENAME'.");
   // clang-format on
 
   po::variables_map vm;
@@ -141,8 +144,10 @@ int main(int argc, char **argv) {
 
   bool print_queries = vm["print-queries"].as<bool>();
 
+  auto license_key_filename = fs::path(vm["license-key-filename"].as<std::string>());
+
   return RunFlightSQLServer(backend, database_filename, hostname, port, username,
                             password, secret_key, tls_cert_path, tls_key_path,
                             mtls_ca_cert_path, init_sql_commands, init_sql_commands_file,
-                            print_queries);
+                            print_queries, license_key_filename);
 }

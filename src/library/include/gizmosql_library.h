@@ -50,6 +50,7 @@ enum class BackendType { duckdb, sqlite };
  * @param init_sql_commands The initial SQL commands to execute. Default is "" - if not set, we use environment variable: "INIT_SQL_COMMANDS".
  * @param init_sql_commands_file The path to a file containing initial SQL commands. Default is an empty path - if not set, we use environment variable: "INIT_SQL_COMMANDS_FILE"
  * @param print_queries Set to true if SQL queries should be printed; false otherwise. Default is false.
+ * @param license_key_filename The path to the license key file. Default is "", if so, we use environment variable: "LICENSE_KEY_FILENAME".
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -64,5 +65,6 @@ int RunFlightSQLServer(
     std::filesystem::path mtls_ca_cert_path = std::filesystem::path(),
     std::string init_sql_commands = "",
     std::filesystem::path init_sql_commands_file = std::filesystem::path(),
-    const bool &print_queries = false);
+    const bool &print_queries = false,
+    std::string license_key_filename = "");
 }
