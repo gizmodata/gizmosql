@@ -1,4 +1,4 @@
-// version.h.in
+// license_validation.h.in
 // This file is used by CMake to generate license_validation.h
 #ifndef LICENSE_PUBLIC_KEY_H
 #define LICENSE_PUBLIC_KEY_H
