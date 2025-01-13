@@ -29,7 +29,7 @@ configure_file(
 
 # --------------------- License Public Key ---------------------
 
-set(LICENSE_PUBLIC_KEY_FILE ${CMAKE_SOURCE_DIR}/license_keys/public_key.pem)
+set(LICENSE_PUBLIC_KEY_FILE ${CMAKE_SOURCE_DIR}/license_generation_files/public_key.pem)
 
 # Read the file into a variable
 file(READ ${LICENSE_PUBLIC_KEY_FILE} LICENSE_PUBLIC_KEY)

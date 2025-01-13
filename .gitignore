@@ -24,3 +24,5 @@ cmake-build-debug
 cmake-build-debug-event-trace
 
 data
+
+license_files
