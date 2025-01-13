@@ -117,7 +117,7 @@ RUN case ${TARGETPLATFORM} in \
 EXPOSE 31337
 
 # Run a test to ensure that the server works...
-RUN --mount=type=secret,id=license_jwt,target=/tmp/license.jwt \
+RUN --mount=type=secret,id=license_jwt,uid=1000,target=/tmp/license.jwt \
     LICENSE_KEY_FILENAME=/tmp/license.jwt scripts/test_gizmosql.sh
 
 ENTRYPOINT scripts/start_gizmosql.sh
