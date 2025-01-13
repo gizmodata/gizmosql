@@ -131,7 +131,7 @@ jobs:
 
       - name: Create GizmoSQL License JWT file
         run: |
-          echo "${{ secrets.LICENSE_JWT }}" > /home/runner/license.jwt
+          echo ${{ secrets.LICENSE_JWT }} > /home/runner/license.jwt
 
       - name: Build and push full Docker image
         uses: docker/build-push-action@v6
