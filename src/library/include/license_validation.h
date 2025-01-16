@@ -8,6 +8,7 @@
 #include <iostream>
 #include <chrono>
 #include <ctime>
+#include <regex>
 #include "jwt-cpp/jwt.h"
 #include "license_public_key.h"
 
@@ -18,9 +19,15 @@ class LicenseFileVerifier {
  public:
   explicit LicenseFileVerifier() {}
 
+  static std::string trim(const std::string& str) {
+    static const std::regex wsRegex(
+        R"(^\s+|\s+$)");  // Matches leading or trailing whitespace
+    return std::regex_replace(str, wsRegex, "");
+  }
+
   static Status ValidateLicenseKey(const std::string& filePath) {
     std::cout << "Using License Key file: " << filePath << std::endl;
-    std::string jwtToken = readFile(filePath);
+    std::string jwtToken = trim(readFile(filePath));
 
     try {
       auto verifier =
