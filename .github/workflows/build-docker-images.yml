@@ -100,7 +100,8 @@ jobs:
             gcc \
             git \
             libboost-all-dev \
-            libgflags-dev
+            libgflags-dev \
+            libssl-dev
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 

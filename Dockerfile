@@ -21,6 +21,7 @@ RUN apt-get update && \
     ninja-build \
     libboost-all-dev \
     libgflags-dev \
+    libssl-dev \
     numactl \
     sqlite3 \
     vim && \
