@@ -18,6 +18,7 @@
 #include "duckdb_statement.h"
 
 #include <duckdb.h>
+#include "duckdb/main/client_context.hpp"
 #include <duckdb/common/arrow/arrow_converter.hpp>
 #include <iostream>
 
@@ -127,7 +128,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   if (query_result_->HasError()) {
     return arrow::Status::ExecutionError("An execution error has occurred: ",
-                                             query_result_->GetError());
+                                         query_result_->GetError());
   }
   return 0;
 }
@@ -136,7 +137,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   std::shared_ptr<arrow::RecordBatch> record_batch;
   ArrowArray res_arr;
   ArrowSchema res_schema;
-  duckdb::ClientProperties res_options;
+  auto client_context = stmt_->context;
+  auto res_options = client_context->GetClientProperties();
   res_options.time_zone = query_result_->client_properties.time_zone;
 
   duckdb::ArrowConverter::ToArrowSchema(&res_schema, query_result_->types,
@@ -150,7 +152,10 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   }
 
   if (data_chunk != nullptr) {
-    duckdb::ArrowConverter::ToArrowArray(*data_chunk, &res_arr, res_options);
+    duckdb::unordered_map<idx_t, const duckdb::shared_ptr<duckdb::ArrowTypeExtensionData>>
+        extension_type_cast;
+    duckdb::ArrowConverter::ToArrowArray(*data_chunk, &res_arr, res_options,
+                                         extension_type_cast);
     ARROW_ASSIGN_OR_RAISE(record_batch, arrow::ImportRecordBatch(&res_arr, &res_schema));
   }
 

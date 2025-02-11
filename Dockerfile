@@ -1,4 +1,4 @@
-FROM python:3.12.8
+FROM python:3.12.9
 
 ARG TARGETPLATFORM
 ARG TARGETARCH
@@ -21,6 +21,7 @@ RUN apt-get update && \
     ninja-build \
     libboost-all-dev \
     libgflags-dev \
+    libssl-dev \
     numactl \
     sqlite3 \
     vim && \
@@ -104,7 +105,7 @@ RUN cmake -S . -B build -G Ninja \
 COPY --chown=app_user:app_user ./tls ./tls
 
 # Install DuckDB CLI for troubleshooting, etc.
-ARG DUCKDB_VERSION="1.1.3"
+ARG DUCKDB_VERSION="1.2.0"
 
 RUN case ${TARGETPLATFORM} in \
          "linux/amd64")  DUCKDB_FILE=https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip  ;; \
