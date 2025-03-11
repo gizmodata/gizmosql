@@ -175,6 +175,19 @@ Status HeaderAuthServerMiddlewareFactory::StartCall(
 
     SecurityUtilities::ParseBasicHeader(incoming_headers, username, password);
 
+    // If the username has "};PWD={" in it, it is from the Flight SQL ODBC driver -
+    // we need to split it into username and password.
+    if (username.find("};PWD={") != std::string::npos) {
+      std::string username_pwd = username;
+      std::string delimiter = "};PWD={";
+      size_t pos = 0;
+      while ((pos = username_pwd.find(delimiter)) != std::string::npos) {
+        username = username_pwd.substr(0, pos);
+        username_pwd.erase(0, pos + delimiter.length());
+      }
+      password = username_pwd;
+    }
+
     if ((username == username_) && (password == password_)) {
       *middleware = std::make_shared<HeaderAuthServerMiddleware>(username, secret_key_);
     } else {
