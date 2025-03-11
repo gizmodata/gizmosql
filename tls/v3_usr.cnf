@@ -1,4 +1,0 @@
-[v3_usr_extensions]
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth, clientAuth
