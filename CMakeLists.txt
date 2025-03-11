@@ -148,6 +148,7 @@ set(GIZMOSQL_SQLITE_SERVER_SRCS
 
 set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_sql_info.cpp
+        src/duckdb/duckdb_type_info.cpp
         src/duckdb/duckdb_statement.cpp
         src/duckdb/duckdb_statement_batch_reader.cpp
         src/duckdb/duckdb_server.cpp

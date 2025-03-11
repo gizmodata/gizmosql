@@ -34,6 +34,7 @@
 #include "duckdb_sql_info.h"
 #include "duckdb_statement.h"
 #include "duckdb_statement_batch_reader.h"
+#include "duckdb_type_info.h"
 #include "duckdb_tables_schema_batch_reader.h"
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
@@ -513,6 +514,25 @@ class DuckDBFlightSqlServer::Impl {
     return statement->ExecuteUpdate();
   }
 
+  Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoTypeInfo(
+      const flight::ServerCallContext &context, const sql::GetXdbcTypeInfo &command,
+      const flight::FlightDescriptor &descriptor) {
+    return GetFlightInfoForCommand(descriptor,
+                                   flight::sql::SqlSchema::GetXdbcTypeInfoSchema());
+  }
+
+  Result<std::unique_ptr<flight::FlightDataStream>> DoGetTypeInfo(
+      const flight::ServerCallContext &context, const sql::GetXdbcTypeInfo &command) {
+    ARROW_ASSIGN_OR_RAISE(auto type_info_result,
+                          command.data_type.has_value()
+                              ? DoGetTypeInfoResult(command.data_type.value())
+                              : DoGetTypeInfoResult());
+
+    ARROW_ASSIGN_OR_RAISE(auto reader,
+                          arrow::RecordBatchReader::Make({type_info_result}));
+    return std::make_unique<flight::RecordBatchStream>(reader);
+  }
+
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoTables(
       const flight::ServerCallContext &context, const sql::GetTables &command,
       const flight::FlightDescriptor &descriptor) {
@@ -787,6 +807,19 @@ Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfo
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetTables(
     const flight::ServerCallContext &context, const sql::GetTables &command) {
   return impl_->DoGetTables(context, command);
+}
+
+Result<std::unique_ptr<flight::FlightInfo>>
+DuckDBFlightSqlServer::GetFlightInfoXdbcTypeInfo(
+    const flight::ServerCallContext &context, const flight::sql::GetXdbcTypeInfo &command,
+    const flight::FlightDescriptor &descriptor) {
+  return impl_->GetFlightInfoTypeInfo(context, command, descriptor);
+}
+
+Result<std::unique_ptr<flight::FlightDataStream>>
+DuckDBFlightSqlServer::DoGetXdbcTypeInfo(const flight::ServerCallContext &context,
+                                         const flight::sql::GetXdbcTypeInfo &command) {
+  return impl_->DoGetTypeInfo(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>

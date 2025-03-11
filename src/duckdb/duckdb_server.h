@@ -109,6 +109,15 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
       const flight::ServerCallContext &context,
       const flight::sql::GetTables &command) override;
 
+  arrow::Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoXdbcTypeInfo(
+      const flight::ServerCallContext &context,
+      const flight::sql::GetXdbcTypeInfo &command,
+      const flight::FlightDescriptor &descriptor) override;
+
+  arrow::Result<std::unique_ptr<flight::FlightDataStream>> DoGetXdbcTypeInfo(
+      const flight::ServerCallContext &context,
+      const flight::sql::GetXdbcTypeInfo &command) override;
+
   arrow::Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoTableTypes(
       const flight::ServerCallContext &context,
       const flight::FlightDescriptor &descriptor) override;
@@ -161,7 +170,8 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
       const flight::sql::ActionEndTransactionRequest &request) override;
 
   arrow::Result<flight::CloseSessionResult> CloseSession(
-          const flight::ServerCallContext& context, const flight::CloseSessionRequest& request) override;
+      const flight::ServerCallContext &context,
+      const flight::CloseSessionRequest &request) override;
 
  private:
   class Impl;
