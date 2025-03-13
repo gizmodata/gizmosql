@@ -805,23 +805,30 @@ SQLiteFlightSqlServer::SQLiteFlightSqlServer(std::shared_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
 arrow::Result<std::shared_ptr<SQLiteFlightSqlServer>> SQLiteFlightSqlServer::Create(
-    std::string path) {
+    const std::string& path, const bool& read_only) {
   std::cout << "SQLite version: " << sqlite3_libversion() << std::endl;
 
   sqlite3* db = nullptr;
 
   char* db_location;
 
-  bool in_memory = path == "";
+  bool in_memory = path == ":memory:";
 
   if (in_memory) {
     db_location = (char*)":memory:";
   } else {
-    db_location = (char*)path.c_str();  // TODO: validate that the path exists
+    db_location = (char*)path.c_str();
   }
 
-  if (sqlite3_open_v2(db_location, &db,
-                      SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI,
+  // Set the open flag per the read_only arg
+  int open_flags;
+  if (read_only) {
+    open_flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI;
+  } else {
+    open_flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_URI;
+  }
+
+  if (sqlite3_open_v2(db_location, &db, open_flags,
                       /*zVfs=*/nullptr)) {
     std::string err_msg = "Can't open database: ";
     if (db != nullptr) {
