@@ -57,7 +57,8 @@ enum class BackendType { duckdb, sqlite };
 
 extern "C" {
 int RunFlightSQLServer(
-    const BackendType backend, std::filesystem::path &database_filename,
+    const BackendType backend,
+    std::filesystem::path database_filename = std::filesystem::path(),
     std::string hostname = "", const int &port = DEFAULT_FLIGHT_PORT,
     std::string username = "", std::string password = "", std::string secret_key = "",
     std::filesystem::path tls_cert_path = std::filesystem::path(),
@@ -65,6 +66,6 @@ int RunFlightSQLServer(
     std::filesystem::path mtls_ca_cert_path = std::filesystem::path(),
     std::string init_sql_commands = "",
     std::filesystem::path init_sql_commands_file = std::filesystem::path(),
-    const bool &print_queries = false,
+    const bool &print_queries = false, const bool &read_only = false,
     std::string license_key_filename = "");
 }

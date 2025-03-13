@@ -745,10 +745,24 @@ DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
-    const std::string &path, const duckdb::DBConfig &config, const bool &print_queries) {
+    const std::string &path, const bool &read_only, const bool &print_queries) {
   std::cout << "DuckDB version: " << duckdb_library_version() << std::endl;
 
-  auto db = std::make_shared<duckdb::DuckDB>(path);
+  bool in_memory = path == ":memory:";
+  char *db_location;
+
+  if (in_memory) {
+    db_location = nullptr;
+  } else {
+    db_location = const_cast<char *>(path.c_str());
+  }
+
+  duckdb::DBConfig config;
+  if (read_only) {
+    config.options.access_mode = duckdb::AccessMode::READ_ONLY;
+  }
+
+  auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 
   auto impl = std::make_shared<Impl>(db, print_queries);
   std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));

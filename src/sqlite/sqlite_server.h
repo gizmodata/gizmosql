@@ -59,7 +59,8 @@ class SQLiteFlightSqlServer : public flight::sql::FlightSqlServerBase {
  public:
   ~SQLiteFlightSqlServer() override;
 
-  static arrow::Result<std::shared_ptr<SQLiteFlightSqlServer>> Create(std::string path);
+  static arrow::Result<std::shared_ptr<SQLiteFlightSqlServer>> Create(
+      const std::string& path, const bool& read_only);
 
   /// \brief Auxiliary method used to execute an arbitrary SQL statement on the underlying
   ///        SQLite database.
