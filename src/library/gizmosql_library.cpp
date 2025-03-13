@@ -67,7 +67,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string &password, const std::string &secret_key,
     const fs::path &tls_cert_path, const fs::path &tls_key_path,
     const fs::path &mtls_ca_cert_path, const std::string &init_sql_commands,
-    const bool &print_queries) {
+    const bool &read_only, const bool &print_queries) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -82,7 +82,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerTlsCertificates(
         tls_cert_path, tls_key_path, &options.tls_certificates));
   } else {
-    std::cout << "WARNING - TLS is disabled for the GizmoSQL server - this is insecure."
+    std::cout << "WARNING - TLS is disabled for the GizmoSQL server - this is NOT secure."
               << std::endl;
   }
 
@@ -110,15 +110,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     db_type = "SQLite";
     std::shared_ptr<gizmosql::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(sqlite_server, gizmosql::sqlite::SQLiteFlightSqlServer::Create(
-                                             database_filename));
+                                             database_filename, read_only));
     RUN_INIT_COMMANDS(sqlite_server, init_sql_commands);
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
     db_type = "DuckDB";
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
-    duckdb::DBConfig config;
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
-                                             database_filename, config, print_queries))
+                                             database_filename, read_only, print_queries))
     // Run additional commands (first) for the DuckDB back-end...
     auto duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;" +
@@ -163,14 +162,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const int &port, std::string username, std::string password, std::string secret_key,
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
-    const bool &print_queries, std::string license_key_filename) {
+    const bool &print_queries, const bool &read_only, std::string license_key_filename) {
   // Validate the license key file
   if (license_key_filename.empty()) {
     license_key_filename = SafeGetEnvVarValue("LICENSE_KEY_FILENAME");
   }
 
   if (license_key_filename.empty()) {
-    return arrow::Status::Invalid("No license key file was provided - exiting.");
+    std::cout << "WARNING - GizmoSQL is currently running in unlicensed mode. This mode is intended for development, evaluation, or testing purposes only."
+              << std::endl
+              << "          To obtain a valid license key, please contact GizmoData LLC Sales at info@gizmodata.com"
+              << std::endl;
   } else {
     if (!fs::exists(license_key_filename)) {
       return arrow::Status::Invalid("License key file does not exist: " +
@@ -183,7 +185,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
 
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
-    return arrow::Status::Invalid("The database filename was not provided!");
+    std::cout << "WARNING - The database filename was not provided, opening an in-memory "
+                 "database..."
+              << std::endl;
+    database_filename = ":memory:";
   } else {
     // We do not check for existence of the database file, b/c they may want to create a new one
     database_filename = fs::absolute(database_filename);
@@ -268,9 +273,16 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     }
   }
 
+  if (read_only) {
+    std::cout << "WARNING - Running in Read-Only mode - no changes will be persisted to the "
+                 "database."
+              << std::endl;
+  }
+
   return FlightSQLServerBuilder(backend, database_filename, hostname, port, username,
                                 password, secret_key, tls_cert_path, tls_key_path,
-                                mtls_ca_cert_path, init_sql_commands, print_queries);
+                                mtls_ca_cert_path, init_sql_commands, read_only,
+                                print_queries);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -282,25 +294,25 @@ arrow::Status StartFlightSQLServer(
 
 extern "C" {
 
-int RunFlightSQLServer(const BackendType backend, fs::path &database_filename,
+int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string hostname, const int &port, std::string username,
                        std::string password, std::string secret_key,
                        fs::path tls_cert_path, fs::path tls_key_path,
                        fs::path mtls_ca_cert_path, std::string init_sql_commands,
                        fs::path init_sql_commands_file, const bool &print_queries,
-                       std::string license_key_filename) {
+                       const bool &read_only, std::string license_key_filename) {
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
   std::tm *localTime = std::localtime(&currentTime);
 
   std::cout << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
-            << " Gizmo Data LLC - All Rights Reserved" << std::endl;
+            << " GizmoData LLC - All Rights Reserved" << std::endl;
   std::cout << "----------------------------------------------" << std::endl;
 
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
-      init_sql_commands_file, print_queries, license_key_filename);
+      init_sql_commands_file, print_queries, read_only, license_key_filename);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
