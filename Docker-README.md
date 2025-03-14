@@ -388,5 +388,3 @@ docker run --name gizmosql-slim \
            --pull missing \
            gizmodata/gizmosql:latest-slim
 ```
-
-See [start_gizmosql_slim.sh](scripts/start_gizmosql_slim.sh) - the container's entrypoint script for more details.
