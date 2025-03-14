@@ -1,8 +1,9 @@
-# GizmoSQL
-### Copyright © 2025 GizmoData LLC - All Rights Reserved
+# [GizmoSQL](https://gizmodata.com/gizmosql)
+### Copyright © 2025 [GizmoData](https://gizmodata.com) LLC - All Rights Reserved
 
 ## An [Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with [DuckDB](https://duckdb.org) or [SQLite](https://sqlite.org) back-end execution engines
 
+[<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql--public-blue.svg?logo=Github">](https://github.com/gizmodata/gizmosql-public)
 [<img src="https://img.shields.io/badge/Arrow%20JDBC%20Driver-download%20artifact-red?logo=Apache%20Maven">](https://search.maven.org/search?q=a:flight-sql-jdbc-driver)
 [<img src="https://img.shields.io/badge/PyPI-Arrow%20ADBC%20Flight%20SQL%20driver-blue?logo=PyPI">](https://pypi.org/project/adbc-driver-flightsql/)
 [<img src="https://img.shields.io/badge/PyPI-GizmoSQL%20SQLAlchemy%20Dialect-blue?logo=PyPI">](https://pypi.org/project/sqlalchemy-gizmosql-adbc-dialect/)
@@ -16,10 +17,12 @@ It enables authentication via middleware and allows for encrypted connections to
 For more information about Apache Arrow Flight SQL - please see this [article](https://voltrondata.com/resources/apache-arrow-flight-sql-arrow-for-every-database-developer). 
 
 > [!NOTE]   
-> GizmoSQL is a licensed-product - you must have a valid license key to use it for production purposes.   
-> If you run GizmoSQL without a valid license key - it will print this warning message:   
-> WARNING - GizmoSQL is currently running in unlicensed mode. This mode is intended for development, evaluation, or testing purposes only.   
-> To obtain a valid license key, please contact GizmoData LLC Sales at info@gizmodata.com
+> GizmoSQL is a licensed-product - you MUST have a valid license key to use it for production purposes.   
+> If you run GizmoSQL without a valid license key - it will print this warning message:
+```text
+WARNING - GizmoSQL is currently running in unlicensed mode. This mode is intended for development, evaluation, or testing purposes only.   
+          To obtain a valid license key, please contact GizmoData LLC Sales at info@gizmodata.com
+```
 
 ## Option 1 - Running from the published Docker image
 
@@ -124,6 +127,8 @@ You can then use the JDBC driver to connect from your host computer to the local
 jdbc:arrow-flight-sql://localhost:31337?useEncryption=true&user=gizmosql_username&password=gizmosql_password&disableCertificateVerification=true
 ```
 
+For instructions on setting up the JDBC driver in popular Database IDE tool: [DBeaver Community Edition](https://dbeaver.io) - see this [repo](https://github.com/gizmodata/setup-arrow-jdbc-driver-in-dbeaver).
+
 **Note** - if you stop/restart the Flight SQL Docker container, and attempt to connect via JDBC with the same password - you could get error: "Invalid bearer token provided. Detail: Unauthenticated".  This is because the client JDBC driver caches the bearer token signed with the previous instance's secret key.  Just change the password in the new container by changing the "GIZMOSQL_PASSWORD" env var setting - and then use that to connect via JDBC.  
 
 ### Connecting to the server via the new [ADBC Python Flight SQL driver](https://pypi.org/project/adbc-driver-flightsql/)
@@ -218,6 +223,24 @@ See: https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect
 Stop the docker image with:
 ```bash
 docker stop gizmosql
+```
+
+## Option 2 - Download and run the gizmosql CLI executable
+
+Download (and unzip) the latest release of the **gizmosql_server** CLI executable from these currently supported platforms:   
+[Linux x86-64](https://github.com/gizmodata/gizmosql-public/releases/latest/download/gizmosql_cli_linux_amd64.zip)   
+[Linux arm64](https://github.com/gizmodata/gizmosql-public/releases/latest/download/gizmosql_cli_linux_arm64.zip)   
+[MacOS x86-64](https://github.com/gizmodata/gizmosql-public/releases/latest/download/gizmosql_cli_macos_amd64.zip)   
+[MacOS arm64](https://github.com/gizmodata/gizmosql-public/releases/latest/download/gizmosql_cli_macos_arm64.zip)
+
+Then from a terminal - you can run:
+```bash
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/some_db.duckdb --print-queries
+```
+
+To see all program options - run:
+```bash
+gizmosql_server --help
 ```
 
 ## Selecting different backends
