@@ -9,6 +9,7 @@ L_DATABASE_BACKEND=${1:-${DATABASE_BACKEND:-"duckdb"}}
 L_DATABASE_FILENAME=${2:-${DATABASE_FILENAME:-"data/TPC-H-small.duckdb"}}
 L_TLS_ENABLED=${3:-${TLS_ENABLED:-"1"}}
 L_PRINT_QUERIES=${4:-${PRINT_QUERIES:-"1"}}
+L_READONLY=${5:-${READONLY:-"0"}}
 
 TLS_ARG=""
 if [ "${L_TLS_ENABLED}" == "1" ]
@@ -30,4 +31,11 @@ then
   PRINT_QUERIES_FLAG="--print-queries"
 fi
 
-gizmosql_server --backend="${L_DATABASE_BACKEND}" --database-filename="${L_DATABASE_FILENAME}" ${TLS_ARG} ${PRINT_QUERIES_FLAG}
+# Setup the readonly option
+READONLY_FLAG=""
+if [ "${L_READONLY}" == "1" ]
+then
+  READONLY_FLAG="--readonly"
+fi
+
+gizmosql_server --backend="${L_DATABASE_BACKEND}" --database-filename="${L_DATABASE_FILENAME}" ${TLS_ARG} ${PRINT_QUERIES_FLAG} ${READONLY_FLAG}
