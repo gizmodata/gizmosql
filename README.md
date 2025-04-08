@@ -58,15 +58,15 @@ The above command will automatically mount a very small TPC-H DuckDB database fi
 **Note**: You can disable TLS in the container by setting environment variable: `TLS_ENABLED` to "0" (default is "1" - enabled).  This is not recommended unless you are using an mTLS sidecar in Kubernetes or something similar, as it will be insecure.    
 
 ### Optional - open a different database file
-When running the Docker image - you can have it run your own DuckDB database file (the database must be built with DuckDB version: 1.2.1).   
+When running the Docker image - you can have it run your own DuckDB database file (the database must be built with DuckDB version: 1.2.2).   
 
 Prerequisite: DuckDB CLI   
-Install DuckDB CLI version [1.2.1](https://github.com/duckdb/duckdb/releases/tag/v1.2.1) - and make sure the executable is on your PATH.
+Install DuckDB CLI version [1.2.2](https://github.com/duckdb/duckdb/releases/tag/v1.2.2) - and make sure the executable is on your PATH.
 
 Platform Downloads:   
-[Linux x86-64](https://github.com/duckdb/duckdb/releases/download/v1.2.1/duckdb_cli-linux-amd64.zip)   
-[Linux arm64 (aarch64)](https://github.com/duckdb/duckdb/releases/download/v1.2.1/duckdb_cli-linux-aarch64.zip)   
-[MacOS Universal](https://github.com/duckdb/duckdb/releases/download/v1.2.1/duckdb_cli-osx-universal.zip)
+[Linux x86-64](https://github.com/duckdb/duckdb/releases/download/v1.2.2/duckdb_cli-linux-amd64.zip)   
+[Linux arm64 (aarch64)](https://github.com/duckdb/duckdb/releases/download/v1.2.2/duckdb_cli-linux-aarch64.zip)   
+[MacOS Universal](https://github.com/duckdb/duckdb/releases/download/v1.2.2/duckdb_cli-osx-universal.zip)
 
 In this example, we'll generate a new TPC-H Scale Factor 1 (1GB) database file, and then run the docker image to mount it:
 
@@ -227,7 +227,7 @@ version(): string
 
 Results:
 version():   [
-    "v1.2.1"
+    "v1.2.2"
   ]
 
 Total: 1
@@ -330,7 +330,7 @@ Licensed by: "GizmoData LLC"
 ----------------------------------------------
 Apache Arrow version: 19.0.1
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
-DuckDB version: v1.2.1
+DuckDB version: v1.2.2
 Running Init SQL command: 
 SET autoinstall_known_extensions = true;
 Running Init SQL command: 
