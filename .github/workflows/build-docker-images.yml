@@ -224,14 +224,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push full manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@master # or use a pinned version in the Releases tab
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}
           images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64
           push: true
 
       - name: Create and push slim manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@master # or use a pinned version in the Releases tab
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
           images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64-slim
@@ -239,14 +239,14 @@ jobs:
 
       # ------------------------------------------------------------------
       - name: Create and push full manifest images - Github
-        uses: Noelware/docker-manifest-action@master # or use a pinned version in the Releases tab
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}
           images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64
           push: true
 
       - name: Create and push slim manifest images - Github
-        uses: Noelware/docker-manifest-action@master # or use a pinned version in the Releases tab
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
           images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
