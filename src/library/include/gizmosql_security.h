@@ -76,7 +76,7 @@ class HeaderAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
                                     const std::string &secret_key);
 
   arrow::Status StartCall(const flight::CallInfo &info,
-                          const flight::CallHeaders &incoming_headers,
+                          const flight::ServerCallContext &context,
                           std::shared_ptr<flight::ServerMiddleware> *middleware) override;
 
  private:
@@ -88,7 +88,7 @@ class HeaderAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
 class BearerAuthServerMiddleware : public flight::ServerMiddleware {
  public:
   explicit BearerAuthServerMiddleware(const std::string &secret_key,
-                                      const flight::CallHeaders &incoming_headers,
+                                      const flight::ServerCallContext &context,
                                       std::optional<bool> *isValid);
 
   void SendingHeaders(flight::AddCallHeaders *outgoing_headers) override;
@@ -110,7 +110,7 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
   explicit BearerAuthServerMiddlewareFactory(const std::string &secret_key);
 
   arrow::Status StartCall(const flight::CallInfo &info,
-                          const flight::CallHeaders &incoming_headers,
+                          const flight::ServerCallContext &context,
                           std::shared_ptr<flight::ServerMiddleware> *middleware) override;
 
   std::optional<bool> GetIsValid();

@@ -328,7 +328,7 @@ License issue date: 2025-01-13 11:11:28
 License expiration date: 2026-01-13 11:11:28
 Licensed by: "GizmoData LLC"
 ----------------------------------------------
-Apache Arrow version: 19.0.1
+Apache Arrow version: 20.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.2.2
 Running Init SQL command: 
@@ -364,7 +364,7 @@ License issue date: 2025-01-13 11:11:28
 License expiration date: 2026-01-13 11:11:28
 Licensed by: "GizmoData LLC"
 ----------------------------------------------
-Apache Arrow version: 19.0.1
+Apache Arrow version: 20.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
 Using database file: "/Users/philip/Documents/git/gizmosql/data/TPC-H-small.sqlite"

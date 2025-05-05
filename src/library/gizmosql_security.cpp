@@ -142,17 +142,20 @@ std::string HeaderAuthServerMiddleware::name() const {
 }
 
 std::string HeaderAuthServerMiddleware::CreateJWTToken() const {
-  auto token = jwt::create()
-                   .set_issuer(std::string(kJWTIssuer))
-                   .set_type("JWT")
-                   .set_id("gizmosql-server-" +
-                           boost::uuids::to_string(boost::uuids::random_generator()()))
-                   .set_issued_at(std::chrono::system_clock::now())
-                   .set_expires_at(std::chrono::system_clock::now() +
-                                   std::chrono::seconds{kJWTExpiration})
-                   .set_payload_claim("username", jwt::claim(username_))
-                   .set_payload_claim("session_id", jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
-                   .sign(jwt::algorithm::hs256{secret_key_});
+  auto token =
+      jwt::create()
+          .set_issuer(std::string(kJWTIssuer))
+          .set_type("JWT")
+          .set_id("gizmosql-server-" +
+                  boost::uuids::to_string(boost::uuids::random_generator()()))
+          .set_issued_at(std::chrono::system_clock::now())
+          .set_expires_at(std::chrono::system_clock::now() +
+                          std::chrono::seconds{kJWTExpiration})
+          .set_payload_claim("username", jwt::claim(username_))
+          .set_payload_claim(
+              "session_id",
+              jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
+          .sign(jwt::algorithm::hs256{secret_key_});
 
   return token;
 }
@@ -164,9 +167,12 @@ HeaderAuthServerMiddlewareFactory::HeaderAuthServerMiddlewareFactory(
     : username_(username), password_(password), secret_key_(secret_key) {}
 
 Status HeaderAuthServerMiddlewareFactory::StartCall(
-    const flight::CallInfo &info, const flight::CallHeaders &incoming_headers,
+    const flight::CallInfo &info, const flight::ServerCallContext &context,
     std::shared_ptr<flight::ServerMiddleware> *middleware) {
   std::string auth_header_type;
+
+  auto incoming_headers = context.incoming_headers();
+
   ARROW_RETURN_NOT_OK(
       SecurityUtilities::GetAuthHeaderType(incoming_headers, &auth_header_type));
   if (auth_header_type == "Basic") {
@@ -200,9 +206,11 @@ Status HeaderAuthServerMiddlewareFactory::StartCall(
 
 // ----------------------------------------
 BearerAuthServerMiddleware::BearerAuthServerMiddleware(
-    const std::string &secret_key, const flight::CallHeaders &incoming_headers,
+    const std::string &secret_key, const flight::ServerCallContext &context,
     std::optional<bool> *isValid)
-    : secret_key_(secret_key), incoming_headers_(incoming_headers), isValid_(isValid) {}
+    : secret_key_(secret_key),
+      incoming_headers_(context.incoming_headers()),
+      isValid_(isValid) {}
 
 void BearerAuthServerMiddleware::SendingHeaders(
     flight::AddCallHeaders *outgoing_headers) {
@@ -210,8 +218,6 @@ void BearerAuthServerMiddleware::SendingHeaders(
       incoming_headers_, kAuthHeader, kBearerPrefix);
   *isValid_ = (VerifyToken(bearer_token));
 }
-
-
 
 void BearerAuthServerMiddleware::CallCompleted(const Status &status) {}
 
@@ -245,8 +251,9 @@ BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
     : secret_key_(secret_key) {}
 
 Status BearerAuthServerMiddlewareFactory::StartCall(
-    const flight::CallInfo &info, const flight::CallHeaders &incoming_headers,
+    const flight::CallInfo &info, const flight::ServerCallContext &context,
     std::shared_ptr<flight::ServerMiddleware> *middleware) {
+  auto incoming_headers = context.incoming_headers();
   if (const std::pair<flight::CallHeaders::const_iterator,
                       flight::CallHeaders::const_iterator> &iter_pair =
           incoming_headers.equal_range(kAuthHeader);
@@ -255,8 +262,8 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
     ARROW_RETURN_NOT_OK(
         SecurityUtilities::GetAuthHeaderType(incoming_headers, &auth_header_type));
     if (auth_header_type == "Bearer") {
-      *middleware = std::make_shared<BearerAuthServerMiddleware>(
-          secret_key_, incoming_headers, &isValid_);
+      *middleware =
+          std::make_shared<BearerAuthServerMiddleware>(secret_key_, context, &isValid_);
     }
   }
   if (isValid_.has_value() && !*isValid_) {

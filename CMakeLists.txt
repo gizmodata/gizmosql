@@ -216,6 +216,8 @@ install(TARGETS gizmosql_server
 )
 
 # ------------ Client Executable section ------------
+find_package(gflags REQUIRED)
+
 add_executable(gizmosql_client
         src/gizmosql_client.cpp
 )
@@ -223,6 +225,7 @@ add_executable(gizmosql_client
 target_link_libraries(gizmosql_client PRIVATE
         Threads::Threads
         ArrowFlightSql::arrow_flight_sql_static
+        gflags
         ${Boost_LIBRARIES}
         "-lresolv"
 )
