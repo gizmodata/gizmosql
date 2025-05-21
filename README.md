@@ -65,7 +65,7 @@ Install DuckDB CLI version [1.3.0](https://github.com/duckdb/duckdb/releases/tag
 
 Platform Downloads:   
 [Linux x86-64](https://github.com/duckdb/duckdb/releases/download/v1.3.0/duckdb_cli-linux-amd64.zip)   
-[Linux arm64 (aarch64)](https://github.com/duckdb/duckdb/releases/download/v1.3.0/duckdb_cli-linux-aarch64.zip)   
+[Linux arm64 (aarch64)](https://github.com/duckdb/duckdb/releases/download/v1.3.0/duckdb_cli-linux-arm64.zip)   
 [MacOS Universal](https://github.com/duckdb/duckdb/releases/download/v1.3.0/duckdb_cli-osx-universal.zip)
 
 In this example, we'll generate a new TPC-H Scale Factor 1 (1GB) database file, and then run the docker image to mount it:
