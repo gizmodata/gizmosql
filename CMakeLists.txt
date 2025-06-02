@@ -27,21 +27,6 @@ configure_file(
         ${CMAKE_SOURCE_DIR}/src/library/include/version.h
 )
 
-# --------------------- License Public Key ---------------------
-
-set(LICENSE_PUBLIC_KEY_FILE ${CMAKE_SOURCE_DIR}/license_generation_files/public_key.pem)
-
-# Read the file into a variable
-file(READ ${LICENSE_PUBLIC_KEY_FILE} LICENSE_PUBLIC_KEY)
-
-# Print the variable (for debugging)
-message(STATUS "License Public Key Contents:\n${LICENSE_PUBLIC_KEY}")
-
-configure_file(
-        ${CMAKE_SOURCE_DIR}/src/library/include/license_public_key.h.in
-        ${CMAKE_SOURCE_DIR}/src/library/include/license_public_key.h
-)
-
 # --------------------- Arrow ---------------------
 configure_file(third_party/Arrow_CMakeLists.txt.in arrow/CMakeLists.txt)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
