@@ -24,8 +24,6 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ## Option 1 - Running from the published Docker image
 
-**Note** - this assumes that you have your Github Access Token stored as an env var named `{GITHUB_ACCESS_TOKEN}`.  See: [Creating a personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token) for more information.
-
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
 
 ```bash
