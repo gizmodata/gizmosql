@@ -61,10 +61,7 @@ int main(int argc, char **argv) {
             ("mtls-ca-cert-filename,M", po::value<std::string>()->default_value(""),
              "Specify an optional mTLS CA certificate path used to verify clients.  The certificate MUST be in PEM format.")
             ("print-queries,Q", po::bool_switch()->default_value(false), "Print queries run by clients to stdout")
-            ("readonly,O", po::bool_switch()->default_value(false), "Open the database in read-only mode")
-            ("license-key-filename,L", po::value<std::string>()->default_value(""),
-              "Specify the license key file path.  "
-              "If not set, we will use env var: 'LICENSE_KEY_FILENAME'.");
+            ("readonly,O", po::bool_switch()->default_value(false), "Open the database in read-only mode");
   // clang-format on
 
   po::variables_map vm;
@@ -147,10 +144,8 @@ int main(int argc, char **argv) {
 
   bool read_only = vm["readonly"].as<bool>();
 
-  auto license_key_filename = fs::path(vm["license-key-filename"].as<std::string>());
-
   return RunFlightSQLServer(backend, database_filename, hostname, port, username,
                             password, secret_key, tls_cert_path, tls_key_path,
                             mtls_ca_cert_path, init_sql_commands, init_sql_commands_file,
-                            print_queries, read_only, license_key_filename);
+                            print_queries, read_only);
 }

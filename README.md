@@ -1,10 +1,9 @@
 # GizmoSQL
-### Copyright © 2025 GizmoData LLC - All Rights Reserved
+### Copyright © 2025 GizmoData LLC
 
 ## An [Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with [DuckDB](https://duckdb.org) or [SQLite](https://sqlite.org) back-end execution engines
 
-**Note**: This project was forked (and renamed) from: https://github.com/voltrondata/sqlflite
-
+[<img src="https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker">](https://hub.docker.com/r/gizmodata/gizmosql)
 [<img src="https://img.shields.io/badge/github--package-container--image-green.svg?logo=Docker">](https://github.com/gizmodata/gizmosql/pkgs/container/gizmosql)
 [<img src="https://img.shields.io/badge/Documentation-dev-yellow.svg?logo=">](https://arrow.apache.org/docs/format/FlightSql.html)
 [<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github">](https://github.com/gizmodata/gizmosql)
@@ -21,11 +20,7 @@ It enables authentication via middleware and allows for encrypted connections to
 
 For more information about Apache Arrow Flight SQL - please see this [article](https://voltrondata.com/resources/apache-arrow-flight-sql-arrow-for-every-database-developer). 
 
-> [!NOTE]   
-> GizmoSQL is a licensed-product - you MUST have a valid license key to use it for production purposes.  See repo: https://github.com/gizmodata/generate-jwt-license to generate a license key file.
-> If you run GizmoSQL without a valid license key - it will print this warning message:   
-> WARNING - GizmoSQL is currently running in unlicensed mode. This mode is intended for development, evaluation, or testing purposes only.   
-> To obtain a valid license key, please contact GizmoData LLC Sales at info@gizmodata.com
+It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlflite)**, an open-source project developed by Voltron Data. I contributed to `sqlflite` while employed at Voltron Data, and have since independently extended and evolved the project into GizmoSQL under the Apache 2.0 License.
 
 ## Option 1 - Running from the published Docker image
 
@@ -34,9 +29,6 @@ For more information about Apache Arrow Flight SQL - please see this [article](h
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
 
 ```bash
-# Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u prmoore77 --password-stdin
-
 # Pull and run the Docker image 
 docker run --name gizmosql \
            --detach \
@@ -44,13 +36,11 @@ docker run --name gizmosql \
            --tty \
            --init \
            --publish 31337:31337 \
-           --volume $(pwd)/license_files:/opt/gizmosql/license_files \
-           --env LICENSE_KEY_FILENAME="license_files/license_key.txt" \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --pull missing \
-           ghcr.io/gizmodata/gizmosql:latest
+           gizmodata/gizmosql:latest
 ```
 
 The above command will automatically mount a very small TPC-H DuckDB database file.
@@ -83,9 +73,6 @@ LOAD tpch;
 CALL dbgen(sf=1);
 EOF
 
-# Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u USERNAME --password-stdin
-
 # Run the gizmosql docker container image - and mount the host's DuckDB database file created above inside the container
 docker run --name gizmosql \
            --detach \
@@ -93,14 +80,12 @@ docker run --name gizmosql \
            --tty \
            --init \
            --publish 31337:31337 \
-           --volume $(pwd)/license_files:/opt/gizmosql/license_files \
-           --env LICENSE_KEY_FILENAME="license_files/license_key.txt" \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --pull missing \
            --mount type=bind,source=$(pwd),target=/opt/gizmosql/data \
            --env DATABASE_FILENAME="data/tpch_sf1.duckdb" \
-           ghcr.io/gizmodata/gizmosql:latest
+           gizmodata/gizmosql:latest
 ```
 
 ### Running initialization SQL commands
@@ -110,9 +95,6 @@ You can now run initialization commands upon container startup by setting enviro
 
 Here is a full example of running the Docker image with initialization SQL commands:
 ```bash
-# Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u USERNAME --password-stdin
-
 # Pull and run the Docker image 
 docker run --name gizmosql \
            --detach \
@@ -120,14 +102,12 @@ docker run --name gizmosql \
            --tty \
            --init \
            --publish 31337:31337 \
-           --volume $(pwd)/license_files:/opt/gizmosql/license_files \
-           --env LICENSE_KEY_FILENAME="license_files/license_key.txt" \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --env INIT_SQL_COMMANDS="SET threads = 1; SET memory_limit = '1GB';" \
            --pull missing \
-           ghcr.io/gizmodata/gizmosql:latest
+           gizmodata/gizmosql:latest
 ```
 
 You can also specify a file containing initialization SQL commands by setting environment variable: `INIT_SQL_COMMANDS_FILE` to the path of the file containing the SQL commands - example value: `/tmp/init.sql`.  The file must be mounted inside the container.   
@@ -316,18 +296,10 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/T
 This option allows choosing from two backends: SQLite and DuckDB. It defaults to DuckDB.
 
 ```bash
-$ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/TPC-H-small.duckdb --license-key-filename license_files/license_key.txt
-GizmoSQL - Copyright © 2025 GizmoData LLC - All Rights Reserved
-----------------------------------------------
-Using License Key file: ../license_files/license_key.txt
-License file verification successful!
-License ID: "9a19b353-1b6f-40ee-8ef2-378863e1a146"
-Licensed to Customer: "GizmoData LLC"
-Licensed to User: "philip@gizmodata.com"
-License issue date: 2025-01-13 11:11:28
-License expiration date: 2026-01-13 11:11:28
-Licensed by: "GizmoData LLC"
-----------------------------------------------
+$ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/TPC-H-small.duckdb
+GizmoSQL - Copyright © 2025 GizmoData LLC
+ Licensed under the Apache License, Version 2.0
+ https://www.apache.org/licenses/LICENSE-2.0
 Apache Arrow version: 20.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.3.0
@@ -344,26 +316,18 @@ GizmoSQL server - started
 The above call is equivalent to running `gizmosql_server -B duckdb` or `gizmosql --backend duckdb`. To select SQLite run
 
 ```bash
-GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server -B sqlite -D data/TPC-H-small.sqlite --license-key-filename license_files/license_key.txt
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server -B sqlite -D data/TPC-H-small.sqlite
 ```
 or 
 ```bash
-GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --backend sqlite --database-filename data/TPC-H-small.sqlite --license-key-filename license_files/license_key.txt
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --backend sqlite --database-filename data/TPC-H-small.sqlite
 ```
 The above will produce output similar to the following:
 
 ```bash
-GizmoSQL - Copyright © 2025 GizmoData LLC - All Rights Reserved
-----------------------------------------------
-Using License Key file: license_files/license_key.txt
-License file verification successful!
-License ID: "9a19b353-1b6f-40ee-8ef2-378863e1a146"
-Licensed to Customer: "GizmoData LLC"
-Licensed to User: "philip@gizmodata.com"
-License issue date: 2025-01-13 11:11:28
-License expiration date: 2026-01-13 11:11:28
-Licensed by: "GizmoData LLC"
-----------------------------------------------
+GizmoSQL - Copyright © 2025 GizmoData LLC
+ Licensed under the Apache License, Version 2.0
+ https://www.apache.org/licenses/LICENSE-2.0
 Apache Arrow version: 20.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
@@ -424,9 +388,6 @@ Allowed options:
                                       certificate MUST be in PEM format.
   -Q [ --print-queries ]              Print queries run by clients to stdout
   -O [ --readonly ]                   Open the database in read-only mode
-  -L [ --license-key-filename ] arg   Specify the license key file path.  If 
-                                      not set, we will use env var: 
-                                      'LICENSE_KEY_FILENAME'.
 ```
 
 ## Slim Docker image
@@ -443,9 +404,6 @@ You can optionally supply the following environment variables:
 
 To run that image - use the following command:
 ```bash
-# Authenticate to Github Docker Registry - replace USERNAME with your Github username
-echo ${GITHUB_ACCESS_TOKEN} | docker login ghcr.io -u USERNAME --password-stdin
-
 # Pull and run the Docker image 
 docker run --name gizmosql-slim \
            --detach \
@@ -453,14 +411,12 @@ docker run --name gizmosql-slim \
            --tty \
            --init \
            --publish 31337:31337 \
-           --volume $(pwd)/license_files:/opt/gizmosql/license_files \
-           --env LICENSE_KEY_FILENAME="license_files/license_key.txt" \
            --env DATABASE_FILENAME="data/some_database.duckdb" \
            --env TLS_ENABLED="0" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --pull missing \
-           ghcr.io/gizmodata/gizmosql:latest-slim
+           gizmodata/gizmosql:latest-slim
 ```
 
 See [start_gizmosql_slim.sh](scripts/start_gizmosql_slim.sh) - the container's entrypoint script for more details.
