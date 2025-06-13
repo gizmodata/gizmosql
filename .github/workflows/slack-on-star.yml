@@ -1,0 +1,25 @@
+# File: .github/workflows/slack-on-star.yml
+
+name: Notify Slack on Star
+
+on:
+  star:
+    types: [created]
+
+jobs:
+  notify-slack:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO_NAME: ${{ github.repository }}
+          SENDER: ${{ github.actor }}
+        run: |
+          MESSAGE=":star: *$SENDER* starred *$REPO_NAME*!"
+          PAYLOAD="{\"text\": \"$MESSAGE\"}"
+
+          curl -X POST -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            "$SLACK_WEBHOOK_URL"
