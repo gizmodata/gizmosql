@@ -212,30 +212,30 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push full manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@v1
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}
-          tags: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64
+          images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64
           push: true
 
       - name: Create and push slim manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@v1
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          tags: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64-slim
+          images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64-slim
           push: true
 
       # ------------------------------------------------------------------
       - name: Create and push full manifest images - Github
-        uses: Noelware/docker-manifest-action@v1
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}
-          tags: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64
+          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64
           push: true
 
       - name: Create and push slim manifest images - Github
-        uses: Noelware/docker-manifest-action@v1
+        uses: Noelware/docker-manifest-action@0.4.3
         with:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          tags: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
+          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
           push: true
