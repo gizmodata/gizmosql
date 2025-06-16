@@ -230,12 +230,12 @@ jobs:
         uses: Noelware/docker-manifest-action@v1
         with:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}
-          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64
+          tags: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64
           push: true
 
       - name: Create and push slim manifest images - Github
         uses: Noelware/docker-manifest-action@v1
         with:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
+          tags: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
           push: true
