@@ -169,7 +169,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
                  "database..."
               << std::endl;
     database_filename = ":memory:";
-  } else {
+  } else if (database_filename.u8string().find(':') == std::string::npos) {
+    // DuckDB supports '<extension_name>:...' syntax, for example 'ducklake:/path/to/lake.db'
     // We do not check for existence of the database file, b/c they may want to create a new one
     database_filename = fs::absolute(database_filename);
   }
