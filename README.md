@@ -22,6 +22,15 @@ For more information about Apache Arrow Flight SQL - please see this [article](h
 
 It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlflite)**, an open-source project developed by Voltron Data. I contributed to `sqlflite` while employed at Voltron Data, and have since independently extended and evolved the project into GizmoSQL under the Apache 2.0 License.
 
+## Component Versions
+
+| Component | Version |
+|-----------|---------|
+| DuckDB | v1.3.1 |
+| SQLite | 3.46.1 |
+| Apache Arrow (Flight SQL) | 20.0.0 |
+| jwt-cpp | v0.7.0 |
+
 ## Option 1 - Running from the published Docker image
 
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
