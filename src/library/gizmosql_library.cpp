@@ -133,8 +133,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   if (server != nullptr) {
     ARROW_CHECK_OK(server->Init(options));
 
-    // Exit with a clean error code (0) on SIGTERM
-    ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM}));
+    // Exit with a clean error code (0) on SIGTERM or SIGINT
+    ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
 
     std::cout << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
               << " - with engine: " << db_type << " - will listen on "
