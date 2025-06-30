@@ -35,12 +35,12 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 
 ## 📦 Component Versions
 
-| Component                  | Version   |
-|---------------------------|-----------|
-| DuckDB                    | v1.3.1    |
-| SQLite                   | 3.50.1    |
-| Apache Arrow (Flight SQL) | 20.0.0    |
-| jwt-cpp                   | v0.7.1    |
+| Component                  | Version |
+|---------------------------|---------|
+| DuckDB                    | v1.3.1  |
+| SQLite                   | 3.50.2 |
+| Apache Arrow (Flight SQL) | 20.0.0  |
+| jwt-cpp                   | v0.7.1  |
 
 ## 📚 Documentation
 
