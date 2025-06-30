@@ -168,8 +168,25 @@ std::shared_ptr<duckdb::PreparedStatement> DuckDBStatement::GetDuckDBStmt() cons
 
 arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
   ARROW_RETURN_NOT_OK(Execute());
-  auto result = FetchResult();
-  return result->get()->num_rows();
+  ARROW_ASSIGN_OR_RAISE(auto result_batch, FetchResult());
+
+  if (!result_batch) {
+    return 0;
+  }
+
+  // For DML statements, DuckDB returns a single BIGINT value with the number of
+  // affected rows. This is represented as a RecordBatch with one row and one
+  // column.
+  if (result_batch->num_rows() == 1 && result_batch->num_columns() == 1 &&
+      result_batch->column(0)->type_id() == arrow::Type::INT64) {
+    ARROW_ASSIGN_OR_RAISE(auto scalar, result_batch->column(0)->GetScalar(0));
+    if (scalar->is_valid) {
+      return std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value;
+    }
+  }
+
+  // Fallback to previous behavior for other cases.
+  return result_batch->num_rows();
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const {
