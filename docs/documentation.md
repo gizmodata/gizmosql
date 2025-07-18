@@ -42,8 +42,8 @@ It was forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) and has
 | Component     | Version  |
 |---------------|----------|
 | DuckDB        | v1.3.2   |
-| SQLite        | 3.50.1   |
-| Arrow Flight  | 20.0.0   |
+| SQLite        | 3.50.3   |
+| Arrow Flight  | 21.0.0   |
 | jwt-cpp       | v0.7.1   |
 
 ---
@@ -79,8 +79,8 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 | Component | Version |
 |-----------|---------|
 | DuckDB | v1.3.2  |
-| SQLite | 3.50.1  |
-| Apache Arrow (Flight SQL) | 20.0.0  |
+| SQLite | 3.50.3  |
+| Apache Arrow (Flight SQL) | 21.0.0  |
 | jwt-cpp | v0.7.1  |
 
 
@@ -381,7 +381,7 @@ $ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 20.0.0
+Apache Arrow version: 21.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.3.2
 Running Init SQL command: 
@@ -409,7 +409,7 @@ The above will produce output similar to the following:
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 20.0.0
+Apache Arrow version: 21.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
 Using database file: "/Users/philip/Documents/git/gizmosql/data/TPC-H-small.sqlite"

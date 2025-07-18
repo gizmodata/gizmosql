@@ -38,8 +38,8 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 | Component                  | Version |
 |---------------------------|---------|
 | DuckDB                    | v1.3.2  |
-| SQLite                   | 3.50.2 |
-| Apache Arrow (Flight SQL) | 20.0.0  |
+| SQLite                   | 3.50.3  |
+| Apache Arrow (Flight SQL) | 21.0.0  |
 | jwt-cpp                   | v0.7.1  |
 
 ## 📚 Documentation
