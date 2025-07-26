@@ -381,20 +381,26 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto dataset_schema, statement->GetSchema())
 
     std::shared_ptr<duckdb::PreparedStatement> stmt = statement->GetDuckDBStmt();
-    const id_t parameter_count = stmt->named_param_map.size();
     arrow::FieldVector parameter_fields;
-    parameter_fields.reserve(parameter_count);
+    id_t parameter_count = 0;
+    
+    if (stmt != nullptr) {
+      // Traditional prepared statement - extract parameter information
+      parameter_count = stmt->named_param_map.size();
+      parameter_fields.reserve(parameter_count);
 
-    duckdb::shared_ptr<duckdb::PreparedStatementData> parameter_data = stmt->data;
-    auto bind_parameter_map = parameter_data->value_map;
+      duckdb::shared_ptr<duckdb::PreparedStatementData> parameter_data = stmt->data;
+      auto bind_parameter_map = parameter_data->value_map;
 
-    for (id_t i = 0; i < parameter_count; i++) {
-      std::string parameter_idx_str = std::to_string(i + 1);
-      std::string parameter_name = std::string("parameter_") + parameter_idx_str;
-      auto parameter_duckdb_type = parameter_data->GetType(parameter_idx_str);
-      auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
-      parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
+      for (id_t i = 0; i < parameter_count; i++) {
+        std::string parameter_idx_str = std::to_string(i + 1);
+        std::string parameter_name = std::string("parameter_") + parameter_idx_str;
+        auto parameter_duckdb_type = parameter_data->GetType(parameter_idx_str);
+        auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
+        parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
+      }
     }
+    // For direct execution mode (stmt == nullptr), we have no parameters
 
     const std::shared_ptr<arrow::Schema> &parameter_schema =
         arrow::schema(parameter_fields);
