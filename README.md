@@ -119,8 +119,15 @@ with gizmosql.connect(uri="grpc+tls://localhost:31337",
                                  }
                       ) as conn:
   with conn.cursor() as cur:
+    # Insert data into nation table
+    insert_query = "INSERT INTO nation (n_nationkey, n_name, n_regionkey, n_comment) VALUES (99, 'EXAMPLE_NATION', 1, 'Sample nation for testing')"
+    cur.adbc_statement.set_sql_query(insert_query)
+    rows_affected = cur.adbc_statement.execute_update()
+    print(f"Inserted {rows_affected} row(s)")
+    
+    # Query the data
     cur.execute("SELECT n_nationkey, n_name FROM nation WHERE n_nationkey = ?",
-                parameters=[24]
+                parameters=[99]
                 )
     x = cur.fetch_arrow_table()
     print(x)
