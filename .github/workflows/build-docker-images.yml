@@ -45,6 +45,7 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
           pip install cmake --upgrade
+          docker buildx create --use --name mybuilder --driver docker-container
 
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
