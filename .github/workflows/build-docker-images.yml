@@ -5,7 +5,6 @@ on:
   push:
 
 env:
-  DOCKERHUB_IMAGE_NAME: gizmosql
   GITHUB_IMAGE_NAME: 851725450642.dkr.ecr.us-west-2.amazonaws.com/gizmosql
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -84,9 +83,6 @@ jobs:
           file: Dockerfile.ci
           push: true
           tags: |
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}
             ${{ env.GITHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}
           no-cache: true
           provenance: false
