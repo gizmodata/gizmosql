@@ -37,7 +37,6 @@ jobs:
             build-essential \
             ninja-build \
             automake \
-            cmake \
             gcc \
             git \
             libboost-all-dev \
@@ -45,6 +44,7 @@ jobs:
             libssl-dev
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
+          pip install cmake --upgrade
 
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
