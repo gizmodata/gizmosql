@@ -3,7 +3,7 @@ name = "python"
 version = "0.1.0"
 description = "GizmoSQL Python Client Demo"
 readme = "README_PYTHON.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "adbc-driver-flightsql>=1.7.0",
     "pyarrow>=21.0.0",
