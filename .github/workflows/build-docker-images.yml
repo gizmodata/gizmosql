@@ -44,7 +44,26 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
           pip install cmake --upgrade
+          # If running on arm64, start docker daemon
+          if [ "${{ matrix.platform }}" = "arm64" ]; then
+            sudo mkdir -p /sys/fs/cgroup/docker
+            nohup /usr/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://127.0.0.1:2375 > /dev/null 2>&1 &
+            timeout 30 sh -c "until docker info; do echo .; sleep 1; done"
+            docker --version
+          fi
+
           docker buildx create --use --name mybuilder --driver docker-container
+
+      - name: Configure AWS Credentials
+        id: creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-west-2
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: get caller identity2
+        run: |
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 851725450642.dkr.ecr.us-west-2.amazonaws.com
 
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
@@ -63,17 +82,6 @@ jobs:
           name: ${{ env.zip_file_name }}
           path: |
             ${{ env.zip_file_name }}
-
-      - name: Configure AWS Credentials
-        id: creds
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: us-west-2
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      - name: get caller identity2
-        run: |
-          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 851725450642.dkr.ecr.us-west-2.amazonaws.com
 
       - name: Build and push full Docker image
         uses: docker/build-push-action@v6
