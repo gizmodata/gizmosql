@@ -21,7 +21,7 @@ jobs:
             runner: codebuild-gizmosql-build-runner-${{ github.run_id }}-${{ github.run_attempt }}
           - platform: arm64
             os: linux
-            runner: codebuild-gizmosql-build-runner-${{ github.run_id }}-${{ github.run_attempt }}
+            runner: codebuild-gizmosql-build-runner-arm-${{ github.run_id }}-${{ github.run_attempt }}
     runs-on: ${{ matrix.runner }}
     env:
       zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
