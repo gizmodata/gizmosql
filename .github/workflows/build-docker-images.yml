@@ -16,9 +16,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - platform: amd64
-            os: linux
-            runner: codebuild-gizmosql-build-runner-${{ github.run_id }}-${{ github.run_attempt }}
+          # - platform: amd64
+          #   os: linux
+          #   runner: codebuild-gizmosql-build-runner-${{ github.run_id }}-${{ github.run_attempt }}
           - platform: arm64
             os: linux
             runner: codebuild-gizmosql-build-runner-arm-${{ github.run_id }}-${{ github.run_attempt }}
