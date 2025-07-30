@@ -739,6 +739,28 @@ class DuckDBFlightSqlServer::Impl {
     auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
     return ExecuteSql(connection, sql);
   }
+
+  // Utility function to execute a query and return string results from the first column
+  Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string &sql) {
+    auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
+    
+    if (result->HasError()) {
+      return Status::Invalid("SQL query failed: ", result->GetError());
+    }
+    
+    std::vector<std::string> string_results;
+    
+    // Extract string values from the first column of all rows
+    for (size_t row_idx = 0; row_idx < result->RowCount(); row_idx++) {
+      auto value = result->GetValue(0, row_idx);  // First column
+      if (!value.IsNull()) {
+        string_results.push_back(value.ToString());
+      }
+    }
+    
+    return string_results;
+  }
 };
 
 DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
@@ -767,7 +789,8 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   auto impl = std::make_shared<Impl>(db, print_queries);
   std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
 
-  for (const auto &id_to_result : GetSqlInfoResultMap()) {
+  // Use dynamic SQL info that queries DuckDB for keywords and functions
+  for (const auto &id_to_result : GetSqlInfoResultMap(result.get())) {
     result->RegisterSqlInfo(id_to_result.first, id_to_result.second);
   }
   return result;
@@ -777,6 +800,10 @@ DuckDBFlightSqlServer::~DuckDBFlightSqlServer() = default;
 
 Status DuckDBFlightSqlServer::ExecuteSql(const std::string &sql) const {
   return impl_->ExecuteSql(sql);
+}
+
+Result<std::vector<std::string>> DuckDBFlightSqlServer::ExecuteSqlAndGetStringVector(const std::string &sql) const {
+  return impl_->ExecuteSqlAndGetStringVector(sql);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoStatement(
