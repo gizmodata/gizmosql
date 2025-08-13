@@ -43,8 +43,11 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
       const std::string &path, const bool &read_only, const bool &print_queries);
 
   /// \brief Auxiliary method used to execute an arbitrary SQL statement on the underlying
-  ///        SQLite database.
+  ///        DuckDB database.
   arrow::Status ExecuteSql(const std::string &sql) const;
+
+  /// \brief Execute SQL query and return string results from first column
+  arrow::Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string &sql) const;
 
   arrow::Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoStatement(
       const flight::ServerCallContext &context,
