@@ -65,6 +65,7 @@ docker run --name gizmosql \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
+           --env LOG_FORMAT="json" \
            --pull missing \
            gizmodata/gizmosql:latest
 ```

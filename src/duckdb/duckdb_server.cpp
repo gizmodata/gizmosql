@@ -23,13 +23,16 @@
 #include <map>
 #include <random>
 #include <sstream>
-#include <iostream>
 #include <mutex>
+#include <chrono>
+#include <iomanip>
+#include <thread>
 
 #include <arrow/api.h>
 #include <arrow/flight/server.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/types.h>
+#include <arrow/util/logging.h>
 
 #include "duckdb_sql_info.h"
 #include "duckdb_statement.h"
@@ -47,6 +50,70 @@ using arrow::Status;
 namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
+
+// Helper function to get current timestamp in ISO8601 format
+std::string GetISO8601Timestamp() {
+  auto now = std::chrono::system_clock::now();
+  auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+  auto now_s = now_ns / 1000000000;
+  auto now_ns_part = now_ns % 1000000000;
+  
+  std::time_t time_t_now = std::chrono::system_clock::to_time_t(now);
+  std::tm* tm_now = std::gmtime(&time_t_now);
+  
+  std::ostringstream oss;
+  oss << std::put_time(tm_now, "%Y-%m-%dT%H:%M:%S");
+  oss << "." << std::setfill('0') << std::setw(9) << now_ns_part << "Z";
+  return oss.str();
+}
+
+// Helper function to get thread name
+std::string GetThreadName() {
+  std::ostringstream oss;
+  oss << "thread-" << std::this_thread::get_id();
+  return oss.str();
+}
+
+// Helper function for consistent logging with level checking
+void LogMessage(const std::string &level, const std::string &message, 
+                const std::string &log_format) {
+  // Check if the log level is enabled using Arrow's log level
+  arrow::util::ArrowLogLevel arrow_level;
+  if (level == "ERROR") {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_ERROR;
+  } else if (level == "WARNING") {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_WARNING;
+  } else if (level == "INFO") {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_INFO;
+  } else {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_DEBUG;
+  }
+  
+  // Only log if the level is enabled
+  if (!arrow::util::ArrowLog::IsLevelEnabled(arrow_level)) {
+    return;
+  }
+  
+  if (log_format == "json") {
+    std::cout << R"({)"
+              << R"("@timestamp":")" << GetISO8601Timestamp() << R"(",)"
+              << R"("@version":"1",)"
+              << R"("message":")" << message << R"(",)"
+              << R"("logger_name":"duckdb_server",)"
+              << R"("thread_name":")" << GetThreadName() << R"(",)"
+              << R"("level":")" << level << R"(")"
+              << R"(})" << std::endl;
+  } else {
+    if (level == "ERROR") {
+      ARROW_LOG(ERROR) << message;
+    } else if (level == "WARNING") {
+      ARROW_LOG(WARNING) << message;
+    } else {
+      ARROW_LOG(INFO) << message;
+    }
+  }
+}
+
 namespace {
 
 std::string PrepareQueryForGetTables(const sql::GetTables &command) {
@@ -168,6 +235,7 @@ class DuckDBFlightSqlServer::Impl {
  private:
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   bool print_queries_;
+  std::string log_format_;
   std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
   std::unordered_map<std::string, std::shared_ptr<duckdb::Connection>> open_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -272,8 +340,10 @@ class DuckDBFlightSqlServer::Impl {
   }
 
  public:
-  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool &print_queries)
-      : db_instance_(std::move(db_instance)), print_queries_(print_queries) {}
+  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool &print_queries,
+                const std::string &log_format)
+      : db_instance_(std::move(db_instance)), print_queries_(print_queries),
+        log_format_(log_format) {}
 
   ~Impl() = default;
 
@@ -318,6 +388,11 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto pair, DecodeTransactionQuery(command.statement_handle))
     const std::string &sql = pair.first;
     const std::string transaction_id = pair.second;
+    
+    if (print_queries_) {
+      LogMessage("INFO", "Client executing SQL statement: " + sql + " [component=duckdb_server]", log_format_);
+    }
+    
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
     ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, sql))
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
@@ -410,9 +485,7 @@ class DuckDBFlightSqlServer::Impl {
                                                     .prepared_statement_handle = handle};
 
     if (print_queries_) {
-      std::cout << "Client running SQL command: \n"
-                << request.query << ";\n"
-                << std::endl;
+      LogMessage("INFO", "Client running SQL command: " + request.query + " [component=duckdb_server]", log_format_);
     }
 
     return result;
@@ -773,8 +846,9 @@ DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
-    const std::string &path, const bool &read_only, const bool &print_queries) {
-  std::cout << "DuckDB version: " << duckdb_library_version() << std::endl;
+    const std::string &path, const bool &read_only, const bool &print_queries,
+    const std::string &log_format) {
+  LogMessage("INFO", "DuckDB version: " + std::string(duckdb_library_version()) + " [component=duckdb_server]", log_format);
 
   bool in_memory = path == ":memory:";
   char *db_location;
@@ -792,7 +866,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 
-  auto impl = std::make_shared<Impl>(db, print_queries);
+  auto impl = std::make_shared<Impl>(db, print_queries, log_format);
   std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions

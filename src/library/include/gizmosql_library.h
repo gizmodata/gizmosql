@@ -65,5 +65,6 @@ int RunFlightSQLServer(
     std::filesystem::path mtls_ca_cert_path = std::filesystem::path(),
     std::string init_sql_commands = "",
     std::filesystem::path init_sql_commands_file = std::filesystem::path(),
-    const bool &print_queries = false, const bool &read_only = false);
+    const bool &print_queries = false, const std::string &log_format = "text",
+    const bool &read_only = false);
 }

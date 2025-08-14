@@ -61,6 +61,8 @@ int main(int argc, char **argv) {
             ("mtls-ca-cert-filename,M", po::value<std::string>()->default_value(""),
              "Specify an optional mTLS CA certificate path used to verify clients.  The certificate MUST be in PEM format.")
             ("print-queries,Q", po::bool_switch()->default_value(false), "Print queries run by clients to stdout")
+            ("log-format,L", po::value<std::string>()->default_value("text"),
+             "Specify the log format. Allowed options: text (default), json")
             ("readonly,O", po::bool_switch()->default_value(false), "Open the database in read-only mode");
   // clang-format on
 
@@ -142,10 +144,16 @@ int main(int argc, char **argv) {
 
   bool print_queries = vm["print-queries"].as<bool>();
 
+  std::string log_format = vm["log-format"].as<std::string>();
+  if (log_format != "text" && log_format != "json") {
+    std::cout << "Invalid log format: " << log_format << ". Must be 'text' or 'json'." << std::endl;
+    return 1;
+  }
+
   bool read_only = vm["readonly"].as<bool>();
 
   return RunFlightSQLServer(backend, database_filename, hostname, port, username,
                             password, secret_key, tls_cert_path, tls_key_path,
                             mtls_ca_cert_path, init_sql_commands, init_sql_commands_file,
-                            print_queries, read_only);
+                            print_queries, log_format, read_only);
 }
