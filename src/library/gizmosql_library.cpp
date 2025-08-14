@@ -47,7 +47,20 @@ void LogMessage(const std::string &level, const std::string &message,
                 const std::string &log_format, 
                 const std::map<std::string, std::string> &extra_fields = {}) {
   if (log_format == "json") {
-    std::cout << R"({"level":")" << level << R"(","message":")" << message << R"(")";
+    // For Datadog compatibility, consolidate extra fields into the message
+    std::string full_message = message;
+    if (!extra_fields.empty()) {
+      full_message += " [";
+      bool first = true;
+      for (const auto& [key, value] : extra_fields) {
+        if (!first) full_message += ", ";
+        full_message += key + "=" + value;
+        first = false;
+      }
+      full_message += "]";
+    }
+    std::cout << R"({"level":")" << level << R"(","message":")" << full_message << R"(")";
+    // Still include structured fields for better parsing if needed
     for (const auto& [key, value] : extra_fields) {
       std::cout << R"(,")" << key << R"(":")" << value << R"(")";
     }
@@ -72,7 +85,7 @@ void LogMessage(const std::string &level, const std::string &message,
         std::string init_sql_command = *iter;                                      \
         if (init_sql_command.empty()) continue;                                    \
         if (log_format == "json") {                                                \
-          std::cout << R"({"level":"INFO","message":"Running Init SQL command","command":")" \
+          std::cout << R"({"level":"INFO","message":"Running Init SQL command: )" \
                     << init_sql_command << R"("})" << std::endl;                   \
         } else {                                                                    \
           std::cout << "Running Init SQL command: " << std::endl                   \
@@ -97,7 +110,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                             : flight::Location::ForGrpcTcp(hostname, port));
 
   if (log_format == "json") {
-    std::cout << R"({"level":"INFO","message":"Apache Arrow version","version":")" 
+    std::cout << R"({"level":"INFO","message":"Apache Arrow version: )" 
               << ARROW_VERSION_STRING << R"("})" << std::endl;
   } else {
     std::cout << "----------------------------------------------" << std::endl;
@@ -131,7 +144,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
   if (!mtls_ca_cert_path.empty()) {
     if (log_format == "json") {
-      std::cout << R"({"level":"INFO","message":"Using mTLS CA certificate","path":")" 
+      std::cout << R"({"level":"INFO","message":"Using mTLS CA certificate: )" 
                 << mtls_ca_cert_path.string() << R"("})" << std::endl;
     } else {
       std::cout << "Using mTLS CA certificate: " << mtls_ca_cert_path << std::endl;
@@ -165,10 +178,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   }
 
   if (log_format == "json") {
-    std::cout << R"({"level":"INFO","message":"Using database file","database":")"
+    std::cout << R"({"level":"INFO","message":"Using database file: )"
               << database_filename.string() << R"("})" << std::endl;
-    std::cout << R"({"level":"INFO","message":"Print queries option","enabled":)"
-              << (print_queries ? "true" : "false") << "}" << std::endl;
+    std::cout << R"({"level":"INFO","message":"Print queries option: )"
+              << (print_queries ? "enabled" : "disabled") << R"("})" << std::endl;
   } else {
     std::cout << "Using database file: " << database_filename << std::endl;
     std::cout << "Print Queries option is set to: " << std::boolalpha << print_queries
@@ -182,9 +195,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
 
     if (log_format == "json") {
-      std::cout << R"({"level":"INFO","message":"GizmoSQL server starting","version":")" 
-                << GIZMOSQL_SERVER_VERSION << R"(","engine":")" << db_type 
-                << R"(","location":")" << server->location().ToString() << R"("})" << std::endl;
+      std::cout << R"({"level":"INFO","message":"GizmoSQL server starting [version=)" 
+                << GIZMOSQL_SERVER_VERSION << R"(, engine=)" << db_type 
+                << R"(, location=)" << server->location().ToString() << R"(]"})" << std::endl;
     } else {
       std::cout << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
                 << " - with engine: " << db_type << " - will listen on "
@@ -348,9 +361,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   std::tm *localTime = std::localtime(&currentTime);
 
   if (log_format == "json") {
-    std::cout << R"({"level":"INFO","message":"GizmoSQL starting","copyright_year":)" 
+    std::cout << R"({"level":"INFO","message":"GizmoSQL starting [copyright_year=)" 
               << (1900 + localTime->tm_year) 
-              << R"(,"license":"Apache License 2.0"})" << std::endl;
+              << R"(, license=Apache License 2.0]"})" << std::endl;
   } else {
     std::cout << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
               << " GizmoData LLC" << std::endl
@@ -376,7 +389,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   } else {
     // Handle the error
     if (log_format == "json") {
-      std::cout << R"({"level":"ERROR","message":"Failed to start GizmoSQL server","error":")" 
+      std::cout << R"({"level":"ERROR","message":"Failed to start GizmoSQL server: )" 
                 << create_server_result.status().ToString() << R"("})" << std::endl;
     } else {
       std::cerr << "Error: " << create_server_result.status().ToString() << std::endl;

@@ -10,6 +10,7 @@ L_DATABASE_FILENAME=${2:-${DATABASE_FILENAME:-"data/TPC-H-small.duckdb"}}
 L_TLS_ENABLED=${3:-${TLS_ENABLED:-"1"}}
 L_PRINT_QUERIES=${4:-${PRINT_QUERIES:-"1"}}
 L_READONLY=${5:-${READONLY:-"0"}}
+L_LOG_FORMAT=${6:-${LOG_FORMAT:-"json"}}
 
 TLS_ARG=""
 if [ "${L_TLS_ENABLED}" == "1" ]
@@ -38,4 +39,11 @@ then
   READONLY_FLAG="--readonly"
 fi
 
-gizmosql_server --backend="${L_DATABASE_BACKEND}" --database-filename="${L_DATABASE_FILENAME}" ${TLS_ARG} ${PRINT_QUERIES_FLAG} ${READONLY_FLAG}
+# Setup the log format option
+LOG_FORMAT_FLAG=""
+if [ "${L_LOG_FORMAT}" == "json" ]
+then
+  LOG_FORMAT_FLAG="--log-format=json"
+fi
+
+${SCRIPT_DIR}/../build/gizmosql_server --backend="${L_DATABASE_BACKEND}" --database-filename="${L_DATABASE_FILENAME}" ${TLS_ARG} ${PRINT_QUERIES_FLAG} ${READONLY_FLAG} ${LOG_FORMAT_FLAG}

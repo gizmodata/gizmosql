@@ -324,8 +324,8 @@ class DuckDBFlightSqlServer::Impl {
     
     if (print_queries_) {
       if (log_format_ == "json") {
-        std::cout << R"({"level":"INFO","message":"Client executing SQL statement","query":")"
-                  << sql << R"(","component":"duckdb_server"})" << std::endl;
+        std::cout << R"({"level":"INFO","message":"Client executing SQL statement: )"
+                  << sql << R"( [component=duckdb_server]"})" << std::endl;
       } else {
         ARROW_LOG(INFO) << "Client executing SQL statement: \n"
                         << sql << ";";
@@ -425,8 +425,8 @@ class DuckDBFlightSqlServer::Impl {
 
     if (print_queries_) {
       if (log_format_ == "json") {
-        std::cout << R"({"level":"INFO","message":"Client running SQL command","query":")"
-                  << request.query << R"(","component":"duckdb_server"})" << std::endl;
+        std::cout << R"({"level":"INFO","message":"Client running SQL command: )"
+                  << request.query << R"( [component=duckdb_server]"})" << std::endl;
       } else {
         ARROW_LOG(INFO) << "Client running SQL command: \n"
                         << request.query << ";";
@@ -794,10 +794,10 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string &path, const bool &read_only, const bool &print_queries,
     const std::string &log_format) {
   if (log_format == "json") {
-    // JSON format: {"level":"INFO","message":"DuckDB version: v1.3.3","component":"duckdb"}
+    // JSON format: {"level":"INFO","message":"DuckDB version: v1.3.3 [component=duckdb_server]"}
     std::cout << R"({"level":"INFO","message":"DuckDB version: )" 
               << duckdb_library_version() 
-              << R"(","component":"duckdb_server"})" << std::endl;
+              << R"( [component=duckdb_server]"})" << std::endl;
   } else {
     ARROW_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
   }

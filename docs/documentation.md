@@ -102,6 +102,7 @@ docker run --name gizmosql \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
+           --env LOG_FORMAT="json" \
            --pull missing \
            gizmodata/gizmosql:latest
 ```
@@ -168,6 +169,7 @@ docker run --name gizmosql \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
+           --env LOG_FORMAT="json" \
            --env INIT_SQL_COMMANDS="SET threads = 1; SET memory_limit = '1GB';" \
            --pull missing \
            gizmodata/gizmosql:latest
@@ -462,6 +464,7 @@ docker run --name gizmosql-slim \
            --env TLS_ENABLED="0" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
+           --env LOG_FORMAT="json" \
            --pull missing \
            gizmodata/gizmosql:latest-slim
 ```
