@@ -24,6 +24,9 @@
 #include <random>
 #include <sstream>
 #include <mutex>
+#include <chrono>
+#include <iomanip>
+#include <thread>
 
 #include <arrow/api.h>
 #include <arrow/flight/server.h>
@@ -47,6 +50,70 @@ using arrow::Status;
 namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
+
+// Helper function to get current timestamp in ISO8601 format
+std::string GetISO8601Timestamp() {
+  auto now = std::chrono::system_clock::now();
+  auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+  auto now_s = now_ns / 1000000000;
+  auto now_ns_part = now_ns % 1000000000;
+  
+  std::time_t time_t_now = std::chrono::system_clock::to_time_t(now);
+  std::tm* tm_now = std::gmtime(&time_t_now);
+  
+  std::ostringstream oss;
+  oss << std::put_time(tm_now, "%Y-%m-%dT%H:%M:%S");
+  oss << "." << std::setfill('0') << std::setw(9) << now_ns_part << "Z";
+  return oss.str();
+}
+
+// Helper function to get thread name
+std::string GetThreadName() {
+  std::ostringstream oss;
+  oss << "thread-" << std::this_thread::get_id();
+  return oss.str();
+}
+
+// Helper function for consistent logging with level checking
+void LogMessage(const std::string &level, const std::string &message, 
+                const std::string &log_format) {
+  // Check if the log level is enabled using Arrow's log level
+  arrow::util::ArrowLogLevel arrow_level;
+  if (level == "ERROR") {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_ERROR;
+  } else if (level == "WARNING") {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_WARNING;
+  } else if (level == "INFO") {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_INFO;
+  } else {
+    arrow_level = arrow::util::ArrowLogLevel::ARROW_DEBUG;
+  }
+  
+  // Only log if the level is enabled
+  if (!arrow::util::ArrowLog::IsLevelEnabled(arrow_level)) {
+    return;
+  }
+  
+  if (log_format == "json") {
+    std::cout << R"({)"
+              << R"("@timestamp":")" << GetISO8601Timestamp() << R"(",)"
+              << R"("@version":"1",)"
+              << R"("message":")" << message << R"(",)"
+              << R"("logger_name":"duckdb_server",)"
+              << R"("thread_name":")" << GetThreadName() << R"(",)"
+              << R"("level":")" << level << R"(")"
+              << R"(})" << std::endl;
+  } else {
+    if (level == "ERROR") {
+      ARROW_LOG(ERROR) << message;
+    } else if (level == "WARNING") {
+      ARROW_LOG(WARNING) << message;
+    } else {
+      ARROW_LOG(INFO) << message;
+    }
+  }
+}
+
 namespace {
 
 std::string PrepareQueryForGetTables(const sql::GetTables &command) {
@@ -323,13 +390,7 @@ class DuckDBFlightSqlServer::Impl {
     const std::string transaction_id = pair.second;
     
     if (print_queries_) {
-      if (log_format_ == "json") {
-        std::cout << R"({"level":"INFO","message":"Client executing SQL statement: )"
-                  << sql << R"( [component=duckdb_server]"})" << std::endl;
-      } else {
-        ARROW_LOG(INFO) << "Client executing SQL statement: \n"
-                        << sql << ";";
-      }
+      LogMessage("INFO", "Client executing SQL statement: " + sql + " [component=duckdb_server]", log_format_);
     }
     
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
@@ -424,13 +485,7 @@ class DuckDBFlightSqlServer::Impl {
                                                     .prepared_statement_handle = handle};
 
     if (print_queries_) {
-      if (log_format_ == "json") {
-        std::cout << R"({"level":"INFO","message":"Client running SQL command: )"
-                  << request.query << R"( [component=duckdb_server]"})" << std::endl;
-      } else {
-        ARROW_LOG(INFO) << "Client running SQL command: \n"
-                        << request.query << ";";
-      }
+      LogMessage("INFO", "Client running SQL command: " + request.query + " [component=duckdb_server]", log_format_);
     }
 
     return result;
@@ -793,14 +848,7 @@ DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string &path, const bool &read_only, const bool &print_queries,
     const std::string &log_format) {
-  if (log_format == "json") {
-    // JSON format: {"level":"INFO","message":"DuckDB version: v1.3.3 [component=duckdb_server]"}
-    std::cout << R"({"level":"INFO","message":"DuckDB version: )" 
-              << duckdb_library_version() 
-              << R"( [component=duckdb_server]"})" << std::endl;
-  } else {
-    ARROW_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
-  }
+  LogMessage("INFO", "DuckDB version: " + std::string(duckdb_library_version()) + " [component=duckdb_server]", log_format);
 
   bool in_memory = path == ":memory:";
   char *db_location;

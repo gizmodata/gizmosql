@@ -46,4 +46,16 @@ then
   LOG_FORMAT_FLAG="--log-format=json"
 fi
 
-${SCRIPT_DIR}/../build/gizmosql_server --backend="${L_DATABASE_BACKEND}" --database-filename="${L_DATABASE_FILENAME}" ${TLS_ARG} ${PRINT_QUERIES_FLAG} ${READONLY_FLAG} ${LOG_FORMAT_FLAG}
+# Try to find gizmosql_server in multiple locations
+if [ -x "${SCRIPT_DIR}/../build/gizmosql_server" ]; then
+  GIZMOSQL_SERVER="${SCRIPT_DIR}/../build/gizmosql_server"
+elif [ -x "/usr/local/bin/gizmosql_server" ]; then
+  GIZMOSQL_SERVER="/usr/local/bin/gizmosql_server"
+elif command -v gizmosql_server >/dev/null 2>&1; then
+  GIZMOSQL_SERVER="gizmosql_server"
+else
+  echo "Error: gizmosql_server not found in build directory, /usr/local/bin, or PATH"
+  exit 1
+fi
+
+${GIZMOSQL_SERVER} --backend="${L_DATABASE_BACKEND}" --database-filename="${L_DATABASE_FILENAME}" ${TLS_ARG} ${PRINT_QUERIES_FLAG} ${READONLY_FLAG} ${LOG_FORMAT_FLAG}
