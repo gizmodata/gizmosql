@@ -23,13 +23,13 @@
 #include <map>
 #include <random>
 #include <sstream>
-#include <iostream>
 #include <mutex>
 
 #include <arrow/api.h>
 #include <arrow/flight/server.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/types.h>
+#include <arrow/util/logging.h>
 
 #include "duckdb_sql_info.h"
 #include "duckdb_statement.h"
@@ -168,6 +168,7 @@ class DuckDBFlightSqlServer::Impl {
  private:
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   bool print_queries_;
+  std::string log_format_;
   std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
   std::unordered_map<std::string, std::shared_ptr<duckdb::Connection>> open_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -272,8 +273,10 @@ class DuckDBFlightSqlServer::Impl {
   }
 
  public:
-  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool &print_queries)
-      : db_instance_(std::move(db_instance)), print_queries_(print_queries) {}
+  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool &print_queries,
+                const std::string &log_format)
+      : db_instance_(std::move(db_instance)), print_queries_(print_queries),
+        log_format_(log_format) {}
 
   ~Impl() = default;
 
@@ -318,6 +321,17 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto pair, DecodeTransactionQuery(command.statement_handle))
     const std::string &sql = pair.first;
     const std::string transaction_id = pair.second;
+    
+    if (print_queries_) {
+      if (log_format_ == "json") {
+        std::cout << R"({"level":"INFO","message":"Client executing SQL statement","query":")"
+                  << sql << R"(","component":"duckdb_server"})" << std::endl;
+      } else {
+        ARROW_LOG(INFO) << "Client executing SQL statement: \n"
+                        << sql << ";";
+      }
+    }
+    
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
     ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, sql))
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
@@ -410,9 +424,13 @@ class DuckDBFlightSqlServer::Impl {
                                                     .prepared_statement_handle = handle};
 
     if (print_queries_) {
-      std::cout << "Client running SQL command: \n"
-                << request.query << ";\n"
-                << std::endl;
+      if (log_format_ == "json") {
+        std::cout << R"({"level":"INFO","message":"Client running SQL command","query":")"
+                  << request.query << R"(","component":"duckdb_server"})" << std::endl;
+      } else {
+        ARROW_LOG(INFO) << "Client running SQL command: \n"
+                        << request.query << ";";
+      }
     }
 
     return result;
@@ -773,8 +791,16 @@ DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
-    const std::string &path, const bool &read_only, const bool &print_queries) {
-  std::cout << "DuckDB version: " << duckdb_library_version() << std::endl;
+    const std::string &path, const bool &read_only, const bool &print_queries,
+    const std::string &log_format) {
+  if (log_format == "json") {
+    // JSON format: {"level":"INFO","message":"DuckDB version: v1.3.3","component":"duckdb"}
+    std::cout << R"({"level":"INFO","message":"DuckDB version: )" 
+              << duckdb_library_version() 
+              << R"(","component":"duckdb_server"})" << std::endl;
+  } else {
+    ARROW_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
+  }
 
   bool in_memory = path == ":memory:";
   char *db_location;
@@ -792,7 +818,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 
-  auto impl = std::make_shared<Impl>(db, print_queries);
+  auto impl = std::make_shared<Impl>(db, print_queries, log_format);
   std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions

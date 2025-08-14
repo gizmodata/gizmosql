@@ -42,7 +42,26 @@ namespace gizmosql {
 
 const int port = 31337;
 
-#define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
+// Helper function for consistent logging
+void LogMessage(const std::string &level, const std::string &message, 
+                const std::string &log_format, 
+                const std::map<std::string, std::string> &extra_fields = {}) {
+  if (log_format == "json") {
+    std::cout << R"({"level":")" << level << R"(","message":")" << message << R"(")";
+    for (const auto& [key, value] : extra_fields) {
+      std::cout << R"(,")" << key << R"(":")" << value << R"(")";
+    }
+    std::cout << "}" << std::endl;
+  } else {
+    if (level == "ERROR") {
+      std::cerr << message << std::endl;
+    } else {
+      std::cout << message << std::endl;
+    }
+  }
+}
+
+#define RUN_INIT_COMMANDS(serverType, init_sql_commands, log_format)               \
   do {                                                                             \
     if (init_sql_commands != "") {                                                 \
       std::regex regex_pattern(";(?=(?:[^']*'[^']*')*[^']*$)");                    \
@@ -52,8 +71,13 @@ const int port = 31337;
       while (iter != end) {                                                        \
         std::string init_sql_command = *iter;                                      \
         if (init_sql_command.empty()) continue;                                    \
-        std::cout << "Running Init SQL command: " << std::endl                     \
-                  << init_sql_command << ";" << std::endl;                         \
+        if (log_format == "json") {                                                \
+          std::cout << R"({"level":"INFO","message":"Running Init SQL command","command":")" \
+                    << init_sql_command << R"("})" << std::endl;                   \
+        } else {                                                                    \
+          std::cout << "Running Init SQL command: " << std::endl                   \
+                    << init_sql_command << ";" << std::endl;                       \
+        }                                                                           \
         ARROW_RETURN_NOT_OK(serverType->ExecuteSql(init_sql_command));             \
         ++iter;                                                                    \
       }                                                                            \
@@ -66,14 +90,19 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string &password, const std::string &secret_key,
     const fs::path &tls_cert_path, const fs::path &tls_key_path,
     const fs::path &mtls_ca_cert_path, const std::string &init_sql_commands,
-    const bool &read_only, const bool &print_queries) {
+    const bool &read_only, const bool &print_queries, const std::string &log_format) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
                             : flight::Location::ForGrpcTcp(hostname, port));
 
-  std::cout << "----------------------------------------------" << std::endl;
-  std::cout << "Apache Arrow version: " << ARROW_VERSION_STRING << std::endl;
+  if (log_format == "json") {
+    std::cout << R"({"level":"INFO","message":"Apache Arrow version","version":")" 
+              << ARROW_VERSION_STRING << R"("})" << std::endl;
+  } else {
+    std::cout << "----------------------------------------------" << std::endl;
+    std::cout << "Apache Arrow version: " << ARROW_VERSION_STRING << std::endl;
+  }
 
   flight::FlightServerOptions options(location);
 
@@ -81,8 +110,13 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerTlsCertificates(
         tls_cert_path, tls_key_path, &options.tls_certificates));
   } else {
-    std::cout << "WARNING - TLS is disabled for the GizmoSQL server - this is NOT secure."
-              << std::endl;
+    if (log_format == "json") {
+      std::cout << R"({"level":"WARNING","message":"TLS is disabled for the GizmoSQL server - this is NOT secure"})" 
+                << std::endl;
+    } else {
+      std::cout << "WARNING - TLS is disabled for the GizmoSQL server - this is NOT secure."
+                << std::endl;
+    }
   }
 
   // Setup authentication middleware (using the same TLS certificate keypair)
@@ -96,7 +130,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   options.middleware.push_back({"bearer-auth-server", bearer_middleware});
 
   if (!mtls_ca_cert_path.empty()) {
-    std::cout << "Using mTLS CA certificate: " << mtls_ca_cert_path << std::endl;
+    if (log_format == "json") {
+      std::cout << R"({"level":"INFO","message":"Using mTLS CA certificate","path":")" 
+                << mtls_ca_cert_path.string() << R"("})" << std::endl;
+    } else {
+      std::cout << "Using mTLS CA certificate: " << mtls_ca_cert_path << std::endl;
+    }
     ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerMtlsCACertificate(
         mtls_ca_cert_path, &options.root_certificates));
     options.verify_client = true;
@@ -110,25 +149,31 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     std::shared_ptr<gizmosql::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(sqlite_server, gizmosql::sqlite::SQLiteFlightSqlServer::Create(
                                              database_filename, read_only));
-    RUN_INIT_COMMANDS(sqlite_server, init_sql_commands);
+    RUN_INIT_COMMANDS(sqlite_server, init_sql_commands, log_format);
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
     db_type = "DuckDB";
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
-                                             database_filename, read_only, print_queries))
+                                             database_filename, read_only, print_queries, log_format))
     // Run additional commands (first) for the DuckDB back-end...
     auto duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;" +
         init_sql_commands;
-    RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands);
+    RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands, log_format);
     server = duckdb_server;
   }
 
-  std::cout << "Using database file: " << database_filename << std::endl;
-
-  std::cout << "Print Queries option is set to: " << std::boolalpha << print_queries
-            << std::endl;
+  if (log_format == "json") {
+    std::cout << R"({"level":"INFO","message":"Using database file","database":")"
+              << database_filename.string() << R"("})" << std::endl;
+    std::cout << R"({"level":"INFO","message":"Print queries option","enabled":)"
+              << (print_queries ? "true" : "false") << "}" << std::endl;
+  } else {
+    std::cout << "Using database file: " << database_filename << std::endl;
+    std::cout << "Print Queries option is set to: " << std::boolalpha << print_queries
+              << std::endl;
+  }
 
   if (server != nullptr) {
     ARROW_CHECK_OK(server->Init(options));
@@ -136,9 +181,15 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Exit with a clean error code (0) on SIGTERM or SIGINT
     ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
 
-    std::cout << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
-              << " - with engine: " << db_type << " - will listen on "
-              << server->location().ToString() << std::endl;
+    if (log_format == "json") {
+      std::cout << R"({"level":"INFO","message":"GizmoSQL server starting","version":")" 
+                << GIZMOSQL_SERVER_VERSION << R"(","engine":")" << db_type 
+                << R"(","location":")" << server->location().ToString() << R"("})" << std::endl;
+    } else {
+      std::cout << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
+                << " - with engine: " << db_type << " - will listen on "
+                << server->location().ToString() << std::endl;
+    }
 
     return server;
   } else {
@@ -161,13 +212,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const int &port, std::string username, std::string password, std::string secret_key,
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
-    const bool &print_queries, const bool &read_only) {
+    const bool &print_queries, const std::string &log_format, const bool &read_only) {
 
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
-    std::cout << "WARNING - The database filename was not provided, opening an in-memory "
-                 "database..."
-              << std::endl;
+    if (log_format == "json") {
+      std::cout << R"({"level":"WARNING","message":"The database filename was not provided, opening an in-memory database"})" 
+                << std::endl;
+    } else {
+      std::cout << "WARNING - The database filename was not provided, opening an in-memory "
+                   "database..."
+                << std::endl;
+    }
     database_filename = ":memory:";
   } else if (database_filename.u8string().find(':') == std::string::npos) {
     // DuckDB supports '<extension_name>:...' syntax, for example 'ducklake:/path/to/lake.db'
@@ -255,15 +311,20 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   }
 
   if (read_only) {
-    std::cout << "WARNING - Running in Read-Only mode - no changes will be persisted to the "
-                 "database."
-              << std::endl;
+    if (log_format == "json") {
+      std::cout << R"({"level":"WARNING","message":"Running in Read-Only mode - no changes will be persisted to the database"})" 
+                << std::endl;
+    } else {
+      std::cout << "WARNING - Running in Read-Only mode - no changes will be persisted to the "
+                   "database."
+                << std::endl;
+    }
   }
 
   return FlightSQLServerBuilder(backend, database_filename, hostname, port, username,
                                 password, secret_key, tls_cert_path, tls_key_path,
                                 mtls_ca_cert_path, init_sql_commands, read_only,
-                                print_queries);
+                                print_queries, log_format);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -281,30 +342,45 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        fs::path tls_cert_path, fs::path tls_key_path,
                        fs::path mtls_ca_cert_path, std::string init_sql_commands,
                        fs::path init_sql_commands_file, const bool &print_queries,
-                       const bool &read_only) {
+                       const std::string &log_format, const bool &read_only) {
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
   std::tm *localTime = std::localtime(&currentTime);
 
-  std::cout << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
-            << " GizmoData LLC" << std::endl
-            << " Licensed under the Apache License, Version 2.0" << std::endl
-            << " https://www.apache.org/licenses/LICENSE-2.0" << std::endl;
-  std::cout << "----------------------------------------------" << std::endl;
+  if (log_format == "json") {
+    std::cout << R"({"level":"INFO","message":"GizmoSQL starting","copyright_year":)" 
+              << (1900 + localTime->tm_year) 
+              << R"(,"license":"Apache License 2.0"})" << std::endl;
+  } else {
+    std::cout << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
+              << " GizmoData LLC" << std::endl
+              << " Licensed under the Apache License, Version 2.0" << std::endl
+              << " https://www.apache.org/licenses/LICENSE-2.0" << std::endl;
+    std::cout << "----------------------------------------------" << std::endl;
+  }
 
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
-      init_sql_commands_file, print_queries, read_only);
+      init_sql_commands_file, print_queries, log_format, read_only);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
-    std::cout << "GizmoSQL server - started" << std::endl;
+    if (log_format == "json") {
+      std::cout << R"({"level":"INFO","message":"GizmoSQL server started"})" << std::endl;
+    } else {
+      std::cout << "GizmoSQL server - started" << std::endl;
+    }
     ARROW_CHECK_OK(server_ptr->Serve());
     return EXIT_SUCCESS;
   } else {
     // Handle the error
-    std::cerr << "Error: " << create_server_result.status().ToString() << std::endl;
+    if (log_format == "json") {
+      std::cout << R"({"level":"ERROR","message":"Failed to start GizmoSQL server","error":")" 
+                << create_server_result.status().ToString() << R"("})" << std::endl;
+    } else {
+      std::cerr << "Error: " << create_server_result.status().ToString() << std::endl;
+    }
     return EXIT_FAILURE;
   }
 }
