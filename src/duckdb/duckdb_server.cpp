@@ -711,6 +711,69 @@ class DuckDBFlightSqlServer::Impl {
     return status;
   }
 
+  Result<flight::CancelFlightInfoResult> CancelFlightInfo(
+      const flight::ServerCallContext &context,
+      const flight::CancelFlightInfoRequest &request) {
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
+    connection->Interrupt();
+    return flight::CancelFlightInfoResult(flight::CancelStatus::kCancelled);
+  }
+
+  Result<flight::sql::CancelResult> CancelQuery(
+      const flight::ServerCallContext &context,
+      const flight::sql::ActionCancelQueryRequest &request) {
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
+    connection->Interrupt();
+    return flight::sql::CancelResult(flight::sql::CancelResult::kCancelled);
+  }
+
+  Result<flight::SetSessionOptionsResult> SetSessionOptions(
+      const flight::ServerCallContext &context,
+      const flight::SetSessionOptionsRequest &request) {
+    flight::SetSessionOptionsResult res;
+
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
+    for (const auto &[name, value] : request.session_options) {
+      if (name == "catalog" || name == "schema") {
+        ARROW_RETURN_NOT_OK(
+            ExecuteSql(connection, "USE " + std::get<std::string>(value)));
+      } else {
+        res.errors.emplace(name, flight::SetSessionOptionsResult::Error{
+                                     flight::SetSessionOptionErrorValue::kInvalidName});
+      }
+    }
+
+    return res;
+  }
+
+  Result<flight::GetSessionOptionsResult> GetSessionOptions(
+      const flight::ServerCallContext &context,
+      const flight::GetSessionOptionsRequest &request) {
+    flight::GetSessionOptionsResult res;
+
+    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
+
+    auto catalog_result =
+        ExecuteSqlAndGetStringVector(connection, "SELECT current_catalog()");
+    if (catalog_result.ok()) {
+      auto current_catalog = catalog_result.ValueOrDie().front();
+      res.session_options.emplace("catalog", current_catalog);
+    } else {
+      return Status::Invalid("Could not get current catalog");
+    }
+
+    auto schema_result =
+        ExecuteSqlAndGetStringVector(connection, "SELECT current_schema()");
+    if (schema_result.ok()) {
+      auto current_schema = schema_result.ValueOrDie().front();
+      res.session_options.emplace("schema", current_schema);
+    } else {
+      return Status::Invalid("Could not get current schema");
+    }
+
+    return res;
+  }
+
   Result<flight::CloseSessionResult> CloseSession(
       const flight::ServerCallContext &context,
       const flight::CloseSessionRequest &request) {
@@ -740,17 +803,16 @@ class DuckDBFlightSqlServer::Impl {
     return ExecuteSql(connection, sql);
   }
 
-  // Utility function to execute a query and return string results from the first column
-  Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string &sql) {
-    auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+  Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(
+      const std::shared_ptr<duckdb::Connection> &connection, const std::string &sql) {
     std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
-    
+
     if (result->HasError()) {
       return Status::Invalid("SQL query failed: ", result->GetError());
     }
-    
+
     std::vector<std::string> string_results;
-    
+
     // Extract string values from the first column of all rows
     for (size_t row_idx = 0; row_idx < result->RowCount(); row_idx++) {
       auto value = result->GetValue(0, row_idx);  // First column
@@ -758,8 +820,16 @@ class DuckDBFlightSqlServer::Impl {
         string_results.push_back(value.ToString());
       }
     }
-    
+
     return string_results;
+  }
+
+  // Utility function to execute a query and return string results from the first column
+  Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string &sql) {
+    // We do not have a call context, so just grab a new connection to the instance
+    auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+
+    return ExecuteSqlAndGetStringVector(connection, sql);
   }
 };
 
@@ -802,7 +872,8 @@ Status DuckDBFlightSqlServer::ExecuteSql(const std::string &sql) const {
   return impl_->ExecuteSql(sql);
 }
 
-Result<std::vector<std::string>> DuckDBFlightSqlServer::ExecuteSqlAndGetStringVector(const std::string &sql) const {
+Result<std::vector<std::string>> DuckDBFlightSqlServer::ExecuteSqlAndGetStringVector(
+    const std::string &sql) const {
   return impl_->ExecuteSqlAndGetStringVector(sql);
 }
 
@@ -980,6 +1051,30 @@ Status DuckDBFlightSqlServer::EndTransaction(
     const flight::ServerCallContext &context,
     const sql::ActionEndTransactionRequest &request) {
   return impl_->EndTransaction(context, request);
+}
+
+Result<flight::CancelFlightInfoResult> DuckDBFlightSqlServer::CancelFlightInfo(
+    const flight::ServerCallContext &context,
+    const flight::CancelFlightInfoRequest &request) {
+  return impl_->CancelFlightInfo(context, request);
+}
+
+Result<flight::sql::CancelResult> DuckDBFlightSqlServer::CancelQuery(
+    const flight::ServerCallContext &context,
+    const flight::sql::ActionCancelQueryRequest &request) {
+  return impl_->CancelQuery(context, request);
+}
+
+Result<flight::SetSessionOptionsResult> DuckDBFlightSqlServer::SetSessionOptions(
+    const flight::ServerCallContext &context,
+    const flight::SetSessionOptionsRequest &request) {
+  return impl_->SetSessionOptions(context, request);
+}
+
+Result<flight::GetSessionOptionsResult> DuckDBFlightSqlServer::GetSessionOptions(
+    const flight::ServerCallContext &context,
+    const flight::GetSessionOptionsRequest &request) {
+  return impl_->GetSessionOptions(context, request);
 }
 
 Result<flight::CloseSessionResult> DuckDBFlightSqlServer::CloseSession(
