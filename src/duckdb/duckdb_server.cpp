@@ -312,6 +312,44 @@ class DuckDBFlightSqlServer::Impl {
       return it->second;
     } else {
       auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+      
+      // Check for custom headers to set default catalog/schema
+      auto incoming_headers = context.incoming_headers();
+      
+      // Check for x-default-catalog header
+      auto catalog_it = incoming_headers.find("x-default-catalog");
+      if (catalog_it != incoming_headers.end()) {
+        std::string catalog = std::string(catalog_it->second);
+        // Execute USE statement to set the default catalog
+        std::string use_sql = "USE " + catalog;
+        auto result = connection->Query(use_sql);
+        if (result->HasError()) {
+          // Log error but don't fail connection - let the user's query fail with proper error
+          if (print_queries_) {
+            std::cerr << "Warning: Failed to set default catalog '" << catalog 
+                      << "': " << result->GetError() << std::endl;
+          }
+        } else if (print_queries_) {
+          std::cerr << "Set default catalog to: " << catalog << std::endl;
+        }
+      }
+      
+      // Check for x-default-schema header (though DuckDB typically uses catalog, not schema)
+      auto schema_it = incoming_headers.find("x-default-schema");
+      if (schema_it != incoming_headers.end()) {
+        std::string schema = std::string(schema_it->second);
+        // Try to set schema (this might not work in DuckDB, but we try)
+        std::string set_schema_sql = "SET schema = '" + schema + "'";
+        auto result = connection->Query(set_schema_sql);
+        if (result->HasError()) {
+          // This is expected to fail in DuckDB, only log if verbose
+          if (print_queries_) {
+            std::cerr << "Info: Schema setting not supported (this is normal for DuckDB): " 
+                      << result->GetError() << std::endl;
+          }
+        }
+      }
+      
       open_sessions_[session_id] = connection;
       return connection;
     }
