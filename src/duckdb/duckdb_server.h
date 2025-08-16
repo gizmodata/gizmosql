@@ -47,7 +47,8 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
   arrow::Status ExecuteSql(const std::string &sql) const;
 
   /// \brief Execute SQL query and return string results from first column
-  arrow::Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string &sql) const;
+  arrow::Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(
+      const std::string &sql) const;
 
   arrow::Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoStatement(
       const flight::ServerCallContext &context,
@@ -171,6 +172,22 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
   arrow::Status EndTransaction(
       const flight::ServerCallContext &context,
       const flight::sql::ActionEndTransactionRequest &request) override;
+
+  arrow::Result<flight::CancelFlightInfoResult> CancelFlightInfo(
+      const flight::ServerCallContext &context,
+      const flight::CancelFlightInfoRequest &request) override;
+
+  arrow::Result<flight::sql::CancelResult> CancelQuery(
+      const flight::ServerCallContext &context,
+      const flight::sql::ActionCancelQueryRequest &request) override;
+
+  arrow::Result<flight::SetSessionOptionsResult> SetSessionOptions(
+      const flight::ServerCallContext &context,
+      const flight::SetSessionOptionsRequest &request) override;
+
+  arrow::Result<flight::GetSessionOptionsResult> GetSessionOptions(
+      const flight::ServerCallContext &context,
+      const flight::GetSessionOptionsRequest &request) override;
 
   arrow::Result<flight::CloseSessionResult> CloseSession(
       const flight::ServerCallContext &context,
