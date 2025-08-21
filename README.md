@@ -117,7 +117,8 @@ with gizmosql.connect(uri="grpc+tls://localhost:31337",
                       db_kwargs={"username": os.getenv("GIZMOSQL_USERNAME", "gizmosql_username"),
                                  "password": os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
                                  DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Not needed if you use a trusted CA-signed TLS cert
-                                 }
+                                 },
+                      autocommit=True
                       ) as conn:
   with conn.cursor() as cur:
     cur.execute("SELECT n_nationkey, n_name FROM nation WHERE n_nationkey = ?",
