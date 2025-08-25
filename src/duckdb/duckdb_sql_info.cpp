@@ -155,7 +155,7 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server) {
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_TRANSACTION,
        SqlInfoResult(SqlInfoOptions::SqlSupportedTransaction::
                          SQL_SUPPORTED_TRANSACTION_TRANSACTION)},
-      {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_CANCEL, SqlInfoResult(false)},
+      {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_CANCEL, SqlInfoResult(true)},
       {SqlInfoOptions::SqlInfo::SQL_DDL_CATALOG, SqlInfoResult(true)},
       {SqlInfoOptions::SqlInfo::SQL_DDL_SCHEMA, SqlInfoResult(true)},
       {SqlInfoOptions::SqlInfo::SQL_DDL_TABLE, SqlInfoResult(true)},
