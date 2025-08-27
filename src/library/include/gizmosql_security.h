@@ -52,9 +52,9 @@ class SecurityUtilities {
                                std::string &username, std::string &password);
 };
 
-class HeaderAuthServerMiddleware : public flight::ServerMiddleware {
+class BasicAuthServerMiddleware : public flight::ServerMiddleware {
  public:
-  HeaderAuthServerMiddleware(const std::string &username, const std::string &secret_key);
+  BasicAuthServerMiddleware(const std::string &username, const std::string &secret_key);
 
   void SendingHeaders(flight::AddCallHeaders *outgoing_headers) override;
 
@@ -69,11 +69,11 @@ class HeaderAuthServerMiddleware : public flight::ServerMiddleware {
   std::string CreateJWTToken() const;
 };
 
-class HeaderAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory {
+class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory {
  public:
-  HeaderAuthServerMiddlewareFactory(const std::string &username,
-                                    const std::string &password,
-                                    const std::string &secret_key);
+  BasicAuthServerMiddlewareFactory(const std::string &username,
+                                   const std::string &password,
+                                   const std::string &secret_key);
 
   arrow::Status StartCall(const flight::CallInfo &info,
                           const flight::ServerCallContext &context,
@@ -87,9 +87,11 @@ class HeaderAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
 
 class BearerAuthServerMiddleware : public flight::ServerMiddleware {
  public:
-  explicit BearerAuthServerMiddleware(const std::string &secret_key,
-                                      const flight::ServerCallContext &context,
-                                      std::optional<bool> *isValid);
+  explicit BearerAuthServerMiddleware(
+      const std::string &secret_key, const std::string &token_allowed_issuer,
+      const std::string &token_allowed_audience,
+      const std::string &token_signature_verify_cert_file_contents,
+      const flight::ServerCallContext &context, std::optional<arrow::Status> *isValid);
 
   void SendingHeaders(flight::AddCallHeaders *outgoing_headers) override;
 
@@ -99,25 +101,35 @@ class BearerAuthServerMiddleware : public flight::ServerMiddleware {
 
  private:
   std::string secret_key_;
+  std::string token_allowed_issuer_;
+  std::string token_allowed_audience_;
+  std::string token_signature_verify_cert_file_contents_;
   flight::CallHeaders incoming_headers_;
-  std::optional<bool> *isValid_;
+  std::optional<arrow::Status> *isValid_;
 
-  bool VerifyToken(const std::string &token) const;
+  arrow::Status VerifyToken(const std::string &token) const;
 };
 
 class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory {
  public:
-  explicit BearerAuthServerMiddlewareFactory(const std::string &secret_key);
+  explicit BearerAuthServerMiddlewareFactory(
+      const std::string &secret_key, const std::string &token_allowed_issuer,
+      const std::string &token_allowed_audience,
+      const std::filesystem::path &token_signature_verify_cert_path);
 
   arrow::Status StartCall(const flight::CallInfo &info,
                           const flight::ServerCallContext &context,
                           std::shared_ptr<flight::ServerMiddleware> *middleware) override;
 
-  std::optional<bool> GetIsValid();
+  std::optional<arrow::Status> GetIsValid();
 
  private:
-  std::optional<bool> isValid_;
+  std::optional<arrow::Status> isValid_;
   std::string secret_key_;
+  std::string token_allowed_issuer_;
+  std::string token_allowed_audience_;
+  std::filesystem::path token_signature_verify_cert_path_;
+  std::string token_signature_verify_cert_file_contents_;
 };
 
 }  // namespace gizmosql

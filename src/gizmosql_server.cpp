@@ -61,7 +61,16 @@ int main(int argc, char **argv) {
             ("mtls-ca-cert-filename,M", po::value<std::string>()->default_value(""),
              "Specify an optional mTLS CA certificate path used to verify clients.  The certificate MUST be in PEM format.")
             ("print-queries,Q", po::bool_switch()->default_value(false), "Print queries run by clients to stdout")
-            ("readonly,O", po::bool_switch()->default_value(false), "Open the database in read-only mode");
+            ("readonly,O", po::bool_switch()->default_value(false), "Open the database in read-only mode")
+            ("token-allowed-issuer", po::value<std::string>()->default_value(""),
+             "Specify the allowed token issuer for JWT token-based authentication - see docs for details.  "
+             "If not set, we will use env var: 'TOKEN_ALLOWED_ISSUER'.")
+            ("token-allowed-audience", po::value<std::string>()->default_value(""),
+             "Specify the allowed token audience for JWT token-based authentication - see docs for details.  "
+              "If not set, we will use env var: 'TOKEN_ALLOWED_AUDIENCE'.")
+            ("token-signature-verify-cert-filename", po::value<std::string>()->default_value(""),
+             "Specify the RSA PEM certificate file used for verifying tokens used in JWT token-based authentication - see docs for details.  "
+              "If not set, we will use env var: 'TOKEN_SIGNATURE_VERIFY_CERT_FILENAME'.");
   // clang-format on
 
   po::variables_map vm;
@@ -144,8 +153,24 @@ int main(int argc, char **argv) {
 
   bool read_only = vm["readonly"].as<bool>();
 
+  std::string token_allowed_issuer = "";
+  if (vm.count("token-allowed-issuer")) {
+    token_allowed_issuer = vm["token-allowed-issuer"].as<std::string>();
+  }
+
+  std::string token_allowed_audience = "";
+  if (vm.count("token-allowed-audience")) {
+    token_allowed_audience = vm["token-allowed-audience"].as<std::string>();
+  }
+
+  fs::path token_signature_verify_cert_path;
+  if (vm.count("token-signature-verify-cert-filename")) {
+    token_signature_verify_cert_path = fs::path(vm["token-signature-verify-cert-filename"].as<std::string>());
+  }
+
   return RunFlightSQLServer(backend, database_filename, hostname, port, username,
                             password, secret_key, tls_cert_path, tls_key_path,
                             mtls_ca_cert_path, init_sql_commands, init_sql_commands_file,
-                            print_queries, read_only);
+                            print_queries, read_only, token_allowed_issuer,
+                            token_allowed_audience, token_signature_verify_cert_path);
 }
