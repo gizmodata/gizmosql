@@ -30,7 +30,11 @@
 #include <arrow/flight/server.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/types.h>
-
+#include <arrow/flight/sql/server_session_middleware.h>
+#include <arrow/flight/sql/server_session_middleware_factory.h>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 #include "duckdb_sql_info.h"
 #include "duckdb_statement.h"
 #include "duckdb_statement_batch_reader.h"
@@ -203,8 +207,9 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   // A function to get the JSON from the decoded auth token
-  static Result<std::string> GetAuthTokenKeyValue(const std::string &auth_token,
-                                                  const std::string &key) {
+  static Result<std::string> GetAuthTokenKeyValue(
+      const flight::ServerCallContext &context, const std::string &key) {
+    ARROW_ASSIGN_OR_RAISE(auto auth_token, GetAuthToken(context));
     try {
       auto decoded = jwt::decode(auth_token);
 
@@ -219,24 +224,44 @@ class DuckDBFlightSqlServer::Impl {
     }
   }
 
-  static Result<std::string> GetSessionID(const flight::ServerCallContext &context) {
-    auto auth_token = GetAuthToken(context);
-    if (!auth_token.ok()) {
-      return auth_token.status();
+  static constexpr const char *kSessionIDKey = "gizmosql_session_id";
+
+  static std::optional<std::string> SessionValueToString(
+      const flight::SessionOptionValue &v) {
+    if (auto p = std::get_if<std::string>(&v)) return *p;
+    if (auto p = std::get_if<int64_t>(&v)) return std::to_string(*p);
+    if (auto p = std::get_if<bool>(&v)) return *p ? "true" : "false";
+    return std::nullopt;
+  }
+
+  static Result<std::string> EnsureSessionID(const flight::ServerCallContext &context) {
+    const auto *base = context.GetMiddleware("session");  // returns ServerMiddleware*
+    auto *server_session_middleware =
+        dynamic_cast<const flight::sql::ServerSessionMiddleware *>(base);
+    if (!server_session_middleware)
+      return arrow::Status::Invalid("No session middleware");
+
+    ARROW_ASSIGN_OR_RAISE(
+        auto session,
+        const_cast<flight::sql::ServerSessionMiddleware *>(server_session_middleware)
+            ->GetSession());
+
+    if (auto session_option = session->GetSessionOption(kSessionIDKey)) {
+      if (auto existing_session_id = SessionValueToString(*session_option))
+        return *existing_session_id;
     }
 
-    auto session_id = GetAuthTokenKeyValue(auth_token.ValueOrDie(), "session_id");
-    if (!session_id.ok()) {
-      return session_id.status();
-    }
+    // We don't have an existing session for this user, so we create one here...
+    auto new_session_id = boost::uuids::to_string(boost::uuids::random_generator()());
+    session->SetSessionOption(kSessionIDKey, new_session_id);
 
-    return session_id.ValueOrDie();
+    return new_session_id;
   }
 
   // We get a new session per thread to be thread-safe...
   Result<std::shared_ptr<duckdb::Connection>> GetConnection(
       const flight::ServerCallContext &context) {
-    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
+    ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
 
     std::scoped_lock guard(mutex_);
     auto it = open_sessions_.find(session_id);
@@ -383,22 +408,34 @@ class DuckDBFlightSqlServer::Impl {
     std::shared_ptr<duckdb::PreparedStatement> stmt = statement->GetDuckDBStmt();
     arrow::FieldVector parameter_fields;
     id_t parameter_count = 0;
-    
+
     if (stmt != nullptr) {
       // Traditional prepared statement - extract parameter information
       parameter_count = stmt->named_param_map.size();
       parameter_fields.reserve(parameter_count);
 
-      duckdb::shared_ptr<duckdb::PreparedStatementData> parameter_data = stmt->data;
-      auto bind_parameter_map = parameter_data->value_map;
+    duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data = stmt->data;
 
-      for (id_t i = 0; i < parameter_count; i++) {
-        std::string parameter_idx_str = std::to_string(i + 1);
-        std::string parameter_name = std::string("parameter_") + parameter_idx_str;
-        auto parameter_duckdb_type = parameter_data->GetType(parameter_idx_str);
-        auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
-        parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
+    if (!prepared_statement_data->properties.IsReadOnly()) {
+      // Check the user's role to ensure that they are not readonly
+      ARROW_ASSIGN_OR_RAISE(auto username, GetAuthTokenKeyValue(context, "sub"));
+      ARROW_ASSIGN_OR_RAISE(auto role, GetAuthTokenKeyValue(context, "role"));
+
+      if (role == "readonly") {
+        return Status::ExecutionError(
+            "User '" + username +
+            "' is readonly and cannot run statements that modify the database state.");
       }
+    }
+
+    auto bind_parameter_map = prepared_statement_data->value_map;
+
+    for (id_t i = 0; i < parameter_count; i++) {
+      std::string parameter_idx_str = std::to_string(i + 1);
+      std::string parameter_name = std::string("parameter_") + parameter_idx_str;
+      auto parameter_duckdb_type = prepared_statement_data->GetType(parameter_idx_str);
+      auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
+      parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
     }
     // For direct execution mode (stmt == nullptr), parameter_fields remains empty
 
@@ -783,7 +820,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<flight::CloseSessionResult> CloseSession(
       const flight::ServerCallContext &context,
       const flight::CloseSessionRequest &request) {
-    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
+    ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
     auto it = open_sessions_.find(session_id);
     if (it != open_sessions_.end()) {
       it->second.reset();

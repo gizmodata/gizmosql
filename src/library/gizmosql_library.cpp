@@ -25,6 +25,8 @@
 #include <vector>
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/server.h>
+#include <arrow/flight/sql/server_session_middleware.h>
+#include <arrow/flight/sql/server_session_middleware_factory.h>
 #include <arrow/util/logging.h>
 #include <arrow/record_batch.h>
 #include <boost/algorithm/string.hpp>
@@ -60,6 +62,10 @@ const int port = 31337;
     }                                                                              \
   } while (false)
 
+static std::string MakeSessionId() {
+  return boost::uuids::to_string(boost::uuids::random_generator()());
+}
+
 arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServerBuilder(
     const BackendType backend, const fs::path &database_filename,
     const std::string &hostname, const int &port, const std::string &username,
@@ -94,6 +100,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   options.auth_handler = std::make_unique<flight::NoOpAuthHandler>();
   options.middleware.push_back({"header-auth-server", header_middleware});
   options.middleware.push_back({"bearer-auth-server", bearer_middleware});
+
+  auto session_middleware =
+      flight::sql::MakeServerSessionMiddlewareFactory(&MakeSessionId);
+  options.middleware.push_back({"session", session_middleware});
 
   if (!mtls_ca_cert_path.empty()) {
     std::cout << "Using mTLS CA certificate: " << mtls_ca_cert_path << std::endl;
@@ -162,7 +172,6 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
     const bool &print_queries, const bool &read_only) {
-
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     std::cout << "WARNING - The database filename was not provided, opening an in-memory "
@@ -255,9 +264,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   }
 
   if (read_only) {
-    std::cout << "WARNING - Running in Read-Only mode - no changes will be persisted to the "
-                 "database."
-              << std::endl;
+    std::cout
+        << "WARNING - Running in Read-Only mode - no changes will be persisted to the "
+           "database."
+        << std::endl;
   }
 
   return FlightSQLServerBuilder(backend, database_filename, hostname, port, username,

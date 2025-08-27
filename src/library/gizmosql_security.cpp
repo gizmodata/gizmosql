@@ -151,7 +151,8 @@ std::string HeaderAuthServerMiddleware::CreateJWTToken() const {
           .set_issued_at(std::chrono::system_clock::now())
           .set_expires_at(std::chrono::system_clock::now() +
                           std::chrono::seconds{kJWTExpiration})
-          .set_payload_claim("username", jwt::claim(username_))
+          .set_payload_claim("sub", jwt::claim(username_))
+          .set_payload_claim("role", jwt::claim(std::string("admin")))
           .set_payload_claim(
               "session_id",
               jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
