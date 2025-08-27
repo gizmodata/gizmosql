@@ -72,7 +72,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string &password, const std::string &secret_key,
     const fs::path &tls_cert_path, const fs::path &tls_key_path,
     const fs::path &mtls_ca_cert_path, const std::string &init_sql_commands,
-    const bool &read_only, const bool &print_queries) {
+    const bool &read_only, const bool &print_queries,
+    const std::string &token_allowed_issuer, const std::string &token_allowed_audience,
+    const fs::path &token_signature_verify_cert_path) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -92,10 +94,11 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   }
 
   // Setup authentication middleware (using the same TLS certificate keypair)
-  auto header_middleware = std::make_shared<gizmosql::HeaderAuthServerMiddlewareFactory>(
+  auto header_middleware = std::make_shared<gizmosql::BasicAuthServerMiddlewareFactory>(
       username, password, secret_key);
-  auto bearer_middleware =
-      std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(secret_key);
+  auto bearer_middleware = std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(
+      secret_key, token_allowed_issuer, token_allowed_audience,
+      token_signature_verify_cert_path);
 
   options.auth_handler = std::make_unique<flight::NoOpAuthHandler>();
   options.middleware.push_back({"header-auth-server", header_middleware});
@@ -171,7 +174,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const int &port, std::string username, std::string password, std::string secret_key,
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
-    const bool &print_queries, const bool &read_only) {
+    const bool &print_queries, const bool &read_only, std::string token_allowed_issuer,
+    std::string token_allowed_audience, fs::path token_signature_verify_cert_path) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     std::cout << "WARNING - The database filename was not provided, opening an in-memory "
@@ -270,10 +274,42 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
         << std::endl;
   }
 
+  if (token_allowed_issuer.empty()) {
+    token_allowed_issuer = SafeGetEnvVarValue("TOKEN_ALLOWED_ISSUER");
+  }
+  if (token_allowed_audience.empty()) {
+    token_allowed_audience = SafeGetEnvVarValue("TOKEN_ALLOWED_AUDIENCE");
+  }
+  if (token_signature_verify_cert_path.empty()) {
+    token_signature_verify_cert_path =
+        fs::absolute(SafeGetEnvVarValue("TOKEN_SIGNATURE_VERIFY_CERT_PATH"));
+  }
+
+  if (!token_allowed_issuer.empty()) {
+    std::cout
+        << "INFO - Using token authentication - the token allowed issuer is set to: '"
+        << token_allowed_issuer << "'" << std::endl;
+    if (token_allowed_audience.empty()) {
+      return arrow::Status::Invalid(
+          "The token allowed issuer is set, but audience is not set.  "
+          "Pass a value to this argument to secure the server.");
+    }
+    if (token_signature_verify_cert_path.empty()) {
+      return arrow::Status::Invalid(
+          "The token allowed issuer is set, but token signature verification certificate "
+          "path is not set.");
+    }
+    std::cout << "INFO - The token audience is set to: '" << token_allowed_audience << "'"
+              << std::endl;
+    std::cout << "INFO - The token signature verification certificate path is set to: "
+              << token_signature_verify_cert_path.string() << std::endl;
+  }
+
   return FlightSQLServerBuilder(backend, database_filename, hostname, port, username,
                                 password, secret_key, tls_cert_path, tls_key_path,
                                 mtls_ca_cert_path, init_sql_commands, read_only,
-                                print_queries);
+                                print_queries, token_allowed_issuer,
+                                token_allowed_audience, token_signature_verify_cert_path);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -291,7 +327,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        fs::path tls_cert_path, fs::path tls_key_path,
                        fs::path mtls_ca_cert_path, std::string init_sql_commands,
                        fs::path init_sql_commands_file, const bool &print_queries,
-                       const bool &read_only) {
+                       const bool &read_only, std::string token_allowed_issuer,
+                       std::string token_allowed_audience,
+                       fs::path token_signature_verify_cert_path) {
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
   std::tm *localTime = std::localtime(&currentTime);
@@ -305,7 +343,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
-      init_sql_commands_file, print_queries, read_only);
+      init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
+      token_allowed_audience, token_signature_verify_cert_path);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
