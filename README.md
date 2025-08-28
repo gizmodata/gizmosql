@@ -142,6 +142,7 @@ gizmosql_client   --command Execute   --host localhost --port 31337   --username
 
 ```bash
 git clone https://github.com/gizmodata/gizmosql --recurse-submodules
+cd gizmosql
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --build build --target install
 ```

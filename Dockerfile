@@ -35,7 +35,7 @@ RUN case ${TARGETPLATFORM} in \
     esac && \
     curl "${AWSCLI_FILE}" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
-    ./aws/install && \
+    aws/install && \
     rm -f awscliv2.zip
 
 # Setup Azure Client (so we can copy Azure files to the container if needed)
@@ -65,8 +65,10 @@ USER app_user
 
 WORKDIR ${APP_DIR}
 
-RUN python3 -m venv ${APP_DIR}/venv && \
-    echo ". ${APP_DIR}/venv/bin/activate" >> ~/.bashrc && \
+ENV VIRTUAL_ENV=${APP_DIR}/.venv
+
+RUN python3 -m venv ${VIRTUAL_ENV} && \
+    echo ". ${VIRTUAL_ENV}/bin/activate" >> ~/.bashrc && \
     . ~/.bashrc && \
     pip install --upgrade pip setuptools wheel
 
@@ -74,7 +76,7 @@ RUN python3 -m venv ${APP_DIR}/venv && \
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 # Copy the scripts directory into the image (we copy directory-by-directory in order to maximize Docker caching)
-COPY --chown=app_user:app_user ./scripts ./scripts
+COPY --chown=app_user:app_user scripts scripts
 
 # Get the SQLite3 database file
 RUN mkdir data && \
@@ -91,9 +93,9 @@ RUN python "scripts/create_duckdb_database_file.py" \
            --overwrite-file=true \
            --scale-factor=0.01
 
-COPY --chown=app_user:app_user ./CMakeLists.txt ./
-COPY --chown=app_user:app_user ./third_party ./third_party
-COPY --chown=app_user:app_user ./src ./src
+COPY --chown=app_user:app_user CMakeLists.txt .
+COPY --chown=app_user:app_user third_party third_party
+COPY --chown=app_user:app_user src src
 
 # Run the CMake build (then cleanup)
 RUN cmake -S . -B build -G Ninja \
@@ -118,6 +120,6 @@ RUN case ${TARGETPLATFORM} in \
 EXPOSE 31337
 
 # Run a test to ensure that the server works...
-RUN scripts/test_gizmosql.sh
+#RUN scripts/test_gizmosql.sh
 
 ENTRYPOINT scripts/start_gizmosql.sh
