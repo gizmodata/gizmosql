@@ -42,6 +42,7 @@
 #include "duckdb_tables_schema_batch_reader.h"
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
+#include "gizmosql_security.h"
 #include "flight_sql_fwd.h"
 #include <jwt-cpp/jwt.h>
 
@@ -186,42 +187,6 @@ class DuckDBFlightSqlServer::Impl {
       return Status::KeyError("Prepared statement not found");
     }
     return search->second;
-  }
-
-  // A function to get the auth token from the context
-  static Result<std::string> GetAuthToken(const flight::ServerCallContext &context) {
-    auto incoming_headers = context.incoming_headers();
-    auto it = incoming_headers.find("authorization");
-    if (it == incoming_headers.end()) {
-      return Status::KeyError("Authorization header not found");
-    }
-
-    auto auth_header = it->second;
-    std::vector<std::string> parts;
-    boost::split(parts, auth_header, boost::is_any_of(" "));
-    if (parts.size() != 2) {
-      return Status::Invalid("Malformed authorization header");
-    }
-
-    return parts[1];
-  }
-
-  // A function to get the JSON from the decoded auth token
-  static Result<std::string> GetAuthTokenKeyValue(
-      const flight::ServerCallContext &context, const std::string &key) {
-    ARROW_ASSIGN_OR_RAISE(auto auth_token, GetAuthToken(context));
-    try {
-      auto decoded = jwt::decode(auth_token);
-
-      for (auto &e : decoded.get_payload_json()) {
-        if (e.first == key) {
-          return e.second.to_str();
-        }
-      }
-      return Status::KeyError("Key: '", key, "' not found in token");
-    } catch (const std::exception &e) {
-      return Status::Invalid("Error decoding JWT token: ", e.what());
-    }
   }
 
   static constexpr const char *kSessionIDKey = "gizmosql_session_id";
@@ -414,28 +379,41 @@ class DuckDBFlightSqlServer::Impl {
       parameter_count = stmt->named_param_map.size();
       parameter_fields.reserve(parameter_count);
 
-    duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data = stmt->data;
+      duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data =
+          stmt->data;
 
-    if (!prepared_statement_data->properties.IsReadOnly()) {
-      // Check the user's role to ensure that they are not readonly
-      ARROW_ASSIGN_OR_RAISE(auto username, GetAuthTokenKeyValue(context, "sub"));
-      ARROW_ASSIGN_OR_RAISE(auto role, GetAuthTokenKeyValue(context, "role"));
+      if (!prepared_statement_data->properties.IsReadOnly()) {
+        const auto *base = context.GetMiddleware(
+            "bearer-auth-server");  // returns BearerAuthServerMiddleware*
+        auto *bearer_auth_server_middleware =
+            dynamic_cast<const BearerAuthServerMiddleware *>(base);
+        if (!bearer_auth_server_middleware)
+          return arrow::Status::Invalid("No Bearer Auth middleware");
 
-      if (role == "readonly") {
-        return Status::ExecutionError(
-            "User '" + username +
-            "' has a readonly session and cannot run statements that modify state.");
+        auto username =
+            const_cast<BearerAuthServerMiddleware *>(bearer_auth_server_middleware)
+                ->GetUsername();
+
+        auto role =
+            const_cast<BearerAuthServerMiddleware *>(bearer_auth_server_middleware)
+                ->GetRole();
+
+        if (role == "readonly") {
+          return Status::ExecutionError(
+              "User '" + username +
+              "' has a readonly session and cannot run statements that modify state.");
+        }
       }
-    }
 
-    auto bind_parameter_map = prepared_statement_data->value_map;
+      auto bind_parameter_map = prepared_statement_data->value_map;
 
-    for (id_t i = 0; i < parameter_count; i++) {
-      std::string parameter_idx_str = std::to_string(i + 1);
-      std::string parameter_name = std::string("parameter_") + parameter_idx_str;
-      auto parameter_duckdb_type = prepared_statement_data->GetType(parameter_idx_str);
-      auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
-      parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
+      for (id_t i = 0; i < parameter_count; i++) {
+        std::string parameter_idx_str = std::to_string(i + 1);
+        std::string parameter_name = std::string("parameter_") + parameter_idx_str;
+        auto parameter_duckdb_type = prepared_statement_data->GetType(parameter_idx_str);
+        auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
+        parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
+      }
     }
     // For direct execution mode (stmt == nullptr), parameter_fields remains empty
 

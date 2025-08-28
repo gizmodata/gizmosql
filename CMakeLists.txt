@@ -142,8 +142,11 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_server.cpp
         src/duckdb/duckdb_tables_schema_batch_reader.cpp)
 
-# Add header file
-set(HEADER_FILES src/library/include/gizmosql_library.h)
+set(GIZMOSQL_PUBLIC_HEADERS
+        src/library/include/gizmosql_library.h
+        src/library/include/gizmosql_security.h
+)
+
 
 # Add a library target
 add_library(gizmosqlserver STATIC
@@ -153,9 +156,14 @@ add_library(gizmosqlserver STATIC
         ${GIZMOSQL_DUCKDB_SERVER_SRCS}
 )
 
-set_target_properties(gizmosqlserver PROPERTIES PUBLIC_HEADER ${HEADER_FILES})
+set_target_properties(gizmosqlserver PROPERTIES
+        PUBLIC_HEADER "${GIZMOSQL_PUBLIC_HEADERS}"
+)
 
-target_include_directories(gizmosqlserver PRIVATE
+target_include_directories(gizmosqlserver
+   PUBLIC
+        src/library/include
+   PRIVATE
         src/sqlite
         src/duckdb
         src/library/include

@@ -206,23 +206,24 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
 
 // ----------------------------------------
 BearerAuthServerMiddleware::BearerAuthServerMiddleware(
-    const std::string &secret_key, const std::string &token_allowed_issuer,
-    const std::string &token_allowed_audience,
-    const std::string &token_signature_verify_cert_file_contents,
-    const flight::ServerCallContext &context, std::optional<Status> *isValid)
-    : secret_key_(secret_key),
-      token_allowed_issuer_(token_allowed_issuer),
-      token_allowed_audience_(token_allowed_audience),
-      token_signature_verify_cert_file_contents_(
-          token_signature_verify_cert_file_contents),
-      incoming_headers_(context.incoming_headers()),
-      isValid_(isValid) {}
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson> decoded_jwt)
+    : decoded_jwt_(decoded_jwt) {}
+
+const jwt::decoded_jwt<jwt::traits::kazuho_picojson> BearerAuthServerMiddleware::GetJWT()
+    const {
+  return decoded_jwt_;
+}
+const std::string BearerAuthServerMiddleware::GetUsername() const {
+  return decoded_jwt_.get_subject();
+}
+const std::string BearerAuthServerMiddleware::GetRole() const {
+  return decoded_jwt_.get_payload_claim("role").as_string();
+}
 
 void BearerAuthServerMiddleware::SendingHeaders(
     flight::AddCallHeaders *outgoing_headers) {
-  std::string bearer_token = SecurityUtilities::FindKeyValPrefixInCallHeaders(
-      incoming_headers_, kAuthHeader, kBearerPrefix);
-  *isValid_ = (VerifyToken(bearer_token));
+  outgoing_headers->AddHeader("x-username", GetUsername());
+  outgoing_headers->AddHeader("x-role", GetRole());
 }
 
 void BearerAuthServerMiddleware::CallCompleted(const Status &status) {}
@@ -231,7 +232,18 @@ std::string BearerAuthServerMiddleware::name() const {
   return "BearerAuthServerMiddleware";
 }
 
-Status BearerAuthServerMiddleware::VerifyToken(const std::string &token) const {
+// ----------------------------------------
+BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
+    const std::string &secret_key, const std::string &token_allowed_issuer,
+    const std::string &token_allowed_audience,
+    const std::filesystem::path &token_signature_verify_cert_path)
+    : secret_key_(secret_key),
+      token_allowed_issuer_(token_allowed_issuer),
+      token_allowed_audience_(token_allowed_audience),
+      token_signature_verify_cert_path_(token_signature_verify_cert_path) {}
+
+arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
+BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string &token) const {
   if (token.empty()) {
     return Status::Invalid("Bearer Token is empty");
   }
@@ -259,7 +271,7 @@ Status BearerAuthServerMiddleware::VerifyToken(const std::string &token) const {
 
     verifier.verify(decoded);
     // If we got this far, the token verified successfully...
-    return Status::OK();
+    return decoded;
   } catch (const std::exception &e) {
     auto error_message = e.what();
     std::cout << "Bearer Token verification failed with exception: " << error_message
@@ -268,16 +280,6 @@ Status BearerAuthServerMiddleware::VerifyToken(const std::string &token) const {
                            std::string(error_message));
   }
 }
-
-// ----------------------------------------
-BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
-    const std::string &secret_key, const std::string &token_allowed_issuer,
-    const std::string &token_allowed_audience,
-    const std::filesystem::path &token_signature_verify_cert_path)
-    : secret_key_(secret_key),
-      token_allowed_issuer_(token_allowed_issuer),
-      token_allowed_audience_(token_allowed_audience),
-      token_signature_verify_cert_path_(token_signature_verify_cert_path) {}
 
 Status BearerAuthServerMiddlewareFactory::StartCall(
     const flight::CallInfo &info, const flight::ServerCallContext &context,
@@ -305,14 +307,14 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
         }
       }
 
-      *middleware = std::make_shared<BearerAuthServerMiddleware>(
-          secret_key_, token_allowed_issuer_, token_allowed_audience_,
-          token_signature_verify_cert_file_contents_, context, &isValid_);
+      std::string bearer_token = SecurityUtilities::FindKeyValPrefixInCallHeaders(
+          incoming_headers, kAuthHeader, kBearerPrefix);
+      ARROW_ASSIGN_OR_RAISE(auto decoded_jwt, VerifyAndDecodeToken(bearer_token));
+
+      *middleware = std::make_shared<BearerAuthServerMiddleware>(decoded_jwt);
     }
   }
-  return *isValid_;
+  return Status::OK();
 }
-
-std::optional<Status> BearerAuthServerMiddlewareFactory::GetIsValid() { return isValid_; }
 
 }  // namespace gizmosql

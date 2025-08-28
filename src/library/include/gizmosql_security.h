@@ -56,6 +56,10 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
  public:
   BasicAuthServerMiddleware(const std::string &username, const std::string &secret_key);
 
+  const jwt::decoded_jwt<jwt::traits::kazuho_picojson> GetJWT();
+  const std::string GetUsername() const;
+  const std::string GetRole() const;
+
   void SendingHeaders(flight::AddCallHeaders *outgoing_headers) override;
 
   void CallCompleted(const arrow::Status &status) override;
@@ -88,10 +92,11 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
 class BearerAuthServerMiddleware : public flight::ServerMiddleware {
  public:
   explicit BearerAuthServerMiddleware(
-      const std::string &secret_key, const std::string &token_allowed_issuer,
-      const std::string &token_allowed_audience,
-      const std::string &token_signature_verify_cert_file_contents,
-      const flight::ServerCallContext &context, std::optional<arrow::Status> *isValid);
+      const jwt::decoded_jwt<jwt::traits::kazuho_picojson> decoded_jwt);
+
+  const jwt::decoded_jwt<jwt::traits::kazuho_picojson> GetJWT() const;
+  const std::string GetUsername() const;
+  const std::string GetRole() const;
 
   void SendingHeaders(flight::AddCallHeaders *outgoing_headers) override;
 
@@ -100,14 +105,7 @@ class BearerAuthServerMiddleware : public flight::ServerMiddleware {
   std::string name() const override;
 
  private:
-  std::string secret_key_;
-  std::string token_allowed_issuer_;
-  std::string token_allowed_audience_;
-  std::string token_signature_verify_cert_file_contents_;
-  flight::CallHeaders incoming_headers_;
-  std::optional<arrow::Status> *isValid_;
-
-  arrow::Status VerifyToken(const std::string &token) const;
+  jwt::decoded_jwt<jwt::traits::kazuho_picojson> decoded_jwt_;
 };
 
 class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory {
@@ -121,15 +119,15 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
                           const flight::ServerCallContext &context,
                           std::shared_ptr<flight::ServerMiddleware> *middleware) override;
 
-  std::optional<arrow::Status> GetIsValid();
-
  private:
-  std::optional<arrow::Status> isValid_;
   std::string secret_key_;
   std::string token_allowed_issuer_;
   std::string token_allowed_audience_;
   std::filesystem::path token_signature_verify_cert_path_;
   std::string token_signature_verify_cert_file_contents_;
+
+  arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>> VerifyAndDecodeToken(
+      const std::string &token) const;
 };
 
 }  // namespace gizmosql

@@ -28,7 +28,6 @@
 #include <arrow/flight/sql/server_session_middleware.h>
 #include <arrow/flight/sql/server_session_middleware_factory.h>
 #include <arrow/util/logging.h>
-#include <arrow/record_batch.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
