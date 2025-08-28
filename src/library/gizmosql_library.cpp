@@ -282,7 +282,16 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   }
   if (token_signature_verify_cert_path.empty()) {
     token_signature_verify_cert_path =
-        fs::absolute(SafeGetEnvVarValue("TOKEN_SIGNATURE_VERIFY_CERT_PATH"));
+        fs::path(SafeGetEnvVarValue("TOKEN_SIGNATURE_VERIFY_CERT_PATH"));
+    if (!token_signature_verify_cert_path.empty()) {
+      token_signature_verify_cert_path = fs::absolute(token_signature_verify_cert_path);
+      if (!fs::exists(token_signature_verify_cert_path)) {
+        return arrow::Status::Invalid(
+            "Token signature verification certificate file does "
+            "not exist: " +
+            token_signature_verify_cert_path.string());
+      }
+    }
   }
 
   if (!token_allowed_issuer.empty()) {
