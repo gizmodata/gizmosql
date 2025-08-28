@@ -111,8 +111,18 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   std::shared_ptr<duckdb::PreparedStatement> stmt = con->Prepare(sql);
 
   if (not stmt->success) {
+    std::string error_message = stmt->error.Message();
+    
+    // Check if this is the multiple statements error that can be resolved with direct execution
+    if (error_message.find("Cannot prepare multiple statements at once") != std::string::npos) {
+      // Fallback to direct query execution for statements like PIVOT that get rewritten to multiple statements
+      std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(con, sql));
+      return result;
+    }
+    
+    // Other preparation errors are still fatal
     std::string err_msg =
-        "Can't prepare statement: '" + sql + "' - Error: " + stmt->error.Message();
+        "Can't prepare statement: '" + sql + "' - Error: " + error_message;
     return Status::Invalid(err_msg);
   }
 
@@ -124,11 +134,28 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 DuckDBStatement::~DuckDBStatement() {}
 
 arrow::Result<int> DuckDBStatement::Execute() {
-  query_result_ = stmt_->Execute(bind_parameters);
+  if (use_direct_execution_) {
+    // Direct query execution for statements that can't be prepared (like PIVOT)
+    // Note: Direct execution doesn't support bind parameters
+    if (!bind_parameters.empty()) {
+      return arrow::Status::Invalid("Direct query execution does not support bind parameters");
+    }
+    
+    auto result = con_->Query(sql_);
+    if (result->HasError()) {
+      return arrow::Status::ExecutionError("Direct query execution error: ", result->GetError());
+    }
+    
+    // Store the result for FetchResult()
+    query_result_ = std::move(result);
+  } else {
+    // Traditional prepared statement execution
+    query_result_ = stmt_->Execute(bind_parameters);
 
-  if (query_result_->HasError()) {
-    return arrow::Status::ExecutionError("An execution error has occurred: ",
-                                         query_result_->GetError());
+    if (query_result_->HasError()) {
+      return arrow::Status::ExecutionError("An execution error has occurred: ",
+                                           query_result_->GetError());
+    }
   }
   return 0;
 }
@@ -137,7 +164,17 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   std::shared_ptr<arrow::RecordBatch> record_batch;
   ArrowArray res_arr;
   ArrowSchema res_schema;
-  auto client_context = stmt_->context;
+  
+  // Get client context - handle both prepared statement and direct execution modes
+  duckdb::shared_ptr<duckdb::ClientContext> client_context;
+  if (use_direct_execution_) {
+    // For direct execution, get context from the connection
+    client_context = con_->context;
+  } else {
+    // For prepared statements, get context from the statement
+    client_context = stmt_->context;
+  }
+  
   auto res_options = client_context->GetClientProperties();
   res_options.time_zone = query_result_->client_properties.time_zone;
 
@@ -163,6 +200,10 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
 }
 
 std::shared_ptr<duckdb::PreparedStatement> DuckDBStatement::GetDuckDBStmt() const {
+  if (use_direct_execution_) {
+    // Direct execution mode doesn't have a prepared statement
+    return nullptr;
+  }
   return stmt_;
 }
 
@@ -190,19 +231,37 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const {
-  // get the names and types of the result schema
-  auto names = stmt_->GetNames();
-  auto types = stmt_->GetTypes();
+  if (use_direct_execution_) {
+    // For direct execution, we need to execute the query to get schema information
+    // This is a temporary execution just to get the schema
+    auto temp_result = con_->Query(sql_);
+    if (temp_result->HasError()) {
+      return arrow::Status::ExecutionError("Failed to get schema for direct query: ", temp_result->GetError());
+    }
+    
+    auto &context = con_->context;
+    auto client_properties = context->GetClientProperties();
+    
+    ArrowSchema arrow_schema;
+    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, temp_result->types, temp_result->names, client_properties);
+    
+    auto return_value = arrow::ImportSchema(&arrow_schema);
+    return return_value;
+  } else {
+    // Traditional prepared statement schema retrieval
+    auto names = stmt_->GetNames();
+    auto types = stmt_->GetTypes();
 
-  auto &context = stmt_->context;
-  auto client_properties = context->GetClientProperties();
+    auto &context = stmt_->context;
+    auto client_properties = context->GetClientProperties();
 
-  ArrowSchema arrow_schema;
-  duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
+    ArrowSchema arrow_schema;
+    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
 
-  auto return_value = arrow::ImportSchema(&arrow_schema);
+    auto return_value = arrow::ImportSchema(&arrow_schema);
 
-  return return_value;
+    return return_value;
+  }
 }
 
 }  // namespace gizmosql::ddb
