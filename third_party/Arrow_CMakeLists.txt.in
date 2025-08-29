@@ -5,8 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
-message(STATUS "Wrapper ARROW_DEPENDENCY_SOURCE=${ARROW_DEPENDENCY_SOURCE}")
-
 ExternalProject_Add(
     arrow_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
