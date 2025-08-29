@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
+message(STATUS "Wrapper ARROW_DEPENDENCY_SOURCE=${ARROW_DEPENDENCY_SOURCE}")
+
 ExternalProject_Add(
     arrow_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
@@ -27,7 +29,7 @@ ExternalProject_Add(
       -DARROW_FLIGHT=ON
       -DARROW_FLIGHT_SQL=ON
       -DARROW_WITH_ZLIB=ON
-      -DARROW_DEPENDENCY_SOURCE=AUTO  # Use BUNDLED if build fails...
+      -DARROW_DEPENDENCY_SOURCE=@ARROW_DEPENDENCY_SOURCE@
       -DARROW_DEPENDENCY_USE_SHARED=OFF
       -Dxsimd_SOURCE=BUNDLED
 )
