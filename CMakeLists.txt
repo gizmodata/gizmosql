@@ -28,16 +28,8 @@ configure_file(
 )
 
 # --------------------- Arrow ---------------------
-# Top-level decide
-if (APPLE)
-    set(ARROW_DEPENDENCY_SOURCE BUNDLED)
-else ()
-    set(ARROW_DEPENDENCY_SOURCE AUTO)
-endif ()
-
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
-        @ONLY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
