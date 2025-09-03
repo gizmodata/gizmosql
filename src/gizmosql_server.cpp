@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "library/include/gizmosql_library.h"
+#include "common/include/gizmosql_library.h"
 #include <iostream>
 #include <boost/program_options.hpp>
 

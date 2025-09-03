@@ -23,8 +23,8 @@ message(STATUS "PROJECT_VERSION: ${PROJECT_VERSION}")
 
 # Configure a header file with the version
 configure_file(
-        ${CMAKE_SOURCE_DIR}/src/library/include/version.h.in
-        ${CMAKE_SOURCE_DIR}/src/library/include/version.h
+        ${CMAKE_SOURCE_DIR}/src/common/include/version.h.in
+        ${CMAKE_SOURCE_DIR}/src/common/include/version.h
 )
 
 # --------------------- Arrow ---------------------
@@ -120,6 +120,13 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 
 set(JWT_CPP_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include")
 
+# --------------------- JSON ---------------------
+
+include(FetchContent)
+
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 # --------------------------------------------------
 
 find_package(Threads REQUIRED)
@@ -145,15 +152,19 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_tables_schema_batch_reader.cpp)
 
 set(GIZMOSQL_PUBLIC_HEADERS
-        src/library/include/gizmosql_library.h
-        src/library/include/gizmosql_security.h
+        src/common/include/gizmosql_logging.h
+        src/common/include/gizmosql_library.h
+        src/common/include/gizmosql_security.h
+        src/common/include/access_log_middleware.h
 )
 
 
 # Add a library target
 add_library(gizmosqlserver STATIC
-        src/library/gizmosql_library.cpp
-        src/library/gizmosql_security.cpp
+        src/common/gizmosql_logging.cpp
+        src/common/gizmosql_library.cpp
+        src/common/gizmosql_security.cpp
+        src/common/access_log_middleware.cpp
         ${GIZMOSQL_SQLITE_SERVER_SRCS}
         ${GIZMOSQL_DUCKDB_SERVER_SRCS}
 )
@@ -164,11 +175,11 @@ set_target_properties(gizmosqlserver PROPERTIES
 
 target_include_directories(gizmosqlserver
         PUBLIC
-        src/library/include
+        src/common/include
         PRIVATE
         src/sqlite
         src/duckdb
-        src/library/include
+        src/common/include
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}
         ${JWT_CPP_INCLUDE_DIR}
@@ -181,6 +192,7 @@ target_link_libraries(gizmosqlserver
         sqlite
         duckdb
         ${Boost_LIBRARIES}
+        nlohmann_json::nlohmann_json
         "-lresolv"
 )
 

@@ -33,7 +33,7 @@
 #include "arrow/status.h"
 #include "arrow/table.h"
 
-#include "library/include/flight_sql_fwd.h"
+#include "common/include/flight_sql_fwd.h"
 
 using arrow::Status;
 
