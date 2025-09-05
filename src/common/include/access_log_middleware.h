@@ -15,6 +15,7 @@ class AccessLogMiddleware : public flight::ServerMiddleware {
   void SendingHeaders(flight::AddCallHeaders* /*out*/) override;
   void CallCompleted(const arrow::Status& status) override;
   std::string name() const override { return "access_log"; }
+  std::string peer() const { return peer_; }
 
  private:
   flight::FlightMethod method_;

@@ -127,7 +127,8 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
   std::string token_signature_verify_cert_file_contents_;
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>> VerifyAndDecodeToken(
-      const std::string &token) const;
+      const std::string &token,
+      const flight::ServerCallContext& context) const;
 };
 
 }  // namespace gizmosql

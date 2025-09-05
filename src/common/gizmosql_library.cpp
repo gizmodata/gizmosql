@@ -423,7 +423,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   gizmosql::LogConfig log_config;
   log_config.level = level;
   log_config.format = fmt;
-  log_config.component = std::string{"flight_server"};
+  log_config.component = std::string{"gizmosql_server"};
   if (!file_s.empty())
     log_config.file_path = file_s;  // "-" => stdout handled in InitLogging
   // ----------------------------------------------------------

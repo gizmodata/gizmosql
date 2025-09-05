@@ -116,8 +116,7 @@ class GizmoSQLLogger final : public Logger {
     tid << std::this_thread::get_id();
     j["tid"] = tid.str();
 
-    j["file"] = file;
-    j["line"] = line;
+    if (G.cfg.show_source) { j["file"] = file; j["line"] = line; }
     if (G.cfg.component) j["component"] = *G.cfg.component;
 
     // Pull out optional [func=...] tag (from GIZMOSQL_LOGF) into a proper field
@@ -153,7 +152,8 @@ class GizmoSQLLogger final : public Logger {
 
     if (G.cfg.component) oss << " component=" << *G.cfg.component;
 
-    oss << " " << file << ":" << line << " - " << message;
+    if (G.cfg.show_source) oss << " " << file << ":" << line;
+    oss << " - " << message;
 
     std::lock_guard<std::mutex> lk(G.sink_mu);
     (*G.sink) << oss.str() << '\n';

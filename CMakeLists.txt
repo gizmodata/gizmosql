@@ -156,6 +156,8 @@ set(GIZMOSQL_PUBLIC_HEADERS
         src/common/include/gizmosql_library.h
         src/common/include/gizmosql_security.h
         src/common/include/access_log_middleware.h
+        src/common/include/request_ctx.h
+        src/common/include/session_context.h
 )
 
 
@@ -230,6 +232,11 @@ find_package(gflags REQUIRED)
 
 add_executable(gizmosql_client
         src/gizmosql_client.cpp
+)
+
+target_include_directories(gizmosql_client
+        PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/common/include
 )
 
 target_link_libraries(gizmosql_client PRIVATE

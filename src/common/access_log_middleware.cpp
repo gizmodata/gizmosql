@@ -2,6 +2,7 @@
 
 // Only the .cpp needs logging; keep the header light.
 #include "include/gizmosql_logging.h"
+#include "include/request_ctx.h"
 
 #include <chrono>
 #include <string>
@@ -67,9 +68,9 @@ void AccessLogMiddleware::CallCompleted(const Status& status) {
 arrow::Status AccessLogFactory::StartCall(
     const CallInfo& info, const ServerCallContext& ctx,
     std::shared_ptr<flight::ServerMiddleware>* out) {
-  auto peer = ctx.peer();
+  tl_request_ctx.peer = ctx.peer();
 
-  *out = std::make_shared<AccessLogMiddleware>(info.method, std::move(peer));
-  return Status::OK();
+  *out = std::make_shared<AccessLogMiddleware>(info.method, *tl_request_ctx.peer);
+  return arrow::Status::OK();
 }
 }  // namespace gizmosql

@@ -46,6 +46,8 @@
 #include "gizmosql_logging.h"
 #include "flight_sql_fwd.h"
 #include <jwt-cpp/jwt.h>
+#include "session_context.h"
+#include "request_ctx.h"
 
 using arrow::Result;
 using arrow::Status;
@@ -175,14 +177,17 @@ class DuckDBFlightSqlServer::Impl {
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   bool print_queries_;
   std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
-  std::unordered_map<std::string, std::shared_ptr<duckdb::Connection>> open_sessions_;
+  std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
   std::default_random_engine gen_;
-  std::mutex mutex_;
+  std::mutex sessions_mutex_;
+  std::mutex statements_mutex_;
+  std::mutex transactions_mutex_;
+
 
   Result<std::shared_ptr<DuckDBStatement>> GetStatementByHandle(
       const std::string &handle) {
-    std::scoped_lock guard(mutex_);
+    std::scoped_lock guard(statements_mutex_);
     auto search = prepared_statements_.find(handle);
     if (search == prepared_statements_.end()) {
       return Status::KeyError("Prepared statement not found");
@@ -224,20 +229,30 @@ class DuckDBFlightSqlServer::Impl {
     return new_session_id;
   }
 
-  // We get a new session per thread to be thread-safe...
-  Result<std::shared_ptr<duckdb::Connection>> GetConnection(
-      const flight::ServerCallContext &context) {
+  arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
 
-    std::scoped_lock guard(mutex_);
-    auto it = open_sessions_.find(session_id);
-    if (it != open_sessions_.end()) {
+    std::scoped_lock lk(sessions_mutex_);
+
+    if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
       return it->second;
-    } else {
-      auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
-      open_sessions_[session_id] = connection;
-      return connection;
     }
+
+    auto cs = std::make_shared<ClientSession>();
+    cs->session_id = session_id;
+    cs->username   = tl_request_ctx.username.value_or("");
+    cs->role       = tl_request_ctx.role.value_or("");
+    cs->peer       = tl_request_ctx.peer.value_or(context.peer());
+    cs->conn       = std::make_shared<duckdb::Connection>(*db_instance_);
+
+    client_sessions_[session_id] = cs;
+    return cs;
+  }
+
+  // Convenience method for retrieving just a database connection:
+  arrow::Result<std::shared_ptr<duckdb::Connection>> GetConnection(const flight::ServerCallContext& context) {
+    ARROW_ASSIGN_OR_RAISE(auto cs, GetClientSession(context));
+    return cs->conn;
   }
 
   // Create a Ticket that combines a query and a transaction ID.
@@ -363,9 +378,9 @@ class DuckDBFlightSqlServer::Impl {
       const sql::ActionCreatePreparedStatementRequest &request) {
     std::shared_ptr<DuckDBStatement> statement;
 
-    ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
-    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, request.query))
-    std::scoped_lock guard(mutex_);
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(client_session->conn, request.query))
+    std::scoped_lock guard(statements_mutex_);
     const std::string handle = GenerateRandomString();
     prepared_statements_[handle] = statement;
 
@@ -384,24 +399,9 @@ class DuckDBFlightSqlServer::Impl {
           stmt->data;
 
       if (!prepared_statement_data->properties.IsReadOnly()) {
-        const auto *base = context.GetMiddleware(
-            "bearer-auth-server");  // returns BearerAuthServerMiddleware*
-        auto *bearer_auth_server_middleware =
-            dynamic_cast<const BearerAuthServerMiddleware *>(base);
-        if (!bearer_auth_server_middleware)
-          return arrow::Status::Invalid("No Bearer Auth middleware");
-
-        auto username =
-            const_cast<BearerAuthServerMiddleware *>(bearer_auth_server_middleware)
-                ->GetUsername();
-
-        auto role =
-            const_cast<BearerAuthServerMiddleware *>(bearer_auth_server_middleware)
-                ->GetRole();
-
-        if (role == "readonly") {
+        if (client_session->role == "readonly") {
           return Status::ExecutionError(
-              "User '" + username +
+              "User '" + client_session->username + "' has a readonly session and cannot run "
               "' has a readonly session and cannot run statements that modify state.");
         }
       }
@@ -426,8 +426,18 @@ class DuckDBFlightSqlServer::Impl {
                                                     .prepared_statement_handle = handle};
 
     if (print_queries_) {
-      GIZMOSQL_LOG(INFO) << "Client running SQL command: \n"
-                         << request.query << ";\n";
+      GIZMOSQL_LOG(INFO) << "Client running SQL command (peer="
+                         << client_session->peer
+                         << " session_id="
+                         << client_session->session_id
+                         << " user="
+                         << client_session->username
+                         << " role="
+                         << client_session->role
+                         << " statement_handle="
+                         << handle
+                         << " command="
+                         << request.query << ";\n)";
     }
 
     return result;
@@ -435,7 +445,7 @@ class DuckDBFlightSqlServer::Impl {
 
   Status ClosePreparedStatement(const flight::ServerCallContext &context,
                                 const sql::ActionClosePreparedStatementRequest &request) {
-    std::scoped_lock guard(mutex_);
+    std::scoped_lock guard(statements_mutex_);
     const std::string &prepared_statement_handle = request.prepared_statement_handle;
 
     if (auto search = prepared_statements_.find(prepared_statement_handle);
@@ -452,7 +462,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context,
       const sql::PreparedStatementQuery &command,
       const flight::FlightDescriptor &descriptor) {
-    std::scoped_lock guard(mutex_);
+    std::scoped_lock guard(statements_mutex_);
     const std::string &prepared_statement_handle = command.prepared_statement_handle;
 
     auto search = prepared_statements_.find(prepared_statement_handle);
@@ -470,7 +480,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetPreparedStatement(
       const flight::ServerCallContext &context,
       const sql::PreparedStatementQuery &command) {
-    std::scoped_lock guard(mutex_);
+    std::scoped_lock guard(statements_mutex_);
     const std::string &prepared_statement_handle = command.prepared_statement_handle;
 
     auto search = prepared_statements_.find(prepared_statement_handle);
@@ -709,7 +719,7 @@ class DuckDBFlightSqlServer::Impl {
       const sql::ActionBeginTransactionRequest &request) {
     std::string handle = GenerateRandomString();
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
-    std::scoped_lock guard(mutex_);
+    std::scoped_lock guard(transactions_mutex_);
     open_transactions_[handle] = "";
 
     ARROW_RETURN_NOT_OK(ExecuteSql(connection, "BEGIN TRANSACTION"));
@@ -799,10 +809,10 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext &context,
       const flight::CloseSessionRequest &request) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
-    auto it = open_sessions_.find(session_id);
-    if (it != open_sessions_.end()) {
+    auto it = client_sessions_.find(session_id);
+    if (it != client_sessions_.end()) {
       it->second.reset();
-      open_sessions_.erase(it);
+      client_sessions_.erase(it);
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
     } else {
       return Status::KeyError("Session: '" + session_id + "' not found");
