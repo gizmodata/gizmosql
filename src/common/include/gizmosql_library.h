@@ -71,5 +71,7 @@ int RunFlightSQLServer(
     std::filesystem::path init_sql_commands_file = std::filesystem::path(),
     const bool &print_queries = false, const bool &read_only = false,
     std::string token_allowed_issuer = "", std::string token_allowed_audience = "",
-    std::filesystem::path token_signature_verify_cert_path = std::filesystem::path());
+    std::filesystem::path token_signature_verify_cert_path = std::filesystem::path(),
+    std::string log_level = "", std::string log_format = "", std::string access_log = "",
+    std::string log_file = "");
 }

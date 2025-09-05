@@ -16,6 +16,7 @@
 // under the License.
 
 #include "common/include/gizmosql_library.h"
+#include "common/include/gizmosql_logging.h"
 #include <iostream>
 #include <boost/program_options.hpp>
 
@@ -70,7 +71,17 @@ int main(int argc, char **argv) {
               "If not set, we will use env var: 'TOKEN_ALLOWED_AUDIENCE'.")
             ("token-signature-verify-cert-filename", po::value<std::string>()->default_value(""),
              "Specify the RSA PEM certificate file used for verifying tokens used in JWT token-based authentication - see docs for details.  "
-              "If not set, we will use env var: 'TOKEN_SIGNATURE_VERIFY_CERT_FILENAME'.");
+              "If not set, we will use env var: 'TOKEN_SIGNATURE_VERIFY_CERT_FILENAME'.")
+            // -------- Logging controls (raw strings; library normalizes) --------
+            ("log-level",  po::value<std::string>()->default_value(""),
+             "Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_LOG_LEVEL or defaults to info.")
+            ("log-format", po::value<std::string>()->default_value(""),
+             "Log format: text|json. If empty, uses env GIZMOSQL_LOG_FORMAT or defaults to text.")
+            ("access-log", po::value<std::string>()->default_value(""),
+             "Per-RPC access logging: on|off. If empty, uses env GIZMOSQL_ACCESS_LOG or defaults to on.")
+            ("log-file",   po::value<std::string>()->default_value(""),
+             "Log file path; use '-' for stdout; empty => stderr. Can also use env GIZMOSQL_LOG_FILE.");
+
   // clang-format on
 
   po::variables_map vm;
@@ -78,12 +89,12 @@ int main(int argc, char **argv) {
   po::notify(vm);
 
   if (vm.count("help")) {
-    std::cout << desc << "\n";
+    GIZMOSQL_LOG(INFO) << desc << "\n";
     return 0;
   }
 
   if (vm.count("version")) {
-    std::cout << "GizmoSQL Server CLI: " << GIZMOSQL_SERVER_VERSION << std::endl;
+    GIZMOSQL_LOG(INFO) << "GizmoSQL Server CLI: " << GIZMOSQL_SERVER_VERSION;
     return 0;
   }
 
@@ -94,7 +105,7 @@ int main(int argc, char **argv) {
   } else if (backend_str == "sqlite") {
     backend = BackendType::sqlite;
   } else {
-    std::cout << "Invalid backend: " << backend_str << std::endl;
+    GIZMOSQL_LOG(INFO) << "Invalid backend: " << backend_str;
     return 1;
   }
 
@@ -127,7 +138,7 @@ int main(int argc, char **argv) {
   if (vm.count("tls")) {
     std::vector<std::string> tls_tokens = tls_token_values;
     if (tls_tokens.size() != 2) {
-      std::cout << "--tls requires 2 entries - separated by a space!" << std::endl;
+      GIZMOSQL_LOG(INFO) << "--tls requires 2 entries - separated by a space!";
       return 1;
     }
     tls_cert_path = fs::path(tls_tokens[0]);
@@ -165,12 +176,21 @@ int main(int argc, char **argv) {
 
   fs::path token_signature_verify_cert_path;
   if (vm.count("token-signature-verify-cert-filename")) {
-    token_signature_verify_cert_path = fs::path(vm["token-signature-verify-cert-filename"].as<std::string>());
+    token_signature_verify_cert_path =
+        fs::path(vm["token-signature-verify-cert-filename"].as<std::string>());
   }
+
+  std::string log_level = vm.count("log-level") ? vm["log-level"].as<std::string>() : "";
+  std::string log_format =
+      vm.count("log-format") ? vm["log-format"].as<std::string>() : "";
+  std::string access_log =
+      vm.count("access-log") ? vm["access-log"].as<std::string>() : "";
+  std::string log_file = vm.count("log-file") ? vm["log-file"].as<std::string>() : "";
 
   return RunFlightSQLServer(backend, database_filename, hostname, port, username,
                             password, secret_key, tls_cert_path, tls_key_path,
                             mtls_ca_cert_path, init_sql_commands, init_sql_commands_file,
                             print_queries, read_only, token_allowed_issuer,
-                            token_allowed_audience, token_signature_verify_cert_path);
+                            token_allowed_audience, token_signature_verify_cert_path,
+                            log_level, log_format, access_log, log_file);
 }

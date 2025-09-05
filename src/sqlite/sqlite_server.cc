@@ -37,6 +37,7 @@
 #include "arrow/flight/sql/server.h"
 #include "arrow/scalar.h"
 #include "arrow/util/logging.h"
+#include "gizmosql_logging.h"
 
 #include "flight_sql_fwd.h"
 
@@ -806,7 +807,7 @@ SQLiteFlightSqlServer::SQLiteFlightSqlServer(std::shared_ptr<Impl> impl)
 
 arrow::Result<std::shared_ptr<SQLiteFlightSqlServer>> SQLiteFlightSqlServer::Create(
     const std::string& path, const bool& read_only) {
-  std::cout << "SQLite version: " << sqlite3_libversion() << std::endl;
+  GIZMOSQL_LOG(INFO) << "SQLite version: " << sqlite3_libversion();
 
   sqlite3* db = nullptr;
 

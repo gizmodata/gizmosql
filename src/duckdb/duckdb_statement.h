@@ -70,10 +70,10 @@ class DuckDBStatement {
   std::shared_ptr<duckdb::Connection> con_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
-  
+
   // Support for direct query execution (fallback for statements that can't be prepared)
-  std::string sql_; // Original SQL for direct execution
-  bool use_direct_execution_; // Flag to indicate whether to use direct query execution
+  std::string sql_;            // Original SQL for direct execution
+  bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
 
   DuckDBStatement(std::shared_ptr<duckdb::Connection> con,
                   std::shared_ptr<duckdb::PreparedStatement> stmt) {
@@ -81,10 +81,9 @@ class DuckDBStatement {
     stmt_ = stmt;
     use_direct_execution_ = false;
   }
-  
+
   // Constructor for direct execution mode
-  DuckDBStatement(std::shared_ptr<duckdb::Connection> con,
-                  const std::string& sql) {
+  DuckDBStatement(std::shared_ptr<duckdb::Connection> con, const std::string& sql) {
     con_ = con;
     sql_ = sql;
     use_direct_execution_ = true;

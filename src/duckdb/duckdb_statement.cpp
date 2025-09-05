@@ -112,14 +112,15 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   if (not stmt->success) {
     std::string error_message = stmt->error.Message();
-    
+
     // Check if this is the multiple statements error that can be resolved with direct execution
-    if (error_message.find("Cannot prepare multiple statements at once") != std::string::npos) {
+    if (error_message.find("Cannot prepare multiple statements at once") !=
+        std::string::npos) {
       // Fallback to direct query execution for statements like PIVOT that get rewritten to multiple statements
       std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(con, sql));
       return result;
     }
-    
+
     // Other preparation errors are still fatal
     std::string err_msg =
         "Can't prepare statement: '" + sql + "' - Error: " + error_message;
@@ -138,14 +139,16 @@ arrow::Result<int> DuckDBStatement::Execute() {
     // Direct query execution for statements that can't be prepared (like PIVOT)
     // Note: Direct execution doesn't support bind parameters
     if (!bind_parameters.empty()) {
-      return arrow::Status::Invalid("Direct query execution does not support bind parameters");
+      return arrow::Status::Invalid(
+          "Direct query execution does not support bind parameters");
     }
-    
+
     auto result = con_->Query(sql_);
     if (result->HasError()) {
-      return arrow::Status::ExecutionError("Direct query execution error: ", result->GetError());
+      return arrow::Status::ExecutionError("Direct query execution error: ",
+                                           result->GetError());
     }
-    
+
     // Store the result for FetchResult()
     query_result_ = std::move(result);
   } else {
@@ -164,7 +167,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   std::shared_ptr<arrow::RecordBatch> record_batch;
   ArrowArray res_arr;
   ArrowSchema res_schema;
-  
+
   // Get client context - handle both prepared statement and direct execution modes
   duckdb::shared_ptr<duckdb::ClientContext> client_context;
   if (use_direct_execution_) {
@@ -174,7 +177,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
     // For prepared statements, get context from the statement
     client_context = stmt_->context;
   }
-  
+
   auto res_options = client_context->GetClientProperties();
   res_options.time_zone = query_result_->client_properties.time_zone;
 
@@ -236,15 +239,17 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const
     // This is a temporary execution just to get the schema
     auto temp_result = con_->Query(sql_);
     if (temp_result->HasError()) {
-      return arrow::Status::ExecutionError("Failed to get schema for direct query: ", temp_result->GetError());
+      return arrow::Status::ExecutionError("Failed to get schema for direct query: ",
+                                           temp_result->GetError());
     }
-    
+
     auto &context = con_->context;
     auto client_properties = context->GetClientProperties();
-    
+
     ArrowSchema arrow_schema;
-    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, temp_result->types, temp_result->names, client_properties);
-    
+    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, temp_result->types,
+                                          temp_result->names, client_properties);
+
     auto return_value = arrow::ImportSchema(&arrow_schema);
     return return_value;
   } else {

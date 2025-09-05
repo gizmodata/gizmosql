@@ -12,8 +12,8 @@ enum class LogFormat { kText, kJson };
 struct LogConfig {
   LogFormat format = LogFormat::kText;  // runtime: text or json
   arrow::util::ArrowLogLevel level = arrow::util::ArrowLogLevel::ARROW_INFO;
-  std::optional<std::string> file_path {}; // if set, write to file; else stderr
-  std::optional<std::string> component {}; // optional tag (e.g., "flight_server")
+  std::optional<std::string> file_path{};  // if set, write to file; else stderr
+  std::optional<std::string> component{};  // optional tag (e.g., "flight_server")
   bool flush_each_line = true;
 };
 
@@ -28,4 +28,4 @@ void SetLogLevel(arrow::util::ArrowLogLevel level);
 #define GIZMOSQL_LOG(sev) ARROW_LOG(sev)
 #define GIZMOSQL_LOGF(sev) ARROW_LOG(sev) << "[func=" << __func__ << "] "
 
-} // namespace gizmosql
+}  // namespace gizmosql

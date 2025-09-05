@@ -16,6 +16,7 @@
 // under the License.
 
 #include "include/gizmosql_security.h"
+#include "include/gizmosql_logging.h"
 
 namespace fs = std::filesystem;
 
@@ -34,8 +35,8 @@ const std::string kAuthHeader = "authorization";
 Status SecurityUtilities::FlightServerTlsCertificates(
     const fs::path &cert_path, const fs::path &key_path,
     std::vector<flight::CertKeyPair> *out) {
-  std::cout << "Using TLS Cert file: " << cert_path << std::endl;
-  std::cout << "Using TLS Key file: " << key_path << std::endl;
+  GIZMOSQL_LOG(INFO) << "Using TLS Cert file: " << cert_path;
+  GIZMOSQL_LOG(INFO) << "Using TLS Key file: " << key_path;
 
   *out = std::vector<flight::CertKeyPair>();
   try {
@@ -264,8 +265,7 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string &token
                      .with_issuer(std::string(token_allowed_issuer_))
                      .with_audience(token_allowed_audience_);
     } else {
-      std::cout << "Bearer Token has an invalid 'iss' claim value of: " << iss
-                << std::endl;
+      GIZMOSQL_LOG(INFO) << "Bearer Token has an invalid 'iss' claim value of: " << iss;
       return Status::Invalid("Invalid token issuer");
     }
 
@@ -274,8 +274,8 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string &token
     return decoded;
   } catch (const std::exception &e) {
     auto error_message = e.what();
-    std::cout << "Bearer Token verification failed with exception: " << error_message
-              << std::endl;
+    GIZMOSQL_LOG(INFO) << "Bearer Token verification failed with exception: "
+                       << error_message;
     return Status::Invalid("Token verification failed with error: " +
                            std::string(error_message));
   }

@@ -12,11 +12,11 @@
 #include <iostream>
 
 #if defined(_WIN32)
-  #include <process.h>
-  static inline int gizmosql_getpid() { return _getpid(); }
+#include <process.h>
+static inline int gizmosql_getpid() { return _getpid(); }
 #else
-  #include <unistd.h>
-  static inline int gizmosql_getpid() { return getpid(); }
+#include <unistd.h>
+static inline int gizmosql_getpid() { return getpid(); }
 #endif
 
 #include <nlohmann/json.hpp>
@@ -57,20 +57,26 @@ inline std::string NowIso8601Utc() {
 #endif
 
   std::ostringstream oss;
-  oss << std::put_time(&tm_utc, "%Y-%m-%dT%H:%M:%S")
-      << "." << std::setw(3) << std::setfill('0') << ms << "Z";
+  oss << std::put_time(&tm_utc, "%Y-%m-%dT%H:%M:%S") << "." << std::setw(3)
+      << std::setfill('0') << ms << "Z";
   return oss.str();
 }
 
 inline const char* LevelName(ArrowLogLevel lvl) {
   using L = ArrowLogLevel;
   switch (lvl) {
-    case L::ARROW_DEBUG:   return "DEBUG";
-    case L::ARROW_INFO:    return "INFO";
-    case L::ARROW_WARNING: return "WARN";
-    case L::ARROW_ERROR:   return "ERROR";
-    case L::ARROW_FATAL:   return "FATAL";
-    default:               return "INFO";
+    case L::ARROW_DEBUG:
+      return "DEBUG";
+    case L::ARROW_INFO:
+      return "INFO";
+    case L::ARROW_WARNING:
+      return "WARN";
+    case L::ARROW_ERROR:
+      return "ERROR";
+    case L::ARROW_FATAL:
+      return "FATAL";
+    default:
+      return "INFO";
   }
 }
 
@@ -82,15 +88,13 @@ class GizmoSQLLogger final : public Logger {
 
   bool is_enabled() const override { return true; }
 
-  ArrowLogLevel severity_threshold() const override {
-    return G.level.load();
-  }
+  ArrowLogLevel severity_threshold() const override { return G.level.load(); }
 
   void Log(const LogDetails& d) override {
     // Extract basics from LogDetails
     const auto lvl = d.severity;
     const std::string& file = d.source_location.file;
-    const int   line = static_cast<int>(d.source_location.line);
+    const int line = static_cast<int>(d.source_location.line);
     const std::string_view& msg = d.message;
 
     if (G.cfg.format == LogFormat::kJson) {
@@ -104,9 +108,9 @@ class GizmoSQLLogger final : public Logger {
   static void WriteJson(ArrowLogLevel level, const std::string file, int line,
                         const std::string_view& message) {
     nlohmann::json j;
-    j["ts"]   = NowIso8601Utc();
-    j["lvl"]  = LevelName(level);
-    j["pid"]  = gizmosql_getpid();
+    j["ts"] = NowIso8601Utc();
+    j["lvl"] = LevelName(level);
+    j["pid"] = gizmosql_getpid();
 
     std::ostringstream tid;
     tid << std::this_thread::get_id();
@@ -144,8 +148,7 @@ class GizmoSQLLogger final : public Logger {
     tid << std::this_thread::get_id();
 
     std::ostringstream oss;
-    oss << NowIso8601Utc() << " " << LevelName(level)
-        << " pid=" << gizmosql_getpid()
+    oss << NowIso8601Utc() << " " << LevelName(level) << " pid=" << gizmosql_getpid()
         << " tid=" << tid.str();
 
     if (G.cfg.component) oss << " component=" << *G.cfg.component;
@@ -160,7 +163,7 @@ class GizmoSQLLogger final : public Logger {
 
 std::shared_ptr<GizmoSQLLogger> g_logger;
 
-} // namespace
+}  // namespace
 
 // ---------- public API
 
@@ -197,4 +200,4 @@ void SetLogLevel(ArrowLogLevel level) {
   // so just updating G.level is sufficient.
 }
 
-} // namespace gizmosql
+}  // namespace gizmosql

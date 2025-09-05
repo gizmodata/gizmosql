@@ -43,6 +43,7 @@
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
 #include "gizmosql_security.h"
+#include "gizmosql_logging.h"
 #include "flight_sql_fwd.h"
 #include <jwt-cpp/jwt.h>
 
@@ -425,9 +426,8 @@ class DuckDBFlightSqlServer::Impl {
                                                     .prepared_statement_handle = handle};
 
     if (print_queries_) {
-      std::cout << "Client running SQL command: \n"
-                << request.query << ";\n"
-                << std::endl;
+      GIZMOSQL_LOG(INFO) << "Client running SQL command: \n"
+                         << request.query << ";\n";
     }
 
     return result;
@@ -859,7 +859,7 @@ DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string &path, const bool &read_only, const bool &print_queries) {
-  std::cout << "DuckDB version: " << duckdb_library_version() << std::endl;
+  GIZMOSQL_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
 
   bool in_memory = path == ":memory:";
   char *db_location;

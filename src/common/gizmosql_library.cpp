@@ -27,7 +27,6 @@
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/sql/server_session_middleware.h>
 #include <arrow/flight/sql/server_session_middleware_factory.h>
-#include <arrow/util/logging.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -35,7 +34,9 @@
 #include "sqlite_server.h"
 #include "duckdb_server.h"
 #include "include/flight_sql_fwd.h"
+#include "include/gizmosql_logging.h"
 #include "include/gizmosql_security.h"
+#include "include/access_log_middleware.h"
 
 namespace fs = std::filesystem;
 
@@ -53,8 +54,8 @@ const int port = 31337;
       while (iter != end) {                                                        \
         std::string init_sql_command = *iter;                                      \
         if (init_sql_command.empty()) continue;                                    \
-        std::cout << "Running Init SQL command: " << std::endl                     \
-                  << init_sql_command << ";" << std::endl;                         \
+        GIZMOSQL_LOG(INFO) << "Running Init SQL command: \n"                       \
+                           << init_sql_command << ";";                             \
         ARROW_RETURN_NOT_OK(serverType->ExecuteSql(init_sql_command));             \
         ++iter;                                                                    \
       }                                                                            \
@@ -73,14 +74,15 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const fs::path &mtls_ca_cert_path, const std::string &init_sql_commands,
     const bool &read_only, const bool &print_queries,
     const std::string &token_allowed_issuer, const std::string &token_allowed_audience,
-    const fs::path &token_signature_verify_cert_path) {
+    const fs::path &token_signature_verify_cert_path, const bool &access_logging_enabled) {
+
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
                             : flight::Location::ForGrpcTcp(hostname, port));
 
-  std::cout << "----------------------------------------------" << std::endl;
-  std::cout << "Apache Arrow version: " << ARROW_VERSION_STRING << std::endl;
+  GIZMOSQL_LOG(INFO) << "----------------------------------------------";
+  GIZMOSQL_LOG(INFO) << "Apache Arrow version: " << ARROW_VERSION_STRING;
 
   flight::FlightServerOptions options(location);
 
@@ -88,8 +90,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerTlsCertificates(
         tls_cert_path, tls_key_path, &options.tls_certificates));
   } else {
-    std::cout << "WARNING - TLS is disabled for the GizmoSQL server - this is NOT secure."
-              << std::endl;
+    GIZMOSQL_LOG(INFO)
+        << "WARNING - TLS is disabled for the GizmoSQL server - this is NOT secure.";
   }
 
   // Setup authentication middleware (using the same TLS certificate keypair)
@@ -107,8 +109,16 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       flight::sql::MakeServerSessionMiddlewareFactory(&MakeSessionId);
   options.middleware.push_back({"session", session_middleware});
 
+  // Access log middleware (toggle)
+  if (access_logging_enabled) {
+    options.middleware.push_back({"access_log", std::make_shared<AccessLogFactory>()});
+    GIZMOSQL_LOG(INFO) << "Access logging enabled";
+  } else {
+    GIZMOSQL_LOG(INFO) << "Access logging disabled";
+  }
+
   if (!mtls_ca_cert_path.empty()) {
-    std::cout << "Using mTLS CA certificate: " << mtls_ca_cert_path << std::endl;
+    GIZMOSQL_LOG(INFO) << "Using mTLS CA certificate: " << mtls_ca_cert_path;
     ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerMtlsCACertificate(
         mtls_ca_cert_path, &options.root_certificates));
     options.verify_client = true;
@@ -137,10 +147,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     server = duckdb_server;
   }
 
-  std::cout << "Using database file: " << database_filename << std::endl;
+  GIZMOSQL_LOG(INFO) << "Using database file: " << database_filename;
 
-  std::cout << "Print Queries option is set to: " << std::boolalpha << print_queries
-            << std::endl;
+  GIZMOSQL_LOG(INFO) << "Print Queries option is set to: " << std::boolalpha
+                     << print_queries;
 
   if (server != nullptr) {
     ARROW_CHECK_OK(server->Init(options));
@@ -148,9 +158,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Exit with a clean error code (0) on SIGTERM or SIGINT
     ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
 
-    std::cout << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
-              << " - with engine: " << db_type << " - will listen on "
-              << server->location().ToString() << std::endl;
+    GIZMOSQL_LOG(INFO) << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
+                       << " - with engine: " << db_type << " - will listen on "
+                       << server->location().ToString();
 
     return server;
   } else {
@@ -174,12 +184,13 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
     const bool &print_queries, const bool &read_only, std::string token_allowed_issuer,
-    std::string token_allowed_audience, fs::path token_signature_verify_cert_path) {
+    std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
+    const bool &access_logging_enabled) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
-    std::cout << "WARNING - The database filename was not provided, opening an in-memory "
-                 "database..."
-              << std::endl;
+    GIZMOSQL_LOG(INFO)
+        << "WARNING - The database filename was not provided, opening an in-memory "
+           "database...";
     database_filename = ":memory:";
   } else if (database_filename.u8string().find(':') == std::string::npos) {
     // DuckDB supports '<extension_name>:...' syntax, for example 'ducklake:/path/to/lake.db'
@@ -267,10 +278,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   }
 
   if (read_only) {
-    std::cout
+    GIZMOSQL_LOG(INFO)
         << "WARNING - Running in Read-Only mode - no changes will be persisted to the "
-           "database."
-        << std::endl;
+           "database.";
   }
 
   if (token_allowed_issuer.empty()) {
@@ -294,9 +304,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   }
 
   if (!token_allowed_issuer.empty()) {
-    std::cout
+    GIZMOSQL_LOG(INFO)
         << "INFO - Using token authentication - the token allowed issuer is set to: '"
-        << token_allowed_issuer << "'" << std::endl;
+        << token_allowed_issuer << "'";
     if (token_allowed_audience.empty()) {
       return arrow::Status::Invalid(
           "The token allowed issuer is set, but audience is not set.  "
@@ -307,17 +317,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
           "The token allowed issuer is set, but token signature verification certificate "
           "path is not set.");
     }
-    std::cout << "INFO - The token audience is set to: '" << token_allowed_audience << "'"
-              << std::endl;
-    std::cout << "INFO - The token signature verification certificate path is set to: "
-              << token_signature_verify_cert_path.string() << std::endl;
+    GIZMOSQL_LOG(INFO) << "INFO - The token audience is set to: '"
+                       << token_allowed_audience << "'";
+    GIZMOSQL_LOG(INFO)
+        << "INFO - The token signature verification certificate path is set to: "
+        << token_signature_verify_cert_path.string();
   }
 
-  return FlightSQLServerBuilder(backend, database_filename, hostname, port, username,
-                                password, secret_key, tls_cert_path, tls_key_path,
-                                mtls_ca_cert_path, init_sql_commands, read_only,
-                                print_queries, token_allowed_issuer,
-                                token_allowed_audience, token_signature_verify_cert_path);
+  return FlightSQLServerBuilder(
+      backend, database_filename, hostname, port, username, password, secret_key,
+      tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
+      print_queries, token_allowed_issuer, token_allowed_audience,
+      token_signature_verify_cert_path, access_logging_enabled);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -337,31 +348,110 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        fs::path init_sql_commands_file, const bool &print_queries,
                        const bool &read_only, std::string token_allowed_issuer,
                        std::string token_allowed_audience,
-                       fs::path token_signature_verify_cert_path) {
+                       fs::path token_signature_verify_cert_path, std::string log_level,
+                       std::string log_format, std::string access_log,
+                       std::string log_file) {
+  // ---- Logging normalization (library-owned) ----------------
+  auto lower = [](std::string s) {
+    for (auto &c : s) c = static_cast<char>(std::tolower((unsigned char)c));
+    return s;
+  };
+
+  auto pick = [&](std::string v, const char *env_name, std::string def) -> std::string {
+    if (!v.empty()) return v;
+    auto env = gizmosql::SafeGetEnvVarValue(env_name);
+    if (!env.empty()) return env;
+    return def;
+  };
+
+  std::string lvl_s = pick(log_level, "GIZMOSQL_LOG_LEVEL", "info");
+  std::string fmt_s = pick(log_format, "GIZMOSQL_LOG_FORMAT", "text");
+  std::string acc_s = pick(access_log, "GIZMOSQL_ACCESS_LOG", "on");
+  std::string file_s = pick(log_file, "GIZMOSQL_LOG_FILE", "");
+
+  // level
+  arrow::util::ArrowLogLevel level = arrow::util::ArrowLogLevel::ARROW_INFO;
+  {
+    auto v = lower(lvl_s);
+    using L = arrow::util::ArrowLogLevel;
+    if (v == "debug")
+      level = L::ARROW_DEBUG;
+    else if (v == "info")
+      level = L::ARROW_INFO;
+    else if (v == "warn" || v == "warning")
+      level = L::ARROW_WARNING;
+    else if (v == "error")
+      level = L::ARROW_ERROR;
+    else if (v == "fatal")
+      level = L::ARROW_FATAL;
+    else
+      std::cerr << "Unknown log-level '" << lvl_s << "', defaulting to INFO\n";
+  }
+
+  // format
+  gizmosql::LogFormat fmt = gizmosql::LogFormat::kText;
+  {
+    auto v = lower(fmt_s);
+#ifdef GIZMOSQL_ENABLE_JSON_LOGS
+    if (v == "json") fmt = gizmosql::LogFormat::kJson;
+#else
+    if (v == "json")
+      std::cerr << "JSON logging requested but GIZMOSQL_ENABLE_JSON_LOGS not enabled; "
+                   "falling back to text\n";
+#endif
+  }
+
+  // access on/off
+  auto parse_bool = [&](std::string s, bool &out) -> bool {
+    s = lower(std::move(s));
+    if (s == "1" || s == "true" || s == "on" || s == "yes") {
+      out = true;
+      return true;
+    }
+    if (s == "0" || s == "false" || s == "off" || s == "no") {
+      out = false;
+      return true;
+    }
+    return false;
+  };
+  bool access_logging_enabled = true;
+  if (!parse_bool(acc_s, access_logging_enabled)) {
+    std::cerr << "Unknown access-log '" << acc_s << "', defaulting to on\n";
+  }
+
+  // build logger config and install (Arrow v21+)
+  gizmosql::LogConfig log_config;
+  log_config.level = level;
+  log_config.format = fmt;
+  log_config.component = std::string{"flight_server"};
+  if (!file_s.empty())
+    log_config.file_path = file_s;  // "-" => stdout handled in InitLogging
+  // ----------------------------------------------------------
+  gizmosql::InitLogging(log_config);
+
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
   std::tm *localTime = std::localtime(&currentTime);
 
-  std::cout << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
-            << " GizmoData LLC" << std::endl
-            << " Licensed under the Apache License, Version 2.0" << std::endl
-            << " https://www.apache.org/licenses/LICENSE-2.0" << std::endl;
-  std::cout << "----------------------------------------------" << std::endl;
+  GIZMOSQL_LOG(INFO) << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
+                     << " GizmoData LLC"
+                     << "\n Licensed under the Apache License, Version 2.0"
+                     << "\n https://www.apache.org/licenses/LICENSE-2.0";
 
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
-      token_allowed_audience, token_signature_verify_cert_path);
+      token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
-    std::cout << "GizmoSQL server - started" << std::endl;
+    GIZMOSQL_LOG(INFO) << "GizmoSQL server - started";
     ARROW_CHECK_OK(server_ptr->Serve());
     return EXIT_SUCCESS;
   } else {
     // Handle the error
-    std::cerr << "Error: " << create_server_result.status().ToString() << std::endl;
+    std::cerr << "Error: " << create_server_result.status().ToString();
     return EXIT_FAILURE;
   }
 }
