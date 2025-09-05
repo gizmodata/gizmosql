@@ -37,6 +37,8 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
 )
+execute_process(COMMAND "${CMAKE_COMMAND}" --install .
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow")
 
 set(ARROW_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
 set(ARROW_INCLUDE_DIR "${ARROW_INSTALL_DIR}/include")
@@ -152,16 +154,6 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_server.cpp
         src/duckdb/duckdb_tables_schema_batch_reader.cpp)
 
-set(GIZMOSQL_PUBLIC_HEADERS
-        src/common/include/gizmosql_logging.h
-        src/common/include/gizmosql_library.h
-        src/common/include/gizmosql_security.h
-        src/common/include/access_log_middleware.h
-        src/common/include/request_ctx.h
-        src/common/include/session_context.h
-)
-
-
 # Add a library target
 add_library(gizmosqlserver STATIC
         src/common/gizmosql_logging.cpp
@@ -173,7 +165,7 @@ add_library(gizmosqlserver STATIC
 )
 
 set_target_properties(gizmosqlserver PROPERTIES
-        PUBLIC_HEADER "${GIZMOSQL_PUBLIC_HEADERS}"
+        PUBLIC_HEADER src/common/include/gizmosql_library.h
 )
 
 target_include_directories(gizmosqlserver
@@ -182,7 +174,7 @@ target_include_directories(gizmosqlserver
         PRIVATE
         src/sqlite
         src/duckdb
-        src/common/include
+        src/common/include/detail
         ${ARROW_INCLUDE_DIR}
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}

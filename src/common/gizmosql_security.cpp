@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "include/gizmosql_security.h"
-#include "include/gizmosql_logging.h"
-#include "include/request_ctx.h"
+#include "gizmosql_security.h"
+#include "include/detail/gizmosql_logging.h"
+#include "include/detail/request_ctx.h"
 
 namespace fs = std::filesystem;
 

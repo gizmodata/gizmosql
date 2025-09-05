@@ -25,7 +25,7 @@
 #include <arrow/record_batch.h>
 #include <arrow/util/rows_to_batches.h>
 
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 
 namespace sql = flight::sql;
 

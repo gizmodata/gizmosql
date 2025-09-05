@@ -1,4 +1,4 @@
-#include "gizmosql_logging.h"
+#include "include/detail/gizmosql_logging.h"
 
 #include <arrow/util/logger.h>
 #include <chrono>

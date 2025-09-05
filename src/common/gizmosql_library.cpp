@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "include/gizmosql_library.h"
+#include "gizmosql_library.h"
 
 #include <cstdlib>
 #include <csignal>
@@ -33,10 +33,10 @@
 
 #include "sqlite_server.h"
 #include "duckdb_server.h"
-#include "include/flight_sql_fwd.h"
-#include "include/gizmosql_logging.h"
-#include "include/gizmosql_security.h"
-#include "include/access_log_middleware.h"
+#include "flight_sql_fwd.h"
+#include "include/detail/gizmosql_logging.h"
+#include "gizmosql_security.h"
+#include "include/detail/access_log_middleware.h"
 
 namespace fs = std::filesystem;
 

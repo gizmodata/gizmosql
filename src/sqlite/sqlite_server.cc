@@ -37,9 +37,9 @@
 #include <arrow/flight/sql/server.h>
 #include <arrow/scalar.h>
 #include <arrow/util/logging.h>
-#include "gizmosql_logging.h"
+#include "../common/include/detail/gizmosql_logging.h"
 
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 
 using arrow::Status;
 

@@ -26,7 +26,7 @@
 
 #include "duckdb_sql_info.h"
 #include "duckdb_server.h"
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 
 namespace sql = flight::sql;
 

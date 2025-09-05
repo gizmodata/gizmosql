@@ -21,7 +21,7 @@
 #include <memory>
 #include <arrow/record_batch.h>
 #include "duckdb_statement.h"
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 
 namespace gizmosql::ddb
 {

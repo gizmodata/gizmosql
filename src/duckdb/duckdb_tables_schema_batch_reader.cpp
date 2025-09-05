@@ -27,7 +27,7 @@
 #include <arrow/ipc/writer.h>
 #include <arrow/record_batch.h>
 
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 
 using arrow::Status;
 

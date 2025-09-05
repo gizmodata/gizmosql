@@ -43,11 +43,11 @@
 #include "duckdb_statement_batch_reader.h"
 #include "duckdb_type_info.h"
 #include "duckdb_tables_schema_batch_reader.h"
-#include "gizmosql_security.h"
+#include "../common/include/detail/gizmosql_security.h"
 #include "gizmosql_logging.h"
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 #include <jwt-cpp/jwt.h>
-#include "session_context.h"
+#include "../common/include/detail/session_context.h"
 #include "request_ctx.h"
 
 using arrow::Result;

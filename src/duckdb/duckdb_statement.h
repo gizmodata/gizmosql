@@ -25,7 +25,7 @@
 #include <arrow/flight/sql/column_metadata.h>
 #include <arrow/type_fwd.h>
 
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 
 namespace gizmosql::ddb
 {

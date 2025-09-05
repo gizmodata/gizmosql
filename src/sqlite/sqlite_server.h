@@ -28,7 +28,7 @@
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/types.h>
 #include <arrow/result.h>
-#include "flight_sql_fwd.h"
+#include "../common/include/detail/flight_sql_fwd.h"
 
 namespace gizmosql::sqlite {
 
