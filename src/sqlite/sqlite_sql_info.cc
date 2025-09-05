@@ -17,8 +17,8 @@
 
 #include "sqlite_sql_info.h"
 
-#include "arrow/flight/sql/types.h"
-#include "arrow/util/config.h"
+#include <arrow/flight/sql/types.h>
+#include <arrow/util/config.h>
 #include "flight_sql_fwd.h"
 
 namespace gizmosql::sqlite {

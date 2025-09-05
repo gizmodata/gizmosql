@@ -21,16 +21,16 @@
 
 #include <sqlite3.h>
 
-#include "arrow/array/array_base.h"
-#include "arrow/array/array_binary.h"
-#include "arrow/array/array_nested.h"
-#include "arrow/array/array_primitive.h"
-#include "arrow/flight/sql/column_metadata.h"
+#include <arrow/array/array_base.h>
+#include <arrow/array/array_binary.h>
+#include <arrow/array/array_nested.h>
+#include <arrow/array/array_primitive.h>
+#include <arrow/flight/sql/column_metadata.h>
 #include "sqlite_server.h"
-#include "arrow/scalar.h"
-#include "arrow/table.h"
-#include "arrow/type.h"
-#include "arrow/util/checked_cast.h"
+#include <arrow/scalar.h>
+#include <arrow/table.h>
+#include <arrow/type.h>
+#include <arrow/util/checked_cast.h>
 #include "flight_sql_fwd.h"
 
 namespace gizmosql::sqlite {

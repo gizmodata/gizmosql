@@ -27,68 +27,70 @@
 
 #include "flight_sql_fwd.h"
 
-namespace gizmosql::ddb {
+namespace gizmosql::ddb
+{
+    std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
+        const duckdb::LogicalType duckdb_type);
 
-std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
-    const duckdb::LogicalType duckdb_type);
-
-/// \brief Create an object ColumnMetadata using the column type and
+    /// \brief Create an object ColumnMetadata using the column type and
 ///        table name.
 /// \param column_type  The DuckDB type.
 /// \param table        The table name.
 /// \return             A Column Metadata object.
-flight::sql::ColumnMetadata GetColumnMetadata(int column_type, const char* table);
+    flight::sql::ColumnMetadata GetColumnMetadata(int column_type, const char* table);
 
-class DuckDBStatement {
- public:
-  /// \brief Creates a duckdb statement.
+    class DuckDBStatement
+    {
+    public:
+        /// \brief Creates a duckdb statement.
   /// \param[in] db        duckdb database instance.
   /// \param[in] sql       SQL statement.
   /// \return              A DuckDBStatement object.
-  static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
-      std::shared_ptr<duckdb::Connection> con, const std::string& sql);
+        static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
+            std::shared_ptr<duckdb::Connection> con, const std::string& sql);
 
-  ~DuckDBStatement();
+        ~DuckDBStatement();
 
-  /// \brief Creates an Arrow Schema based on the results of this statement.
+        /// \brief Creates an Arrow Schema based on the results of this statement.
   /// \return              The resulting Schema.
-  arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema() const;
+        arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema() const;
 
-  arrow::Result<int> Execute();
-  arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
-  // arrow::Result<std::shared_ptr<Schema>> GetArrowSchema();
+        arrow::Result<int> Execute();
+        arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
+        // arrow::Result<std::shared_ptr<Schema>> GetArrowSchema();
 
-  std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
+        std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
 
-  /// \brief Executes an UPDATE, INSERT or DELETE statement.
+        /// \brief Executes an UPDATE, INSERT or DELETE statement.
   /// \return              The number of rows changed by execution.
-  arrow::Result<int64_t> ExecuteUpdate();
+        arrow::Result<int64_t> ExecuteUpdate();
 
-  duckdb::vector<duckdb::Value> bind_parameters;
+        duckdb::vector<duckdb::Value> bind_parameters;
 
- private:
-  std::shared_ptr<duckdb::Connection> con_;
-  std::shared_ptr<duckdb::PreparedStatement> stmt_;
-  duckdb::unique_ptr<duckdb::QueryResult> query_result_;
+    private:
+        std::shared_ptr<duckdb::Connection> con_;
+        std::shared_ptr<duckdb::PreparedStatement> stmt_;
+        duckdb::unique_ptr<duckdb::QueryResult> query_result_;
 
-  // Support for direct query execution (fallback for statements that can't be prepared)
-  std::string sql_;            // Original SQL for direct execution
-  bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
+        // Support for direct query execution (fallback for statements that can't be prepared)
+        std::string sql_; // Original SQL for direct execution
+        bool use_direct_execution_; // Flag to indicate whether to use direct query execution
 
-  DuckDBStatement(std::shared_ptr<duckdb::Connection> con,
-                  std::shared_ptr<duckdb::PreparedStatement> stmt) {
-    con_ = con;
-    stmt_ = stmt;
-    use_direct_execution_ = false;
-  }
+        DuckDBStatement(std::shared_ptr<duckdb::Connection> con,
+                        std::shared_ptr<duckdb::PreparedStatement> stmt)
+        {
+            con_ = con;
+            stmt_ = stmt;
+            use_direct_execution_ = false;
+        }
 
-  // Constructor for direct execution mode
-  DuckDBStatement(std::shared_ptr<duckdb::Connection> con, const std::string& sql) {
-    con_ = con;
-    sql_ = sql;
-    use_direct_execution_ = true;
-    stmt_ = nullptr;
-  }
-};
-
-}  // namespace gizmosql::ddb
+        // Constructor for direct execution mode
+        DuckDBStatement(std::shared_ptr<duckdb::Connection> con, const std::string& sql)
+        {
+            con_ = con;
+            sql_ = sql;
+            use_direct_execution_ = true;
+            stmt_ = nullptr;
+        }
+    };
+} // namespace gizmosql::ddb

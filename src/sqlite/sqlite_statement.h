@@ -22,8 +22,8 @@
 #include <memory>
 #include <string>
 
-#include "arrow/flight/sql/column_metadata.h"
-#include "arrow/type_fwd.h"
+#include <arrow/flight/sql/column_metadata.h>
+#include <arrow/type_fwd.h>
 
 namespace gizmosql::sqlite {
 

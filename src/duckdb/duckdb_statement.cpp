@@ -18,7 +18,7 @@
 #include "duckdb_statement.h"
 
 #include <duckdb.h>
-#include "duckdb/main/client_context.hpp"
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
 #include <iostream>
 
@@ -32,7 +32,6 @@ using arrow::Status;
 using duckdb::QueryResult;
 
 namespace gizmosql::ddb {
-
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType duckdb_type) {
   const duckdb::LogicalTypeId column_type_id = duckdb_type.id();
@@ -75,7 +74,7 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
       return timestamp(arrow::TimeUnit::NANO);
     case duckdb::LogicalTypeId::INTERVAL:
       return duration(
-          arrow::TimeUnit::MICRO);  // ASSUMING MICRO AS DUCKDB's DOCS DOES NOT SPECIFY
+          arrow::TimeUnit::MICRO); // ASSUMING MICRO AS DUCKDB's DOCS DOES NOT SPECIFY
     case duckdb::LogicalTypeId::UTINYINT:
       return arrow::uint8();
     case duckdb::LogicalTypeId::USMALLINT:
@@ -107,7 +106,7 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 }
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
-    std::shared_ptr<duckdb::Connection> con, const std::string &sql) {
+    std::shared_ptr<duckdb::Connection> con, const std::string& sql) {
   std::shared_ptr<duckdb::PreparedStatement> stmt = con->Prepare(sql);
 
   if (not stmt->success) {
@@ -132,7 +131,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   return result;
 }
 
-DuckDBStatement::~DuckDBStatement() {}
+DuckDBStatement::~DuckDBStatement() {
+}
 
 arrow::Result<int> DuckDBStatement::Execute() {
   if (use_direct_execution_) {
@@ -243,7 +243,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const
                                            temp_result->GetError());
     }
 
-    auto &context = con_->context;
+    auto& context = con_->context;
     auto client_properties = context->GetClientProperties();
 
     ArrowSchema arrow_schema;
@@ -257,7 +257,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const
     auto names = stmt_->GetNames();
     auto types = stmt_->GetTypes();
 
-    auto &context = stmt_->context;
+    auto& context = stmt_->context;
     auto client_properties = context->GetClientProperties();
 
     ArrowSchema arrow_schema;
@@ -268,5 +268,4 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const
     return return_value;
   }
 }
-
-}  // namespace gizmosql::ddb
+} // namespace gizmosql::ddb

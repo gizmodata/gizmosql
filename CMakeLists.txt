@@ -39,6 +39,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 )
 
 set(ARROW_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
+set(ARROW_INCLUDE_DIR "${ARROW_INSTALL_DIR}/include")
 
 find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlight REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
@@ -182,6 +183,7 @@ target_include_directories(gizmosqlserver
         src/sqlite
         src/duckdb
         src/common/include
+        ${ARROW_INCLUDE_DIR}
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}
         ${JWT_CPP_INCLUDE_DIR}
@@ -237,6 +239,7 @@ add_executable(gizmosql_client
 target_include_directories(gizmosql_client
         PRIVATE
         ${CMAKE_SOURCE_DIR}/src/common/include
+        ${ARROW_INCLUDE_DIR}
 )
 
 target_link_libraries(gizmosql_client PRIVATE

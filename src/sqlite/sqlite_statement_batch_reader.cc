@@ -19,7 +19,7 @@
 
 #include <sqlite3.h>
 
-#include "arrow/builder.h"
+#include <arrow/builder.h>
 #include "sqlite_statement.h"
 
 #define STRING_BUILDER_CASE(TYPE_CLASS, STMT, COLUMN)                            \

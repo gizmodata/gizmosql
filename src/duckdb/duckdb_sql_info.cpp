@@ -22,7 +22,7 @@
 
 #include <duckdb.hpp>
 #include <arrow/flight/sql/types.h>
-#include "arrow/util/config.h"
+#include <arrow/util/config.h>
 
 #include "duckdb_sql_info.h"
 #include "duckdb_server.h"
@@ -30,161 +30,182 @@
 
 namespace sql = flight::sql;
 
-namespace gizmosql::ddb {
+namespace gizmosql::ddb
+{
+    // Dynamic query versions that use the server instance (emulating DuckDB Java behavior)
+    std::vector<std::string> GetDynamicKeywords(const DuckDBFlightSqlServer* server)
+    {
+        auto result = server->ExecuteSqlAndGetStringVector(
+            "SELECT keyword_name FROM duckdb_keywords() ORDER BY keyword_name");
+        if (result.ok())
+        {
+            return result.ValueOrDie();
+        }
+        // If query fails, return empty vector like Java version would
+        return {};
+    }
 
-// Dynamic query versions that use the server instance (emulating DuckDB Java behavior)
-std::vector<std::string> GetDynamicKeywords(const DuckDBFlightSqlServer* server) {
-  auto result = server->ExecuteSqlAndGetStringVector(
-      "SELECT keyword_name FROM duckdb_keywords() ORDER BY keyword_name");
-  if (result.ok()) {
-    return result.ValueOrDie();
-  }
-  // If query fails, return empty vector like Java version would
-  return {};
-}
+    std::vector<std::string> GetDynamicNumericFunctions(const DuckDBFlightSqlServer* server)
+    {
+        auto result = server->ExecuteSqlAndGetStringVector(
+            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+            "AND return_type SIMILAR TO '%(INTEGER|BIGINT|DOUBLE|FLOAT|DECIMAL|NUMERIC|REAL)%' "
+            "ORDER BY function_name");
+        if (result.ok())
+        {
+            return result.ValueOrDie();
+        }
+        // If query fails, return empty vector like Java version would
+        return {};
+    }
 
-std::vector<std::string> GetDynamicNumericFunctions(const DuckDBFlightSqlServer* server) {
-  auto result = server->ExecuteSqlAndGetStringVector(
-      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-      "AND return_type SIMILAR TO '%(INTEGER|BIGINT|DOUBLE|FLOAT|DECIMAL|NUMERIC|REAL)%' "
-      "ORDER BY function_name");
-  if (result.ok()) {
-    return result.ValueOrDie();
-  }
-  // If query fails, return empty vector like Java version would
-  return {};
-}
+    std::vector<std::string> GetDynamicStringFunctions(const DuckDBFlightSqlServer* server)
+    {
+        auto result = server->ExecuteSqlAndGetStringVector(
+            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+            "AND return_type SIMILAR TO '%(VARCHAR|TEXT|STRING)%' "
+            "ORDER BY function_name");
+        if (result.ok())
+        {
+            return result.ValueOrDie();
+        }
+        // If query fails, return empty vector like Java version would
+        return {};
+    }
 
-std::vector<std::string> GetDynamicStringFunctions(const DuckDBFlightSqlServer* server) {
-  auto result = server->ExecuteSqlAndGetStringVector(
-      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-      "AND return_type SIMILAR TO '%(VARCHAR|TEXT|STRING)%' "
-      "ORDER BY function_name");
-  if (result.ok()) {
-    return result.ValueOrDie();
-  }
-  // If query fails, return empty vector like Java version would
-  return {};
-}
+    std::vector<std::string> GetDynamicSystemFunctions(const DuckDBFlightSqlServer* server)
+    {
+        auto result = server->ExecuteSqlAndGetStringVector(
+            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+            "AND (function_name LIKE '%CURRENT%' OR function_name LIKE '%SESSION%' OR "
+            "function_name LIKE '%USER%' OR function_name = 'VERSION') "
+            "ORDER BY function_name");
+        if (result.ok())
+        {
+            return result.ValueOrDie();
+        }
+        // If query fails, return empty vector like Java version would
+        return {};
+    }
 
-std::vector<std::string> GetDynamicSystemFunctions(const DuckDBFlightSqlServer* server) {
-  auto result = server->ExecuteSqlAndGetStringVector(
-      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-      "AND (function_name LIKE '%CURRENT%' OR function_name LIKE '%SESSION%' OR "
-      "function_name LIKE '%USER%' OR function_name = 'VERSION') "
-      "ORDER BY function_name");
-  if (result.ok()) {
-    return result.ValueOrDie();
-  }
-  // If query fails, return empty vector like Java version would
-  return {};
-}
+    std::vector<std::string> GetDynamicDateTimeFunctions(
+        const DuckDBFlightSqlServer* server)
+    {
+        auto result = server->ExecuteSqlAndGetStringVector(
+            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+            "AND return_type SIMILAR TO '%(DATE|TIME|TIMESTAMP|TIMESTAMPTZ|INTERVAL)%' "
+            "ORDER BY function_name");
+        if (result.ok())
+        {
+            return result.ValueOrDie();
+        }
+        // If query fails, return empty vector like Java version would
+        return {};
+    }
 
-std::vector<std::string> GetDynamicDateTimeFunctions(
-    const DuckDBFlightSqlServer* server) {
-  auto result = server->ExecuteSqlAndGetStringVector(
-      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-      "AND return_type SIMILAR TO '%(DATE|TIME|TIMESTAMP|TIMESTAMPTZ|INTERVAL)%' "
-      "ORDER BY function_name");
-  if (result.ok()) {
-    return result.ValueOrDie();
-  }
-  // If query fails, return empty vector like Java version would
-  return {};
-}
+    // Static functions for original GetSqlInfoResultMap (backward compatibility)
+    std::vector<std::string> GetStaticNumericFunctions()
+    {
+        return {
+            "ABS", "ACOS", "ASIN", "ATAN", "ATAN2", "CEIL",
+            "CEILING", "COS", "COT", "DEGREES", "EXP", "FLOOR",
+            "GREATEST", "LEAST", "LN", "LOG", "LOG10", "LOG2",
+            "MOD", "PI", "POW", "POWER", "RADIANS", "RANDOM",
+            "ROUND", "SIGN", "SIN", "SQRT", "TAN", "TRUNC",
+            "CBRT", "FACTORIAL", "GAMMA", "LGAMMA", "NEXTAFTER", "SETSEED",
+            "BIT_COUNT", "CHR", "EVEN", "XOR", "@"
+        };
+    }
 
-// Static functions for original GetSqlInfoResultMap (backward compatibility)
-std::vector<std::string> GetStaticNumericFunctions() {
-  return {"ABS",       "ACOS",      "ASIN",  "ATAN",    "ATAN2",     "CEIL",
-          "CEILING",   "COS",       "COT",   "DEGREES", "EXP",       "FLOOR",
-          "GREATEST",  "LEAST",     "LN",    "LOG",     "LOG10",     "LOG2",
-          "MOD",       "PI",        "POW",   "POWER",   "RADIANS",   "RANDOM",
-          "ROUND",     "SIGN",      "SIN",   "SQRT",    "TAN",       "TRUNC",
-          "CBRT",      "FACTORIAL", "GAMMA", "LGAMMA",  "NEXTAFTER", "SETSEED",
-          "BIT_COUNT", "CHR",       "EVEN",  "XOR",     "@"};
-}
+    std::vector<std::string> GetStaticStringFunctions()
+    {
+        return {
+            "ASCII",
+            "BIT_LENGTH",
+            "CHAR_LENGTH",
+            "CHARACTER_LENGTH",
+            "CHR",
+            "CONCAT",
+            "CONCAT_WS",
+            "FORMAT",
+            "INITCAP",
+            "INSTR",
+            "LCASE",
+            "LEFT",
+            "LENGTH",
+            "LIKE_ESCAPE",
+            "LOWER",
+            "LPAD",
+            "LTRIM",
+            "MD5",
+            "NFC_NORMALIZE",
+            "ORD",
+            "POSITION",
+            "PREFIX",
+            "PRINTF",
+            "REGEXP_EXTRACT",
+            "REGEXP_FULL_MATCH",
+            "REGEXP_MATCHES",
+            "REGEXP_REPLACE",
+            "REGEXP_SPLIT_TO_ARRAY",
+            "REPEAT",
+            "REPLACE",
+            "REVERSE",
+            "RIGHT",
+            "RPAD",
+            "RTRIM",
+            "STRPOS",
+            "SUBSTR",
+            "SUBSTRING",
+            "SUFFIX",
+            "TRIM",
+            "UCASE",
+            "UNICODE",
+            "UPPER",
+            "BASE64",
+            "FROM_BASE64",
+            "TO_BASE64",
+            "STRIP_ACCENTS",
+            "STR_SPLIT",
+            "STR_SPLIT_REGEX",
+            "STRING_SPLIT",
+            "STRING_SPLIT_REGEX",
+            "STRING_TO_ARRAY",
+            "EDITDIST3",
+            "HAMMING",
+            "JACCARD",
+            "LEVENSHTEIN",
+            "MISMATCHES",
+            "CONTAINS",
+            "NOT_LIKE_ESCAPE",
+            "ARRAY_EXTRACT",
+            "ARRAY_SLICE",
+            "LIST_ELEMENT",
+            "LIST_EXTRACT",
+            "STRLEN"
+        };
+    }
 
-std::vector<std::string> GetStaticStringFunctions() {
-  return {"ASCII",
-          "BIT_LENGTH",
-          "CHAR_LENGTH",
-          "CHARACTER_LENGTH",
-          "CHR",
-          "CONCAT",
-          "CONCAT_WS",
-          "FORMAT",
-          "INITCAP",
-          "INSTR",
-          "LCASE",
-          "LEFT",
-          "LENGTH",
-          "LIKE_ESCAPE",
-          "LOWER",
-          "LPAD",
-          "LTRIM",
-          "MD5",
-          "NFC_NORMALIZE",
-          "ORD",
-          "POSITION",
-          "PREFIX",
-          "PRINTF",
-          "REGEXP_EXTRACT",
-          "REGEXP_FULL_MATCH",
-          "REGEXP_MATCHES",
-          "REGEXP_REPLACE",
-          "REGEXP_SPLIT_TO_ARRAY",
-          "REPEAT",
-          "REPLACE",
-          "REVERSE",
-          "RIGHT",
-          "RPAD",
-          "RTRIM",
-          "STRPOS",
-          "SUBSTR",
-          "SUBSTRING",
-          "SUFFIX",
-          "TRIM",
-          "UCASE",
-          "UNICODE",
-          "UPPER",
-          "BASE64",
-          "FROM_BASE64",
-          "TO_BASE64",
-          "STRIP_ACCENTS",
-          "STR_SPLIT",
-          "STR_SPLIT_REGEX",
-          "STRING_SPLIT",
-          "STRING_SPLIT_REGEX",
-          "STRING_TO_ARRAY",
-          "EDITDIST3",
-          "HAMMING",
-          "JACCARD",
-          "LEVENSHTEIN",
-          "MISMATCHES",
-          "CONTAINS",
-          "NOT_LIKE_ESCAPE",
-          "ARRAY_EXTRACT",
-          "ARRAY_SLICE",
-          "LIST_ELEMENT",
-          "LIST_EXTRACT",
-          "STRLEN"};
-}
+    std::vector<std::string> GetStaticSystemFunctions()
+    {
+        return {
+            "CURRENT_CATALOG", "CURRENT_DATABASE", "CURRENT_SCHEMA",
+            "CURRENT_USER", "SESSION_USER", "USER",
+            "VERSION"
+        };
+    }
 
-std::vector<std::string> GetStaticSystemFunctions() {
-  return {"CURRENT_CATALOG", "CURRENT_DATABASE", "CURRENT_SCHEMA",
-          "CURRENT_USER",    "SESSION_USER",     "USER",
-          "VERSION"};
-}
-
-std::vector<std::string> GetStaticDateTimeFunctions() {
-  return {
-      "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME",  "LOCALTIMESTAMP",
-      "NOW",          "TODAY",        "YESTERDAY",         "TOMORROW",   "DATE_PART",
-      "DATE_TRUNC",   "EXTRACT",      "STRFTIME",          "STRPTIME",   "AGE",
-      "DATE_ADD",     "DATE_SUB",     "DATEDIFF",          "DATEADD",    "DATESUB",
-      "LAST_DAY",     "MONTHNAME",    "DAYNAME",           "DAYOFWEEK",  "DAYOFYEAR",
-      "ISODOW",       "ISOYEAR",      "WEEKDAY",           "WEEKOFYEAR", "YEARWEEK"};
-}
+    std::vector<std::string> GetStaticDateTimeFunctions()
+    {
+        return {
+            "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP",
+            "NOW", "TODAY", "YESTERDAY", "TOMORROW", "DATE_PART",
+            "DATE_TRUNC", "EXTRACT", "STRFTIME", "STRPTIME", "AGE",
+            "DATE_ADD", "DATE_SUB", "DATEDIFF", "DATEADD", "DATESUB",
+            "LAST_DAY", "MONTHNAME", "DAYNAME", "DAYOFWEEK", "DAYOFYEAR",
+            "ISODOW", "ISOYEAR", "WEEKDAY", "WEEKOFYEAR", "YEARWEEK"
+        };
+    }
 
 // clang-format off
 /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
@@ -386,6 +407,5 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server) {
   return result_map;
 }
 
-// clang-format on
-
-}  // namespace gizmosql::ddb
+    // clang-format on
+} // namespace gizmosql::ddb

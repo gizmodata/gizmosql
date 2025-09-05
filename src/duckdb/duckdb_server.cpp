@@ -35,13 +35,14 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
+
 #include "duckdb_sql_info.h"
 #include "duckdb_statement.h"
 #include "duckdb_statement_batch_reader.h"
 #include "duckdb_type_info.h"
 #include "duckdb_tables_schema_batch_reader.h"
-#include "duckdb/main/prepared_statement.hpp"
-#include "duckdb/main/prepared_statement_data.hpp"
 #include "gizmosql_security.h"
 #include "gizmosql_logging.h"
 #include "flight_sql_fwd.h"
@@ -56,26 +57,26 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
-
-std::string PrepareQueryForGetTables(const sql::GetTables &command) {
+std::string PrepareQueryForGetTables(const sql::GetTables& command) {
   std::stringstream table_query;
 
   table_query
       << "SELECT table_catalog as catalog_name, table_schema as schema_name, table_name, "
-         "table_type FROM information_schema.tables where 1=1";
+      "table_type FROM information_schema.tables where 1=1";
 
   table_query << " and table_catalog = "
-              << (command.catalog.has_value() ? "'" + command.catalog.value() + "'"
-                                              : "CURRENT_DATABASE()");
+      << (command.catalog.has_value()
+            ? "'" + command.catalog.value() + "'"
+            : "CURRENT_DATABASE()");
 
   if (command.db_schema_filter_pattern.has_value()) {
     table_query << " and table_schema LIKE '" << command.db_schema_filter_pattern.value()
-                << "'";
+        << "'";
   }
 
   if (command.table_name_filter_pattern.has_value()) {
     table_query << " and table_name LIKE '" << command.table_name_filter_pattern.value()
-                << "'";
+        << "'";
   }
 
   if (!command.table_types.empty()) {
@@ -95,19 +96,19 @@ std::string PrepareQueryForGetTables(const sql::GetTables &command) {
   return table_query.str();
 }
 
-Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement> &stmt,
-                                      flight::FlightMessageReader *reader) {
+Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& stmt,
+                                      flight::FlightMessageReader* reader) {
   while (true) {
     ARROW_ASSIGN_OR_RAISE(flight::FlightStreamChunk chunk, reader->Next())
-    const std::shared_ptr<arrow::RecordBatch> &record_batch = chunk.data;
+    const std::shared_ptr<arrow::RecordBatch>& record_batch = chunk.data;
     if (record_batch == nullptr) break;
 
     const int64_t num_rows = record_batch->num_rows();
-    const int &num_columns = record_batch->num_columns();
+    const int& num_columns = record_batch->num_columns();
 
     for (int row_index = 0; row_index < num_rows; ++row_index) {
       for (int column_index = 0; column_index < num_columns; ++column_index) {
-        const std::shared_ptr<arrow::Array> &column = record_batch->column(column_index);
+        const std::shared_ptr<arrow::Array>& column = record_batch->column(column_index);
         ARROW_ASSIGN_OR_RAISE(std::shared_ptr<arrow::Scalar> scalar,
                               column->GetScalar(row_index))
 
@@ -120,8 +121,8 @@ Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement> &st
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
-    const std::shared_ptr<duckdb::Connection> &connection, const std::string &query,
-    const std::shared_ptr<arrow::Schema> &schema) {
+    const std::shared_ptr<duckdb::Connection>& connection, const std::string& query,
+    const std::shared_ptr<arrow::Schema>& schema) {
   std::shared_ptr<DuckDBStatement> statement;
 
   ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, query))
@@ -133,8 +134,8 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
-    const flight::FlightDescriptor &descriptor,
-    const std::shared_ptr<arrow::Schema> &schema) {
+    const flight::FlightDescriptor& descriptor,
+    const std::shared_ptr<arrow::Schema>& schema) {
   std::vector<flight::FlightEndpoint> endpoints{
       flight::FlightEndpoint{flight::Ticket{descriptor.cmd}, {}, std::nullopt, ""}};
   ARROW_ASSIGN_OR_RAISE(auto result,
@@ -143,7 +144,7 @@ Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
   return std::make_unique<flight::FlightInfo>(result);
 }
 
-std::string PrepareQueryForGetImportedOrExportedKeys(const std::string &filter) {
+std::string PrepareQueryForGetImportedOrExportedKeys(const std::string& filter) {
   return R"(SELECT * FROM (
                SELECT fk.database_name                                                                         AS pk_catalog_name,
                       fk.schema_name                                                                           AS pk_schema_name,
@@ -169,11 +170,10 @@ std::string PrepareQueryForGetImportedOrExportedKeys(const std::string &filter) 
          filter + R"( ORDER BY
   pk_catalog_name, pk_schema_name, pk_table_name, pk_key_name, key_sequence)";
 }
-
-}  // namespace
+} // namespace
 
 class DuckDBFlightSqlServer::Impl {
- private:
+private:
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   bool print_queries_;
   std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
@@ -186,7 +186,7 @@ class DuckDBFlightSqlServer::Impl {
 
 
   Result<std::shared_ptr<DuckDBStatement>> GetStatementByHandle(
-      const std::string &handle) {
+      const std::string& handle) {
     std::scoped_lock guard(statements_mutex_);
     auto search = prepared_statements_.find(handle);
     if (search == prepared_statements_.end()) {
@@ -195,27 +195,27 @@ class DuckDBFlightSqlServer::Impl {
     return search->second;
   }
 
-  static constexpr const char *kSessionIDKey = "gizmosql_session_id";
+  static constexpr const char* kSessionIDKey = "gizmosql_session_id";
 
   static std::optional<std::string> SessionValueToString(
-      const flight::SessionOptionValue &v) {
+      const flight::SessionOptionValue& v) {
     if (auto p = std::get_if<std::string>(&v)) return *p;
     if (auto p = std::get_if<int64_t>(&v)) return std::to_string(*p);
     if (auto p = std::get_if<bool>(&v)) return *p ? "true" : "false";
     return std::nullopt;
   }
 
-  static Result<std::string> EnsureSessionID(const flight::ServerCallContext &context) {
-    const auto *base = context.GetMiddleware("session");  // returns ServerMiddleware*
-    auto *server_session_middleware =
-        dynamic_cast<const flight::sql::ServerSessionMiddleware *>(base);
+  static Result<std::string> EnsureSessionID(const flight::ServerCallContext& context) {
+    const auto* base = context.GetMiddleware("session"); // returns ServerMiddleware*
+    auto* server_session_middleware =
+        dynamic_cast<const flight::sql::ServerSessionMiddleware*>(base);
     if (!server_session_middleware)
       return arrow::Status::Invalid("No session middleware");
 
     ARROW_ASSIGN_OR_RAISE(
         auto session,
         const_cast<flight::sql::ServerSessionMiddleware *>(server_session_middleware)
-            ->GetSession());
+        ->GetSession());
 
     if (auto session_option = session->GetSessionOption(kSessionIDKey)) {
       if (auto existing_session_id = SessionValueToString(*session_option))
@@ -229,7 +229,8 @@ class DuckDBFlightSqlServer::Impl {
     return new_session_id;
   }
 
-  arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(const flight::ServerCallContext& context) {
+  arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(
+      const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
 
     std::scoped_lock lk(sessions_mutex_);
@@ -240,24 +241,25 @@ class DuckDBFlightSqlServer::Impl {
 
     auto cs = std::make_shared<ClientSession>();
     cs->session_id = session_id;
-    cs->username   = tl_request_ctx.username.value_or("");
-    cs->role       = tl_request_ctx.role.value_or("");
-    cs->peer       = tl_request_ctx.peer.value_or(context.peer());
-    cs->conn       = std::make_shared<duckdb::Connection>(*db_instance_);
+    cs->username = tl_request_ctx.username.value_or("");
+    cs->role = tl_request_ctx.role.value_or("");
+    cs->peer = tl_request_ctx.peer.value_or(context.peer());
+    cs->conn = std::make_shared<duckdb::Connection>(*db_instance_);
 
     client_sessions_[session_id] = cs;
     return cs;
   }
 
   // Convenience method for retrieving just a database connection:
-  arrow::Result<std::shared_ptr<duckdb::Connection>> GetConnection(const flight::ServerCallContext& context) {
+  arrow::Result<std::shared_ptr<duckdb::Connection>> GetConnection(
+      const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto cs, GetClientSession(context));
     return cs->conn;
   }
 
   // Create a Ticket that combines a query and a transaction ID.
   static Result<flight::Ticket> EncodeTransactionQuery(
-      const std::string &query, const std::string &transaction_id) {
+      const std::string& query, const std::string& transaction_id) {
     std::string transaction_query = transaction_id;
     transaction_query += ':';
     transaction_query += query;
@@ -267,7 +269,7 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   static Result<std::pair<std::string, std::string>> DecodeTransactionQuery(
-      const std::string &ticket) {
+      const std::string& ticket) {
     auto divider = ticket.find(':');
     if (divider == std::string::npos) {
       return Status::Invalid("Malformed ticket");
@@ -277,9 +279,10 @@ class DuckDBFlightSqlServer::Impl {
     return std::make_pair(std::move(query), std::move(transaction_id));
   }
 
- public:
-  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool &print_queries)
-      : db_instance_(std::move(db_instance)), print_queries_(print_queries) {}
+public:
+  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool& print_queries)
+    : db_instance_(std::move(db_instance)), print_queries_(print_queries) {
+  }
 
   ~Impl() = default;
 
@@ -288,11 +291,11 @@ class DuckDBFlightSqlServer::Impl {
         "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     constexpr int charsetLength = sizeof(charset) - 1;
 
-    std::random_device rd;   // Create a random device to seed the generator
-    std::mt19937 gen(rd());  // Create a Mersenne Twister generator
+    std::random_device rd; // Create a random device to seed the generator
+    std::mt19937 gen(rd()); // Create a Mersenne Twister generator
     std::uniform_int_distribution<> dis(
         0,
-        charsetLength - 1);  // Create a uniform distribution over the character set
+        charsetLength - 1); // Create a uniform distribution over the character set
 
     std::string randomString;
     for (int i = 0; i < length; i++) {
@@ -303,9 +306,9 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoStatement(
-      const flight::ServerCallContext &context, const sql::StatementQuery &command,
-      const flight::FlightDescriptor &descriptor) {
-    const std::string &query = command.query;
+      const flight::ServerCallContext& context, const sql::StatementQuery& command,
+      const flight::FlightDescriptor& descriptor) {
+    const std::string& query = command.query;
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
     ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, query))
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
@@ -319,10 +322,10 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetStatement(
-      const flight::ServerCallContext &context,
-      const sql::StatementQueryTicket &command) {
+      const flight::ServerCallContext& context,
+      const sql::StatementQueryTicket& command) {
     ARROW_ASSIGN_OR_RAISE(auto pair, DecodeTransactionQuery(command.statement_handle))
-    const std::string &sql = pair.first;
+    const std::string& sql = pair.first;
     const std::string transaction_id = pair.second;
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
     ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, sql))
@@ -332,13 +335,13 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoCatalogs(
-      const flight::ServerCallContext &context,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor, sql::SqlSchema::GetCatalogsSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetCatalogs(
-      const flight::ServerCallContext &context) {
+      const flight::ServerCallContext& context) {
     std::string query =
         "SELECT DISTINCT catalog_name FROM information_schema.schemata ORDER BY "
         "catalog_name";
@@ -348,23 +351,24 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoSchemas(
-      const flight::ServerCallContext &context, const sql::GetDbSchemas &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context, const sql::GetDbSchemas& command,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor, sql::SqlSchema::GetDbSchemasSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetDbSchemas(
-      const flight::ServerCallContext &context, const sql::GetDbSchemas &command) {
+      const flight::ServerCallContext& context, const sql::GetDbSchemas& command) {
     std::stringstream query;
     query << "SELECT catalog_name, schema_name AS db_schema_name FROM "
-             "information_schema.schemata WHERE 1 = 1";
+        "information_schema.schemata WHERE 1 = 1";
 
     query << " AND catalog_name = "
-          << (command.catalog.has_value() ? "'" + command.catalog.value() + "'"
-                                          : "CURRENT_DATABASE()");
+        << (command.catalog.has_value()
+              ? "'" + command.catalog.value() + "'"
+              : "CURRENT_DATABASE()");
     if (command.db_schema_filter_pattern.has_value()) {
       query << " AND schema_name LIKE '" << command.db_schema_filter_pattern.value()
-            << "'";
+          << "'";
     }
     query << " ORDER BY catalog_name, db_schema_name";
 
@@ -374,12 +378,13 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<sql::ActionCreatePreparedStatementResult> CreatePreparedStatement(
-      const flight::ServerCallContext &context,
-      const sql::ActionCreatePreparedStatementRequest &request) {
+      const flight::ServerCallContext& context,
+      const sql::ActionCreatePreparedStatementRequest& request) {
     std::shared_ptr<DuckDBStatement> statement;
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(client_session->conn, request.query))
+    ARROW_ASSIGN_OR_RAISE(statement,
+                          DuckDBStatement::Create(client_session->conn, request.query))
     std::scoped_lock guard(statements_mutex_);
     const std::string handle = GenerateRandomString();
     prepared_statements_[handle] = statement;
@@ -401,7 +406,8 @@ class DuckDBFlightSqlServer::Impl {
       if (!prepared_statement_data->properties.IsReadOnly()) {
         if (client_session->role == "readonly") {
           return Status::ExecutionError(
-              "User '" + client_session->username + "' has a readonly session and cannot run "
+              "User '" + client_session->username +
+              "' has a readonly session and cannot run "
               "' has a readonly session and cannot run statements that modify state.");
         }
       }
@@ -418,7 +424,7 @@ class DuckDBFlightSqlServer::Impl {
     }
     // For direct execution mode (stmt == nullptr), parameter_fields remains empty
 
-    const std::shared_ptr<arrow::Schema> &parameter_schema =
+    const std::shared_ptr<arrow::Schema>& parameter_schema =
         arrow::schema(parameter_fields);
 
     sql::ActionCreatePreparedStatementResult result{.dataset_schema = dataset_schema,
@@ -427,29 +433,29 @@ class DuckDBFlightSqlServer::Impl {
 
     if (print_queries_) {
       GIZMOSQL_LOG(INFO) << "Client running SQL command (peer="
-                         << client_session->peer
-                         << " session_id="
-                         << client_session->session_id
-                         << " user="
-                         << client_session->username
-                         << " role="
-                         << client_session->role
-                         << " statement_handle="
-                         << handle
-                         << " command="
-                         << request.query << ";\n)";
+          << client_session->peer
+          << " session_id="
+          << client_session->session_id
+          << " user="
+          << client_session->username
+          << " role="
+          << client_session->role
+          << " statement_handle="
+          << handle
+          << " command="
+          << request.query << ";\n)";
     }
 
     return result;
   }
 
-  Status ClosePreparedStatement(const flight::ServerCallContext &context,
-                                const sql::ActionClosePreparedStatementRequest &request) {
+  Status ClosePreparedStatement(const flight::ServerCallContext& context,
+                                const sql::ActionClosePreparedStatementRequest& request) {
     std::scoped_lock guard(statements_mutex_);
-    const std::string &prepared_statement_handle = request.prepared_statement_handle;
+    const std::string& prepared_statement_handle = request.prepared_statement_handle;
 
     if (auto search = prepared_statements_.find(prepared_statement_handle);
-        search != prepared_statements_.end()) {
+      search != prepared_statements_.end()) {
       prepared_statements_.erase(prepared_statement_handle);
     } else {
       return Status::Invalid("Prepared statement not found");
@@ -459,11 +465,11 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoPreparedStatement(
-      const flight::ServerCallContext &context,
-      const sql::PreparedStatementQuery &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context,
+      const sql::PreparedStatementQuery& command,
+      const flight::FlightDescriptor& descriptor) {
     std::scoped_lock guard(statements_mutex_);
-    const std::string &prepared_statement_handle = command.prepared_statement_handle;
+    const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
     auto search = prepared_statements_.find(prepared_statement_handle);
     if (search == prepared_statements_.end()) {
@@ -478,10 +484,10 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetPreparedStatement(
-      const flight::ServerCallContext &context,
-      const sql::PreparedStatementQuery &command) {
+      const flight::ServerCallContext& context,
+      const sql::PreparedStatementQuery& command) {
     std::scoped_lock guard(statements_mutex_);
-    const std::string &prepared_statement_handle = command.prepared_statement_handle;
+    const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
     auto search = prepared_statements_.find(prepared_statement_handle);
     if (search == prepared_statements_.end()) {
@@ -495,11 +501,11 @@ class DuckDBFlightSqlServer::Impl {
     return std::make_unique<flight::RecordBatchStream>(reader);
   }
 
-  Status DoPutPreparedStatementQuery(const flight::ServerCallContext &context,
-                                     const sql::PreparedStatementQuery &command,
-                                     flight::FlightMessageReader *reader,
-                                     flight::FlightMetadataWriter *writer) {
-    const std::string &prepared_statement_handle = command.prepared_statement_handle;
+  Status DoPutPreparedStatementQuery(const flight::ServerCallContext& context,
+                                     const sql::PreparedStatementQuery& command,
+                                     flight::FlightMessageReader* reader,
+                                     flight::FlightMetadataWriter* writer) {
+    const std::string& prepared_statement_handle = command.prepared_statement_handle;
     ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle))
 
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
@@ -508,9 +514,9 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<int64_t> DoPutPreparedStatementUpdate(
-      const flight::ServerCallContext &context,
-      const sql::PreparedStatementUpdate &command, flight::FlightMessageReader *reader) {
-    const std::string &prepared_statement_handle = command.prepared_statement_handle;
+      const flight::ServerCallContext& context,
+      const sql::PreparedStatementUpdate& command, flight::FlightMessageReader* reader) {
+    const std::string& prepared_statement_handle = command.prepared_statement_handle;
     ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle))
 
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
@@ -519,14 +525,14 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTables(
-      const flight::ServerCallContext &context, const sql::GetTables &command) {
+      const flight::ServerCallContext& context, const sql::GetTables& command) {
     std::string query = PrepareQueryForGetTables(command);
     std::shared_ptr<DuckDBStatement> statement;
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(connection, query))
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
-                                           statement, sql::SqlSchema::GetTablesSchema()))
+                            statement, sql::SqlSchema::GetTablesSchema()))
 
     if (command.include_schema) {
       auto table_schema_reader =
@@ -537,27 +543,27 @@ class DuckDBFlightSqlServer::Impl {
     }
   }
 
-  Result<int64_t> DoPutCommandStatementUpdate(const flight::ServerCallContext &context,
-                                              const sql::StatementUpdate &command) {
-    const std::string &sql = command.query;
+  Result<int64_t> DoPutCommandStatementUpdate(const flight::ServerCallContext& context,
+                                              const sql::StatementUpdate& command) {
+    const std::string& sql = command.query;
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context))
     ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(connection, sql))
     return statement->ExecuteUpdate();
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoTypeInfo(
-      const flight::ServerCallContext &context, const sql::GetXdbcTypeInfo &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context, const sql::GetXdbcTypeInfo& command,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor,
                                    flight::sql::SqlSchema::GetXdbcTypeInfoSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTypeInfo(
-      const flight::ServerCallContext &context, const sql::GetXdbcTypeInfo &command) {
+      const flight::ServerCallContext& context, const sql::GetXdbcTypeInfo& command) {
     ARROW_ASSIGN_OR_RAISE(auto type_info_result,
                           command.data_type.has_value()
-                              ? DoGetTypeInfoResult(command.data_type.value())
-                              : DoGetTypeInfoResult());
+                          ? DoGetTypeInfoResult(command.data_type.value())
+                          : DoGetTypeInfoResult());
 
     ARROW_ASSIGN_OR_RAISE(auto reader,
                           arrow::RecordBatchReader::Make({type_info_result}));
@@ -565,8 +571,8 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoTables(
-      const flight::ServerCallContext &context, const sql::GetTables &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context, const sql::GetTables& command,
+      const flight::FlightDescriptor& descriptor) {
     std::vector<flight::FlightEndpoint> endpoints{
         flight::FlightEndpoint{flight::Ticket{descriptor.cmd}, {}, std::nullopt, ""}};
 
@@ -575,21 +581,21 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(
         auto result,
         flight::FlightInfo::Make(
-            include_schema ? *sql::SqlSchema::GetTablesSchemaWithIncludedSchema()
-                           : *sql::SqlSchema::GetTablesSchema(),
-            descriptor, endpoints, -1, -1))
+          include_schema ? *sql::SqlSchema::GetTablesSchemaWithIncludedSchema()
+          : *sql::SqlSchema::GetTablesSchema(),
+          descriptor, endpoints, -1, -1))
 
     return std::make_unique<flight::FlightInfo>(result);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoTableTypes(
-      const flight::ServerCallContext &context,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor, sql::SqlSchema::GetTableTypesSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTableTypes(
-      const flight::ServerCallContext &context) {
+      const flight::ServerCallContext& context) {
     std::string query = "SELECT DISTINCT table_type FROM information_schema.tables";
 
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
@@ -597,35 +603,36 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoPrimaryKeys(
-      const flight::ServerCallContext &context, const sql::GetPrimaryKeys &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context, const sql::GetPrimaryKeys& command,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor, sql::SqlSchema::GetPrimaryKeysSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetPrimaryKeys(
-      const flight::ServerCallContext &context, const sql::GetPrimaryKeys &command) {
+      const flight::ServerCallContext& context, const sql::GetPrimaryKeys& command) {
     std::stringstream table_query;
 
     // The field key_name can not be recovered by the sqlite, so it is being set
     // to null following the same pattern for catalog_name and schema_name.
     table_query
         << "SELECT database_name AS catalog_name\n"
-           "     , schema_name\n"
-           "     , table_name\n"
-           "     , column_name\n"
-           "     , column_index + 1 AS key_sequence\n"
-           "     , constraint_name  AS key_name\n"
-           "   FROM (SELECT dc.*\n"
-           "              , UNNEST(dc.constraint_column_indexes) AS column_index\n"
-           "              , UNNEST(dc.constraint_column_names) AS column_name\n"
-           "           FROM duckdb_constraints() AS dc\n"
-           "          WHERE constraint_type = 'PRIMARY KEY'\n"
-           "        ) WHERE 1 = 1";
+        "     , schema_name\n"
+        "     , table_name\n"
+        "     , column_name\n"
+        "     , column_index + 1 AS key_sequence\n"
+        "     , constraint_name  AS key_name\n"
+        "   FROM (SELECT dc.*\n"
+        "              , UNNEST(dc.constraint_column_indexes) AS column_index\n"
+        "              , UNNEST(dc.constraint_column_names) AS column_name\n"
+        "           FROM duckdb_constraints() AS dc\n"
+        "          WHERE constraint_type = 'PRIMARY KEY'\n"
+        "        ) WHERE 1 = 1";
 
-    const sql::TableRef &table_ref = command.table_ref;
+    const sql::TableRef& table_ref = command.table_ref;
     table_query << " AND catalog_name = "
-                << (table_ref.catalog.has_value() ? "'" + table_ref.catalog.value() + "'"
-                                                  : "CURRENT_DATABASE()");
+        << (table_ref.catalog.has_value()
+              ? "'" + table_ref.catalog.value() + "'"
+              : "CURRENT_DATABASE()");
 
     if (table_ref.db_schema.has_value()) {
       table_query << " and schema_name LIKE '" << table_ref.db_schema.value() << "'";
@@ -639,19 +646,19 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoImportedKeys(
-      const flight::ServerCallContext &context, const sql::GetImportedKeys &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context, const sql::GetImportedKeys& command,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor, sql::SqlSchema::GetImportedKeysSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetImportedKeys(
-      const flight::ServerCallContext &context, const sql::GetImportedKeys &command) {
-    const sql::TableRef &table_ref = command.table_ref;
+      const flight::ServerCallContext& context, const sql::GetImportedKeys& command) {
+    const sql::TableRef& table_ref = command.table_ref;
     std::string filter = "fk_table_name = '" + table_ref.table + "'";
 
     filter += " AND fk_catalog_name = " + (table_ref.catalog.has_value()
-                                               ? "'" + table_ref.catalog.value() + "'"
-                                               : "CURRENT_DATABASE()");
+                                             ? "'" + table_ref.catalog.value() + "'"
+                                             : "CURRENT_DATABASE()");
     if (table_ref.db_schema.has_value()) {
       filter += " AND fk_schema_name = '" + table_ref.db_schema.value() + "'";
     }
@@ -662,18 +669,18 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoExportedKeys(
-      const flight::ServerCallContext &context, const sql::GetExportedKeys &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context, const sql::GetExportedKeys& command,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor, sql::SqlSchema::GetExportedKeysSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetExportedKeys(
-      const flight::ServerCallContext &context, const sql::GetExportedKeys &command) {
-    const sql::TableRef &table_ref = command.table_ref;
+      const flight::ServerCallContext& context, const sql::GetExportedKeys& command) {
+    const sql::TableRef& table_ref = command.table_ref;
     std::string filter = "pk_table_name = '" + table_ref.table + "'";
     filter += " AND pk_catalog_name = " + (table_ref.catalog.has_value()
-                                               ? "'" + table_ref.catalog.value() + "'"
-                                               : "CURRENT_DATABASE()");
+                                             ? "'" + table_ref.catalog.value() + "'"
+                                             : "CURRENT_DATABASE()");
     if (table_ref.db_schema.has_value()) {
       filter += " AND pk_schema_name = '" + table_ref.db_schema.value() + "'";
     }
@@ -684,27 +691,27 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoCrossReference(
-      const flight::ServerCallContext &context, const sql::GetCrossReference &command,
-      const flight::FlightDescriptor &descriptor) {
+      const flight::ServerCallContext& context, const sql::GetCrossReference& command,
+      const flight::FlightDescriptor& descriptor) {
     return GetFlightInfoForCommand(descriptor, sql::SqlSchema::GetCrossReferenceSchema());
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetCrossReference(
-      const flight::ServerCallContext &context, const sql::GetCrossReference &command) {
-    const sql::TableRef &pk_table_ref = command.pk_table_ref;
+      const flight::ServerCallContext& context, const sql::GetCrossReference& command) {
+    const sql::TableRef& pk_table_ref = command.pk_table_ref;
     std::string filter = "pk_table_name = '" + pk_table_ref.table + "'";
     filter += " AND pk_catalog_name = " + (pk_table_ref.catalog.has_value()
-                                               ? "'" + pk_table_ref.catalog.value() + "'"
-                                               : "CURRENT_DATABASE()");
+                                             ? "'" + pk_table_ref.catalog.value() + "'"
+                                             : "CURRENT_DATABASE()");
     if (pk_table_ref.db_schema.has_value()) {
       filter += " AND pk_schema_name = '" + pk_table_ref.db_schema.value() + "'";
     }
 
-    const sql::TableRef &fk_table_ref = command.fk_table_ref;
+    const sql::TableRef& fk_table_ref = command.fk_table_ref;
     filter += " AND fk_table_name = '" + fk_table_ref.table + "'";
     filter += " AND fk_catalog_name = " + (fk_table_ref.catalog.has_value()
-                                               ? "'" + fk_table_ref.catalog.value() + "'"
-                                               : "CURRENT_DATABASE()");
+                                             ? "'" + fk_table_ref.catalog.value() + "'"
+                                             : "CURRENT_DATABASE()");
     if (fk_table_ref.db_schema.has_value()) {
       filter += " AND fk_schema_name = '" + fk_table_ref.db_schema.value() + "'";
     }
@@ -715,8 +722,8 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
-      const flight::ServerCallContext &context,
-      const sql::ActionBeginTransactionRequest &request) {
+      const flight::ServerCallContext& context,
+      const sql::ActionBeginTransactionRequest& request) {
     std::string handle = GenerateRandomString();
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     std::scoped_lock guard(transactions_mutex_);
@@ -727,8 +734,8 @@ class DuckDBFlightSqlServer::Impl {
     return sql::ActionBeginTransactionResult{std::move(handle)};
   }
 
-  Status EndTransaction(const flight::ServerCallContext &context,
-                        const sql::ActionEndTransactionRequest &request) {
+  Status EndTransaction(const flight::ServerCallContext& context,
+                        const sql::ActionEndTransactionRequest& request) {
     Status status;
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     {
@@ -743,34 +750,34 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<flight::CancelFlightInfoResult> CancelFlightInfo(
-      const flight::ServerCallContext &context,
-      const flight::CancelFlightInfoRequest &request) {
+      const flight::ServerCallContext& context,
+      const flight::CancelFlightInfoRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     connection->Interrupt();
     return flight::CancelFlightInfoResult(flight::CancelStatus::kCancelled);
   }
 
   Result<flight::sql::CancelResult> CancelQuery(
-      const flight::ServerCallContext &context,
-      const flight::sql::ActionCancelQueryRequest &request) {
+      const flight::ServerCallContext& context,
+      const flight::sql::ActionCancelQueryRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
     connection->Interrupt();
     return flight::sql::CancelResult(flight::sql::CancelResult::kCancelled);
   }
 
   Result<flight::SetSessionOptionsResult> SetSessionOptions(
-      const flight::ServerCallContext &context,
-      const flight::SetSessionOptionsRequest &request) {
+      const flight::ServerCallContext& context,
+      const flight::SetSessionOptionsRequest& request) {
     flight::SetSessionOptionsResult res;
 
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
-    for (const auto &[name, value] : request.session_options) {
+    for (const auto& [name, value] : request.session_options) {
       if (name == "catalog" || name == "schema") {
         ARROW_RETURN_NOT_OK(
             ExecuteSql(connection, "USE " + std::get<std::string>(value)));
       } else {
         res.errors.emplace(name, flight::SetSessionOptionsResult::Error{
-                                     flight::SetSessionOptionErrorValue::kInvalidName});
+                               flight::SetSessionOptionErrorValue::kInvalidName});
       }
     }
 
@@ -778,8 +785,8 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<flight::GetSessionOptionsResult> GetSessionOptions(
-      const flight::ServerCallContext &context,
-      const flight::GetSessionOptionsRequest &request) {
+      const flight::ServerCallContext& context,
+      const flight::GetSessionOptionsRequest& request) {
     flight::GetSessionOptionsResult res;
 
     ARROW_ASSIGN_OR_RAISE(auto connection, GetConnection(context));
@@ -806,8 +813,8 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<flight::CloseSessionResult> CloseSession(
-      const flight::ServerCallContext &context,
-      const flight::CloseSessionRequest &request) {
+      const flight::ServerCallContext& context,
+      const flight::CloseSessionRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
@@ -819,23 +826,23 @@ class DuckDBFlightSqlServer::Impl {
     }
   }
 
-  static Status ExecuteSql(const std::shared_ptr<duckdb::Connection> &connection,
-                           const std::string &sql) {
+  static Status ExecuteSql(const std::shared_ptr<duckdb::Connection>& connection,
+                           const std::string& sql) {
     if (std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
-        result->HasError()) {
+      result->HasError()) {
       return Status::Invalid(result->GetError());
     }
     return Status::OK();
   }
 
-  Status ExecuteSql(const std::string &sql) {
+  Status ExecuteSql(const std::string& sql) {
     // We do not have a call context, so just grab a new connection to the instance
     auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
     return ExecuteSql(connection, sql);
   }
 
   Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(
-      const std::shared_ptr<duckdb::Connection> &connection, const std::string &sql) {
+      const std::shared_ptr<duckdb::Connection>& connection, const std::string& sql) {
     std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
 
     if (result->HasError()) {
@@ -846,7 +853,7 @@ class DuckDBFlightSqlServer::Impl {
 
     // Extract string values from the first column of all rows
     for (size_t row_idx = 0; row_idx < result->RowCount(); row_idx++) {
-      auto value = result->GetValue(0, row_idx);  // First column
+      auto value = result->GetValue(0, row_idx); // First column
       if (!value.IsNull()) {
         string_results.push_back(value.ToString());
       }
@@ -856,7 +863,7 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   // Utility function to execute a query and return string results from the first column
-  Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string &sql) {
+  Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string& sql) {
     // We do not have a call context, so just grab a new connection to the instance
     auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
 
@@ -865,19 +872,20 @@ class DuckDBFlightSqlServer::Impl {
 };
 
 DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
-    : impl_(std::move(impl)) {}
+  : impl_(std::move(impl)) {
+}
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
-    const std::string &path, const bool &read_only, const bool &print_queries) {
+    const std::string& path, const bool& read_only, const bool& print_queries) {
   GIZMOSQL_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
 
   bool in_memory = path == ":memory:";
-  char *db_location;
+  char* db_location;
 
   if (in_memory) {
     db_location = nullptr;
   } else {
-    db_location = const_cast<char *>(path.c_str());
+    db_location = const_cast<char*>(path.c_str());
   }
 
   duckdb::DBConfig config;
@@ -891,7 +899,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
-  for (const auto &id_to_result : GetSqlInfoResultMap(result.get())) {
+  for (const auto& id_to_result : GetSqlInfoResultMap(result.get())) {
     result->RegisterSqlInfo(id_to_result.first, id_to_result.second);
   }
   return result;
@@ -899,219 +907,218 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 
 DuckDBFlightSqlServer::~DuckDBFlightSqlServer() = default;
 
-Status DuckDBFlightSqlServer::ExecuteSql(const std::string &sql) const {
+Status DuckDBFlightSqlServer::ExecuteSql(const std::string& sql) const {
   return impl_->ExecuteSql(sql);
 }
 
 Result<std::vector<std::string>> DuckDBFlightSqlServer::ExecuteSqlAndGetStringVector(
-    const std::string &sql) const {
+    const std::string& sql) const {
   return impl_->ExecuteSqlAndGetStringVector(sql);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoStatement(
-    const flight::ServerCallContext &context, const sql::StatementQuery &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::StatementQuery& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoStatement(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetStatement(
-    const flight::ServerCallContext &context, const sql::StatementQueryTicket &command) {
+    const flight::ServerCallContext& context, const sql::StatementQueryTicket& command) {
   return impl_->DoGetStatement(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoCatalogs(
-    const flight::ServerCallContext &context,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoCatalogs(context, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetCatalogs(
-    const flight::ServerCallContext &context) {
+    const flight::ServerCallContext& context) {
   return impl_->DoGetCatalogs(context);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoSchemas(
-    const flight::ServerCallContext &context, const sql::GetDbSchemas &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::GetDbSchemas& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoSchemas(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetDbSchemas(
-    const flight::ServerCallContext &context, const sql::GetDbSchemas &command) {
+    const flight::ServerCallContext& context, const sql::GetDbSchemas& command) {
   return impl_->DoGetDbSchemas(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoTables(
-    const flight::ServerCallContext &context, const sql::GetTables &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::GetTables& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoTables(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetTables(
-    const flight::ServerCallContext &context, const sql::GetTables &command) {
+    const flight::ServerCallContext& context, const sql::GetTables& command) {
   return impl_->DoGetTables(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoXdbcTypeInfo(
-    const flight::ServerCallContext &context, const flight::sql::GetXdbcTypeInfo &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const flight::sql::GetXdbcTypeInfo& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoTypeInfo(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
-DuckDBFlightSqlServer::DoGetXdbcTypeInfo(const flight::ServerCallContext &context,
-                                         const flight::sql::GetXdbcTypeInfo &command) {
+DuckDBFlightSqlServer::DoGetXdbcTypeInfo(const flight::ServerCallContext& context,
+                                         const flight::sql::GetXdbcTypeInfo& command) {
   return impl_->DoGetTypeInfo(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoTableTypes(
-    const flight::ServerCallContext &context,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoTableTypes(context, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetTableTypes(
-    const flight::ServerCallContext &context) {
+    const flight::ServerCallContext& context) {
   return impl_->DoGetTableTypes(context);
 }
 
 Result<int64_t> DuckDBFlightSqlServer::DoPutCommandStatementUpdate(
-    const flight::ServerCallContext &context, const sql::StatementUpdate &command) {
+    const flight::ServerCallContext& context, const sql::StatementUpdate& command) {
   return impl_->DoPutCommandStatementUpdate(context, command);
 }
 
 Result<sql::ActionCreatePreparedStatementResult>
 DuckDBFlightSqlServer::CreatePreparedStatement(
-    const flight::ServerCallContext &context,
-    const sql::ActionCreatePreparedStatementRequest &request) {
+    const flight::ServerCallContext& context,
+    const sql::ActionCreatePreparedStatementRequest& request) {
   return impl_->CreatePreparedStatement(context, request);
 }
 
 Status DuckDBFlightSqlServer::ClosePreparedStatement(
-    const flight::ServerCallContext &context,
-    const sql::ActionClosePreparedStatementRequest &request) {
+    const flight::ServerCallContext& context,
+    const sql::ActionClosePreparedStatementRequest& request) {
   return impl_->ClosePreparedStatement(context, request);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoPreparedStatement(
-    const flight::ServerCallContext &context, const sql::PreparedStatementQuery &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::PreparedStatementQuery& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoPreparedStatement(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetPreparedStatement(
-    const flight::ServerCallContext &context,
-    const sql::PreparedStatementQuery &command) {
+    const flight::ServerCallContext& context,
+    const sql::PreparedStatementQuery& command) {
   return impl_->DoGetPreparedStatement(context, command);
 }
 
 Status DuckDBFlightSqlServer::DoPutPreparedStatementQuery(
-    const flight::ServerCallContext &context, const sql::PreparedStatementQuery &command,
-    flight::FlightMessageReader *reader, flight::FlightMetadataWriter *writer) {
+    const flight::ServerCallContext& context, const sql::PreparedStatementQuery& command,
+    flight::FlightMessageReader* reader, flight::FlightMetadataWriter* writer) {
   return impl_->DoPutPreparedStatementQuery(context, command, reader, writer);
 }
 
 Result<int64_t> DuckDBFlightSqlServer::DoPutPreparedStatementUpdate(
-    const flight::ServerCallContext &context, const sql::PreparedStatementUpdate &command,
-    flight::FlightMessageReader *reader) {
+    const flight::ServerCallContext& context, const sql::PreparedStatementUpdate& command,
+    flight::FlightMessageReader* reader) {
   return impl_->DoPutPreparedStatementUpdate(context, command, reader);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoPrimaryKeys(
-    const flight::ServerCallContext &context, const sql::GetPrimaryKeys &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::GetPrimaryKeys& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoPrimaryKeys(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetPrimaryKeys(
-    const flight::ServerCallContext &context, const sql::GetPrimaryKeys &command) {
+    const flight::ServerCallContext& context, const sql::GetPrimaryKeys& command) {
   return impl_->DoGetPrimaryKeys(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoImportedKeys(
-    const flight::ServerCallContext &context, const sql::GetImportedKeys &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::GetImportedKeys& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoImportedKeys(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
-DuckDBFlightSqlServer::DoGetImportedKeys(const flight::ServerCallContext &context,
-                                         const sql::GetImportedKeys &command) {
+DuckDBFlightSqlServer::DoGetImportedKeys(const flight::ServerCallContext& context,
+                                         const sql::GetImportedKeys& command) {
   return impl_->DoGetImportedKeys(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoExportedKeys(
-    const flight::ServerCallContext &context, const sql::GetExportedKeys &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::GetExportedKeys& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoExportedKeys(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
-DuckDBFlightSqlServer::DoGetExportedKeys(const flight::ServerCallContext &context,
-                                         const sql::GetExportedKeys &command) {
+DuckDBFlightSqlServer::DoGetExportedKeys(const flight::ServerCallContext& context,
+                                         const sql::GetExportedKeys& command) {
   return impl_->DoGetExportedKeys(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoCrossReference(
-    const flight::ServerCallContext &context, const sql::GetCrossReference &command,
-    const flight::FlightDescriptor &descriptor) {
+    const flight::ServerCallContext& context, const sql::GetCrossReference& command,
+    const flight::FlightDescriptor& descriptor) {
   return impl_->GetFlightInfoCrossReference(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
-DuckDBFlightSqlServer::DoGetCrossReference(const flight::ServerCallContext &context,
-                                           const sql::GetCrossReference &command) {
+DuckDBFlightSqlServer::DoGetCrossReference(const flight::ServerCallContext& context,
+                                           const sql::GetCrossReference& command) {
   return impl_->DoGetCrossReference(context, command);
 }
 
 Result<sql::ActionBeginTransactionResult> DuckDBFlightSqlServer::BeginTransaction(
-    const flight::ServerCallContext &context,
-    const sql::ActionBeginTransactionRequest &request) {
+    const flight::ServerCallContext& context,
+    const sql::ActionBeginTransactionRequest& request) {
   return impl_->BeginTransaction(context, request);
 }
 
 Status DuckDBFlightSqlServer::EndTransaction(
-    const flight::ServerCallContext &context,
-    const sql::ActionEndTransactionRequest &request) {
+    const flight::ServerCallContext& context,
+    const sql::ActionEndTransactionRequest& request) {
   return impl_->EndTransaction(context, request);
 }
 
 Result<flight::CancelFlightInfoResult> DuckDBFlightSqlServer::CancelFlightInfo(
-    const flight::ServerCallContext &context,
-    const flight::CancelFlightInfoRequest &request) {
+    const flight::ServerCallContext& context,
+    const flight::CancelFlightInfoRequest& request) {
   return impl_->CancelFlightInfo(context, request);
 }
 
 Result<flight::sql::CancelResult> DuckDBFlightSqlServer::CancelQuery(
-    const flight::ServerCallContext &context,
-    const flight::sql::ActionCancelQueryRequest &request) {
+    const flight::ServerCallContext& context,
+    const flight::sql::ActionCancelQueryRequest& request) {
   return impl_->CancelQuery(context, request);
 }
 
 Result<flight::SetSessionOptionsResult> DuckDBFlightSqlServer::SetSessionOptions(
-    const flight::ServerCallContext &context,
-    const flight::SetSessionOptionsRequest &request) {
+    const flight::ServerCallContext& context,
+    const flight::SetSessionOptionsRequest& request) {
   return impl_->SetSessionOptions(context, request);
 }
 
 Result<flight::GetSessionOptionsResult> DuckDBFlightSqlServer::GetSessionOptions(
-    const flight::ServerCallContext &context,
-    const flight::GetSessionOptionsRequest &request) {
+    const flight::ServerCallContext& context,
+    const flight::GetSessionOptionsRequest& request) {
   return impl_->GetSessionOptions(context, request);
 }
 
 Result<flight::CloseSessionResult> DuckDBFlightSqlServer::CloseSession(
-    const flight::ServerCallContext &context,
-    const flight::CloseSessionRequest &request) {
+    const flight::ServerCallContext& context,
+    const flight::CloseSessionRequest& request) {
   return impl_->CloseSession(context, request);
 }
-
-}  // namespace gizmosql::ddb
+} // namespace gizmosql::ddb

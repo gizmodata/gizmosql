@@ -17,7 +17,7 @@
 
 #pragma once
 
-#include "arrow/flight/sql/types.h"
+#include <arrow/flight/sql/types.h>
 
 namespace gizmosql::sqlite {
 

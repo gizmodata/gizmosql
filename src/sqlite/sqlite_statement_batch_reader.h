@@ -22,7 +22,7 @@
 #include <memory>
 
 #include "sqlite_statement.h"
-#include "arrow/record_batch.h"
+#include <arrow/record_batch.h>
 
 namespace gizmosql::sqlite {
 

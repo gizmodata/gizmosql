@@ -25,9 +25,9 @@
 
 #include "sqlite_statement.h"
 #include "sqlite_statement_batch_reader.h"
-#include "arrow/flight/sql/server.h"
-#include "arrow/flight/types.h"
-#include "arrow/result.h"
+#include <arrow/flight/sql/server.h>
+#include <arrow/flight/types.h>
+#include <arrow/result.h>
 #include "flight_sql_fwd.h"
 
 namespace gizmosql::sqlite {

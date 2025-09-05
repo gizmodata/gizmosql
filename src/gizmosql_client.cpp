@@ -24,14 +24,14 @@
 #include <sstream>
 #include <fstream>
 
-#include "arrow/array/builder_binary.h"
-#include "arrow/array/builder_primitive.h"
-#include "arrow/flight/api.h"
-#include "arrow/flight/sql/api.h"
-#include "arrow/io/memory.h"
-#include "arrow/pretty_print.h"
-#include "arrow/status.h"
-#include "arrow/table.h"
+#include <arrow/array/builder_binary.h>
+#include <arrow/array/builder_primitive.h>
+#include <arrow/flight/api.h>
+#include <arrow/flight/sql/api.h>
+#include <arrow/io/memory.h>
+#include <arrow/pretty_print.h>
+#include <arrow/status.h>
+#include <arrow/table.h>
 
 
 #include "flight_sql_fwd.h"

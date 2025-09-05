@@ -28,15 +28,15 @@
 
 #include <sqlite3.h>
 
-#include "arrow/array/builder_binary.h"
+#include <arrow/array/builder_binary.h>
 #include "sqlite_sql_info.h"
 #include "sqlite_statement.h"
 #include "sqlite_statement_batch_reader.h"
 #include "sqlite_tables_schema_batch_reader.h"
 #include "sqlite_type_info.h"
-#include "arrow/flight/sql/server.h"
-#include "arrow/scalar.h"
-#include "arrow/util/logging.h"
+#include <arrow/flight/sql/server.h>
+#include <arrow/scalar.h>
+#include <arrow/util/logging.h>
 #include "gizmosql_logging.h"
 
 #include "flight_sql_fwd.h"

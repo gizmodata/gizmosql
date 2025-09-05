@@ -21,13 +21,13 @@
 
 #include <sstream>
 
-#include "arrow/array/builder_binary.h"
-#include "arrow/flight/sql/column_metadata.h"
+#include <arrow/array/builder_binary.h>
+#include <arrow/flight/sql/column_metadata.h>
 #include "sqlite_server.h"
 #include "sqlite_statement.h"
-#include "arrow/flight/sql/server.h"
-#include "arrow/ipc/writer.h"
-#include "arrow/record_batch.h"
+#include <arrow/flight/sql/server.h>
+#include <arrow/ipc/writer.h>
+#include <arrow/record_batch.h>
 
 #include "flight_sql_fwd.h"
 
