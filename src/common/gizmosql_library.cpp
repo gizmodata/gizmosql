@@ -392,13 +392,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   gizmosql::LogFormat fmt = gizmosql::LogFormat::kText;
   {
     auto v = lower(fmt_s);
-#ifdef GIZMOSQL_ENABLE_JSON_LOGS
     if (v == "json") fmt = gizmosql::LogFormat::kJson;
-#else
-    if (v == "json")
-      std::cerr << "JSON logging requested but GIZMOSQL_ENABLE_JSON_LOGS not enabled; "
-                   "falling back to text\n";
-#endif
   }
 
   // access on/off
