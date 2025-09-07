@@ -37,11 +37,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
 )
-execute_process(COMMAND "${CMAKE_COMMAND}" --install .
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow")
-
 set(ARROW_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
-set(ARROW_INCLUDE_DIR "${ARROW_INSTALL_DIR}/include")
 
 find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlight REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
@@ -175,7 +171,6 @@ target_include_directories(gizmosqlserver
         src/sqlite
         src/duckdb
         src/common/include/detail
-        ${ARROW_INCLUDE_DIR}
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}
         ${JWT_CPP_INCLUDE_DIR}
@@ -213,6 +208,7 @@ add_executable(gizmosql_server
 target_link_libraries(gizmosql_server PRIVATE
         gizmosqlserver
         ${Boost_LIBRARIES}
+        Arrow::arrow_static
 )
 
 target_compile_options(gizmosql_server PRIVATE "-static")
@@ -231,11 +227,11 @@ add_executable(gizmosql_client
 target_include_directories(gizmosql_client
         PRIVATE
         ${CMAKE_SOURCE_DIR}/src/common/include
-        ${ARROW_INCLUDE_DIR}
 )
 
 target_link_libraries(gizmosql_client PRIVATE
         Threads::Threads
+        Arrow::arrow_static
         ArrowFlightSql::arrow_flight_sql_static
         gflags
         ${Boost_LIBRARIES}
