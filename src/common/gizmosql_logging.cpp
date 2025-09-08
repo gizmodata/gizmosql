@@ -24,15 +24,17 @@ static inline int gizmosql_getpid() { return getpid(); }
 
 namespace gizmosql {
 namespace {
-
 using arrow::util::ArrowLogLevel;
 using arrow::util::LogDetails;
 using arrow::util::Logger;
 using arrow::util::LoggerRegistry;
 
+// Marker prefix to smuggle structured fields through Arrow's Logger message
+static constexpr const char* kKV_PREFIX = "[[KV]]";
+
 struct GlobalState {
   std::mutex sink_mu;
-  std::unique_ptr<std::ostream> owned_sink;  // if file-backed
+  std::unique_ptr<std::ostream> owned_sink; // if file-backed
   std::ostream* sink = &std::cerr;
 
   std::atomic<ArrowLogLevel> level{ArrowLogLevel::ARROW_INFO};
@@ -81,10 +83,38 @@ inline const char* LevelName(ArrowLogLevel lvl) {
   }
 }
 
+// Encode fields into a compact JSON string (only for transport inside message)
+inline std::string EncodeFieldsForMessage(const FieldList& fields) {
+  if (fields.empty()) return {};
+  nlohmann::json j = nlohmann::json::object();
+  for (const auto& f : fields) {
+    std::visit([&](auto&& v) {
+      j[f.key] = v;
+    }, f.value);
+  }
+  return std::string(kKV_PREFIX) + j.dump() + " ";
+}
+
+// Try to peel off the encoded fields prefix from the message
+inline std::optional<nlohmann::json> TryExtractFieldsFromMessage(std::string& text) {
+  if (text.rfind(kKV_PREFIX, 0) != 0) return std::nullopt; // no prefix
+  // strip prefix
+  auto space_pos = text.find(' ');
+  if (space_pos == std::string::npos) return std::nullopt;
+  auto json_str = text.substr(std::strlen(kKV_PREFIX),
+                              space_pos - std::strlen(kKV_PREFIX));
+  text.erase(0, space_pos + 1);
+  try {
+    return nlohmann::json::parse(json_str);
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
 // ---------- custom logger (Arrow v21+)
 
 class GizmoSQLLogger final : public Logger {
- public:
+public:
   explicit GizmoSQLLogger() = default;
 
   bool is_enabled() const override { return true; }
@@ -105,7 +135,7 @@ class GizmoSQLLogger final : public Logger {
     WriteText(lvl, file, line, msg);
   }
 
- private:
+private:
   static void WriteJson(ArrowLogLevel level, const std::string file, int line,
                         const std::string_view& message) {
     nlohmann::json j;
@@ -117,15 +147,28 @@ class GizmoSQLLogger final : public Logger {
     tid << std::this_thread::get_id();
     j["tid"] = tid.str();
 
-    if (G.cfg.show_source) { j["file"] = file; j["line"] = line; }
+    if (G.cfg.show_source) {
+      j["file"] = file;
+      j["line"] = line;
+    }
     if (G.cfg.component) j["component"] = *G.cfg.component;
 
-    // Pull out optional [func=...] tag (from GIZMOSQL_LOGF) into a proper field
-    std::string func;
+    // Pull func tag and the encoded KV prefix
     std::string text = std::string(message);
+
+    // 1) Extract encoded fields if present
+    if (auto kv = TryExtractFieldsFromMessage(text)) {
+      // Merge into top-level (don’t overwrite required keys)
+      for (auto it = kv->begin(); it != kv->end(); ++it) {
+        if (!j.contains(it.key())) j[it.key()] = *it;
+        else j["extra_" + it.key()] = *it; // avoid collisions
+      }
+    }
+
+    // 2) Extract [func=...] tag like before
+    std::string func;
     constexpr char kTag[] = "[func=";
-    auto pos = text.find(kTag);
-    if (pos != std::string::npos) {
+    if (auto pos = text.find(kTag); pos != std::string::npos) {
       auto end = text.find(']', pos);
       if (end != std::string::npos) {
         func = text.substr(pos + sizeof(kTag) - 1, end - (pos + sizeof(kTag) - 1));
@@ -142,19 +185,48 @@ class GizmoSQLLogger final : public Logger {
     if (G.cfg.flush_each_line) G.sink->flush();
   }
 
+  static inline std::string QuoteIfNeeded(const std::string& s) {
+    // quote if whitespace present
+    for (char c : s) if (std::isspace(static_cast<unsigned char>(c))) return
+        "\"" + s + "\"";
+    return s;
+  }
+
+  static void AppendFieldsText(std::ostringstream& oss, const nlohmann::json& kv) {
+    for (auto it = kv.begin(); it != kv.end(); ++it) {
+      oss << " " << it.key() << "=";
+      if (it->is_string()) {
+        oss << QuoteIfNeeded(it->get<std::string>());
+      } else {
+        oss << it->dump(); // numbers/bools
+      }
+    }
+  }
+
   static void WriteText(ArrowLogLevel level, const std::string file, int line,
                         const std::string_view& message) {
     std::ostringstream tid;
     tid << std::this_thread::get_id();
+
+    std::string text = std::string(message);
+    nlohmann::json kv;
+    if (auto extracted = TryExtractFieldsFromMessage(text)) {
+      kv = std::move(*extracted);
+    }
 
     std::ostringstream oss;
     oss << NowIso8601Utc() << " " << LevelName(level) << " pid=" << gizmosql_getpid()
         << " tid=" << tid.str();
 
     if (G.cfg.component) oss << " component=" << *G.cfg.component;
-
     if (G.cfg.show_source) oss << " " << file << ":" << line;
-    oss << " - " << message;
+
+    // Optional func tag extraction (reuse the JSON logic if you like; omitted here)
+    oss << " - " << text;
+
+    if (!kv.is_null()) {
+      AppendFieldsText(oss, kv);
+    }
 
     std::lock_guard<std::mutex> lk(G.sink_mu);
     (*G.sink) << oss.str() << '\n';
@@ -163,8 +235,7 @@ class GizmoSQLLogger final : public Logger {
 };
 
 std::shared_ptr<GizmoSQLLogger> g_logger;
-
-}  // namespace
+} // namespace
 
 // ---------- public API
 
@@ -180,7 +251,7 @@ void InitLogging(const LogConfig& cfg) {
       G.sink = &std::cerr;
       // At this early stage we don't have a logger yet; write a plain warning.
       std::cerr << "WARN Failed to open log file '" << *cfg.file_path
-                << "', logging to stderr\n";
+          << "', logging to stderr\n";
     } else {
       G.sink = out.get();
       G.owned_sink = std::move(out);
@@ -201,4 +272,28 @@ void SetLogLevel(ArrowLogLevel level) {
   // so just updating G.level is sufficient.
 }
 
-}  // namespace gizmosql
+// ---------- public API (cont.) ----------
+
+void LogWithFields(arrow::util::ArrowLogLevel level,
+                   const char* file,
+                   int line,
+                   std::string_view msg,
+                   const FieldList& fields) {
+  // Prepend encoded KV if present
+  std::string full = EncodeFieldsForMessage(fields);
+  full.append(msg.data(), msg.size());
+
+  auto logger = arrow::util::LoggerRegistry::GetDefaultLogger();
+  if (!logger || !logger->is_enabled() || level < logger->severity_threshold()) {
+    return;
+  }
+
+  arrow::util::LogDetails d;
+  d.severity = level;
+  d.message = full;
+  d.source_location.file = file;
+  d.source_location.line = static_cast<uint32_t>(line);
+  logger->Log(d);
+}
+
+} // namespace gizmosql

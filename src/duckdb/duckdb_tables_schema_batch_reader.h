@@ -33,7 +33,7 @@ namespace gizmosql::ddb
     private:
         std::shared_ptr<DuckDBStatementBatchReader> reader_;
         std::string main_query_;
-        std::shared_ptr<duckdb::Connection> db_conn_;
+        std::shared_ptr<ClientSession> client_session_;
         bool already_executed_;
 
     public:
@@ -43,10 +43,10 @@ namespace gizmosql::ddb
   /// \param db     a pointer to the sqlite3 db.
         DuckDBTablesWithSchemaBatchReader(std::shared_ptr<DuckDBStatementBatchReader> reader,
                                           std::string main_query,
-                                          std::shared_ptr<duckdb::Connection> db_conn)
+                                          std::shared_ptr<ClientSession> client_session)
             : reader_(std::move(reader)),
               main_query_(std::move(main_query)),
-              db_conn_(db_conn),
+              client_session_(client_session),
               already_executed_(false)
         {
         }

@@ -18,7 +18,7 @@
 #pragma once
 
 #include <arrow/flight/sql/types.h>
-#include "../common/include/detail/flight_sql_fwd.h"
+#include "flight_sql_fwd.h"
 
 namespace gizmosql::ddb {
 

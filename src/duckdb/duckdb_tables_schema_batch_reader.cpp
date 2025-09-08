@@ -27,7 +27,7 @@
 #include <arrow/ipc/writer.h>
 #include <arrow/record_batch.h>
 
-#include "../common/include/detail/flight_sql_fwd.h"
+#include "flight_sql_fwd.h"
 
 using arrow::Status;
 
@@ -43,8 +43,9 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
     return Status::OK();
   } else {
     std::shared_ptr<DuckDBStatement> schema_statement;
+
     ARROW_ASSIGN_OR_RAISE(schema_statement,
-                          DuckDBStatement::Create(db_conn_, main_query_));
+                          DuckDBStatement::Create(client_session_, main_query_));
 
     std::shared_ptr<arrow::RecordBatch> first_batch;
 
@@ -70,7 +71,7 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
       std::shared_ptr<DuckDBStatement> table_schema_statement;
       ARROW_ASSIGN_OR_RAISE(
           table_schema_statement,
-          DuckDBStatement::Create(db_conn_,
+          DuckDBStatement::Create(client_session_,
             "SELECT * FROM " + table_name + " WHERE 1 = 0"));
 
       ARROW_ASSIGN_OR_RAISE(auto table_schema, table_schema_statement->GetSchema());

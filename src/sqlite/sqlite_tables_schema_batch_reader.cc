@@ -29,7 +29,7 @@
 #include <arrow/ipc/writer.h>
 #include <arrow/record_batch.h>
 
-#include "../common/include/detail/flight_sql_fwd.h"
+#include "flight_sql_fwd.h"
 
 namespace gizmosql::sqlite {
 

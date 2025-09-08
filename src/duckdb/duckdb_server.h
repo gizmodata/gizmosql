@@ -24,7 +24,7 @@
 
 #include <arrow/api.h>
 #include <arrow/flight/sql/server.h>
-#include "../common/include/detail/flight_sql_fwd.h"
+#include "flight_sql_fwd.h"
 
 namespace gizmosql::ddb {
 /// \brief Convert a column type to a ArrowType.

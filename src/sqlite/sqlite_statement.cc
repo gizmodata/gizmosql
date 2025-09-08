@@ -31,7 +31,7 @@
 #include <arrow/table.h>
 #include <arrow/type.h>
 #include <arrow/util/checked_cast.h>
-#include "../common/include/detail/flight_sql_fwd.h"
+#include "flight_sql_fwd.h"
 
 namespace gizmosql::sqlite {
 

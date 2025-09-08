@@ -8,7 +8,7 @@ include(ExternalProject)
 # Download and configure SQLite during the CMake configuration step
 ExternalProject_Add(
     sqlite_project
-    URL "https://sqlite.org/2025/sqlite-autoconf-3500300.tar.gz"
+    URL "https://sqlite.org/2025/sqlite-autoconf-3500400.tar.gz"
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     PREFIX "${CMAKE_BINARY_DIR}/third_party/sqlite"
     CONFIGURE_COMMAND ../sqlite_project/configure "CFLAGS=-DSQLITE_ENABLE_COLUMN_METADATA=1" --prefix=${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install
