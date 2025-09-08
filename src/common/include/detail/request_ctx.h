@@ -3,10 +3,11 @@
 #include <string>
 #include <optional>
 
-struct RequestCtx {
-  std::optional<std::string> username;
-  std::optional<std::string> role;
-  std::optional<std::string> peer;
+struct RequestCtx
+{
+    std::optional<std::string> username;
+    std::optional<std::string> role;
+    std::optional<std::string> peer;
 };
 
 // One scratchpad per RPC thread

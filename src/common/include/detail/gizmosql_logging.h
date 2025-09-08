@@ -90,5 +90,4 @@ GIZMOSQL_LOG(SEV) << "[func=" << __func__ << "] "
 ::gizmosql::LogStreamKV( \
 SEV, __FILE__, __LINE__, \
 ::gizmosql::FieldList{ __VA_ARGS__ } )
-
 } // namespace gizmosql

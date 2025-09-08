@@ -187,8 +187,10 @@ private:
 
   static inline std::string QuoteIfNeeded(const std::string& s) {
     // quote if whitespace present
-    for (char c : s) if (std::isspace(static_cast<unsigned char>(c))) return
-        "\"" + s + "\"";
+    for (char c : s)
+      if (std::isspace(static_cast<unsigned char>(c)))
+        return
+            "\"" + s + "\"";
     return s;
   }
 
@@ -295,5 +297,4 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
   d.source_location.line = static_cast<uint32_t>(line);
   logger->Log(d);
 }
-
 } // namespace gizmosql

@@ -125,7 +125,9 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<arrow::Schema>& schema) {
   std::shared_ptr<DuckDBStatement> statement;
 
-  ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(client_session, query, arrow::util::ArrowLogLevel::ARROW_DEBUG))
+  ARROW_ASSIGN_OR_RAISE(statement,
+                        DuckDBStatement::Create(client_session, query, arrow::util::
+                          ArrowLogLevel::ARROW_DEBUG))
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
   ARROW_ASSIGN_OR_RAISE(reader, DuckDBStatementBatchReader::Create(statement, schema))
@@ -291,7 +293,9 @@ public:
       const flight::FlightDescriptor& descriptor) {
     const std::string& query = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(client_session, query, arrow::util::ArrowLogLevel::ARROW_DEBUG))
+    ARROW_ASSIGN_OR_RAISE(auto statement,
+                          DuckDBStatement::Create(client_session, query, arrow::util::
+                            ArrowLogLevel::ARROW_DEBUG))
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
                           EncodeTransactionQuery(query, command.transaction_id))
@@ -368,7 +372,8 @@ public:
 
     ARROW_ASSIGN_OR_RAISE(auto statement,
                           DuckDBStatement::Create(client_session, handle, request.
-                            query, arrow::util::ArrowLogLevel::ARROW_INFO, print_queries_))
+                            query, arrow::util::ArrowLogLevel::ARROW_INFO, print_queries_
+                          ))
     prepared_statements_[handle] = statement;
 
     ARROW_ASSIGN_OR_RAISE(auto dataset_schema, statement->GetSchema())
@@ -496,7 +501,9 @@ public:
     std::string query = PrepareQueryForGetTables(command);
     std::shared_ptr<DuckDBStatement> statement;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(statement, DuckDBStatement::Create(client_session, query, arrow::util::ArrowLogLevel::ARROW_DEBUG))
+    ARROW_ASSIGN_OR_RAISE(statement,
+                          DuckDBStatement::Create(client_session, query, arrow::util::
+                            ArrowLogLevel::ARROW_DEBUG))
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
                             statement, sql::SqlSchema::GetTablesSchema()))
@@ -515,7 +522,9 @@ public:
                                               const sql::StatementUpdate& command) {
     const std::string& sql = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(client_session, sql, arrow::util::ArrowLogLevel::ARROW_INFO))
+    ARROW_ASSIGN_OR_RAISE(auto statement,
+                          DuckDBStatement::Create(client_session, sql, arrow::util::
+                            ArrowLogLevel::ARROW_INFO))
     return statement->ExecuteUpdate();
   }
 

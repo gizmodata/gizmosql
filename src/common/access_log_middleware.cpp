@@ -49,7 +49,8 @@ static const char* MethodName(FlightMethod m) {
 }
 
 AccessLogMiddleware::AccessLogMiddleware(FlightMethod method, std::string peer)
-    : method_(method), peer_(std::move(peer)), t0_(steady_clock::now()) {}
+  : method_(method), peer_(std::move(peer)), t0_(steady_clock::now()) {
+}
 
 void AccessLogMiddleware::SendingHeaders(AddCallHeaders* /*out*/) {
   // no-op (could add request-id header here)
@@ -60,9 +61,9 @@ void AccessLogMiddleware::CallCompleted(const Status& status) {
 
   // Goes through your unified gizmo logger (JSON or text based on runtime config)
   GIZMOSQL_LOGF(INFO) << "access"
-                      << " method=" << MethodName(method_)
-                      << " peer=" << (peer_.empty() ? "unknown" : peer_)
-                      << " status=" << status.ToString() << " duration_ms=" << dur_ms;
+      << " method=" << MethodName(method_)
+      << " peer=" << (peer_.empty() ? "unknown" : peer_)
+      << " status=" << status.ToString() << " duration_ms=" << dur_ms;
 }
 
 arrow::Status AccessLogFactory::StartCall(
@@ -73,4 +74,4 @@ arrow::Status AccessLogFactory::StartCall(
   *out = std::make_shared<AccessLogMiddleware>(info.method, *tl_request_ctx.peer);
   return arrow::Status::OK();
 }
-}  // namespace gizmosql
+} // namespace gizmosql

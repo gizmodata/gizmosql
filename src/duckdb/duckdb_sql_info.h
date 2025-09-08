@@ -20,15 +20,14 @@
 #include <arrow/flight/sql/types.h>
 #include "flight_sql_fwd.h"
 
-namespace gizmosql::ddb {
+namespace gizmosql::ddb
+{
+    // Forward declaration
+    class DuckDBFlightSqlServer;
 
-// Forward declaration
-class DuckDBFlightSqlServer;
-
-/// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
+    /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
 /// Uses dynamic queries to DuckDB like the Java driver.
 /// \param server The DuckDB server instance to use for dynamic queries
 /// \return the cache.
-flight::sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server);
-
-}  // namespace gizmosql::ddb
+    flight::sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server);
+} // namespace gizmosql::ddb
