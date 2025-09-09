@@ -98,18 +98,63 @@ inline std::string EncodeFieldsForMessage(const FieldList& fields) {
 // Try to peel off the encoded fields prefix from the message
 inline std::optional<nlohmann::json> TryExtractFieldsFromMessage(std::string& text) {
   if (text.rfind(kKV_PREFIX, 0) != 0) return std::nullopt; // no prefix
-  // strip prefix
-  auto space_pos = text.find(' ');
-  if (space_pos == std::string::npos) return std::nullopt;
-  auto json_str = text.substr(std::strlen(kKV_PREFIX),
-                              space_pos - std::strlen(kKV_PREFIX));
-  text.erase(0, space_pos + 1);
-  try {
-    return nlohmann::json::parse(json_str);
-  } catch (...) {
-    return std::nullopt;
+
+  const size_t prefix_len = std::strlen(kKV_PREFIX);
+  if (text.size() <= prefix_len || text[prefix_len] != '{') return std::nullopt;
+
+  // Find the end of the JSON object by tracking depth, respecting quotes/escapes
+  size_t i = prefix_len;
+  int depth = 0;
+  bool in_string = false;
+  bool escaped = false;
+
+  for (; i < text.size(); ++i) {
+    char c = text[i];
+
+    if (in_string) {
+      if (escaped) {
+        escaped = false;
+      } else if (c == '\\') {
+        escaped = true;
+      } else if (c == '"') {
+        in_string = false;
+      }
+      continue;
+    }
+
+    if (c == '"') {
+      in_string = true;
+      continue;
+    }
+    if (c == '{') {
+      ++depth;
+    } else if (c == '}') {
+      --depth;
+      if (depth == 0) {
+        // i is the position of the matching closing brace
+        size_t json_end = i + 1; // past '}'
+        // Optional single space delimiter after the JSON
+        size_t erase_upto = json_end;
+        if (json_end < text.size() && text[json_end] == ' ') {
+          erase_upto = json_end + 1;
+        }
+
+        std::string json_str = text.substr(prefix_len, json_end - prefix_len);
+        text.erase(0, erase_upto);
+
+        try {
+          return nlohmann::json::parse(json_str);
+        } catch (...) {
+          return std::nullopt;
+        }
+      }
+    }
   }
+
+  // If we get here, we never closed the top-level object
+  return std::nullopt;
 }
+
 
 // ---------- custom logger (Arrow v21+)
 
