@@ -53,6 +53,7 @@ const int port = 31337;
       while (iter != end) {                                                        \
         std::string init_sql_command = *iter;                                      \
         if (init_sql_command.empty()) continue;                                    \
+        init_sql_command = redact_sql_for_logs(init_sql_command);                  \
         GIZMOSQL_LOG(INFO) << "Running Init SQL command: \n"                       \
                            << init_sql_command << ";";                             \
         ARROW_RETURN_NOT_OK(serverType->ExecuteSql(init_sql_command));             \

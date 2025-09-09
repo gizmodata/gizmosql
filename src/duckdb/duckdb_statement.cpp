@@ -125,7 +125,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                            {"user", client_session->username},
                            {"role", client_session->role},
                            {"statement_handle", handle},
-                           {"command", sql}
+                           {"command", redact_sql_for_logs(sql)}
         );
   }
   std::shared_ptr<duckdb::PreparedStatement> stmt = client_session->connection->
@@ -156,7 +156,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                      {"user", client_session->username},
                      {"role", client_session->role},
                      {"statement_handle", handle},
-                     {"command", sql},
+                     {"command", redact_sql_for_logs(sql)},
                      {"error", err_msg}
           );
     }
@@ -202,7 +202,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                        {"user", client_session_->username},
                        {"role", client_session_->role},
                        {"statement_handle", handle_},
-                       {"command", sql_},
+                       {"command", redact_sql_for_logs(sql_)},
                        {"error", result->GetError()}
             );
       }
@@ -227,7 +227,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                        {"user", client_session_->username},
                        {"role", client_session_->role},
                        {"statement_handle", handle_},
-                       {"command", sql_},
+                       {"command", redact_sql_for_logs(sql_)},
                        {"error", query_result_->GetError()}
             );
       }
