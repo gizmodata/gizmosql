@@ -145,7 +145,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
     // Other preparation errors are still fatal
     std::string err_msg =
-        "Can't prepare statement: '" + sql + "' - Error: " + error_message;
+        "Can't prepare statement: '" + redact_sql_for_logs(sql) + "' - Error: " + error_message;
 
     if (log_queries) {
       GIZMOSQL_LOGKV(WARNING, "Client SQL command failed preparation", {"peer",
