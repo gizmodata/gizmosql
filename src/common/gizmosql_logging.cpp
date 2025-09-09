@@ -223,12 +223,12 @@ private:
     if (G.cfg.component) oss << " component=" << *G.cfg.component;
     if (G.cfg.show_source) oss << " " << file << ":" << line;
 
-    // Optional func tag extraction (reuse the JSON logic if you like; omitted here)
-    oss << " - " << text;
-
     if (!kv.is_null()) {
       AppendFieldsText(oss, kv);
     }
+
+    // Optional func tag extraction (reuse the JSON logic if you like; omitted here)
+    oss << " - " << text;
 
     std::lock_guard<std::mutex> lk(G.sink_mu);
     (*G.sink) << oss.str() << '\n';
@@ -281,14 +281,15 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
                    int line,
                    std::string_view msg,
                    const FieldList& fields) {
-  // Prepend encoded KV if present
-  std::string full = EncodeFieldsForMessage(fields);
-  full.append(msg.data(), msg.size());
-
   auto logger = arrow::util::LoggerRegistry::GetDefaultLogger();
   if (!logger || !logger->is_enabled() || level < logger->severity_threshold()) {
     return;
   }
+
+  // Prepend encoded KV if present
+  std::string full = EncodeFieldsForMessage(fields);
+
+  full.append(msg.data(), msg.size());
 
   arrow::util::LogDetails d;
   d.severity = level;

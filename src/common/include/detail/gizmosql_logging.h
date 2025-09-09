@@ -42,33 +42,6 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
                    std::string_view msg,
                    const FieldList& fields = {});
 
-class LogStreamKV {
-public:
-  LogStreamKV(::arrow::util::ArrowLogLevel lvl,
-              const char* file,
-              int line,
-              FieldList fields)
-    : lvl_(lvl), file_(file), line_(line), fields_(std::move(fields)) {
-  }
-
-  ~LogStreamKV() {
-    ::gizmosql::LogWithFields(lvl_, file_, line_, oss_.str(), fields_);
-  }
-
-  template <typename T>
-  LogStreamKV& operator<<(const T& v) {
-    oss_ << v;
-    return *this;
-  }
-
-private:
-  ::arrow::util::ArrowLogLevel lvl_;
-  const char* file_;
-  int line_;
-  FieldList fields_;
-  std::ostringstream oss_;
-};
-
 // Convenience macros that route through Arrow’s ARROW_LOG,
 // which will use our installed logger.
 #define GIZMOSQL_LOG(SEV)                                                \
@@ -81,13 +54,12 @@ private:
 #define GIZMOSQL_LOGF(SEV)                                               \
 GIZMOSQL_LOG(SEV) << "[func=" << __func__ << "] "
 
-#define GIZMOSQL_LOGKV(SEV, ...) \
-::gizmosql::LogStreamKV( \
-::arrow::util::ArrowLogLevel::ARROW_##SEV, __FILE__, __LINE__, \
+#define GIZMOSQL_LOGKV(SEV, MSG, ...) \
+::gizmosql::LogWithFields(::arrow::util::ArrowLogLevel::ARROW_##SEV, \
+__FILE__, __LINE__, MSG, \
 ::gizmosql::FieldList{ __VA_ARGS__ } )
 
-#define GIZMOSQL_LOGKV_DYNAMIC(SEV, ...) \
-::gizmosql::LogStreamKV( \
-SEV, __FILE__, __LINE__, \
+#define GIZMOSQL_LOGKV_DYNAMIC(SEV, MSG, ...) \
+::gizmosql::LogWithFields(SEV, __FILE__, __LINE__, MSG, \
 ::gizmosql::FieldList{ __VA_ARGS__ } )
 } // namespace gizmosql

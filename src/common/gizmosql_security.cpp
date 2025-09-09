@@ -200,30 +200,28 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
 
     if ((username == username_) && (password == password_)) {
       *middleware = std::make_shared<BasicAuthServerMiddleware>(username, secret_key_);
-      GIZMOSQL_LOGKV(INFO, {"user", username},
-                     {"peer", context.peer()},
-                     {"kind", "authentication"},
-                     {"authentication_type", "basic"},
-                     {"result", "success"}
-          )
-          << "User: "
-          << username
-          << " (peer "
-          << context.peer()
-          << ") - Successfully Basic authenticated";
+      GIZMOSQL_LOGKV(
+          INFO, "User: " + username + " (peer "+ context.peer() +
+          ") - Successfully Basic authenticated",
+          {"user", username},
+          {"peer", context.peer()},
+          {"kind", "authentication"},
+          {"authentication_type", "basic"},
+          {"result", "success"}
+          );
     } else {
-      GIZMOSQL_LOGKV(WARNING, {"user", username},
+      GIZMOSQL_LOGKV(WARNING, "User: "
+                     + username
+                     + " (peer "
+                     + context.peer()
+                     + ") - Failed Basic authentication - reason: user provided invalid credentials",
+                     {"user", username},
                      {"peer", context.peer()},
                      {"kind", "authentication"},
                      {"authentication_type", "basic"},
                      {"result", "failure"},
                      {"reason", "invalid_credentials"}
-          )
-          << "User: "
-          << username
-          << " (peer "
-          << context.peer()
-          << ") - Failed Basic authentication - reason: user provided invalid credentials";
+          );
 
       return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
                              "Invalid credentials");
@@ -299,7 +297,19 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string& token
                  .with_issuer(std::string(token_allowed_issuer_))
                  .with_audience(token_allowed_audience_);
     } else {
-      GIZMOSQL_LOGKV(WARNING, {"peer", context.peer()},
+      GIZMOSQL_LOGKV(WARNING,
+                     "peer="
+                     + context.peer()
+                     + " - Bearer Token has an invalid 'iss' claim value of: "
+                     + iss
+                     + " - token_claims=(id="
+                     + decoded.get_id()
+                     + " sub="
+                     + decoded.get_subject()
+                     + " iss="
+                     + decoded.get_issuer()
+                     + ")",
+                     {"peer", context.peer()},
                      {"kind", "authentication"},
                      {"authentication_type", "bearer"},
                      {"result", "failure"},
@@ -307,56 +317,43 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string& token
                      {"token_id", decoded.get_id()},
                      {"token_sub", decoded.get_subject()},
                      {"token_iss", decoded.get_issuer()}
-          )
-          << "peer="
-          << context.peer()
-          << " - Bearer Token has an invalid 'iss' claim value of: "
-          << iss
-          << " - token_claims=(id="
-          << decoded.get_id()
-          << " sub="
-          << decoded.get_subject()
-          << " iss="
-          << decoded.get_issuer()
-          << ")";
+          );
       return Status::Invalid("Invalid token issuer");
     }
 
     verifier.verify(decoded);
 
     // If we got this far, the token verified successfully
-    GIZMOSQL_LOGKV(DEBUG, {"peer", context.peer()},
+    GIZMOSQL_LOGKV(DEBUG, "peer="
+                   + context.peer()
+                   + " - Bearer Token was validated successfully"
+                   + " - token_claims=(id="
+                   + decoded.get_id()
+                   + " sub="
+                   + decoded.get_subject()
+                   + " iss="
+                   + decoded.get_issuer()
+                   + ")", {"peer", context.peer()},
                    {"kind", "authentication"},
                    {"authentication_type", "bearer"},
                    {"result", "success"},
                    {"token_id", decoded.get_id()},
                    {"token_sub", decoded.get_subject()},
                    {"token_iss", decoded.get_issuer()}
-        )
-        << "peer="
-        << context.peer()
-        << " - Bearer Token was validated successfully"
-        << " - token_claims=(id="
-        << decoded.get_id()
-        << " sub="
-        << decoded.get_subject()
-        << " iss="
-        << decoded.get_issuer()
-        << ")";
+        );
 
     return decoded;
   } catch (const std::exception& e) {
     auto error_message = e.what();
-    GIZMOSQL_LOGKV(WARNING, {"peer", context.peer()},
+    GIZMOSQL_LOGKV(WARNING, "peer="
+                   + context.peer()
+                   + " - Bearer Token verification failed with exception: "
+                   + error_message, {"peer", context.peer()},
                    {"kind", "authentication"},
                    {"authentication_type", "bearer"},
                    {"result", "failure"},
                    {"reason", error_message}
-        )
-        << "peer="
-        << context.peer()
-        << " - Bearer Token verification failed with exception: "
-        << error_message;
+        );
 
     return Status::Invalid("Token verification failed with error: " +
                            std::string(error_message));
