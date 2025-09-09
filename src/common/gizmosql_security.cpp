@@ -324,7 +324,25 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string& token
     verifier.verify(decoded);
 
     // If we got this far, the token verified successfully
-    GIZMOSQL_LOGKV(DEBUG, "peer="
+    // Only log success at INFO level once per token ID
+    arrow::util::ArrowLogLevel token_log_level = arrow::util::ArrowLogLevel::ARROW_DEBUG;
+    {
+      std::lock_guard<std::mutex> lk(token_log_mutex_);
+      const std::string& token_id = decoded.get_id();
+      if (!token_id.empty() && logged_token_ids_.find(token_id) == logged_token_ids_.end()) {
+        logged_token_ids_.insert(token_id);
+        token_log_level = arrow::util::ArrowLogLevel::ARROW_INFO;
+
+        // Optional: simple bound to avoid unbounded growth
+        if (logged_token_ids_.size() > 50000) {
+          logged_token_ids_.clear();
+          // Re-insert current id so it remains considered logged
+          logged_token_ids_.insert(token_id);
+        }
+      }
+    }
+
+    GIZMOSQL_LOGKV_DYNAMIC(token_log_level, "peer="
                    + context.peer()
                    + " - Bearer Token was validated successfully"
                    + " - token_claims=(id="
@@ -340,7 +358,7 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string& token
                    {"token_id", decoded.get_id()},
                    {"token_sub", decoded.get_subject()},
                    {"token_iss", decoded.get_issuer()}
-        );
+      );
 
     return decoded;
   } catch (const std::exception& e) {
