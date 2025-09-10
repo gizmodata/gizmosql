@@ -60,8 +60,10 @@ USER app_user
 
 WORKDIR ${APP_DIR}
 
-RUN python3 -m venv ${APP_DIR}/venv && \
-    echo ". ${APP_DIR}/venv/bin/activate" >> ~/.bashrc && \
+ENV VIRTUAL_ENV=${APP_DIR}/.venv
+
+RUN python3 -m venv ${VIRTUAL_ENV} && \
+    echo ". ${VIRTUAL_ENV}/bin/activate" >> ~/.bashrc && \
     . ~/.bashrc && \
     pip install --upgrade pip setuptools wheel
 

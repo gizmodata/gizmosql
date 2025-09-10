@@ -24,29 +24,31 @@
 
 #include "sqlite_statement.h"
 #include "sqlite_statement_batch_reader.h"
-#include "arrow/record_batch.h"
+#include <arrow/record_batch.h>
 
-namespace gizmosql::sqlite {
+namespace gizmosql::sqlite
+{
+    class SqliteTablesWithSchemaBatchReader : public arrow::RecordBatchReader
+    {
+    private:
+        std::shared_ptr<sqlite::SqliteStatementBatchReader> reader_;
+        std::string main_query_;
+        sqlite3* db_;
 
-class SqliteTablesWithSchemaBatchReader : public arrow::RecordBatchReader {
- private:
-  std::shared_ptr<sqlite::SqliteStatementBatchReader> reader_;
-  std::string main_query_;
-  sqlite3* db_;
-
- public:
-  /// Constructor for SqliteTablesWithSchemaBatchReader class
+    public:
+        /// Constructor for SqliteTablesWithSchemaBatchReader class
   /// \param reader an shared_ptr from a SqliteStatementBatchReader.
   /// \param main_query  SQL query that originated reader's data.
   /// \param db     a pointer to the sqlite3 db.
-  SqliteTablesWithSchemaBatchReader(
-      std::shared_ptr<sqlite::SqliteStatementBatchReader> reader, std::string main_query,
-      sqlite3* db)
-      : reader_(std::move(reader)), main_query_(std::move(main_query)), db_(db) {}
+        SqliteTablesWithSchemaBatchReader(
+            std::shared_ptr<sqlite::SqliteStatementBatchReader> reader, std::string main_query,
+            sqlite3* db)
+            : reader_(std::move(reader)), main_query_(std::move(main_query)), db_(db)
+        {
+        }
 
-  std::shared_ptr<arrow::Schema> schema() const override;
+        std::shared_ptr<arrow::Schema> schema() const override;
 
-  arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) override;
-};
-
-}  // namespace gizmosql::sqlite
+        arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) override;
+    };
+} // namespace gizmosql::sqlite

@@ -21,18 +21,17 @@
 
 #include <sstream>
 
-#include "arrow/array/builder_binary.h"
-#include "arrow/flight/sql/column_metadata.h"
+#include <arrow/array/builder_binary.h>
+#include <arrow/flight/sql/column_metadata.h>
 #include "sqlite_server.h"
 #include "sqlite_statement.h"
-#include "arrow/flight/sql/server.h"
-#include "arrow/ipc/writer.h"
-#include "arrow/record_batch.h"
+#include <arrow/flight/sql/server.h>
+#include <arrow/ipc/writer.h>
+#include <arrow/record_batch.h>
 
 #include "flight_sql_fwd.h"
 
 namespace gizmosql::sqlite {
-
 std::shared_ptr<arrow::Schema> SqliteTablesWithSchemaBatchReader::schema() const {
   return flight::sql::SqlSchema::GetTablesSchemaWithIncludedSchema();
 }
@@ -71,12 +70,12 @@ arrow::Status SqliteTablesWithSchemaBatchReader::ReadNext(
 
     while (sqlite3_step(schema_statement->GetSqlite3Stmt()) == SQLITE_ROW) {
       std::string sqlite_table_name = std::string(reinterpret_cast<const char*>(
-          sqlite3_column_text(schema_statement->GetSqlite3Stmt(), 0)));
+        sqlite3_column_text(schema_statement->GetSqlite3Stmt(), 0)));
       if (sqlite_table_name == table_name) {
         const char* column_name = reinterpret_cast<const char*>(
-            sqlite3_column_text(schema_statement->GetSqlite3Stmt(), 1));
+          sqlite3_column_text(schema_statement->GetSqlite3Stmt(), 1));
         const char* column_type = reinterpret_cast<const char*>(
-            sqlite3_column_text(schema_statement->GetSqlite3Stmt(), 2));
+          sqlite3_column_text(schema_statement->GetSqlite3Stmt(), 2));
         int nullable = sqlite3_column_int(schema_statement->GetSqlite3Stmt(), 3);
 
         const flight::sql::ColumnMetadata& column_metadata =
@@ -107,5 +106,4 @@ arrow::Status SqliteTablesWithSchemaBatchReader::ReadNext(
 
   return arrow::Status::OK();
 }
-
-}  // namespace gizmosql::sqlite
+} // namespace gizmosql::sqlite

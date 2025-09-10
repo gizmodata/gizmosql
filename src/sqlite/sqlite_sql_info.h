@@ -17,12 +17,11 @@
 
 #pragma once
 
-#include "arrow/flight/sql/types.h"
+#include <arrow/flight/sql/types.h>
 
-namespace gizmosql::sqlite {
-
-/// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
+namespace gizmosql::sqlite
+{
+    /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
 /// \return the cache.
-arrow::flight::sql::SqlInfoResultMap GetSqlInfoResultMap();
-
-}  // namespace gizmosql::sqlite
+    arrow::flight::sql::SqlInfoResultMap GetSqlInfoResultMap();
+} // namespace gizmosql::sqlite

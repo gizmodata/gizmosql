@@ -36,12 +36,13 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 
 ## 📦 Component Versions
 
-| Component                  | Version |
-|---------------------------|---------|
-| DuckDB                    | v1.3.2  |
-| SQLite                   | 3.50.3  |
-| Apache Arrow (Flight SQL) | 21.0.0  |
-| jwt-cpp                   | v0.7.1  |
+| Component                                                                        | Version              |
+|----------------------------------------------------------------------------------|----------------------|
+| [DuckDB](https://duckdb.org)                                                     | v1.4.0 (pre-release) |
+| [SQLite](https://sqlite.org)                                                     | 3.50.4               |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 21.0.0               |
+| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.1               |
+| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0              |
 
 ## 📚 Documentation
 
@@ -130,6 +131,9 @@ with gizmosql.connect(uri="grpc+tls://localhost:31337",
 
 ---
 
+### 🔑 Token authentication
+See: https://github.com/gizmodata/generate-gizmosql-token for an example of how to generate a token and use it with GizmoSQL.
+
 ### 💻 CLI Client
 
 ```bash
@@ -142,6 +146,7 @@ gizmosql_client   --command Execute   --host localhost --port 31337   --username
 
 ```bash
 git clone https://github.com/gizmodata/gizmosql --recurse-submodules
+cd gizmosql
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --build build --target install
 ```

@@ -37,17 +37,6 @@ It was forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) and has
 
 ---
 
-## 🔢 Component Versions
-
-| Component     | Version  |
-|---------------|----------|
-| DuckDB        | v1.3.2   |
-| SQLite        | 3.50.3   |
-| Arrow Flight  | 21.0.0   |
-| jwt-cpp       | v0.7.1   |
-
----
-
 ## 📦 Installation & Deployment
 
 # [GizmoSQL](https://gizmodata.com/gizmosql) - by [GizmoData™](https://gizmodata.com)
@@ -76,18 +65,15 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ## Component Versions
 
-| Component | Version |
-|-----------|---------|
-| DuckDB | v1.3.2  |
-| SQLite | 3.50.3  |
-| Apache Arrow (Flight SQL) | 21.0.0  |
-| jwt-cpp | v0.7.1  |
-
-
+| Component                                                                        | Version              |
+|----------------------------------------------------------------------------------|----------------------|
+| [DuckDB](https://duckdb.org)                                                     | v1.4.0 (pre-release) |
+| [SQLite](https://sqlite.org)                                                     | 3.50.4               |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 21.0.0               |
+| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.1               |
+| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0              |
 
 ### Running from Docker Image
-
-
 
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
 

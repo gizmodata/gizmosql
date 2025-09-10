@@ -24,33 +24,32 @@
 
 #include "duckdb_statement.h"
 #include "duckdb_statement_batch_reader.h"
-#include "arrow/record_batch.h"
+#include <arrow/record_batch.h>
 
 namespace gizmosql::ddb {
-
 class DuckDBTablesWithSchemaBatchReader : public arrow::RecordBatchReader {
- private:
+private:
   std::shared_ptr<DuckDBStatementBatchReader> reader_;
   std::string main_query_;
-  std::shared_ptr<duckdb::Connection> db_conn_;
+  std::shared_ptr<ClientSession> client_session_;
   bool already_executed_;
 
- public:
+public:
   /// Constructor for DuckDBTablesWithSchemaBatchReader class
-  /// \param reader an shared_ptr from a DuckDBStatementBatchReader.
-  /// \param main_query  SQL query that originated reader's data.
-  /// \param db     a pointer to the sqlite3 db.
+/// \param reader an shared_ptr from a DuckDBStatementBatchReader.
+/// \param main_query  SQL query that originated reader's data.
+/// \param db     a pointer to the sqlite3 db.
   DuckDBTablesWithSchemaBatchReader(std::shared_ptr<DuckDBStatementBatchReader> reader,
                                     std::string main_query,
-                                    std::shared_ptr<duckdb::Connection> db_conn)
-      : reader_(std::move(reader)),
-        main_query_(std::move(main_query)),
-        db_conn_(db_conn),
-        already_executed_(false) {}
+                                    std::shared_ptr<ClientSession> client_session)
+    : reader_(std::move(reader)),
+      main_query_(std::move(main_query)),
+      client_session_(client_session),
+      already_executed_(false) {
+  }
 
   std::shared_ptr<arrow::Schema> schema() const override;
 
   arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) override;
 };
-
-}  // namespace gizmosql::ddb
+} // namespace gizmosql::ddb

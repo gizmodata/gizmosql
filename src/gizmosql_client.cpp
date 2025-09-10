@@ -24,21 +24,22 @@
 #include <sstream>
 #include <fstream>
 
-#include "arrow/array/builder_binary.h"
-#include "arrow/array/builder_primitive.h"
-#include "arrow/flight/api.h"
-#include "arrow/flight/sql/api.h"
-#include "arrow/io/memory.h"
-#include "arrow/pretty_print.h"
-#include "arrow/status.h"
-#include "arrow/table.h"
+#include <arrow/array/builder_binary.h>
+#include <arrow/array/builder_primitive.h>
+#include <arrow/flight/api.h>
+#include <arrow/flight/sql/api.h>
+#include <arrow/io/memory.h>
+#include <arrow/pretty_print.h>
+#include <arrow/status.h>
+#include <arrow/table.h>
 
-#include "library/include/flight_sql_fwd.h"
+
+#include "common/include/detail/flight_sql_fwd.h"
+#include "common/include/detail/gizmosql_logging.h"
 
 using arrow::Status;
 
 namespace gizmosql {
-
 DEFINE_string(host, "localhost", "Host to connect to");
 DEFINE_int32(port, 31337, "Port to connect to");
 DEFINE_string(username, "", "Username");
@@ -59,18 +60,18 @@ DEFINE_string(catalog, "", "Catalog");
 DEFINE_string(schema, "", "Schema");
 DEFINE_string(table, "", "Table");
 
-Status PrintResultsForEndpoint(flight::sql::FlightSqlClient &client,
-                               const flight::FlightCallOptions &call_options,
-                               const flight::FlightEndpoint &endpoint) {
+Status PrintResultsForEndpoint(flight::sql::FlightSqlClient& client,
+                               const flight::FlightCallOptions& call_options,
+                               const flight::FlightEndpoint& endpoint) {
   ARROW_ASSIGN_OR_RAISE(auto stream, client.DoGet(call_options, endpoint.ticket));
 
-  const arrow::Result<std::shared_ptr<arrow::Schema>> &schema = stream->GetSchema();
+  const arrow::Result<std::shared_ptr<arrow::Schema>>& schema = stream->GetSchema();
   ARROW_RETURN_NOT_OK(schema);
 
-  std::cout << "Schema:" << std::endl;
-  std::cout << schema->get()->ToString() << std::endl << std::endl;
+  GIZMOSQL_LOG(INFO) << "Schema:" << std::endl;
+  GIZMOSQL_LOG(INFO) << schema->get()->ToString() << std::endl << std::endl;
 
-  std::cout << "Results:" << std::endl;
+  GIZMOSQL_LOG(INFO) << "Results:" << std::endl;
 
   int64_t num_rows = 0;
 
@@ -79,31 +80,31 @@ Status PrintResultsForEndpoint(flight::sql::FlightSqlClient &client,
     if (chunk.data == nullptr) {
       break;
     }
-    std::cout << chunk.data->ToString() << std::endl;
+    GIZMOSQL_LOG(INFO) << chunk.data->ToString() << std::endl;
     num_rows += chunk.data->num_rows();
   }
 
-  std::cout << "Total: " << num_rows << std::endl;
+  GIZMOSQL_LOG(INFO) << "Total: " << num_rows << std::endl;
 
   return Status::OK();
 }
 
-Status PrintResults(flight::sql::FlightSqlClient &client,
-                    const flight::FlightCallOptions &call_options,
-                    const std::unique_ptr<flight::FlightInfo> &info) {
-  const std::vector<flight::FlightEndpoint> &endpoints = info->endpoints();
+Status PrintResults(flight::sql::FlightSqlClient& client,
+                    const flight::FlightCallOptions& call_options,
+                    const std::unique_ptr<flight::FlightInfo>& info) {
+  const std::vector<flight::FlightEndpoint>& endpoints = info->endpoints();
 
   for (size_t i = 0; i < endpoints.size(); i++) {
-    std::cout << "Results from endpoint " << i + 1 << " of " << endpoints.size()
-              << std::endl;
+    GIZMOSQL_LOG(INFO) << "Results from endpoint " << i + 1 << " of " << endpoints.size()
+        << std::endl;
     ARROW_RETURN_NOT_OK(PrintResultsForEndpoint(client, call_options, endpoints[i]));
   }
 
   return Status::OK();
 }
 
-Status getPEMCertFileContents(const std::string &cert_file_path,
-                              std::string &cert_contents) {
+Status getPEMCertFileContents(const std::string& cert_file_path,
+                              std::string& cert_contents) {
   std::ifstream cert_file(cert_file_path);
   if (!cert_file.is_open()) {
     return Status::IOError("Could not open file: " + cert_file_path);
@@ -119,8 +120,8 @@ Status getPEMCertFileContents(const std::string &cert_file_path,
 Status RunMain() {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (FLAGS_use_tls)
-                            ? flight::Location::ForGrpcTls(FLAGS_host, FLAGS_port)
-                            : flight::Location::ForGrpcTcp(FLAGS_host, FLAGS_port));
+                        ? flight::Location::ForGrpcTls(FLAGS_host, FLAGS_port)
+                        : flight::Location::ForGrpcTcp(FLAGS_host, FLAGS_port));
 
   // Setup our options
   flight::FlightClientOptions options;
@@ -161,7 +162,7 @@ Status RunMain() {
   if (FLAGS_command == "ExecuteUpdate") {
     ARROW_ASSIGN_OR_RAISE(auto rows, sql_client.ExecuteUpdate(call_options, FLAGS_query));
 
-    std::cout << "Result: " << rows << std::endl;
+    GIZMOSQL_LOG(INFO) << "Result: " << rows << std::endl;
 
     return Status::OK();
   }
@@ -183,7 +184,7 @@ Status RunMain() {
     auto parameter_schema = prepared_statement->parameter_schema();
     auto result_set_schema = prepared_statement->dataset_schema();
 
-    std::cout << result_set_schema->ToString(false) << std::endl;
+    GIZMOSQL_LOG(INFO) << result_set_schema->ToString(false) << std::endl;
     arrow::Int64Builder int_builder;
     ARROW_RETURN_NOT_OK(int_builder.Append(1));
     std::shared_ptr<arrow::Array> int_array;
@@ -201,7 +202,7 @@ Status RunMain() {
   } else if (FLAGS_command == "GetTables") {
     ARROW_ASSIGN_OR_RAISE(
         info, sql_client.GetTables(call_options, &FLAGS_catalog, &FLAGS_schema,
-                                   &FLAGS_table, false, nullptr));
+          &FLAGS_table, false, nullptr));
   } else if (FLAGS_command == "GetExportedKeys") {
     flight::sql::TableRef table_ref = {std::make_optional(FLAGS_catalog),
                                        std::make_optional(FLAGS_schema), FLAGS_table};
@@ -229,10 +230,9 @@ Status RunMain() {
 
   return print_status;
 }
+} // namespace gizmosql
 
-}  // namespace gizmosql
-
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
   Status st = gizmosql::RunMain();

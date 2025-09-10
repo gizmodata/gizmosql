@@ -22,42 +22,42 @@
 #include <memory>
 
 #include "sqlite_statement.h"
-#include "arrow/record_batch.h"
+#include <arrow/record_batch.h>
 
-namespace gizmosql::sqlite {
-
-class SqliteStatementBatchReader : public arrow::RecordBatchReader {
- public:
-  /// \brief Creates a RecordBatchReader backed by a SQLite statement.
+namespace gizmosql::sqlite
+{
+    class SqliteStatementBatchReader : public arrow::RecordBatchReader
+    {
+    public:
+        /// \brief Creates a RecordBatchReader backed by a SQLite statement.
   /// \param[in] statement    SQLite statement to be read.
   /// \return                 A SqliteStatementBatchReader.
-  static arrow::Result<std::shared_ptr<SqliteStatementBatchReader>> Create(
-      const std::shared_ptr<SqliteStatement>& statement);
+        static arrow::Result<std::shared_ptr<SqliteStatementBatchReader>> Create(
+            const std::shared_ptr<SqliteStatement>& statement);
 
-  /// \brief Creates a RecordBatchReader backed by a SQLite statement.
+        /// \brief Creates a RecordBatchReader backed by a SQLite statement.
   /// \param[in] statement    SQLite statement to be read.
   /// \param[in] schema       Schema to be used on results.
   /// \return                 A SqliteStatementBatchReader..
-  static arrow::Result<std::shared_ptr<SqliteStatementBatchReader>> Create(
-      const std::shared_ptr<SqliteStatement>& statement,
-      const std::shared_ptr<arrow::Schema>& schema);
+        static arrow::Result<std::shared_ptr<SqliteStatementBatchReader>> Create(
+            const std::shared_ptr<SqliteStatement>& statement,
+            const std::shared_ptr<arrow::Schema>& schema);
 
-  std::shared_ptr<arrow::Schema> schema() const override;
+        std::shared_ptr<arrow::Schema> schema() const override;
 
-  arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* out) override;
+        arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* out) override;
 
- private:
-  std::shared_ptr<SqliteStatement> statement_;
-  std::shared_ptr<arrow::Schema> schema_;
-  int rc_;
-  bool already_executed_;
+    private:
+        std::shared_ptr<SqliteStatement> statement_;
+        std::shared_ptr<arrow::Schema> schema_;
+        int rc_;
+        bool already_executed_;
 
-  // State for parameter binding
-  size_t batch_index_{0};
-  int64_t row_index_{0};
+        // State for parameter binding
+        size_t batch_index_{0};
+        int64_t row_index_{0};
 
-  SqliteStatementBatchReader(std::shared_ptr<SqliteStatement> statement,
-                             std::shared_ptr<arrow::Schema> schema);
-};
-
-}  // namespace gizmosql::sqlite
+        SqliteStatementBatchReader(std::shared_ptr<SqliteStatement> statement,
+                                   std::shared_ptr<arrow::Schema> schema);
+    };
+} // namespace gizmosql::sqlite

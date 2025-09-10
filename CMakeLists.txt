@@ -23,19 +23,20 @@ message(STATUS "PROJECT_VERSION: ${PROJECT_VERSION}")
 
 # Configure a header file with the version
 configure_file(
-        ${CMAKE_SOURCE_DIR}/src/library/include/version.h.in
-        ${CMAKE_SOURCE_DIR}/src/library/include/version.h
+        ${CMAKE_SOURCE_DIR}/src/common/include/version.h.in
+        ${CMAKE_SOURCE_DIR}/src/common/include/version.h
 )
 
 # --------------------- Arrow ---------------------
-configure_file(third_party/Arrow_CMakeLists.txt.in arrow/CMakeLists.txt)
+configure_file(third_party/Arrow_CMakeLists.txt.in
+        arrow/CMakeLists.txt
+)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
 )
-
 set(ARROW_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
 
 find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
@@ -104,7 +105,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             INTERFACE
             "${DUCKDB_INSTALL_DIR}/lib/libjemalloc_extension.a"
     )
-endif()
+endif ()
 
 # --------------------- JWT-CPP ---------------------
 
@@ -117,6 +118,13 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 )
 
 set(JWT_CPP_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include")
+
+# --------------------- JSON ---------------------
+
+include(FetchContent)
+
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+FetchContent_MakeAvailable(json)
 
 # --------------------------------------------------
 
@@ -142,23 +150,27 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_server.cpp
         src/duckdb/duckdb_tables_schema_batch_reader.cpp)
 
-# Add header file
-set(HEADER_FILES src/library/include/gizmosql_library.h)
-
 # Add a library target
 add_library(gizmosqlserver STATIC
-        src/library/gizmosql_library.cpp
-        src/library/gizmosql_security.cpp
+        src/common/gizmosql_logging.cpp
+        src/common/gizmosql_library.cpp
+        src/common/gizmosql_security.cpp
+        src/common/access_log_middleware.cpp
         ${GIZMOSQL_SQLITE_SERVER_SRCS}
         ${GIZMOSQL_DUCKDB_SERVER_SRCS}
 )
 
-set_target_properties(gizmosqlserver PROPERTIES PUBLIC_HEADER ${HEADER_FILES})
+set_target_properties(gizmosqlserver PROPERTIES
+        PUBLIC_HEADER src/common/include/gizmosql_library.h
+)
 
-target_include_directories(gizmosqlserver PRIVATE
+target_include_directories(gizmosqlserver
+        PUBLIC
+        src/common/include
+        PRIVATE
         src/sqlite
         src/duckdb
-        src/library/include
+        src/common/include/detail
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}
         ${JWT_CPP_INCLUDE_DIR}
@@ -171,6 +183,7 @@ target_link_libraries(gizmosqlserver
         sqlite
         duckdb
         ${Boost_LIBRARIES}
+        nlohmann_json::nlohmann_json
         "-lresolv"
 )
 
@@ -195,6 +208,7 @@ add_executable(gizmosql_server
 target_link_libraries(gizmosql_server PRIVATE
         gizmosqlserver
         ${Boost_LIBRARIES}
+        Arrow::arrow_static
 )
 
 target_compile_options(gizmosql_server PRIVATE "-static")
@@ -210,8 +224,14 @@ add_executable(gizmosql_client
         src/gizmosql_client.cpp
 )
 
+target_include_directories(gizmosql_client
+        PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/common/include
+)
+
 target_link_libraries(gizmosql_client PRIVATE
         Threads::Threads
+        Arrow::arrow_static
         ArrowFlightSql::arrow_flight_sql_static
         gflags
         ${Boost_LIBRARIES}

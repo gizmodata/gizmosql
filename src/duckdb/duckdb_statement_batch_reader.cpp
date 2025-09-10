@@ -21,13 +21,12 @@
 
 #include <iostream>
 
-#include "arrow/builder.h"
+#include <arrow/builder.h>
 #include <arrow/c/bridge.h>
 
 #include "duckdb_statement.h"
 
 namespace gizmosql::ddb {
-
 // Batch size for SQLite statement results
 static constexpr int kMaxBatchSize = 1024;
 
@@ -37,11 +36,12 @@ std::shared_ptr<arrow::Schema> DuckDBStatementBatchReader::schema() const {
 
 DuckDBStatementBatchReader::DuckDBStatementBatchReader(
     std::shared_ptr<DuckDBStatement> statement, std::shared_ptr<arrow::Schema> schema)
-    : statement_(std::move(statement)),
-      schema_(std::move(schema)),
-      rc_(DuckDBSuccess),
-      already_executed_(false),
-      results_read_(false) {}
+  : statement_(std::move(statement)),
+    schema_(std::move(schema)),
+    rc_(DuckDBSuccess),
+    already_executed_(false),
+    results_read_(false) {
+}
 
 arrow::Result<std::shared_ptr<DuckDBStatementBatchReader>>
 DuckDBStatementBatchReader::Create(const std::shared_ptr<DuckDBStatement>& statement_) {
@@ -73,5 +73,4 @@ arrow::Status DuckDBStatementBatchReader::ReadNext(
 
   return arrow::Status::OK();
 }
-
-}  // namespace gizmosql::ddb
+} // namespace gizmosql::ddb

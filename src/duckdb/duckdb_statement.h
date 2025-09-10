@@ -26,9 +26,13 @@
 #include <arrow/type_fwd.h>
 
 #include "flight_sql_fwd.h"
+#include "gizmosql_logging.h"
+#include "session_context.h"
+#include <chrono>
+
+using Clock = std::chrono::steady_clock;
 
 namespace gizmosql::ddb {
-
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType duckdb_type);
 
@@ -40,18 +44,26 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 flight::sql::ColumnMetadata GetColumnMetadata(int column_type, const char* table);
 
 class DuckDBStatement {
- public:
-  /// \brief Creates a duckdb statement.
-  /// \param[in] db        duckdb database instance.
-  /// \param[in] sql       SQL statement.
-  /// \return              A DuckDBStatement object.
+public:
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
-      std::shared_ptr<duckdb::Connection> con, const std::string& sql);
+      std::shared_ptr<ClientSession> client_session, const std::string& handle,
+      const std::string& sql,
+      const arrow::util::ArrowLogLevel& log_level =
+          arrow::util::ArrowLogLevel::ARROW_INFO,
+      const bool& log_queries = true);
+
+  // Convenience method to generate a handle for the caller
+  static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
+      std::shared_ptr<ClientSession> client_session,
+      const std::string& sql,
+      const arrow::util::ArrowLogLevel& log_level =
+          arrow::util::ArrowLogLevel::ARROW_INFO,
+      const bool& log_queries = true);
 
   ~DuckDBStatement();
 
   /// \brief Creates an Arrow Schema based on the results of this statement.
-  /// \return              The resulting Schema.
+/// \return              The resulting Schema.
   arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema() const;
 
   arrow::Result<int> Execute();
@@ -61,35 +73,55 @@ class DuckDBStatement {
   std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
 
   /// \brief Executes an UPDATE, INSERT or DELETE statement.
-  /// \return              The number of rows changed by execution.
+/// \return              The number of rows changed by execution.
   arrow::Result<int64_t> ExecuteUpdate();
+
+  long GetLastExecutionDurationMs() const;
 
   duckdb::vector<duckdb::Value> bind_parameters;
 
- private:
-  std::shared_ptr<duckdb::Connection> con_;
+private:
+  std::shared_ptr<ClientSession> client_session_;
+  std::string handle_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
-  
+  arrow::util::ArrowLogLevel log_level_;
+  bool log_queries_;
+
   // Support for direct query execution (fallback for statements that can't be prepared)
   std::string sql_; // Original SQL for direct execution
   bool use_direct_execution_; // Flag to indicate whether to use direct query execution
+  std::chrono::steady_clock::time_point start_time_;
+  std::chrono::steady_clock::time_point end_time_;
 
-  DuckDBStatement(std::shared_ptr<duckdb::Connection> con,
-                  std::shared_ptr<duckdb::PreparedStatement> stmt) {
-    con_ = con;
+  DuckDBStatement(std::shared_ptr<ClientSession> client_session,
+                  const std::string& handle,
+                  std::shared_ptr<duckdb::PreparedStatement> stmt,
+                  const arrow::util::ArrowLogLevel& log_level,
+                  const bool& log_queries) {
+    client_session_ = client_session;
+    handle_ = handle;
     stmt_ = stmt;
     use_direct_execution_ = false;
+    log_level_ = log_level;
+    log_queries_ = log_queries;
+    start_time_ = std::chrono::steady_clock::now();
   }
-  
+
   // Constructor for direct execution mode
-  DuckDBStatement(std::shared_ptr<duckdb::Connection> con,
-                  const std::string& sql) {
-    con_ = con;
+  DuckDBStatement(std::shared_ptr<ClientSession> client_session,
+                  const std::string& handle,
+                  const std::string& sql,
+                  const arrow::util::ArrowLogLevel& log_level,
+                  const bool& log_queries) {
+    client_session_ = client_session;
+    handle_ = handle;
     sql_ = sql;
     use_direct_execution_ = true;
     stmt_ = nullptr;
+    log_level_ = log_level;
+    log_queries_ = log_queries;
+    start_time_ = std::chrono::steady_clock::now();
   }
 };
-
-}  // namespace gizmosql::ddb
+} // namespace gizmosql::ddb

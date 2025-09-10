@@ -17,6 +17,8 @@
 
 #pragma once
 
-namespace arrow::flight {}
+namespace arrow::flight
+{
+}
 
 namespace flight = arrow::flight;
