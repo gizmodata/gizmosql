@@ -131,6 +131,9 @@ with gizmosql.connect(uri="grpc+tls://localhost:31337",
 
 ---
 
+### 🔑 Token authentication
+See: https://github.com/gizmodata/generate-gizmosql-token for an example of how to generate a token and use it with GizmoSQL.
+
 ### 💻 CLI Client
 
 ```bash
