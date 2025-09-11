@@ -15,85 +15,24 @@ on:
   push:
 
 env:
-  DOCKERHUB_IMAGE_NAME: gizmodata/gizmosql
-  GITHUB_IMAGE_NAME: ghcr.io/gizmodata/gizmosql
   CMAKE_BUILD_TYPE: ${{ github.event.inputs.cmake_build_type || 'Release' }}
+  GITHUB_IMAGE_NAME: 851725450642.dkr.ecr.us-west-2.amazonaws.com/gizmosql
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
 
 jobs:
-  build-project-macos:
-    name: Build Project - MacOS
-    strategy:
-      matrix:
-        include:
-          - platform: amd64
-            os: macos
-            runner: macos-14
-          - platform: arm64
-            os: macos
-            runner: macos-14-xlarge
-    runs-on: ${{ matrix.runner }}
-    env:
-      zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install build requirements
-        env:
-          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
-        run: |
-          brew install automake boost gflags
-
-      - name: Configure Project
-        uses: threeal/cmake-action@v2.1.0
-        with:
-          generator: Ninja
-          run-build: true
-
-      - name: Sign and notarize the server release build
-        uses: toitlang/action-macos-sign-notarize@v1.2.1
-        with:
-          certificate: ${{ secrets.APPLE_CERTIFICATE }}
-          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          username: ${{ secrets.APPLE_ID_USERNAME }}
-          password: ${{ secrets.APPLE_ID_PASSWORD }}
-          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          app-path: build/gizmosql_server
-          entitlements-path: macos/entitlements.plist
-
-      - name: Sign and notarize the server release build
-        uses: toitlang/action-macos-sign-notarize@v1.2.1
-        with:
-          certificate: ${{ secrets.APPLE_CERTIFICATE }}
-          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          username: ${{ secrets.APPLE_ID_USERNAME }}
-          password: ${{ secrets.APPLE_ID_PASSWORD }}
-          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          app-path: build/gizmosql_client
-
-      - name: Zip artifacts
-        run: |
-          mv build/gizmosql_server build/gizmosql_client .
-          zip -j ${{ env.zip_file_name }} gizmosql_server gizmosql_client
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.zip_file_name }}
-          path: |
-            ${{ env.zip_file_name }}
-
   build-project-linux:
     name: Build Project - Linux
     strategy:
       matrix:
         include:
-          - platform: amd64
-            os: linux
-            runner: buildjet-8vcpu-ubuntu-2204
+          # - platform: amd64
+          #   os: linux
+          #   runner: codebuild-gizmosql-build-runner-${{ github.run_id }}-${{ github.run_attempt }}
           - platform: arm64
             os: linux
-            runner: buildjet-8vcpu-ubuntu-2204-arm
+            runner: codebuild-gizmosql-build-runner-arm-${{ github.run_id }}-${{ github.run_attempt }}
     runs-on: ${{ matrix.runner }}
     env:
       zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
@@ -103,19 +42,20 @@ jobs:
 
       - name: Install build requirements
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            ninja-build \
-            automake \
-            cmake \
-            gcc \
-            git \
-            libboost-all-dev \
-            libgflags-dev \
-            libssl-dev
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
+          # If running on arm64, start docker daemon
+          if [ "${{ matrix.platform }}" = "arm64" ]; then
+            sudo mkdir -p /sys/fs/cgroup/docker
+            nohup /usr/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://127.0.0.1:2375 > /dev/null 2>&1 &
+            timeout 30 sh -c "until docker info; do echo .; sleep 1; done"
+            docker --version
+          fi
+
+          docker buildx create --use --name mybuilder --driver docker-container
+          aws --version
+
+      - name: get caller identity2
+        run: |
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 851725450642.dkr.ecr.us-west-2.amazonaws.com
 
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
@@ -137,118 +77,14 @@ jobs:
           path: |
             ${{ env.zip_file_name }}
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and push full Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/${{ matrix.platform }}
           file: Dockerfile.ci
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          push: true
           tags: |
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}
-            ${{ env.GITHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}
+            ${{ env.GITHUB_IMAGE_NAME }}:${{ github.sha }}
           no-cache: true
           provenance: false
-
-      - name: Build and push slim Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/${{ matrix.platform }}
-          file: Dockerfile-slim.ci
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
-          tags: |
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}-slim
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}-slim
-            ${{ env.GITHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}-slim
-            ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}-slim
-          no-cache: true
-          provenance: false
-
-  create-release:
-    name: Create a release
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-project-macos, build-project-linux]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: gizmosql_cli_*.zip
-          merge-multiple: true
-
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/gizmosql_cli_*.zip
-            LICENSE
-
-  update-image-manifest:
-    name: Update DockerHub image manifest to include all built platforms
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build-project-linux
-    runs-on: ubuntu-latest
-    steps:
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push full manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}
-          images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64
-          push: true
-
-      - name: Create and push slim manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64-slim
-          push: true
-
-      # ------------------------------------------------------------------
-      - name: Create and push full manifest images - Github
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}
-          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64
-          push: true
-
-      - name: Create and push slim manifest images - Github
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
-          push: true
