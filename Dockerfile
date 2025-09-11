@@ -50,6 +50,12 @@ RUN case ${TARGETPLATFORM} in \
     mv azcopy_linux_*/azcopy /usr/bin/azcopy && \
     rm -rf azcopy_linux_* azcopy.tar.gz
 
+# Install libraries and debugging tools
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gdb \
+        && rm -rf /var/lib/apt/lists/*
+
 # Create an application user
 RUN useradd app_user --create-home
 
@@ -121,4 +127,4 @@ EXPOSE 31337
 # Run a test to ensure that the server works...
 #RUN scripts/test_gizmosql.sh
 
-ENTRYPOINT scripts/start_gizmosql.sh
+ENTRYPOINT scripts/start_gizmosql_debug.sh
