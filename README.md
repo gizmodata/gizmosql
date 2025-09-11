@@ -183,9 +183,10 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 
 ## 🧩 Extensions & Integrations
 
-- 🔌 [SQLAlchemy dialect](https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect)
+- 🔌 [SQLAlchemy dialect](https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect) - can be used for connecting to GizmoSQL with [Apache Superset](https://superset.apache.org)
 - 🔌 [Ibis adapter](https://github.com/gizmodata/ibis-gizmosql)
 - 🌐 [Flight SQL over WebSocket Proxy](https://github.com/gizmodata/flight-sql-websocket-proxy)
+- 📈 [Metabase driver](https://github.com/J0hnG4lt/metabase-flightsql-driver)
 
 ---
 
