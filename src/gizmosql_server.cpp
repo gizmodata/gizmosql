@@ -79,7 +79,7 @@ int main(int argc, char** argv)
             ("log-format", po::value<std::string>()->default_value(""),
              "Log format: text|json. If empty, uses env GIZMOSQL_LOG_FORMAT or defaults to text.")
             ("access-log", po::value<std::string>()->default_value(""),
-             "Per-RPC access logging: on|off. If empty, uses env GIZMOSQL_ACCESS_LOG or defaults to on.")
+             "Per-RPC access logging: on|off. If empty, uses env GIZMOSQL_ACCESS_LOG or defaults to off (it is very verbose).")
             ("log-file",   po::value<std::string>()->default_value(""),
              "Log file path; use '-' for stdout; empty => stderr. Can also use env GIZMOSQL_LOG_FILE.");
 

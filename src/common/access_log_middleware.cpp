@@ -1,8 +1,8 @@
-#include "include/detail/access_log_middleware.h"
+#include "access_log_middleware.h"
 
 // Only the .cpp needs logging; keep the header light.
-#include "include/detail/gizmosql_logging.h"
-#include "include/detail/request_ctx.h"
+#include "gizmosql_logging.h"
+#include "request_ctx.h"
 
 #include <chrono>
 #include <string>
