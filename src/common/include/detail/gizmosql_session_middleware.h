@@ -27,7 +27,7 @@
 
 #include <arrow/flight/server_middleware.h>
 #include <arrow/flight/sql/types.h>
-#include <arrow/Status.h>
+#include <arrow/status.h>
 
 #include "flight_sql_fwd.h"
 
