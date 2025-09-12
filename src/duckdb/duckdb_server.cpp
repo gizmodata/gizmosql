@@ -30,13 +30,12 @@
 #include <arrow/flight/server.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/types.h>
-#include <arrow/flight/sql/server_session_middleware.h>
-#include <arrow/flight/sql/server_session_middleware_factory.h>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
+#include <jwt-cpp/jwt.h>
 
 #include "duckdb_sql_info.h"
 #include "duckdb_statement.h"
@@ -46,9 +45,11 @@
 #include "gizmosql_security.h"
 #include "gizmosql_logging.h"
 #include "flight_sql_fwd.h"
-#include <jwt-cpp/jwt.h>
 #include "session_context.h"
 #include "request_ctx.h"
+#include "gizmosql_session_middleware.h"
+#include "gizmosql_session_middleware_factory.h"
+
 
 using arrow::Result;
 using arrow::Status;
@@ -197,8 +198,6 @@ private:
     return search->second;
   }
 
-  static constexpr const char* kSessionIDKey = "gizmosql_session_id";
-
   static std::optional<std::string> SessionValueToString(
       const flight::SessionOptionValue& v) {
     if (auto p = std::get_if<std::string>(&v)) return *p;
@@ -207,33 +206,24 @@ private:
     return std::nullopt;
   }
 
-  static Result<std::string> EnsureSessionID(const flight::ServerCallContext& context) {
+  static Result<std::string> GetSessionID(const flight::ServerCallContext& context) {
     const auto* base = context.GetMiddleware("session"); // returns ServerMiddleware*
-    auto* server_session_middleware =
-        dynamic_cast<const flight::sql::ServerSessionMiddleware*>(base);
-    if (!server_session_middleware)
-      return arrow::Status::Invalid("No session middleware");
+    auto* gizmosql_session_middleware =
+        dynamic_cast<const GizmoSQLSessionMiddleware*>(base);
+    if (!gizmosql_session_middleware)
+      return arrow::Status::Invalid("No GizmoSQL session middleware");
 
     ARROW_ASSIGN_OR_RAISE(
         auto session,
-        const_cast<flight::sql::ServerSessionMiddleware *>(server_session_middleware)
+        const_cast<GizmoSQLSessionMiddleware *>(gizmosql_session_middleware)
         ->GetSession());
 
-    if (auto session_option = session->GetSessionOption(kSessionIDKey)) {
-      if (auto existing_session_id = SessionValueToString(*session_option))
-        return *existing_session_id;
-    }
-
-    // We don't have an existing session for this user, so we create one here...
-    auto new_session_id = boost::uuids::to_string(boost::uuids::random_generator()());
-    session->SetSessionOption(kSessionIDKey, new_session_id);
-
-    return new_session_id;
+    return session->id();
   }
 
   arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(
       const flight::ServerCallContext& context) {
-    ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
+    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
 
     std::scoped_lock lk(sessions_mutex_);
 
@@ -798,7 +788,7 @@ public:
   Result<flight::CloseSessionResult> CloseSession(
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
-    ARROW_ASSIGN_OR_RAISE(auto session_id, EnsureSessionID(context));
+    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
       it->second.reset();

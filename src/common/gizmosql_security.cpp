@@ -16,8 +16,8 @@
 // under the License.
 
 #include "gizmosql_security.h"
-#include "include/detail/gizmosql_logging.h"
-#include "include/detail/request_ctx.h"
+#include "gizmosql_logging.h"
+#include "request_ctx.h"
 
 namespace fs = std::filesystem;
 

@@ -25,8 +25,6 @@
 #include <vector>
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/server.h>
-#include <arrow/flight/sql/server_session_middleware.h>
-#include <arrow/flight/sql/server_session_middleware_factory.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -34,9 +32,10 @@
 #include "sqlite_server.h"
 #include "duckdb_server.h"
 #include "flight_sql_fwd.h"
-#include "include/detail/gizmosql_logging.h"
+#include "gizmosql_logging.h"
 #include "gizmosql_security.h"
-#include "include/detail/access_log_middleware.h"
+#include "gizmosql_session_middleware_factory.h"
+#include "access_log_middleware.h"
 
 namespace fs = std::filesystem;
 
@@ -106,7 +105,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   options.middleware.push_back({"bearer-auth-server", bearer_middleware});
 
   auto session_middleware =
-      flight::sql::MakeServerSessionMiddlewareFactory(&MakeSessionId);
+      MakeGizmoSQLSessionMiddlewareFactory(&MakeSessionId, true);
   options.middleware.push_back({"session", session_middleware});
 
   // Access log middleware (toggle)
@@ -364,7 +363,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
 
   std::string lvl_s = pick(log_level, "GIZMOSQL_LOG_LEVEL", "info");
   std::string fmt_s = pick(log_format, "GIZMOSQL_LOG_FORMAT", "text");
-  std::string acc_s = pick(access_log, "GIZMOSQL_ACCESS_LOG", "on");
+  std::string acc_s = pick(access_log, "GIZMOSQL_ACCESS_LOG", "off");
   std::string file_s = pick(log_file, "GIZMOSQL_LOG_FILE", "");
 
   // level
