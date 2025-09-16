@@ -47,8 +47,6 @@
 #include "flight_sql_fwd.h"
 #include "session_context.h"
 #include "request_ctx.h"
-#include "gizmosql_session_middleware.h"
-#include "gizmosql_session_middleware_factory.h"
 
 
 using arrow::Result;
@@ -206,24 +204,17 @@ private:
     return std::nullopt;
   }
 
-  static Result<std::string> GetSessionID(const flight::ServerCallContext& context) {
-    const auto* base = context.GetMiddleware("session"); // returns ServerMiddleware*
-    auto* gizmosql_session_middleware =
-        dynamic_cast<const GizmoSQLSessionMiddleware*>(base);
-    if (!gizmosql_session_middleware)
-      return arrow::Status::Invalid("No GizmoSQL session middleware");
-
-    ARROW_ASSIGN_OR_RAISE(
-        auto session,
-        const_cast<GizmoSQLSessionMiddleware *>(gizmosql_session_middleware)
-        ->GetSession());
-
-    return session->id();
+  static Result<std::string> GetSessionID() {
+        if (tl_request_ctx.session_id.has_value()) {
+          return tl_request_ctx.session_id.value();
+        } else {
+          return Status::Invalid("No session ID in request context");
+        }
   }
 
   arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(
       const flight::ServerCallContext& context) {
-    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
+    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
 
     std::scoped_lock lk(sessions_mutex_);
 
@@ -788,7 +779,7 @@ public:
   Result<flight::CloseSessionResult> CloseSession(
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
-    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID(context));
+    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
       it->second.reset();

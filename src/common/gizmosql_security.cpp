@@ -256,6 +256,8 @@ void BearerAuthServerMiddleware::SendingHeaders(
 }
 
 void BearerAuthServerMiddleware::CallCompleted(const Status& status) {
+  // Clear on completion to avoid leakage across threads
+  tl_request_ctx = {};
 }
 
 std::string BearerAuthServerMiddleware::name() const {
@@ -271,6 +273,21 @@ BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
     token_allowed_issuer_(token_allowed_issuer),
     token_allowed_audience_(token_allowed_audience),
     token_signature_verify_cert_path_(token_signature_verify_cert_path) {
+  // Load the cert file into a private string member
+  if (!token_signature_verify_cert_path_.empty()) {
+    std::ifstream cert_file(token_signature_verify_cert_path_);
+    if (!cert_file) {
+      // Raise an error
+      GIZMOSQL_LOG(ERROR) << "Could not open certificate file: "
+          << token_signature_verify_cert_path_.string();
+      throw std::invalid_argument("Could not open certificate file: " +
+                                  token_signature_verify_cert_path_.string());
+    } else {
+      std::stringstream cert;
+      cert << cert_file.rdbuf();
+      token_signature_verify_cert_file_contents_ = cert.str();
+    }
+  }
 }
 
 arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
@@ -329,7 +346,8 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string& token
     {
       std::lock_guard<std::mutex> lk(token_log_mutex_);
       const std::string& token_id = decoded.get_id();
-      if (!token_id.empty() && logged_token_ids_.find(token_id) == logged_token_ids_.end()) {
+      if (!token_id.empty() && logged_token_ids_.find(token_id) == logged_token_ids_.
+          end()) {
         logged_token_ids_.insert(token_id);
         token_log_level = arrow::util::ArrowLogLevel::ARROW_INFO;
 
@@ -343,22 +361,22 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string& token
     }
 
     GIZMOSQL_LOGKV_DYNAMIC(token_log_level, "peer="
-                   + context.peer()
-                   + " - Bearer Token was validated successfully"
-                   + " - token_claims=(id="
-                   + decoded.get_id()
-                   + " sub="
-                   + decoded.get_subject()
-                   + " iss="
-                   + decoded.get_issuer()
-                   + ")", {"peer", context.peer()},
-                   {"kind", "authentication"},
-                   {"authentication_type", "bearer"},
-                   {"result", "success"},
-                   {"token_id", decoded.get_id()},
-                   {"token_sub", decoded.get_subject()},
-                   {"token_iss", decoded.get_issuer()}
-      );
+                           + context.peer()
+                           + " - Bearer Token was validated successfully"
+                           + " - token_claims=(id="
+                           + decoded.get_id()
+                           + " sub="
+                           + decoded.get_subject()
+                           + " iss="
+                           + decoded.get_issuer()
+                           + ")", {"peer", context.peer()},
+                           {"kind", "authentication"},
+                           {"authentication_type", "bearer"},
+                           {"result", "success"},
+                           {"token_id", decoded.get_id()},
+                           {"token_sub", decoded.get_subject()},
+                           {"token_iss", decoded.get_issuer()}
+        );
 
     return decoded;
   } catch (const std::exception& e) {
@@ -390,20 +408,6 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
     ARROW_RETURN_NOT_OK(
         SecurityUtilities::GetAuthHeaderType(incoming_headers, &auth_header_type));
     if (auth_header_type == "Bearer") {
-      // Load the cert file into a private string member
-      if (!token_signature_verify_cert_path_.empty()) {
-        std::ifstream cert_file(token_signature_verify_cert_path_);
-        if (!cert_file) {
-          return MakeFlightError(flight::FlightStatusCode::Failed,
-                                 "Could not open certificate file: " +
-                                 token_signature_verify_cert_path_.string());
-        } else {
-          std::stringstream cert;
-          cert << cert_file.rdbuf();
-          token_signature_verify_cert_file_contents_ = cert.str();
-        }
-      }
-
       std::string bearer_token = SecurityUtilities::FindKeyValPrefixInCallHeaders(
           incoming_headers, kAuthHeader, kBearerPrefix);
       ARROW_ASSIGN_OR_RAISE(auto decoded_jwt,
@@ -414,6 +418,13 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       // Update our thread local context
       tl_request_ctx.username = decoded_jwt.get_subject();
       tl_request_ctx.role = decoded_jwt.get_payload_claim("role").as_string();
+      tl_request_ctx.peer = context.peer();
+      if (decoded_jwt.has_payload_claim("session_id")) {
+        tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").
+                                                as_string();
+      } else {
+        tl_request_ctx.session_id = decoded_jwt.get_id();
+      }
     }
   }
   return Status::OK();

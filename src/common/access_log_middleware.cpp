@@ -69,9 +69,7 @@ void AccessLogMiddleware::CallCompleted(const Status& status) {
 arrow::Status AccessLogFactory::StartCall(
     const CallInfo& info, const ServerCallContext& ctx,
     std::shared_ptr<flight::ServerMiddleware>* out) {
-  tl_request_ctx.peer = ctx.peer();
-
-  *out = std::make_shared<AccessLogMiddleware>(info.method, *tl_request_ctx.peer);
+  *out = std::make_shared<AccessLogMiddleware>(info.method, ctx.peer());
   return arrow::Status::OK();
 }
 } // namespace gizmosql

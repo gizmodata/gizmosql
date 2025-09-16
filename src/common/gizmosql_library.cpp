@@ -34,7 +34,6 @@
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 #include "gizmosql_security.h"
-#include "gizmosql_session_middleware_factory.h"
 #include "access_log_middleware.h"
 
 namespace fs = std::filesystem;
@@ -103,10 +102,6 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   options.auth_handler = std::make_unique<flight::NoOpAuthHandler>();
   options.middleware.push_back({"header-auth-server", header_middleware});
   options.middleware.push_back({"bearer-auth-server", bearer_middleware});
-
-  auto session_middleware =
-      MakeGizmoSQLSessionMiddlewareFactory(&MakeSessionId, true);
-  options.middleware.push_back({"session", session_middleware});
 
   // Access log middleware (toggle)
   if (access_logging_enabled) {

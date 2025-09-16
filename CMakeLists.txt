@@ -156,7 +156,6 @@ add_library(gizmosqlserver STATIC
         src/common/gizmosql_library.cpp
         src/common/gizmosql_security.cpp
         src/common/access_log_middleware.cpp
-        src/common/gizmosql_session_middleware.cpp
         ${GIZMOSQL_SQLITE_SERVER_SRCS}
         ${GIZMOSQL_DUCKDB_SERVER_SRCS}
 )
