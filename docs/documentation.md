@@ -88,7 +88,7 @@ docker run --name gizmosql \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
-           --pull missing \
+           --pull always \
            gizmodata/gizmosql:latest
 ```
 
@@ -131,7 +131,7 @@ docker run --name gizmosql \
            --publish 31337:31337 \
            --env TLS_ENABLED="1" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
-           --pull missing \
+           --pull always \
            --mount type=bind,source=$(pwd),target=/opt/gizmosql/data \
            --env DATABASE_FILENAME="data/tpch_sf1.duckdb" \
            gizmodata/gizmosql:latest
@@ -155,7 +155,7 @@ docker run --name gizmosql \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
            --env INIT_SQL_COMMANDS="SET threads = 1; SET memory_limit = '1GB';" \
-           --pull missing \
+           --pull always \
            gizmodata/gizmosql:latest
 ```
 
@@ -449,7 +449,7 @@ docker run --name gizmosql-slim \
            --env TLS_ENABLED="0" \
            --env GIZMOSQL_PASSWORD="gizmosql_password" \
            --env PRINT_QUERIES="1" \
-           --pull missing \
+           --pull always \
            gizmodata/gizmosql:latest-slim
 ```
 
