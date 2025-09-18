@@ -127,8 +127,10 @@ void SecurityUtilities::ParseBasicHeader(const flight::CallHeaders& incoming_hea
 
 // ----------------------------------------
 BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
+                                                     const std::string& role,
+                                                     const std::string& auth_method,
                                                      const std::string& secret_key)
-  : username_(username), secret_key_(secret_key) {
+  : username_(username), role_(role), auth_method_(auth_method), secret_key_(secret_key) {
 }
 
 void BasicAuthServerMiddleware::SendingHeaders(flight::AddCallHeaders* outgoing_headers) {
@@ -154,7 +156,8 @@ std::string BasicAuthServerMiddleware::CreateJWTToken() const {
       .set_expires_at(std::chrono::system_clock::now() +
                       std::chrono::seconds{kJWTExpiration})
       .set_payload_claim("sub", jwt::claim(username_))
-      .set_payload_claim("role", jwt::claim(std::string("admin")))
+      .set_payload_claim("role", jwt::claim(role_))
+      .set_payload_claim("auth_method", jwt::claim(auth_method_))
       .set_payload_claim(
           "session_id",
           jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
@@ -166,8 +169,30 @@ std::string BasicAuthServerMiddleware::CreateJWTToken() const {
 // ----------------------------------------
 BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
     const std::string& username, const std::string& password,
-    const std::string& secret_key)
-  : username_(username), password_(password), secret_key_(secret_key) {
+    const std::string& secret_key,
+    const std::string& token_allowed_issuer,
+    const std::string& token_allowed_audience,
+    const std::filesystem::path&
+    token_signature_verify_cert_path)
+  : username_(username), password_(password), secret_key_(secret_key),
+    token_allowed_issuer_(token_allowed_issuer),
+    token_allowed_audience_(token_allowed_audience),
+    token_signature_verify_cert_path_(token_signature_verify_cert_path) {
+  // Load the cert file into a private string member
+  if (!token_signature_verify_cert_path_.empty()) {
+    std::ifstream cert_file(token_signature_verify_cert_path_);
+    if (!cert_file) {
+      // Raise an error
+      GIZMOSQL_LOG(ERROR) << "Could not open certificate file: "
+          << token_signature_verify_cert_path_.string();
+      throw std::invalid_argument("Could not open certificate file: " +
+                                  token_signature_verify_cert_path_.string());
+    } else {
+      std::stringstream cert;
+      cert << cert_file.rdbuf();
+      token_signature_verify_cert_file_contents_ = cert.str();
+    }
+  }
 }
 
 Status BasicAuthServerMiddlewareFactory::StartCall(
@@ -198,36 +223,137 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       password = username_pwd;
     }
 
-    if ((username == username_) && (password == password_)) {
-      *middleware = std::make_shared<BasicAuthServerMiddleware>(username, secret_key_);
-      GIZMOSQL_LOGKV(
-          INFO, "User: " + username + " (peer "+ context.peer() +
-          ") - Successfully Basic authenticated",
-          {"user", username},
-          {"peer", context.peer()},
-          {"kind", "authentication"},
-          {"authentication_type", "basic"},
-          {"result", "success"}
-          );
-    } else {
-      GIZMOSQL_LOGKV(WARNING, "User: "
-                     + username
-                     + " (peer "
-                     + context.peer()
-                     + ") - Failed Basic authentication - reason: user provided invalid credentials",
-                     {"user", username},
-                     {"peer", context.peer()},
-                     {"kind", "authentication"},
-                     {"authentication_type", "basic"},
-                     {"result", "failure"},
-                     {"reason", "invalid_credentials"}
-          );
-
+    if (username.empty() or password.empty()) {
       return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
-                             "Invalid credentials");
+                             "No Username or Password supplied");
+    }
+
+    if (username != "token") {
+      if ((username == username_) && (password == password_)) {
+        *middleware = std::make_shared<BasicAuthServerMiddleware>(
+            username, "admin", "Basic", secret_key_);
+        GIZMOSQL_LOGKV(
+            INFO, "User: " + username + " (peer "+ context.peer() +
+            ") - Successfully Basic authenticated via Username / Password",
+            {"user", username},
+            {"peer", context.peer()},
+            {"kind", "authentication"},
+            {"authentication_type", "basic"},
+            {"authentication_method", "username/password"},
+            {"result", "success"}
+            );
+      } else {
+        GIZMOSQL_LOGKV(WARNING, "User: "
+                       + username
+                       + " (peer "
+                       + context.peer()
+                       + ") - Failed Basic authentication via Username / Password - reason: user provided invalid credentials",
+                       {"user", username},
+                       {"peer", context.peer()},
+                       {"kind", "authentication"},
+                       {"authentication_type", "basic"},
+                       {"result", "failure"},
+                       {"reason", "invalid_credentials"}
+            );
+        return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                               "Invalid credentials");
+      }
+    }
+    // If the username is "token" - it is assumed that the user is using token auth - use the password field as the bootstrap token
+    else {
+      ARROW_ASSIGN_OR_RAISE(auto bootstrap_decoded_token,
+                            VerifyAndDecodeBootstrapToken(password,
+                              context));
+      *middleware = std::make_shared<BasicAuthServerMiddleware>(
+          bootstrap_decoded_token.get_subject(),
+          bootstrap_decoded_token.get_payload_claim("role").as_string(), "BootstrapToken",
+          secret_key_);
     }
   }
   return Status::OK();
+}
+
+arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
+BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(const std::string& token,
+  const flight::ServerCallContext&
+  context) const {
+  if (token.empty()) {
+    return Status::Invalid("Bearer Token is empty");
+  }
+
+  try {
+    auto decoded = jwt::decode(token);
+
+    const auto iss = decoded.get_issuer();
+
+    auto verifier = jwt::verify();
+    if (iss == token_allowed_issuer_) {
+      verifier = verifier
+                 .allow_algorithm(jwt::algorithm::rs256(
+                     token_signature_verify_cert_file_contents_, "", "", ""))
+                 .with_issuer(std::string(token_allowed_issuer_))
+                 .with_audience(token_allowed_audience_);
+    } else {
+      GIZMOSQL_LOGKV(WARNING,
+                     "peer="
+                     + context.peer()
+                     + " - Bootstrap Bearer Token has an invalid 'iss' claim value of: "
+                     + iss
+                     + " - token_claims=(id="
+                     + decoded.get_id()
+                     + " sub="
+                     + decoded.get_subject()
+                     + " iss="
+                     + decoded.get_issuer()
+                     + ")",
+                     {"peer", context.peer()},
+                     {"kind", "authentication"},
+                     {"authentication_type", "bearer"},
+                     {"result", "failure"},
+                     {"reason", "invalid_issuer"},
+                     {"token_id", decoded.get_id()},
+                     {"token_sub", decoded.get_subject()},
+                     {"token_iss", decoded.get_issuer()}
+          );
+      return Status::Invalid("Invalid token issuer");
+    }
+
+    verifier.verify(decoded);
+
+    GIZMOSQL_LOGKV(INFO, "peer="
+                   + context.peer()
+                   + " - Bootstrap Bearer Token was validated successfully"
+                   + " - token_claims=(id="
+                   + decoded.get_id()
+                   + " sub="
+                   + decoded.get_subject()
+                   + " iss="
+                   + decoded.get_issuer()
+                   + ")", {"peer", context.peer()},
+                   {"kind", "authentication"},
+                   {"authentication_type", "bearer"},
+                   {"result", "success"},
+                   {"token_id", decoded.get_id()},
+                   {"token_sub", decoded.get_subject()},
+                   {"token_iss", decoded.get_issuer()}
+        );
+
+    return decoded;
+  } catch (const std::exception& e) {
+    auto error_message = e.what();
+    GIZMOSQL_LOGKV(WARNING, "peer="
+                   + context.peer()
+                   + " - Bootstrap Bearer Token verification failed with exception: "
+                   + error_message, {"peer", context.peer()},
+                   {"kind", "authentication"},
+                   {"authentication_type", "bearer"},
+                   {"result", "failure"},
+                   {"reason", error_message}
+        );
+
+    return Status::Invalid("Bootstrap Token verification failed with error: " +
+                           std::string(error_message));
+  }
 }
 
 // ----------------------------------------
@@ -266,28 +392,8 @@ std::string BearerAuthServerMiddleware::name() const {
 
 // ----------------------------------------
 BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
-    const std::string& secret_key, const std::string& token_allowed_issuer,
-    const std::string& token_allowed_audience,
-    const std::filesystem::path& token_signature_verify_cert_path)
-  : secret_key_(secret_key),
-    token_allowed_issuer_(token_allowed_issuer),
-    token_allowed_audience_(token_allowed_audience),
-    token_signature_verify_cert_path_(token_signature_verify_cert_path) {
-  // Load the cert file into a private string member
-  if (!token_signature_verify_cert_path_.empty()) {
-    std::ifstream cert_file(token_signature_verify_cert_path_);
-    if (!cert_file) {
-      // Raise an error
-      GIZMOSQL_LOG(ERROR) << "Could not open certificate file: "
-          << token_signature_verify_cert_path_.string();
-      throw std::invalid_argument("Could not open certificate file: " +
-                                  token_signature_verify_cert_path_.string());
-    } else {
-      std::stringstream cert;
-      cert << cert_file.rdbuf();
-      token_signature_verify_cert_file_contents_ = cert.str();
-    }
-  }
+    const std::string& secret_key)
+  : secret_key_(secret_key) {
 }
 
 arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
@@ -307,12 +413,6 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(const std::string& token
     if (iss == kServerJWTIssuer) {
       verifier = verifier.allow_algorithm(jwt::algorithm::hs256{secret_key_})
                          .with_issuer(std::string(kServerJWTIssuer));
-    } else if (iss == token_allowed_issuer_) {
-      verifier = verifier
-                 .allow_algorithm(jwt::algorithm::rs256(
-                     token_signature_verify_cert_file_contents_, "", "", ""))
-                 .with_issuer(std::string(token_allowed_issuer_))
-                 .with_audience(token_allowed_audience_);
     } else {
       GIZMOSQL_LOGKV(WARNING,
                      "peer="
@@ -419,12 +519,8 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       tl_request_ctx.username = decoded_jwt.get_subject();
       tl_request_ctx.role = decoded_jwt.get_payload_claim("role").as_string();
       tl_request_ctx.peer = context.peer();
-      if (decoded_jwt.has_payload_claim("session_id")) {
-        tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").
-                                                as_string();
-      } else {
-        tl_request_ctx.session_id = decoded_jwt.get_id();
-      }
+      tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").
+                                              as_string();
     }
   }
   return Status::OK();

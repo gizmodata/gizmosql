@@ -94,10 +94,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
   // Setup authentication middleware (using the same TLS certificate keypair)
   auto header_middleware = std::make_shared<gizmosql::BasicAuthServerMiddlewareFactory>(
-      username, password, secret_key);
-  auto bearer_middleware = std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(
-      secret_key, token_allowed_issuer, token_allowed_audience,
+      username, password, secret_key, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path);
+  auto bearer_middleware = std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(
+      secret_key);
 
   options.auth_handler = std::make_unique<flight::NoOpAuthHandler>();
   options.middleware.push_back({"header-auth-server", header_middleware});
