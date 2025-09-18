@@ -205,11 +205,11 @@ private:
   }
 
   static Result<std::string> GetSessionID() {
-        if (tl_request_ctx.session_id.has_value()) {
-          return tl_request_ctx.session_id.value();
-        } else {
-          return Status::Invalid("No session ID in request context");
-        }
+    if (tl_request_ctx.session_id.has_value()) {
+      return tl_request_ctx.session_id.value();
+    } else {
+      return Status::Invalid("No session ID in request context");
+    }
   }
 
   arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(
@@ -714,7 +714,20 @@ public:
       const flight::ServerCallContext& context,
       const flight::CancelFlightInfoRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    if (!client_session->active_sql_handle.has_value() ) {
+      return Status::Invalid("No active SQL statement to cancel.");
+    }
     client_session->connection->Interrupt();
+    GIZMOSQL_LOGKV(INFO, "SQL Statement was successfully canceled.",
+               {"peer", client_session->peer},
+               {"kind", "sql"},
+               {"status", "canceled"},
+               {"session_id", client_session->session_id},
+               {"user", client_session->username},
+               {"role", client_session->role},
+               {"statement_handle", client_session->active_sql_handle.value()}
+    );
+
     return flight::CancelFlightInfoResult(flight::CancelStatus::kCancelled);
   }
 
@@ -779,14 +792,31 @@ public:
   Result<flight::CloseSessionResult> CloseSession(
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
-    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
-    auto it = client_sessions_.find(session_id);
+    ARROW_ASSIGN_OR_RAISE(auto cs, GetClientSession(context));
+    auto it = client_sessions_.find(cs->session_id);
     if (it != client_sessions_.end()) {
       it->second.reset();
       client_sessions_.erase(it);
+      GIZMOSQL_LOGKV(INFO, "Client session was successfully closed.",
+                     {"peer", cs->peer},
+                     {"kind", "session_close"},
+                     {"status", "success"},
+                     {"session_id", cs->session_id},
+                     {"user", cs->username},
+                     {"role", cs->role}
+          );
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
     } else {
-      return Status::KeyError("Session: '" + session_id + "' not found");
+      GIZMOSQL_LOGKV(
+          WARNING, "Client session was NOT successfully closed - session not found.",
+          {"peer", cs->peer},
+          {"kind", "session_close"},
+          {"status", "failure"},
+          {"session_id", cs->session_id},
+          {"user", cs->username},
+          {"role", cs->role}
+          );
+      return Status::KeyError("Session: '" + cs->session_id + "' not found");
     }
   }
 

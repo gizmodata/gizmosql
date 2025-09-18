@@ -225,7 +225,7 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
 
     if (username.empty() or password.empty()) {
       return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
-                             "No Username or Password supplied");
+                             "No Username and/or Password supplied");
     }
 
     if (username != "token") {
@@ -320,6 +320,9 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(const std::strin
 
     verifier.verify(decoded);
 
+    if (!decoded.has_payload_claim("role")) {
+      return Status::Invalid("Bootstrap Bearer Token MUST have a 'role' claim");
+    }
     GIZMOSQL_LOGKV(INFO, "peer="
                    + context.peer()
                    + " - Bootstrap Bearer Token was validated successfully"
@@ -329,12 +332,15 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(const std::strin
                    + decoded.get_subject()
                    + " iss="
                    + decoded.get_issuer()
+                   + " role="
+                   + decoded.get_payload_claim("role").as_string()
                    + ")", {"peer", context.peer()},
                    {"kind", "authentication"},
                    {"authentication_type", "bearer"},
                    {"result", "success"},
                    {"token_id", decoded.get_id()},
                    {"token_sub", decoded.get_subject()},
+                   {"token_role", decoded.get_payload_claim("role").as_string()},
                    {"token_iss", decoded.get_issuer()}
         );
 

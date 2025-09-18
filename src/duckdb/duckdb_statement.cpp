@@ -116,6 +116,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::string& sql,
     const arrow::util::ArrowLogLevel& log_level,
     const bool& log_queries) {
+  client_session->active_sql_handle = handle;
   if (log_queries) {
     GIZMOSQL_LOGKV_DYNAMIC(log_level, "Client is attempting to run a SQL command",
                            {"peer", client_session->peer},
@@ -187,11 +188,13 @@ arrow::Result<int> DuckDBStatement::Execute() {
     // Direct query execution for statements that can't be prepared (like PIVOT)
     // Note: Direct execution doesn't support bind parameters
     if (!bind_parameters.empty()) {
-      return arrow::Status::Invalid(
+       client_session_->active_sql_handle = "";
+       return arrow::Status::Invalid(
           "Direct query execution does not support bind parameters");
     }
 
     auto result = client_session_->connection->Query(sql_);
+    client_session_->active_sql_handle = "";
     if (result->HasError()) {
       if (log_queries_) {
         GIZMOSQL_LOGKV(WARNING, "Client SQL command failed direct execution", {"peer",
@@ -206,7 +209,6 @@ arrow::Result<int> DuckDBStatement::Execute() {
                        {"error", result->GetError()}
             );
       }
-
       return arrow::Status::ExecutionError("Direct query execution error: ",
                                            result->GetError());
     }
@@ -216,6 +218,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
   } else {
     // Traditional prepared statement execution
     query_result_ = stmt_->Execute(bind_parameters);
+    client_session_->active_sql_handle = "";
 
     if (query_result_->HasError()) {
       if (log_queries_) {
@@ -231,7 +234,6 @@ arrow::Result<int> DuckDBStatement::Execute() {
                        {"error", query_result_->GetError()}
             );
       }
-
       return arrow::Status::ExecutionError("An execution error has occurred: ",
                                            query_result_->GetError());
     }

@@ -10,4 +10,5 @@ struct ClientSession {
   std::string username; // from bearer auth middleware (JWT sub/email/etc.)
   std::string role; // from JWT claims (e.g. "role") or header
   std::string peer; // client ip:port (ctx.peer())
+  std::optional<std::string> active_sql_handle;
 };
