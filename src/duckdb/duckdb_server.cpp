@@ -710,24 +710,28 @@ public:
     return status;
   }
 
-  Result<flight::CancelFlightInfoResult> CancelFlightInfo(
-      const flight::ServerCallContext& context,
-      const flight::CancelFlightInfoRequest& request) {
-    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    if (!client_session->active_sql_handle.has_value() ) {
+  Status DoCancelActiveStatement(const std::shared_ptr<ClientSession>& client_session) {
+    if (!client_session->active_sql_handle.has_value()) {
       return Status::Invalid("No active SQL statement to cancel.");
     }
     client_session->connection->Interrupt();
     GIZMOSQL_LOGKV(INFO, "SQL Statement was successfully canceled.",
-               {"peer", client_session->peer},
-               {"kind", "sql"},
-               {"status", "canceled"},
-               {"session_id", client_session->session_id},
-               {"user", client_session->username},
-               {"role", client_session->role},
-               {"statement_handle", client_session->active_sql_handle.value()}
+                   {"peer", client_session->peer},
+                   {"kind", "sql"},
+                   {"status", "canceled"},
+                   {"session_id", client_session->session_id},
+                   {"user", client_session->username},
+                   {"role", client_session->role},
+                   {"statement_handle", client_session->active_sql_handle.value()}
     );
+    return Status::OK();
+  }
 
+  Result<flight::CancelFlightInfoResult> CancelFlightInfo(
+      const flight::ServerCallContext& context,
+      const flight::CancelFlightInfoRequest& request) {
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    ARROW_RETURN_NOT_OK(DoCancelActiveStatement(client_session));
     return flight::CancelFlightInfoResult(flight::CancelStatus::kCancelled);
   }
 
@@ -735,7 +739,7 @@ public:
       const flight::ServerCallContext& context,
       const flight::sql::ActionCancelQueryRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    client_session->connection->Interrupt();
+    ARROW_RETURN_NOT_OK(DoCancelActiveStatement(client_session));
     return flight::sql::CancelResult(flight::sql::CancelResult::kCancelled);
   }
 
