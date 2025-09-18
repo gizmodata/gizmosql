@@ -711,7 +711,7 @@ public:
   }
 
   Status DoCancelActiveStatement(const std::shared_ptr<ClientSession>& client_session) {
-    if (!client_session->active_sql_handle.has_value()) {
+    if (!client_session->active_sql_handle.has_value() || client_session->active_sql_handle->empty()) {
       return Status::Invalid("No active SQL statement to cancel.");
     }
     client_session->connection->Interrupt();
