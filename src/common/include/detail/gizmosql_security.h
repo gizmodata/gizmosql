@@ -101,7 +101,7 @@ private:
   std::string token_allowed_audience_;
   std::filesystem::path token_signature_verify_cert_path_;
   std::string token_signature_verify_cert_file_contents_;
-  bool token_auth_enabled_;
+  bool token_auth_enabled_ = false;
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
   VerifyAndDecodeBootstrapToken(
