@@ -56,7 +56,9 @@ public:
 
 class BasicAuthServerMiddleware : public flight::ServerMiddleware {
 public:
-  BasicAuthServerMiddleware(const std::string& username, const std::string& role, const std::string& auth_method, const std::string& secret_key);
+  BasicAuthServerMiddleware(const std::string& username, const std::string& role,
+                            const std::string& auth_method,
+                            const std::string& secret_key);
 
   const jwt::decoded_jwt<jwt::traits::kazuho_picojson> GetJWT();
   const std::string GetUsername() const;
@@ -99,10 +101,12 @@ private:
   std::string token_allowed_audience_;
   std::filesystem::path token_signature_verify_cert_path_;
   std::string token_signature_verify_cert_file_contents_;
+  bool token_auth_enabled_;
 
-  arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>> VerifyAndDecodeBootstrapToken(
-    const std::string& token,
-    const flight::ServerCallContext& context) const;
+  arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
+  VerifyAndDecodeBootstrapToken(
+      const std::string& token,
+      const flight::ServerCallContext& context) const;
 };
 
 class BearerAuthServerMiddleware : public flight::ServerMiddleware {

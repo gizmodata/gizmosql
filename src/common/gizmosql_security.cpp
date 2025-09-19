@@ -178,20 +178,26 @@ BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
     token_allowed_issuer_(token_allowed_issuer),
     token_allowed_audience_(token_allowed_audience),
     token_signature_verify_cert_path_(token_signature_verify_cert_path) {
-  // Load the cert file into a private string member
-  if (!token_signature_verify_cert_path_.empty()) {
-    std::ifstream cert_file(token_signature_verify_cert_path_);
-    if (!cert_file) {
-      // Raise an error
-      GIZMOSQL_LOG(ERROR) << "Could not open certificate file: "
-          << token_signature_verify_cert_path_.string();
-      throw std::invalid_argument("Could not open certificate file: " +
-                                  token_signature_verify_cert_path_.string());
-    } else {
-      std::stringstream cert;
-      cert << cert_file.rdbuf();
-      token_signature_verify_cert_file_contents_ = cert.str();
+  if (!token_allowed_issuer_.empty() && !token_allowed_audience_.empty() && !
+      token_signature_verify_cert_path_.empty()) {
+    // Load the cert file into a private string member
+    if (!token_signature_verify_cert_path_.empty()) {
+      std::ifstream cert_file(token_signature_verify_cert_path_);
+      if (!cert_file) {
+        // Raise error here, can't return from constructor
+        throw std::runtime_error("Could not open certificate file: " +
+                                 token_signature_verify_cert_path_.string());
+      } else {
+        std::stringstream cert;
+        cert << cert_file.rdbuf();
+        token_signature_verify_cert_file_contents_ = cert.str();
+      }
     }
+    token_auth_enabled_ = true;
+    GIZMOSQL_LOG(INFO) << "Token auth is enabled on the server - Allowed Issuer: '"
+        << token_allowed_issuer_ << "' - Allowed Audience: '"
+        << token_allowed_audience_ << "' - Signature Verify Cert Path: '"
+        << token_signature_verify_cert_path_.string() << "'";
   }
 }
 
@@ -261,6 +267,10 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
     }
     // If the username is "token" - it is assumed that the user is using token auth - use the password field as the bootstrap token
     else {
+      if (!token_auth_enabled_) {
+        return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                               "Token auth is not enabled on the server");
+      }
       ARROW_ASSIGN_OR_RAISE(auto bootstrap_decoded_token,
                             VerifyAndDecodeBootstrapToken(password,
                               context));
