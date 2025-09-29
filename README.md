@@ -188,6 +188,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 🔌 [Ibis adapter](https://github.com/gizmodata/ibis-gizmosql)
 - 🌐 [Flight SQL over WebSocket Proxy](https://github.com/gizmodata/flight-sql-websocket-proxy)
 - 📈 [Metabase driver](https://github.com/J0hnG4lt/metabase-flightsql-driver)
+- ⚙️ [dbt Adapter](https://github.com/gizmodata/dbt-gizmosql) 🚀 **NEW!**
 
 ---
 
