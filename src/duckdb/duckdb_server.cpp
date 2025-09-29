@@ -705,6 +705,7 @@ public:
       } else {
         status = ExecuteSql(client_session->connection, "ROLLBACK");
       }
+      std::scoped_lock guard(transactions_mutex_);
       open_transactions_.erase(request.transaction_id);
     }
     return status;
@@ -751,8 +752,10 @@ public:
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     for (const auto& [name, value] : request.session_options) {
       if (name == "catalog" || name == "schema") {
+        std::string sanitized = boost::algorithm::erase_all_copy(std::get<std::string>(value), "\"");
+        std::string quoted_identifier = "\"" + sanitized + "\"";
         ARROW_RETURN_NOT_OK(
-            ExecuteSql(client_session->connection, "USE " + std::get<std::string>(value)))
+            ExecuteSql(client_session->connection, "USE " + quoted_identifier))
         ;
       } else {
         res.errors.emplace(name, flight::SetSessionOptionsResult::Error{
@@ -796,31 +799,34 @@ public:
   Result<flight::CloseSessionResult> CloseSession(
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
-    ARROW_ASSIGN_OR_RAISE(auto cs, GetClientSession(context));
-    auto it = client_sessions_.find(cs->session_id);
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    std::scoped_lock lk(sessions_mutex_);
+    auto it = client_sessions_.find(client_session->session_id);
+    // Issue a checkpoint to ensure that this session's changes get flushed from the WAL to the database file
+    ARROW_RETURN_NOT_OK(ExecuteSql(client_session->connection, "CHECKPOINT"));
     if (it != client_sessions_.end()) {
       it->second.reset();
       client_sessions_.erase(it);
       GIZMOSQL_LOGKV(INFO, "Client session was successfully closed.",
-                     {"peer", cs->peer},
+                     {"peer", client_session->peer},
                      {"kind", "session_close"},
                      {"status", "success"},
-                     {"session_id", cs->session_id},
-                     {"user", cs->username},
-                     {"role", cs->role}
+                     {"session_id", client_session->session_id},
+                     {"user", client_session->username},
+                     {"role", client_session->role}
           );
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
     } else {
       GIZMOSQL_LOGKV(
           WARNING, "Client session was NOT successfully closed - session not found.",
-          {"peer", cs->peer},
+          {"peer", client_session->peer},
           {"kind", "session_close"},
           {"status", "failure"},
-          {"session_id", cs->session_id},
-          {"user", cs->username},
-          {"role", cs->role}
+          {"session_id", client_session->session_id},
+          {"user", client_session->username},
+          {"role", client_session->role}
           );
-      return Status::KeyError("Session: '" + cs->session_id + "' not found");
+      return Status::KeyError("Session: '" + client_session->session_id + "' not found");
     }
   }
 
