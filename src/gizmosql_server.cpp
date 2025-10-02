@@ -70,7 +70,7 @@ int main(int argc, char** argv)
             ("token-allowed-audience", po::value<std::string>()->default_value(""),
              "Specify the allowed token audience for JWT token-based authentication - see docs for details.  "
               "If not set, we will use env var: 'TOKEN_ALLOWED_AUDIENCE'.")
-            ("token-signature-verify-cert-filename", po::value<std::string>()->default_value(""),
+            ("token-signature-verify-cert-path", po::value<std::string>()->default_value(""),
              "Specify the RSA PEM certificate file used for verifying tokens used in JWT token-based authentication - see docs for details.  "
               "If not set, we will use env var: 'TOKEN_SIGNATURE_VERIFY_CERT_PATH'.")
             // -------- Logging controls (raw strings; library normalizes) --------
@@ -194,10 +194,10 @@ int main(int argc, char** argv)
     }
 
     fs::path token_signature_verify_cert_path;
-    if (vm.count("token-signature-verify-cert-filename"))
+    if (vm.count("token-signature-verify-cert-path"))
     {
         token_signature_verify_cert_path =
-            fs::path(vm["token-signature-verify-cert-filename"].as<std::string>());
+            fs::path(vm["token-signature-verify-cert-path"].as<std::string>());
     }
 
     std::string log_level = vm.count("log-level") ? vm["log-level"].as<std::string>() : "";
