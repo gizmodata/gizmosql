@@ -72,7 +72,7 @@ int main(int argc, char** argv)
               "If not set, we will use env var: 'TOKEN_ALLOWED_AUDIENCE'.")
             ("token-signature-verify-cert-filename", po::value<std::string>()->default_value(""),
              "Specify the RSA PEM certificate file used for verifying tokens used in JWT token-based authentication - see docs for details.  "
-              "If not set, we will use env var: 'TOKEN_SIGNATURE_VERIFY_CERT_FILENAME'.")
+              "If not set, we will use env var: 'TOKEN_SIGNATURE_VERIFY_CERT_PATH'.")
             // -------- Logging controls (raw strings; library normalizes) --------
             ("log-level",  po::value<std::string>()->default_value(""),
              "Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_LOG_LEVEL or defaults to info.")
