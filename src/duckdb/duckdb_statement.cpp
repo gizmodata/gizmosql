@@ -198,6 +198,25 @@ arrow::Result<int> DuckDBStatement::Execute() {
     // Store the result for FetchResult()
     query_result_ = std::move(result);
   } else {
+    // Log bind parameters before execution
+    if (log_queries_ && !bind_parameters.empty()) {
+      std::stringstream params_str;
+      params_str << "[";
+      for (size_t i = 0; i < bind_parameters.size(); i++) {
+        if (i > 0) params_str << ", ";
+        params_str << "'" << bind_parameters[i].ToString() << "'";
+      }
+      params_str << "]";
+
+      GIZMOSQL_LOGKV_DYNAMIC(
+          log_level_, "Executing prepared statement with bind parameters",
+          {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "executing"},
+          {"session_id", client_session_->session_id},
+          {"user", client_session_->username}, {"role", client_session_->role},
+          {"statement_handle", handle_}, {"bind_parameters", params_str.str()},
+          {"param_count", std::to_string(bind_parameters.size())});
+    }
+
     // Traditional prepared statement execution
     query_result_ = stmt_->Execute(bind_parameters);
     client_session_->active_sql_handle = "";
