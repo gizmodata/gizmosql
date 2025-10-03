@@ -41,6 +41,19 @@ python "${SCRIPT_DIR}/test_gizmosql.py"
 
 RC=$?
 
+# Test the gizmosql_client
+gizmosql_client \
+  --command Execute \
+  --host "localhost" \
+  --port 31337 \
+  --username "gizmosql_username" \
+  --password "${GIZMOSQL_PASSWORD}" \
+  --query "SELECT version()" \
+  --use-tls \
+  --tls-skip-verify
+
+RC=$((RC + $?))
+
 # Stop the server...
 kill %1
 
@@ -54,5 +67,5 @@ rm -f ./*.csr \
 
 popd
 
-# Exit with the code of the python test...
+# Exit with the combined code of the python and gizmosql_client tests...
 exit ${RC}

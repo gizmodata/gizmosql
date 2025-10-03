@@ -218,7 +218,27 @@ install(TARGETS gizmosql_server
 )
 
 # ------------ Client Executable section ------------
-find_package(gflags REQUIRED)
+
+# --------------------- GFlags ---------------------
+configure_file(third_party/gflags_CMakeLists.txt.in
+        gflags/CMakeLists.txt
+)
+execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/gflags"
+)
+execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/gflags"
+)
+
+set(GFLAGS_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/gflags")
+set(GFLAGS_LIBRARY_PATH "${GFLAGS_INSTALL_DIR}/lib/libgflags.a")
+set(GFLAGS_INCLUDE_DIR "${GFLAGS_INSTALL_DIR}/include")
+
+add_library(gflags STATIC IMPORTED)
+set_property(TARGET gflags PROPERTY IMPORTED_LOCATION ${GFLAGS_LIBRARY_PATH})
+set_property(TARGET gflags APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${GFLAGS_INCLUDE_DIR})
+
+# ------------------------------------------
 
 add_executable(gizmosql_client
         src/gizmosql_client.cpp

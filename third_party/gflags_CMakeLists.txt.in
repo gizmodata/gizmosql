@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.25)
+project(gflags)
+
+set(CMAKE_CXX_STANDARD 17)
+
+include(ExternalProject)
+
+ExternalProject_Add(
+    gflags_project
+    PREFIX ${CMAKE_BINARY_DIR}/third_party
+    GIT_REPOSITORY https://github.com/gflags/gflags.git
+    GIT_TAG v2.2.2
+    CMAKE_ARGS
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/gflags
+      -DCMAKE_INSTALL_LIBDIR=lib
+      -DCMAKE_INSTALL_INCLUDEDIR=include
+      -DCMAKE_BUILD_TYPE=Release
+      -DGFLAGS_BUILD_STATIC_LIBS=ON
+      -DGFLAGS_INSTALL_STATIC_LIBS=ON
+)

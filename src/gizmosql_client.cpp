@@ -35,7 +35,6 @@
 
 
 #include "common/include/detail/flight_sql_fwd.h"
-#include "common/include/detail/gizmosql_logging.h"
 
 using arrow::Status;
 
@@ -68,10 +67,10 @@ Status PrintResultsForEndpoint(flight::sql::FlightSqlClient& client,
   const arrow::Result<std::shared_ptr<arrow::Schema>>& schema = stream->GetSchema();
   ARROW_RETURN_NOT_OK(schema);
 
-  GIZMOSQL_LOG(INFO) << "Schema:" << std::endl;
-  GIZMOSQL_LOG(INFO) << schema->get()->ToString() << std::endl << std::endl;
+  std::cout << "Schema:" << std::endl;
+  std::cout << schema->get()->ToString() << std::endl << std::endl;
 
-  GIZMOSQL_LOG(INFO) << "Results:" << std::endl;
+  std::cout << "Results:" << std::endl;
 
   int64_t num_rows = 0;
 
@@ -80,11 +79,11 @@ Status PrintResultsForEndpoint(flight::sql::FlightSqlClient& client,
     if (chunk.data == nullptr) {
       break;
     }
-    GIZMOSQL_LOG(INFO) << chunk.data->ToString() << std::endl;
+    std::cout << chunk.data->ToString() << std::endl;
     num_rows += chunk.data->num_rows();
   }
 
-  GIZMOSQL_LOG(INFO) << "Total: " << num_rows << std::endl;
+  std::cout << "Total: " << num_rows << std::endl;
 
   return Status::OK();
 }
@@ -95,7 +94,7 @@ Status PrintResults(flight::sql::FlightSqlClient& client,
   const std::vector<flight::FlightEndpoint>& endpoints = info->endpoints();
 
   for (size_t i = 0; i < endpoints.size(); i++) {
-    GIZMOSQL_LOG(INFO) << "Results from endpoint " << i + 1 << " of " << endpoints.size()
+    std::cout << "Results from endpoint " << i + 1 << " of " << endpoints.size()
         << std::endl;
     ARROW_RETURN_NOT_OK(PrintResultsForEndpoint(client, call_options, endpoints[i]));
   }
@@ -162,7 +161,7 @@ Status RunMain() {
   if (FLAGS_command == "ExecuteUpdate") {
     ARROW_ASSIGN_OR_RAISE(auto rows, sql_client.ExecuteUpdate(call_options, FLAGS_query));
 
-    GIZMOSQL_LOG(INFO) << "Result: " << rows << std::endl;
+    std::cout << "Result: " << rows << std::endl;
 
     return Status::OK();
   }
@@ -184,7 +183,7 @@ Status RunMain() {
     auto parameter_schema = prepared_statement->parameter_schema();
     auto result_set_schema = prepared_statement->dataset_schema();
 
-    GIZMOSQL_LOG(INFO) << result_set_schema->ToString(false) << std::endl;
+    std::cout << result_set_schema->ToString(false) << std::endl;
     arrow::Int64Builder int_builder;
     ARROW_RETURN_NOT_OK(int_builder.Append(1));
     std::shared_ptr<arrow::Array> int_array;
