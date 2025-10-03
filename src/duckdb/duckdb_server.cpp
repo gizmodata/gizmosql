@@ -56,26 +56,31 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
-std::string PrepareQueryForGetTables(const sql::GetTables& command) {
+std::string PrepareQueryForGetTables(const sql::GetTables& command,
+  duckdb::vector<duckdb::Value>& bind_parameters
+  ) {
   std::stringstream table_query;
 
   table_query
       << "SELECT table_catalog as catalog_name, table_schema as schema_name, table_name, "
       "table_type FROM information_schema.tables where 1=1";
 
-  table_query << " and table_catalog = "
-      << (command.catalog.has_value()
-            ? "'" + command.catalog.value() + "'"
-            : "CURRENT_DATABASE()");
+  table_query << " and table_catalog = ";
+  if (command.catalog.has_value()) {
+    table_query << "$1";
+    bind_parameters.push_back(command.catalog.value());
+  } else {
+    table_query << "CURRENT_DATABASE()";
+  }
 
   if (command.db_schema_filter_pattern.has_value()) {
-    table_query << " and table_schema LIKE '" << command.db_schema_filter_pattern.value()
-        << "'";
+    table_query << " and table_schema LIKE $2";
+    bind_parameters.push_back(command.db_schema_filter_pattern.value());
   }
 
   if (command.table_name_filter_pattern.has_value()) {
-    table_query << " and table_name LIKE '" << command.table_name_filter_pattern.value()
-        << "'";
+    table_query << " and table_name LIKE $3";
+    bind_parameters.push_back(command.table_name_filter_pattern.value());
   }
 
   if (!command.table_types.empty()) {
@@ -121,17 +126,26 @@ Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& st
 
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<ClientSession>& client_session, const std::string& query,
-    const std::shared_ptr<arrow::Schema>& schema) {
+    const std::shared_ptr<arrow::Schema>& schema,
+    const duckdb::vector<duckdb::Value>& bind_parameters) {
   std::shared_ptr<DuckDBStatement> statement;
 
   ARROW_ASSIGN_OR_RAISE(statement,
                         DuckDBStatement::Create(client_session, query, arrow::util::
                           ArrowLogLevel::ARROW_DEBUG))
+  statement->bind_parameters = bind_parameters;
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
   ARROW_ASSIGN_OR_RAISE(reader, DuckDBStatementBatchReader::Create(statement, schema))
 
   return std::make_unique<flight::RecordBatchStream>(reader);
+}
+
+Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
+    const std::shared_ptr<ClientSession>& client_session, const std::string& query,
+    const std::shared_ptr<arrow::Schema>& schema) {
+  duckdb::vector<duckdb::Value> bind_parameters;
+  return DoGetDuckDBQuery(client_session, query, schema, bind_parameters);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
@@ -325,22 +339,28 @@ public:
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetDbSchemas(
       const flight::ServerCallContext& context, const sql::GetDbSchemas& command) {
     std::stringstream query;
+    duckdb::vector<duckdb::Value> bind_parameters;
     query << "SELECT catalog_name, schema_name AS db_schema_name FROM "
         "information_schema.schemata WHERE 1 = 1";
 
-    query << " AND catalog_name = "
-        << (command.catalog.has_value()
-              ? "'" + command.catalog.value() + "'"
-              : "CURRENT_DATABASE()");
+    query << " AND catalog_name = ";
+    if (command.catalog.has_value()) {
+      query << "$1";
+      bind_parameters.push_back(command.catalog.value());
+    } else {
+      query << "CURRENT_DATABASE()";
+    }
+
     if (command.db_schema_filter_pattern.has_value()) {
-      query << " AND schema_name LIKE '" << command.db_schema_filter_pattern.value()
-          << "'";
+      query << " AND schema_name LIKE $2";
+      bind_parameters.push_back(command.db_schema_filter_pattern.value());
     }
     query << " ORDER BY catalog_name, db_schema_name";
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query.str(),
-                            sql::SqlSchema::GetDbSchemasSchema());
+                            sql::SqlSchema::GetDbSchemasSchema(),
+                            bind_parameters);
   }
 
   Result<sql::ActionCreatePreparedStatementResult> CreatePreparedStatement(
@@ -460,7 +480,6 @@ public:
                                      flight::FlightMetadataWriter* writer) {
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
     ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle))
-
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
 
     return Status::OK();
@@ -479,20 +498,21 @@ public:
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTables(
       const flight::ServerCallContext& context, const sql::GetTables& command) {
-    std::string query = PrepareQueryForGetTables(command);
+    duckdb::vector<duckdb::Value> get_tables_bind_parameters;
+    std::string get_tables_query = PrepareQueryForGetTables(command, get_tables_bind_parameters);
     std::shared_ptr<DuckDBStatement> statement;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     ARROW_ASSIGN_OR_RAISE(statement,
-                          DuckDBStatement::Create(client_session, query, arrow::util::
+                          DuckDBStatement::Create(client_session, get_tables_query, arrow::util::
                             ArrowLogLevel::ARROW_DEBUG))
-
+    statement->bind_parameters = get_tables_bind_parameters;
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
                             statement, sql::SqlSchema::GetTablesSchema()))
 
     if (command.include_schema) {
       auto table_schema_reader =
           std::make_shared<DuckDBTablesWithSchemaBatchReader>(
-              reader, query, client_session);
+              reader, get_tables_query, client_session);
       return std::make_unique<flight::RecordBatchStream>(table_schema_reader);
     } else {
       return std::make_unique<flight::RecordBatchStream>(reader);
@@ -569,6 +589,7 @@ public:
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetPrimaryKeys(
       const flight::ServerCallContext& context, const sql::GetPrimaryKeys& command) {
     std::stringstream table_query;
+    duckdb::vector<duckdb::Value> bind_parameters;
 
     // The field key_name can not be recovered by the sqlite, so it is being set
     // to null following the same pattern for catalog_name and schema_name.
@@ -587,20 +608,26 @@ public:
         "        ) WHERE 1 = 1";
 
     const sql::TableRef& table_ref = command.table_ref;
-    table_query << " AND catalog_name = "
-        << (table_ref.catalog.has_value()
-              ? "'" + table_ref.catalog.value() + "'"
-              : "CURRENT_DATABASE()");
-
-    if (table_ref.db_schema.has_value()) {
-      table_query << " and schema_name LIKE '" << table_ref.db_schema.value() << "'";
+    table_query << " AND catalog_name = ";
+    if (table_ref.catalog.has_value()) {
+      table_query << "$1";
+      bind_parameters.push_back(table_ref.catalog.value());
+    } else {
+      table_query << "CURRENT_DATABASE()";
     }
 
-    table_query << " and table_name LIKE '" << table_ref.table << "'";
+    if (table_ref.db_schema.has_value()) {
+      table_query << " and schema_name LIKE $2";
+      bind_parameters.push_back(table_ref.db_schema.value());
+    }
+
+    table_query << " and table_name LIKE $3";
+    bind_parameters.push_back(table_ref.table);
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, table_query.str(),
-                            sql::SqlSchema::GetPrimaryKeysSchema());
+                            sql::SqlSchema::GetPrimaryKeysSchema(),
+                            bind_parameters);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoImportedKeys(
@@ -612,19 +639,30 @@ public:
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetImportedKeys(
       const flight::ServerCallContext& context, const sql::GetImportedKeys& command) {
     const sql::TableRef& table_ref = command.table_ref;
-    std::string filter = "fk_table_name = '" + table_ref.table + "'";
+    duckdb::vector<duckdb::Value> bind_parameters;
 
-    filter += " AND fk_catalog_name = " + (table_ref.catalog.has_value()
-                                             ? "'" + table_ref.catalog.value() + "'"
-                                             : "CURRENT_DATABASE()");
-    if (table_ref.db_schema.has_value()) {
-      filter += " AND fk_schema_name = '" + table_ref.db_schema.value() + "'";
+    std::string filter = "fk_table_name = $1";
+    bind_parameters.push_back(table_ref.table);
+
+    filter += " AND fk_catalog_name = ";
+    if (table_ref.catalog.has_value()) {
+      filter += "$2";
+      bind_parameters.push_back(table_ref.catalog.value());
+    } else {
+      filter += "CURRENT_DATABASE()";
     }
+
+    if (table_ref.db_schema.has_value()) {
+      filter += " AND fk_schema_name = $3";
+      bind_parameters.push_back(table_ref.db_schema.value());
+    }
+
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
-                            sql::SqlSchema::GetImportedKeysSchema());
+                            sql::SqlSchema::GetImportedKeysSchema(),
+                            bind_parameters);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoExportedKeys(
@@ -636,18 +674,30 @@ public:
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetExportedKeys(
       const flight::ServerCallContext& context, const sql::GetExportedKeys& command) {
     const sql::TableRef& table_ref = command.table_ref;
-    std::string filter = "pk_table_name = '" + table_ref.table + "'";
-    filter += " AND pk_catalog_name = " + (table_ref.catalog.has_value()
-                                             ? "'" + table_ref.catalog.value() + "'"
-                                             : "CURRENT_DATABASE()");
+    duckdb::vector<duckdb::Value> bind_parameters;
+
+    std::string filter = "pk_table_name = $1";
+    bind_parameters.push_back(table_ref.table);
+
+    filter += " AND pk_catalog_name = ";
+
+    if (table_ref.catalog.has_value()) {
+      filter += "$2";
+      bind_parameters.push_back(table_ref.catalog.value());
+    } else {
+      filter += "CURRENT_DATABASE()";
+    }
+
     if (table_ref.db_schema.has_value()) {
-      filter += " AND pk_schema_name = '" + table_ref.db_schema.value() + "'";
+      filter += " AND pk_schema_name = $3";
+      bind_parameters.push_back(table_ref.db_schema.value());
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
-                            sql::SqlSchema::GetExportedKeysSchema());
+                            sql::SqlSchema::GetExportedKeysSchema(),
+                            bind_parameters);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoCrossReference(
@@ -659,27 +709,52 @@ public:
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetCrossReference(
       const flight::ServerCallContext& context, const sql::GetCrossReference& command) {
     const sql::TableRef& pk_table_ref = command.pk_table_ref;
-    std::string filter = "pk_table_name = '" + pk_table_ref.table + "'";
-    filter += " AND pk_catalog_name = " + (pk_table_ref.catalog.has_value()
-                                             ? "'" + pk_table_ref.catalog.value() + "'"
-                                             : "CURRENT_DATABASE()");
+    duckdb::vector<duckdb::Value> bind_parameters;
+
+    std::string filter = "pk_table_name = $1";
+    bind_parameters.push_back(pk_table_ref.table);
+
+    filter += " AND pk_catalog_name = ";
+    if (pk_table_ref.catalog.has_value()) {
+      filter += "$2";
+      bind_parameters.push_back(pk_table_ref.catalog.value());
+    } else {
+      filter += "CURRENT_DATABASE()";
+    }
+
     if (pk_table_ref.db_schema.has_value()) {
-      filter += " AND pk_schema_name = '" + pk_table_ref.db_schema.value() + "'";
+      filter += " AND pk_schema_name = $3";
+      bind_parameters.push_back(pk_table_ref.db_schema.value());
     }
 
     const sql::TableRef& fk_table_ref = command.fk_table_ref;
-    filter += " AND fk_table_name = '" + fk_table_ref.table + "'";
-    filter += " AND fk_catalog_name = " + (fk_table_ref.catalog.has_value()
-                                             ? "'" + fk_table_ref.catalog.value() + "'"
-                                             : "CURRENT_DATABASE()");
+    filter += " AND fk_table_name = $4";
+    bind_parameters.push_back(fk_table_ref.table);
+
+    filter += " AND fk_catalog_name = ";
+    if (fk_table_ref.catalog.has_value()) {
+      filter += "$5";
+      bind_parameters.push_back(fk_table_ref.catalog.value());
+    } else {
+      filter += "CURRENT_DATABASE()";
+    }
+
     if (fk_table_ref.db_schema.has_value()) {
-      filter += " AND fk_schema_name = '" + fk_table_ref.db_schema.value() + "'";
+      filter += " AND fk_schema_name = $6";
+      bind_parameters.push_back(fk_table_ref.db_schema.value());
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
-                            sql::SqlSchema::GetCrossReferenceSchema());
+                            sql::SqlSchema::GetCrossReferenceSchema(),
+                            bind_parameters);
+  }
+
+  Result<int64_t> DoPutCommandStatementIngest(
+      const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
+      flight::FlightMessageReader* reader) {
+
   }
 
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
@@ -1082,6 +1157,12 @@ Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetCrossReference(const flight::ServerCallContext& context,
                                            const sql::GetCrossReference& command) {
   return impl_->DoGetCrossReference(context, command);
+}
+
+Result<int64_t> DuckDBFlightSqlServer::DoPutCommandStatementIngest(
+    const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
+    flight::FlightMessageReader* reader) {
+  return impl_->DoPutCommandStatementIngest(context, command, reader);
 }
 
 Result<sql::ActionBeginTransactionResult> DuckDBFlightSqlServer::BeginTransaction(
