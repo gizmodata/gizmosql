@@ -38,7 +38,7 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 
 | Component                                                                        | Version  |
 |----------------------------------------------------------------------------------|----------|
-| [DuckDB](https://duckdb.org)                                                     | v1.4.1   |
+| [DuckDB](https://duckdb.org)                                                     | v1.4.0   |
 | [SQLite](https://sqlite.org)                                                     | 3.50.4   |
 | [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 21.0.0   |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.1   |
