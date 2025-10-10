@@ -858,8 +858,6 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     std::scoped_lock lk(sessions_mutex_);
     auto it = client_sessions_.find(client_session->session_id);
-    // Issue a checkpoint to ensure that this session's changes get flushed from the WAL to the database file
-    ARROW_RETURN_NOT_OK(ExecuteSql(client_session->connection, "CHECKPOINT"));
     if (it != client_sessions_.end()) {
       it->second.reset();
       client_sessions_.erase(it);
