@@ -33,9 +33,11 @@ configure_file(third_party/Arrow_CMakeLists.txt.in
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 set(ARROW_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
 
@@ -47,12 +49,15 @@ find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 configure_file(third_party/SQLite_CMakeLists.txt.in sqlite/CMakeLists.txt)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/sqlite"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/sqlite"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --install .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/sqlite"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 
 set(SQLITE_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install/include")
@@ -67,9 +72,11 @@ set_property(TARGET sqlite PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${SQLITE_INCLU
 configure_file(third_party/DuckDB_CMakeLists.txt.in duckdb/CMakeLists.txt)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 
 set(DUCKDB_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/duckdb")
@@ -112,9 +119,11 @@ endif ()
 configure_file(third_party/JWTCPP_CMakeLists.txt.in jwt-cpp/CMakeLists.txt)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 
 set(JWT_CPP_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include")
@@ -225,9 +234,11 @@ configure_file(third_party/gflags_CMakeLists.txt.in
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/gflags"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/gflags"
+        COMMAND_ERROR_IS_FATAL ANY
 )
 
 set(GFLAGS_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/gflags")
