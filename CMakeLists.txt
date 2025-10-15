@@ -31,7 +31,7 @@ configure_file(
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
 )
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
+execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
@@ -45,7 +45,7 @@ find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 
 # --------------------- SQLite ---------------------
 configure_file(third_party/SQLite_CMakeLists.txt.in sqlite/CMakeLists.txt)
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
+execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/sqlite"
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
@@ -65,7 +65,7 @@ set_property(TARGET sqlite PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${SQLITE_INCLU
 # --------------------- DuckDB ---------------------
 
 configure_file(third_party/DuckDB_CMakeLists.txt.in duckdb/CMakeLists.txt)
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
+execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
@@ -110,7 +110,7 @@ endif ()
 # --------------------- JWT-CPP ---------------------
 
 configure_file(third_party/JWTCPP_CMakeLists.txt.in jwt-cpp/CMakeLists.txt)
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
+execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
@@ -223,7 +223,7 @@ install(TARGETS gizmosql_server
 configure_file(third_party/gflags_CMakeLists.txt.in
         gflags/CMakeLists.txt
 )
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" .
+execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/gflags"
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .

@@ -2,11 +2,22 @@ name: ci
 
 on:
   workflow_dispatch:
+    inputs:
+      cmake_build_type:
+        description: "The CMake build type to use"
+        type: choice
+        required: true
+        default: Release
+        options:
+          - Release
+          - Debug
+          - RelWithDebInfo
   push:
 
 env:
   DOCKERHUB_IMAGE_NAME: gizmodata/gizmosql
   GITHUB_IMAGE_NAME: ghcr.io/gizmodata/gizmosql
+  CMAKE_BUILD_TYPE: ${{ github.event.inputs.cmake_build_type || 'Release' }}
 
 jobs:
   build-project-macos:
@@ -111,6 +122,8 @@ jobs:
         with:
           generator: Ninja
           run-build: true
+          options: |
+            CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Zip artifacts
         run: |
