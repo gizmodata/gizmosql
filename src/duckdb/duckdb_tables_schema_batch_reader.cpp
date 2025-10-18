@@ -45,8 +45,9 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
   } else {
     std::shared_ptr<DuckDBStatement> schema_statement;
 
-    ARROW_ASSIGN_OR_RAISE(schema_statement,
-                          DuckDBStatement::Create(client_session_, main_query_, arrow::util::ArrowLogLevel::ARROW_DEBUG));
+    ARROW_ASSIGN_OR_RAISE(schema_statement, DuckDBStatement::Create(
+                                                client_session_, main_query_,
+                                                arrow::util::ArrowLogLevel::ARROW_DEBUG));
 
     std::shared_ptr<arrow::RecordBatch> first_batch;
 
@@ -57,23 +58,36 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
       return Status::OK();
     }
 
+    const std::shared_ptr<arrow::Array> catalog_name_array =
+        first_batch->GetColumnByName("catalog_name");
+    const std::shared_ptr<arrow::Array> schema_name_array =
+        first_batch->GetColumnByName("schema_name");
     const std::shared_ptr<arrow::Array> table_name_array =
         first_batch->GetColumnByName("table_name");
 
     arrow::BinaryBuilder schema_builder;
 
-    auto* string_array = reinterpret_cast<arrow::StringArray*>(table_name_array.get());
+    auto* catalog_name_string_array =
+        reinterpret_cast<arrow::StringArray*>(catalog_name_array.get());
+    auto* schema_name_string_array =
+        reinterpret_cast<arrow::StringArray*>(schema_name_array.get());
+    auto* table_name_string_array =
+        reinterpret_cast<arrow::StringArray*>(table_name_array.get());
 
-    for (int table_name_index = 0; table_name_index < table_name_array->length();
-         table_name_index++) {
-      const std::string& table_name = string_array->GetString(table_name_index);
+    for (int i = 0; i < table_name_array->length(); i++) {
+      const std::string& catalog_name = catalog_name_string_array->GetString(i);
+      const std::string& schema_name = schema_name_string_array->GetString(i);
+      const std::string& table_name = table_name_string_array->GetString(i);
 
       // Just get the schema from a prepared statement
       std::shared_ptr<DuckDBStatement> table_schema_statement;
       ARROW_ASSIGN_OR_RAISE(
           table_schema_statement,
           DuckDBStatement::Create(client_session_,
-            "SELECT * FROM " + table_name + " WHERE 1 = 0", arrow::util::ArrowLogLevel::ARROW_DEBUG));
+                                  "SELECT * FROM \"" + catalog_name + "\".\"" +
+                                      schema_name + "\".\"" + table_name + "\"" +
+                                      " LIMIT 0",
+                                  arrow::util::ArrowLogLevel::ARROW_DEBUG));
 
       ARROW_ASSIGN_OR_RAISE(auto table_schema, table_schema_statement->GetSchema());
 
@@ -96,4 +110,4 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
     return Status::OK();
   }
 }
-} // namespace gizmosql::ddb
+}  // namespace gizmosql::ddb
