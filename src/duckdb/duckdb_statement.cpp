@@ -115,13 +115,14 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::string& sql, const arrow::util::ArrowLogLevel& log_level,
     const bool& log_queries) {
   client_session->active_sql_handle = handle;
+  auto logged_sql = redact_sql_for_logs(sql);
   if (log_queries) {
     GIZMOSQL_LOGKV_DYNAMIC(
         log_level, "Client is attempting to run a SQL command",
         {"peer", client_session->peer}, {"kind", "sql"}, {"status", "attempt"},
         {"session_id", client_session->session_id}, {"user", client_session->username},
         {"role", client_session->role}, {"statement_handle", handle},
-        {"sql", redact_sql_for_logs(sql)});
+        {"sql", logged_sql});
   }
   std::shared_ptr<duckdb::PreparedStatement> stmt =
       client_session->connection->Prepare(sql);
@@ -139,7 +140,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     }
 
     // Other preparation errors are still fatal
-    std::string err_msg = "Can't prepare statement: '" + redact_sql_for_logs(sql) +
+    std::string err_msg = "Can't prepare statement: '" + logged_sql +
                           "' - Error: " + error_message;
 
     if (log_queries) {
@@ -148,7 +149,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                      {"status", "failure"}, {"session_id", client_session->session_id},
                      {"user", client_session->username}, {"role", client_session->role},
                      {"statement_handle", handle}, {"error", err_msg},
-                     {"sql", redact_sql_for_logs(sql)});
+                     {"sql", logged_sql});
     }
 
     return Status::Invalid(err_msg);
@@ -170,7 +171,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 DuckDBStatement::~DuckDBStatement() {}
 
 arrow::Result<int> DuckDBStatement::Execute() {
+  std::string logged_sql;
   if (use_direct_execution_) {
+    logged_sql = redact_sql_for_logs(sql_);
     // Direct query execution for statements that can't be prepared (like PIVOT)
     // Note: Direct execution doesn't support bind parameters
     if (!bind_parameters.empty()) {
@@ -188,7 +191,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                        {"status", "failure"}, {"session_id", client_session_->session_id},
                        {"user", client_session_->username},
                        {"role", client_session_->role}, {"statement_handle", handle_},
-                       {"error", result->GetError()}, {"sql", redact_sql_for_logs(sql_)});
+                       {"error", result->GetError()}, {"sql", logged_sql});
       }
       return arrow::Status::ExecutionError("Direct query execution error: ",
                                            result->GetError());
@@ -197,6 +200,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
     // Store the result for FetchResult()
     query_result_ = std::move(result);
   } else {
+    logged_sql = redact_sql_for_logs(stmt_->query);
     // Log bind parameters before execution
     if (log_queries_ && !bind_parameters.empty()) {
       std::stringstream params_str;
@@ -228,8 +232,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                        {"status", "failure"}, {"session_id", client_session_->session_id},
                        {"user", client_session_->username},
                        {"role", client_session_->role}, {"statement_handle", handle_},
-                       {"error", query_result_->GetError()},
-                       {"sql", redact_sql_for_logs(stmt_->query)});
+                       {"error", query_result_->GetError()}, {"sql", logged_sql});
       }
       return arrow::Status::ExecutionError("An execution error has occurred: ",
                                            query_result_->GetError());
@@ -244,8 +247,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
         {"session_id", client_session_->session_id}, {"user", client_session_->username},
         {"role", client_session_->role}, {"statement_handle", handle_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
-        {"duration_ms", GetLastExecutionDurationMs()},
-        {"sql", redact_sql_for_logs(stmt_->query)});
+        {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql});
   }
 
   return 0;  // Success
