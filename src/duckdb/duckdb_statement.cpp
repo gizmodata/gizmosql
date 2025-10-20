@@ -117,11 +117,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   client_session->active_sql_handle = handle;
   if (log_queries) {
     GIZMOSQL_LOGKV_DYNAMIC(
-        log_level,
-        "Client is attempting to run a SQL command:\n" + redact_sql_for_logs(sql),
+        log_level, "Client is attempting to run a SQL command",
         {"peer", client_session->peer}, {"kind", "sql"}, {"status", "attempt"},
         {"session_id", client_session->session_id}, {"user", client_session->username},
-        {"role", client_session->role}, {"statement_handle", handle});
+        {"role", client_session->role}, {"statement_handle", handle},
+        {"sql", redact_sql_for_logs(sql)});
   }
   std::shared_ptr<duckdb::PreparedStatement> stmt =
       client_session->connection->Prepare(sql);
@@ -143,12 +143,12 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                           "' - Error: " + error_message;
 
     if (log_queries) {
-      GIZMOSQL_LOGKV(WARNING,
-                     "Client SQL command failed preparation\n" + redact_sql_for_logs(sql),
+      GIZMOSQL_LOGKV(WARNING, "Client SQL command failed preparation",
                      {"peer", client_session->peer}, {"kind", "sql"},
                      {"status", "failure"}, {"session_id", client_session->session_id},
                      {"user", client_session->username}, {"role", client_session->role},
-                     {"statement_handle", handle}, {"error", err_msg});
+                     {"statement_handle", handle}, {"error", err_msg},
+                     {"sql", redact_sql_for_logs(sql)});
     }
 
     return Status::Invalid(err_msg);
@@ -183,13 +183,12 @@ arrow::Result<int> DuckDBStatement::Execute() {
     client_session_->active_sql_handle = "";
     if (result->HasError()) {
       if (log_queries_) {
-        GIZMOSQL_LOGKV(
-            WARNING,
-            "Client SQL command failed direct execution\n" + redact_sql_for_logs(sql_),
-            {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
-            {"session_id", client_session_->session_id},
-            {"user", client_session_->username}, {"role", client_session_->role},
-            {"statement_handle", handle_}, {"error", result->GetError()});
+        GIZMOSQL_LOGKV(WARNING, "Client SQL command failed direct execution",
+                       {"peer", client_session_->peer}, {"kind", "sql"},
+                       {"status", "failure"}, {"session_id", client_session_->session_id},
+                       {"user", client_session_->username},
+                       {"role", client_session_->role}, {"statement_handle", handle_},
+                       {"error", result->GetError()}, {"sql", redact_sql_for_logs(sql_)});
       }
       return arrow::Status::ExecutionError("Direct query execution error: ",
                                            result->GetError());
@@ -208,6 +207,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
       }
       params_str << "]";
 
+      // Do NOT log the SQL statement here - they may have bound thousands of rows for execution (bulk binding)
       GIZMOSQL_LOGKV_DYNAMIC(
           log_level_, "Executing prepared statement with bind parameters",
           {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "executing"},
@@ -223,13 +223,13 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
     if (query_result_->HasError()) {
       if (log_queries_) {
-        GIZMOSQL_LOGKV(
-            WARNING,
-            "Client SQL command failed direct execution\n" + redact_sql_for_logs(sql_),
-            {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
-            {"session_id", client_session_->session_id},
-            {"user", client_session_->username}, {"role", client_session_->role},
-            {"statement_handle", handle_}, {"error", query_result_->GetError()});
+        GIZMOSQL_LOGKV(WARNING, "Client SQL command failed execution",
+                       {"peer", client_session_->peer}, {"kind", "sql"},
+                       {"status", "failure"}, {"session_id", client_session_->session_id},
+                       {"user", client_session_->username},
+                       {"role", client_session_->role}, {"statement_handle", handle_},
+                       {"error", query_result_->GetError()},
+                       {"sql", redact_sql_for_logs(stmt_->query)});
       }
       return arrow::Status::ExecutionError("An execution error has occurred: ",
                                            query_result_->GetError());
@@ -244,7 +244,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
         {"session_id", client_session_->session_id}, {"user", client_session_->username},
         {"role", client_session_->role}, {"statement_handle", handle_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
-        {"duration_ms", GetLastExecutionDurationMs()});
+        {"duration_ms", GetLastExecutionDurationMs()},
+        {"sql", redact_sql_for_logs(stmt_->query)});
   }
 
   return 0;  // Success
