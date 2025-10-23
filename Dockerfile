@@ -98,7 +98,7 @@ COPY --chown=app_user:app_user src src
 
 # Run the CMake build (then cleanup)
 RUN cmake -S . -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_INSTALL_PREFIX=/usr/local && \
     cmake --build build --target install && \
     rm -rf build src third_party CMakeLists.txt
@@ -106,7 +106,7 @@ RUN cmake -S . -B build -G Ninja \
 COPY --chown=app_user:app_user ./tls ./tls
 
 # Install DuckDB CLI for troubleshooting, etc.
-ARG DUCKDB_VERSION="1.4.1"
+ARG DUCKDB_VERSION="1.4.0"
 
 RUN case ${TARGETPLATFORM} in \
          "linux/amd64")  DUCKDB_FILE=https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip  ;; \
