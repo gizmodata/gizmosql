@@ -50,7 +50,7 @@ public:
       const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = true);
+      const bool& log_queries = false);
 
   // Convenience method to generate a handle for the caller
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
@@ -58,7 +58,7 @@ public:
       const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = true);
+      const bool& log_queries = false);
 
   ~DuckDBStatement();
 

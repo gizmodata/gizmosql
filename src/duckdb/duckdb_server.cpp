@@ -126,12 +126,13 @@ Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& st
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<ClientSession>& client_session, const std::string& query,
     const std::shared_ptr<arrow::Schema>& schema,
-    const duckdb::vector<duckdb::Value>& bind_parameters) {
+    const duckdb::vector<duckdb::Value>& bind_parameters, const bool& print_queries) {
   std::shared_ptr<DuckDBStatement> statement;
 
-  ARROW_ASSIGN_OR_RAISE(statement,
-                        DuckDBStatement::Create(client_session, query,
-                                                arrow::util::ArrowLogLevel::ARROW_DEBUG))
+  ARROW_ASSIGN_OR_RAISE(
+      statement,
+      DuckDBStatement::Create(client_session, query,
+                              arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries))
   statement->bind_parameters = bind_parameters;
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
@@ -142,9 +143,9 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
 
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<ClientSession>& client_session, const std::string& query,
-    const std::shared_ptr<arrow::Schema>& schema) {
+    const std::shared_ptr<arrow::Schema>& schema, const bool& print_queries) {
   duckdb::vector<duckdb::Value> bind_parameters;
-  return DoGetDuckDBQuery(client_session, query, schema, bind_parameters);
+  return DoGetDuckDBQuery(client_session, query, schema, bind_parameters, print_queries);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
@@ -286,8 +287,9 @@ class DuckDBFlightSqlServer::Impl {
     const std::string& query = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     ARROW_ASSIGN_OR_RAISE(
-        auto statement, DuckDBStatement::Create(client_session, query,
-                                                arrow::util::ArrowLogLevel::ARROW_DEBUG))
+        auto statement,
+        DuckDBStatement::Create(client_session, query,
+                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_))
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
                           EncodeTransactionQuery(query, command.transaction_id))
@@ -305,7 +307,10 @@ class DuckDBFlightSqlServer::Impl {
     const std::string& sql = pair.first;
     const std::string transaction_id = pair.second;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(auto statement, DuckDBStatement::Create(client_session, sql))
+    ARROW_ASSIGN_OR_RAISE(
+        auto statement,
+        DuckDBStatement::Create(client_session, sql,
+                                arrow::util::ArrowLogLevel::ARROW_INFO, print_queries_))
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
     return std::make_unique<flight::RecordBatchStream>(reader);
@@ -324,7 +329,8 @@ class DuckDBFlightSqlServer::Impl {
         "catalog_name";
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetCatalogsSchema());
+    return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetCatalogsSchema(),
+                            print_queries_);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoSchemas(
@@ -356,7 +362,8 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query.str(),
-                            sql::SqlSchema::GetDbSchemasSchema(), bind_parameters);
+                            sql::SqlSchema::GetDbSchemasSchema(), bind_parameters,
+                            print_queries_);
   }
 
   Result<sql::ActionCreatePreparedStatementResult> CreatePreparedStatement(
@@ -500,8 +507,9 @@ class DuckDBFlightSqlServer::Impl {
     std::shared_ptr<DuckDBStatement> statement;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     ARROW_ASSIGN_OR_RAISE(
-        statement, DuckDBStatement::Create(client_session, get_tables_query,
-                                           arrow::util::ArrowLogLevel::ARROW_DEBUG))
+        statement,
+        DuckDBStatement::Create(client_session, get_tables_query,
+                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_))
     statement->bind_parameters = get_tables_bind_parameters;
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
                                            statement, sql::SqlSchema::GetTablesSchema()))
@@ -519,9 +527,10 @@ class DuckDBFlightSqlServer::Impl {
                                               const sql::StatementUpdate& command) {
     const std::string& sql = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(auto statement,
-                          DuckDBStatement::Create(client_session, sql,
-                                                  arrow::util::ArrowLogLevel::ARROW_INFO))
+    ARROW_ASSIGN_OR_RAISE(
+        auto statement,
+        DuckDBStatement::Create(client_session, sql,
+                                arrow::util::ArrowLogLevel::ARROW_INFO, print_queries_))
     return statement->ExecuteUpdate();
   }
 
@@ -573,7 +582,8 @@ class DuckDBFlightSqlServer::Impl {
     std::string query = "SELECT DISTINCT table_type FROM information_schema.tables";
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetTableTypesSchema());
+    return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetTableTypesSchema(),
+                            print_queries_);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoPrimaryKeys(
@@ -622,7 +632,8 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, table_query.str(),
-                            sql::SqlSchema::GetPrimaryKeysSchema(), bind_parameters);
+                            sql::SqlSchema::GetPrimaryKeysSchema(), bind_parameters,
+                            print_queries_);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoImportedKeys(
@@ -656,7 +667,8 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
-                            sql::SqlSchema::GetImportedKeysSchema(), bind_parameters);
+                            sql::SqlSchema::GetImportedKeysSchema(), bind_parameters,
+                            print_queries_);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoExportedKeys(
@@ -690,7 +702,8 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
-                            sql::SqlSchema::GetExportedKeysSchema(), bind_parameters);
+                            sql::SqlSchema::GetExportedKeysSchema(), bind_parameters,
+                            print_queries_);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoCrossReference(
@@ -740,7 +753,8 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
-                            sql::SqlSchema::GetCrossReferenceSchema(), bind_parameters);
+                            sql::SqlSchema::GetCrossReferenceSchema(), bind_parameters,
+                            print_queries_);
   }
 
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
