@@ -36,8 +36,7 @@ std::shared_ptr<arrow::Schema> SqliteTablesWithSchemaBatchReader::schema() const
   return flight::sql::SqlSchema::GetTablesSchemaWithIncludedSchema();
 }
 
-arrow::Status SqliteTablesWithSchemaBatchReader::ReadNext(
-    std::shared_ptr<arrow::RecordBatch>* batch) {
+arrow::Status SqliteTablesWithSchemaBatchReader::ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) {
   std::stringstream schema_query;
 
   schema_query
@@ -102,7 +101,10 @@ arrow::Status SqliteTablesWithSchemaBatchReader::ReadNext(
   std::shared_ptr<arrow::Array> schema_array;
   ARROW_RETURN_NOT_OK(schema_builder.Finish(&schema_array));
 
-  ARROW_ASSIGN_OR_RAISE(*batch, first_batch->AddColumn(4, "table_schema", schema_array));
+  std::shared_ptr<arrow::Field> schema_field =
+      arrow::field("table_schema", schema_array->type(), false);
+
+  ARROW_ASSIGN_OR_RAISE(*batch, first_batch->AddColumn(4, schema_field, schema_array));
 
   return arrow::Status::OK();
 }

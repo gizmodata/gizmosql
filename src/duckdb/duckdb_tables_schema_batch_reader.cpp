@@ -61,7 +61,7 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
     const std::shared_ptr<arrow::Array> catalog_name_array =
         first_batch->GetColumnByName("catalog_name");
     const std::shared_ptr<arrow::Array> schema_name_array =
-        first_batch->GetColumnByName("schema_name");
+        first_batch->GetColumnByName("db_schema_name");
     const std::shared_ptr<arrow::Array> table_name_array =
         first_batch->GetColumnByName("table_name");
 

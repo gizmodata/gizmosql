@@ -44,26 +44,27 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 flight::sql::ColumnMetadata GetColumnMetadata(int column_type, const char* table);
 
 class DuckDBStatement {
-public:
+ public:
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
       std::shared_ptr<ClientSession> client_session, const std::string& handle,
       const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = false);
+      const bool& log_queries = false,
+      const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
 
   // Convenience method to generate a handle for the caller
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
-      std::shared_ptr<ClientSession> client_session,
-      const std::string& sql,
+      std::shared_ptr<ClientSession> client_session, const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = false);
+      const bool& log_queries = false,
+      const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
 
   ~DuckDBStatement();
 
   /// \brief Creates an Arrow Schema based on the results of this statement.
-/// \return              The resulting Schema.
+  /// \return              The resulting Schema.
   arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema() const;
 
   arrow::Result<int> Execute();
@@ -73,14 +74,14 @@ public:
   std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
 
   /// \brief Executes an UPDATE, INSERT or DELETE statement.
-/// \return              The number of rows changed by execution.
+  /// \return              The number of rows changed by execution.
   arrow::Result<int64_t> ExecuteUpdate();
 
   long GetLastExecutionDurationMs() const;
 
   duckdb::vector<duckdb::Value> bind_parameters;
 
-private:
+ private:
   std::shared_ptr<ClientSession> client_session_;
   std::string handle_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
@@ -89,16 +90,17 @@ private:
   bool log_queries_;
 
   // Support for direct query execution (fallback for statements that can't be prepared)
-  std::string sql_; // Original SQL for direct execution
-  bool use_direct_execution_; // Flag to indicate whether to use direct query execution
+  std::string sql_;            // Original SQL for direct execution
+  bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
   std::chrono::steady_clock::time_point start_time_;
   std::chrono::steady_clock::time_point end_time_;
+  std::shared_ptr<arrow::Schema> override_schema_;
 
   DuckDBStatement(std::shared_ptr<ClientSession> client_session,
                   const std::string& handle,
                   std::shared_ptr<duckdb::PreparedStatement> stmt,
-                  const arrow::util::ArrowLogLevel& log_level,
-                  const bool& log_queries) {
+                  const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
+                  std::shared_ptr<arrow::Schema> override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     stmt_ = stmt;
@@ -106,14 +108,14 @@ private:
     log_level_ = log_level;
     log_queries_ = log_queries;
     start_time_ = std::chrono::steady_clock::now();
+    override_schema_ = override_schema;
   }
 
   // Constructor for direct execution mode
   DuckDBStatement(std::shared_ptr<ClientSession> client_session,
-                  const std::string& handle,
-                  const std::string& sql,
-                  const arrow::util::ArrowLogLevel& log_level,
-                  const bool& log_queries) {
+                  const std::string& handle, const std::string& sql,
+                  const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
+                  std::shared_ptr<arrow::Schema> override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     sql_ = sql;
@@ -122,6 +124,7 @@ private:
     log_level_ = log_level;
     log_queries_ = log_queries;
     start_time_ = std::chrono::steady_clock::now();
+    override_schema_ = override_schema;
   }
 };
-} // namespace gizmosql::ddb
+}  // namespace gizmosql::ddb

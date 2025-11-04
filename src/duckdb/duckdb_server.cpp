@@ -59,9 +59,9 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
                                      duckdb::vector<duckdb::Value>& bind_parameters) {
   std::stringstream table_query;
 
-  table_query
-      << "SELECT table_catalog as catalog_name, table_schema as schema_name, table_name, "
-         "table_type FROM information_schema.tables where 1=1";
+  table_query << "SELECT table_catalog as catalog_name, table_schema as db_schema_name, "
+                 "table_name, "
+                 "table_type FROM information_schema.tables where 1=1";
 
   table_query << " and table_catalog = ";
   if (command.catalog.has_value()) {
@@ -132,7 +132,7 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
   ARROW_ASSIGN_OR_RAISE(
       statement,
       DuckDBStatement::Create(client_session, query,
-                              arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries))
+                              arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries, schema))
   statement->bind_parameters = bind_parameters;
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
@@ -506,13 +506,15 @@ class DuckDBFlightSqlServer::Impl {
         PrepareQueryForGetTables(command, get_tables_bind_parameters);
     std::shared_ptr<DuckDBStatement> statement;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(
-        statement,
-        DuckDBStatement::Create(client_session, get_tables_query,
-                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_))
+    auto get_tables_schema = sql::SqlSchema::GetTablesSchema();
+    ARROW_ASSIGN_OR_RAISE(statement,
+                          DuckDBStatement::Create(client_session, get_tables_query,
+                                                  arrow::util::ArrowLogLevel::ARROW_DEBUG,
+                                                  print_queries_, get_tables_schema))
     statement->bind_parameters = get_tables_bind_parameters;
+
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
-                                           statement, sql::SqlSchema::GetTablesSchema()))
+                                           statement, get_tables_schema))
 
     if (command.include_schema) {
       auto table_schema_reader = std::make_shared<DuckDBTablesWithSchemaBatchReader>(

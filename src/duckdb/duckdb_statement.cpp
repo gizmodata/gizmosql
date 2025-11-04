@@ -113,7 +113,7 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     std::shared_ptr<ClientSession> client_session, const std::string& handle,
     const std::string& sql, const arrow::util::ArrowLogLevel& log_level,
-    const bool& log_queries) {
+    const bool& log_queries, const std::shared_ptr<arrow::Schema>& override_schema) {
   client_session->active_sql_handle = handle;
   auto logged_sql = redact_sql_for_logs(sql);
   if (log_queries) {
@@ -134,14 +134,14 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     if (error_message.find("Cannot prepare multiple statements at once") !=
         std::string::npos) {
       // Fallback to direct query execution for statements like PIVOT that get rewritten to multiple statements
-      std::shared_ptr<DuckDBStatement> result(
-          new DuckDBStatement(client_session, handle, sql, log_level, log_queries));
+      std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
+          client_session, handle, sql, log_level, log_queries, override_schema));
       return result;
     }
 
     // Other preparation errors are still fatal
-    std::string err_msg = "Can't prepare statement: '" + logged_sql +
-                          "' - Error: " + error_message;
+    std::string err_msg =
+        "Can't prepare statement: '" + logged_sql + "' - Error: " + error_message;
 
     if (log_queries) {
       GIZMOSQL_LOGKV(WARNING, "Client SQL command failed preparation",
@@ -155,17 +155,19 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     return Status::Invalid(err_msg);
   }
 
-  std::shared_ptr<DuckDBStatement> result(
-      new DuckDBStatement(client_session, handle, stmt, log_level, log_queries));
+  std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
+      client_session, handle, stmt, log_level, log_queries, override_schema));
 
   return result;
 }
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     std::shared_ptr<ClientSession> client_session, const std::string& sql,
-    const arrow::util::ArrowLogLevel& log_level, const bool& log_queries) {
+    const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
+    const std::shared_ptr<arrow::Schema>& override_schema) {
   std::string handle = boost::uuids::to_string(boost::uuids::random_generator()());
-  return DuckDBStatement::Create(client_session, handle, sql, log_level, log_queries);
+  return DuckDBStatement::Create(client_session, handle, sql, log_level, log_queries,
+                                 override_schema);
 }
 
 DuckDBStatement::~DuckDBStatement() {}
@@ -271,8 +273,12 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   auto res_options = client_context->GetClientProperties();
   res_options.time_zone = query_result_->client_properties.time_zone;
 
-  duckdb::ArrowConverter::ToArrowSchema(&res_schema, query_result_->types,
-                                        query_result_->names, res_options);
+  if (override_schema_) {
+    ARROW_RETURN_NOT_OK(arrow::ExportSchema(*override_schema_, &res_schema));
+  } else {
+    duckdb::ArrowConverter::ToArrowSchema(&res_schema, query_result_->types,
+                                          query_result_->names, res_options);
+  }
 
   duckdb::unique_ptr<duckdb::DataChunk> data_chunk;
   duckdb::ErrorData fetch_error;
@@ -286,7 +292,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
         extension_type_cast;
     duckdb::ArrowConverter::ToArrowArray(*data_chunk, &res_arr, res_options,
                                          extension_type_cast);
-    ARROW_ASSIGN_OR_RAISE(record_batch, arrow::ImportRecordBatch(&res_arr, &res_schema));
+    ARROW_ASSIGN_OR_RAISE(record_batch,
+                          arrow::ImportRecordBatch(&res_arr, &res_schema));
   }
 
   return record_batch;
@@ -324,6 +331,10 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const {
+  if (override_schema_) {
+    return override_schema_;
+  }
+
   if (use_direct_execution_) {
     // For direct execution, we need to execute the query to get schema information
     // This is a temporary execution just to get the schema
