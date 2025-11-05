@@ -59,9 +59,9 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
                                      duckdb::vector<duckdb::Value>& bind_parameters) {
   std::stringstream table_query;
 
-  table_query
-      << "SELECT table_catalog as catalog_name, table_schema as schema_name, table_name, "
-         "table_type FROM information_schema.tables where 1=1";
+  table_query << "SELECT table_catalog as catalog_name, table_schema as db_schema_name, "
+                 "table_name, "
+                 "table_type FROM information_schema.tables where 1=1";
 
   table_query << " and table_catalog = ";
   if (command.catalog.has_value()) {
@@ -129,10 +129,10 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const duckdb::vector<duckdb::Value>& bind_parameters, const bool& print_queries) {
   std::shared_ptr<DuckDBStatement> statement;
 
-  ARROW_ASSIGN_OR_RAISE(
-      statement,
-      DuckDBStatement::Create(client_session, query,
-                              arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries))
+  ARROW_ASSIGN_OR_RAISE(statement,
+                        DuckDBStatement::Create(client_session, query,
+                                                arrow::util::ArrowLogLevel::ARROW_DEBUG,
+                                                print_queries, schema))
   statement->bind_parameters = bind_parameters;
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
@@ -509,8 +509,10 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(
         statement,
         DuckDBStatement::Create(client_session, get_tables_query,
-                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_))
+                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
+                                sql::SqlSchema::GetTablesSchema()))
     statement->bind_parameters = get_tables_bind_parameters;
+
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
                                            statement, sql::SqlSchema::GetTablesSchema()))
 
@@ -579,7 +581,9 @@ class DuckDBFlightSqlServer::Impl {
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTableTypes(
       const flight::ServerCallContext& context) {
-    std::string query = "SELECT DISTINCT table_type FROM information_schema.tables";
+    std::string query =
+        "SELECT * FROM VALUES ('BASE TABLE'), ('LOCAL TEMPORARY'), ('VIEW') AS "
+        "table_types (table_type);";
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetTableTypesSchema(),
