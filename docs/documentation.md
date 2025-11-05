@@ -69,7 +69,7 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 |----------------------------------------------------------------------------------|---------|
 | [DuckDB](https://duckdb.org)                                                     | v1.4.1  |
 | [SQLite](https://sqlite.org)                                                     | 3.50.4  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 21.0.0  |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 22.0.0 |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.1  |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
 
@@ -368,7 +368,7 @@ $ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 21.0.0
+Apache Arrow version: 22.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.4.1
 Running Init SQL command: 
@@ -396,7 +396,7 @@ The above will produce output similar to the following:
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 21.0.0
+Apache Arrow version: 22.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
 Using database file: "/Users/philip/Documents/git/gizmosql/data/TPC-H-small.sqlite"
