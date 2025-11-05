@@ -105,6 +105,28 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
 
     ARROW_ASSIGN_OR_RAISE(*batch,
                           first_batch->AddColumn(4, "table_schema", schema_array));
+
+    // Conform the batch to the expected schema using RecordBatch selection
+    const auto& expected_schema = schema();
+
+    std::vector<std::shared_ptr<arrow::Array>> conformed_arrays;
+    conformed_arrays.reserve(expected_schema->num_fields());
+
+    for (const auto& expected_field : expected_schema->fields()) {
+      int column_index = (*batch)->schema()->GetFieldIndex(expected_field->name());
+
+      if (column_index == -1) {
+        return arrow::Status::Invalid("Expected column '", expected_field->name(),
+                                      "' not found in result batch");
+      }
+
+      conformed_arrays.push_back((*batch)->column(column_index));
+    }
+
+    // Create new batch with columns in the correct order and with the expected schema
+    *batch =
+        arrow::RecordBatch::Make(expected_schema, (*batch)->num_rows(), conformed_arrays);
+
     already_executed_ = true;
 
     return Status::OK();
