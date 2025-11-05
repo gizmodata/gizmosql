@@ -583,7 +583,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context) {
     std::string query =
         "SELECT * FROM VALUES ('BASE TABLE'), ('LOCAL TEMPORARY'), ('VIEW') AS "
-        "table_types (table_type);";
+        "table_types (table_type)";
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetTableTypesSchema(),
