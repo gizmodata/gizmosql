@@ -9,6 +9,7 @@ L_TLS_ENABLED=${4:-${TLS_ENABLED:-"0"}}
 L_TLS_CERT=${5:-${TLS_CERT}}
 L_TLS_KEY=${6:-${TLS_KEY}}
 L_READONLY=${7:-${READONLY:-"0"}}
+L_QUERY_TIMEOUT=${8:-${QUERY_TIMEOUT:-"0"}}
 
 TLS_ARG=""
 if [ "${L_TLS_ENABLED}" == "1" ]
@@ -37,4 +38,10 @@ then
   READONLY_FLAG="--readonly"
 fi
 
-gizmosql_server --backend="${L_DATABASE_BACKEND}" --database-filename="${L_DATABASE_FILENAME}" ${TLS_ARG} ${PRINT_QUERIES_FLAG} ${READONLY_FLAG}
+gizmosql_server \
+  --backend="${L_DATABASE_BACKEND}" \
+  --database-filename="${L_DATABASE_FILENAME}" \
+  ${TLS_ARG} \
+  ${PRINT_QUERIES_FLAG} \
+  ${READONLY_FLAG} \
+  --query-timeout ${L_QUERY_TIMEOUT}
