@@ -181,7 +181,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 
 > [!TIP]
 > You can now use the: `--query-timeout` argument to set a maximum query timeout in seconds for the server.  Queries running longer than the timeout will be killed.  The default value of: `0` means "unlimited".   
-> Example: `gizmosql_server --query-timeout 10`   
+> Example: `gizmosql_server (other args...) --query-timeout 10`   
 > will set a timeout of 10 seconds for all queries.
 
 ---
