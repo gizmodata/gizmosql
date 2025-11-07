@@ -50,7 +50,7 @@ class DuckDBStatement {
       const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = false,
+      const bool& log_queries = false, const int32_t& query_timeout = 0,
       const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
 
   // Convenience method to generate a handle for the caller
@@ -58,7 +58,7 @@ class DuckDBStatement {
       std::shared_ptr<ClientSession> client_session, const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = false,
+      const bool& log_queries = false, const int32_t& query_timeout = 0,
       const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
 
   ~DuckDBStatement();
@@ -88,18 +88,20 @@ class DuckDBStatement {
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
   arrow::util::ArrowLogLevel log_level_;
   bool log_queries_;
+  int32_t query_timeout_;
+  std::shared_ptr<arrow::Schema> override_schema_;
+  std::chrono::steady_clock::time_point start_time_;
+  std::chrono::steady_clock::time_point end_time_;
 
   // Support for direct query execution (fallback for statements that can't be prepared)
   std::string sql_;            // Original SQL for direct execution
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
-  std::chrono::steady_clock::time_point start_time_;
-  std::chrono::steady_clock::time_point end_time_;
-  std::shared_ptr<arrow::Schema> override_schema_;
 
   DuckDBStatement(std::shared_ptr<ClientSession> client_session,
                   const std::string& handle,
                   std::shared_ptr<duckdb::PreparedStatement> stmt,
                   const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
+                  const int32_t& query_timeout,
                   std::shared_ptr<arrow::Schema> override_schema) {
     client_session_ = client_session;
     handle_ = handle;
@@ -108,6 +110,7 @@ class DuckDBStatement {
     log_level_ = log_level;
     log_queries_ = log_queries;
     start_time_ = std::chrono::steady_clock::now();
+    query_timeout_ = query_timeout;
     override_schema_ = override_schema;
   }
 
@@ -115,6 +118,7 @@ class DuckDBStatement {
   DuckDBStatement(std::shared_ptr<ClientSession> client_session,
                   const std::string& handle, const std::string& sql,
                   const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
+                  const int32_t& query_timeout,
                   std::shared_ptr<arrow::Schema> override_schema) {
     client_session_ = client_session;
     handle_ = handle;
@@ -124,6 +128,7 @@ class DuckDBStatement {
     log_level_ = log_level;
     log_queries_ = log_queries;
     start_time_ = std::chrono::steady_clock::now();
+    query_timeout_ = query_timeout;
     override_schema_ = override_schema;
   }
 };

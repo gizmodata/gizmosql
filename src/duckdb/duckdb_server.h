@@ -35,11 +35,12 @@ std::shared_ptr<arrow::DataType> GetArrowType(const char* duckdb_type);
 /// \brief Example implementation of FlightSqlServerBase backed by an in-memory DuckDB
 ///        database.
 class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
-public:
+ public:
   ~DuckDBFlightSqlServer() override;
 
   static arrow::Result<std::shared_ptr<DuckDBFlightSqlServer>> Create(
-      const std::string& path, const bool& read_only, const bool& print_queries);
+      const std::string& path, const bool& read_only, const bool& print_queries,
+      const int32_t& query_timeout);
 
   /// \brief Auxiliary method used to execute an arbitrary SQL statement on the underlying
   ///        DuckDB database.
@@ -192,11 +193,11 @@ public:
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) override;
 
-private:
+ private:
   class Impl;
 
   std::shared_ptr<Impl> impl_;
 
   explicit DuckDBFlightSqlServer(std::shared_ptr<Impl> impl);
 };
-} // namespace gizmosql::ddb
+}  // namespace gizmosql::ddb

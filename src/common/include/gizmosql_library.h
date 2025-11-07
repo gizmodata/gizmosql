@@ -25,6 +25,7 @@ const std::string GIZMOSQL_SERVER_VERSION = PROJECT_VERSION;
 const std::string DEFAULT_GIZMOSQL_HOSTNAME = "0.0.0.0";
 const std::string DEFAULT_GIZMOSQL_USERNAME = "gizmosql_username";
 const int DEFAULT_FLIGHT_PORT = 31337;
+const int32_t DEFAULT_QUERY_TIMEOUT_SECONDS = 0;  // Unlimited timeout
 
 enum class BackendType { duckdb, sqlite };
 
@@ -54,6 +55,11 @@ enum class BackendType { duckdb, sqlite };
  * @param token_allowed_issuer The allowed token issuer for JWT token-based authentication. Default is an empty string.
  * @param token_allowed_audience The allowed token audience for JWT token-based authentication. Default is an empty string.
  * @param token_signature_verify_cert_path The path to the RSA PEM certificate file used for verifying tokens in JWT token-based authentication. Default is an empty path.
+ * @param log_level The logging level to use for the server.  Default is: info
+ * @param log_format The logging format to use.  Default is: text
+ * @param access_log Whether or not to log client access to the server.  It is VERY verbose.  Default is: off
+ * @param log_file The log file to use.  If not set, we log to stdout.  Default is: none (stdout)
+ * @param query_timeout The query timeout in seconds.  Queries running longer than this will be canceled by the server.  Default is: 0 (no timeout)
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -73,5 +79,5 @@ int RunFlightSQLServer(
     std::string token_allowed_issuer = "", std::string token_allowed_audience = "",
     std::filesystem::path token_signature_verify_cert_path = std::filesystem::path(),
     std::string log_level = "", std::string log_format = "", std::string access_log = "",
-    std::string log_file = "");
+    std::string log_file = "", int32_t query_timeout = 0);
 }
