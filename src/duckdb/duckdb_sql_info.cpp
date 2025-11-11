@@ -30,189 +30,168 @@
 
 namespace sql = flight::sql;
 
-namespace gizmosql::ddb
-{
-    // Dynamic query versions that use the server instance (emulating DuckDB Java behavior)
-    std::vector<std::string> GetDynamicKeywords(const DuckDBFlightSqlServer* server)
-    {
-        auto result = server->ExecuteSqlAndGetStringVector(
-            "SELECT keyword_name FROM duckdb_keywords() ORDER BY keyword_name");
-        if (result.ok())
-        {
-            return result.ValueOrDie();
-        }
-        // If query fails, return empty vector like Java version would
-        return {};
-    }
+namespace gizmosql::ddb {
+// Dynamic query versions that use the server instance (emulating DuckDB Java behavior)
+std::vector<std::string> GetDynamicKeywords(const DuckDBFlightSqlServer* server) {
+  auto result = server->ExecuteSqlAndGetStringVector(
+      "SELECT keyword_name FROM duckdb_keywords() ORDER BY keyword_name");
+  if (result.ok()) {
+    return result.ValueOrDie();
+  }
+  // If query fails, return empty vector like Java version would
+  return {};
+}
 
-    std::vector<std::string> GetDynamicNumericFunctions(const DuckDBFlightSqlServer* server)
-    {
-        auto result = server->ExecuteSqlAndGetStringVector(
-            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-            "AND return_type SIMILAR TO '%(INTEGER|BIGINT|DOUBLE|FLOAT|DECIMAL|NUMERIC|REAL)%' "
-            "ORDER BY function_name");
-        if (result.ok())
-        {
-            return result.ValueOrDie();
-        }
-        // If query fails, return empty vector like Java version would
-        return {};
-    }
+std::vector<std::string> GetDynamicNumericFunctions(const DuckDBFlightSqlServer* server) {
+  auto result = server->ExecuteSqlAndGetStringVector(
+      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+      "AND return_type SIMILAR TO '%(INTEGER|BIGINT|DOUBLE|FLOAT|DECIMAL|NUMERIC|REAL)%' "
+      "ORDER BY function_name");
+  if (result.ok()) {
+    return result.ValueOrDie();
+  }
+  // If query fails, return empty vector like Java version would
+  return {};
+}
 
-    std::vector<std::string> GetDynamicStringFunctions(const DuckDBFlightSqlServer* server)
-    {
-        auto result = server->ExecuteSqlAndGetStringVector(
-            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-            "AND return_type SIMILAR TO '%(VARCHAR|TEXT|STRING)%' "
-            "ORDER BY function_name");
-        if (result.ok())
-        {
-            return result.ValueOrDie();
-        }
-        // If query fails, return empty vector like Java version would
-        return {};
-    }
+std::vector<std::string> GetDynamicStringFunctions(const DuckDBFlightSqlServer* server) {
+  auto result = server->ExecuteSqlAndGetStringVector(
+      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+      "AND return_type SIMILAR TO '%(VARCHAR|TEXT|STRING)%' "
+      "ORDER BY function_name");
+  if (result.ok()) {
+    return result.ValueOrDie();
+  }
+  // If query fails, return empty vector like Java version would
+  return {};
+}
 
-    std::vector<std::string> GetDynamicSystemFunctions(const DuckDBFlightSqlServer* server)
-    {
-        auto result = server->ExecuteSqlAndGetStringVector(
-            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-            "AND (function_name LIKE '%CURRENT%' OR function_name LIKE '%SESSION%' OR "
-            "function_name LIKE '%USER%' OR function_name = 'VERSION') "
-            "ORDER BY function_name");
-        if (result.ok())
-        {
-            return result.ValueOrDie();
-        }
-        // If query fails, return empty vector like Java version would
-        return {};
-    }
+std::vector<std::string> GetDynamicSystemFunctions(const DuckDBFlightSqlServer* server) {
+  auto result = server->ExecuteSqlAndGetStringVector(
+      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+      "AND (function_name LIKE '%CURRENT%' OR function_name LIKE '%SESSION%' OR "
+      "function_name LIKE '%USER%' OR function_name = 'VERSION') "
+      "ORDER BY function_name");
+  if (result.ok()) {
+    return result.ValueOrDie();
+  }
+  // If query fails, return empty vector like Java version would
+  return {};
+}
 
-    std::vector<std::string> GetDynamicDateTimeFunctions(
-        const DuckDBFlightSqlServer* server)
-    {
-        auto result = server->ExecuteSqlAndGetStringVector(
-            "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
-            "AND return_type SIMILAR TO '%(DATE|TIME|TIMESTAMP|TIMESTAMPTZ|INTERVAL)%' "
-            "ORDER BY function_name");
-        if (result.ok())
-        {
-            return result.ValueOrDie();
-        }
-        // If query fails, return empty vector like Java version would
-        return {};
-    }
+std::vector<std::string> GetDynamicDateTimeFunctions(
+    const DuckDBFlightSqlServer* server) {
+  auto result = server->ExecuteSqlAndGetStringVector(
+      "SELECT function_name FROM duckdb_functions() WHERE function_type = 'scalar' "
+      "AND return_type SIMILAR TO '%(DATE|TIME|TIMESTAMP|TIMESTAMPTZ|INTERVAL)%' "
+      "ORDER BY function_name");
+  if (result.ok()) {
+    return result.ValueOrDie();
+  }
+  // If query fails, return empty vector like Java version would
+  return {};
+}
 
-    // Static functions for original GetSqlInfoResultMap (backward compatibility)
-    std::vector<std::string> GetStaticNumericFunctions()
-    {
-        return {
-            "ABS", "ACOS", "ASIN", "ATAN", "ATAN2", "CEIL",
-            "CEILING", "COS", "COT", "DEGREES", "EXP", "FLOOR",
-            "GREATEST", "LEAST", "LN", "LOG", "LOG10", "LOG2",
-            "MOD", "PI", "POW", "POWER", "RADIANS", "RANDOM",
-            "ROUND", "SIGN", "SIN", "SQRT", "TAN", "TRUNC",
-            "CBRT", "FACTORIAL", "GAMMA", "LGAMMA", "NEXTAFTER", "SETSEED",
-            "BIT_COUNT", "CHR", "EVEN", "XOR", "@"
-        };
-    }
+// Static functions for original GetSqlInfoResultMap (backward compatibility)
+std::vector<std::string> GetStaticNumericFunctions() {
+  return {"ABS",       "ACOS",      "ASIN",  "ATAN",    "ATAN2",     "CEIL",
+          "CEILING",   "COS",       "COT",   "DEGREES", "EXP",       "FLOOR",
+          "GREATEST",  "LEAST",     "LN",    "LOG",     "LOG10",     "LOG2",
+          "MOD",       "PI",        "POW",   "POWER",   "RADIANS",   "RANDOM",
+          "ROUND",     "SIGN",      "SIN",   "SQRT",    "TAN",       "TRUNC",
+          "CBRT",      "FACTORIAL", "GAMMA", "LGAMMA",  "NEXTAFTER", "SETSEED",
+          "BIT_COUNT", "CHR",       "EVEN",  "XOR",     "@"};
+}
 
-    std::vector<std::string> GetStaticStringFunctions()
-    {
-        return {
-            "ASCII",
-            "BIT_LENGTH",
-            "CHAR_LENGTH",
-            "CHARACTER_LENGTH",
-            "CHR",
-            "CONCAT",
-            "CONCAT_WS",
-            "FORMAT",
-            "INITCAP",
-            "INSTR",
-            "LCASE",
-            "LEFT",
-            "LENGTH",
-            "LIKE_ESCAPE",
-            "LOWER",
-            "LPAD",
-            "LTRIM",
-            "MD5",
-            "NFC_NORMALIZE",
-            "ORD",
-            "POSITION",
-            "PREFIX",
-            "PRINTF",
-            "REGEXP_EXTRACT",
-            "REGEXP_FULL_MATCH",
-            "REGEXP_MATCHES",
-            "REGEXP_REPLACE",
-            "REGEXP_SPLIT_TO_ARRAY",
-            "REPEAT",
-            "REPLACE",
-            "REVERSE",
-            "RIGHT",
-            "RPAD",
-            "RTRIM",
-            "STRPOS",
-            "SUBSTR",
-            "SUBSTRING",
-            "SUFFIX",
-            "TRIM",
-            "UCASE",
-            "UNICODE",
-            "UPPER",
-            "BASE64",
-            "FROM_BASE64",
-            "TO_BASE64",
-            "STRIP_ACCENTS",
-            "STR_SPLIT",
-            "STR_SPLIT_REGEX",
-            "STRING_SPLIT",
-            "STRING_SPLIT_REGEX",
-            "STRING_TO_ARRAY",
-            "EDITDIST3",
-            "HAMMING",
-            "JACCARD",
-            "LEVENSHTEIN",
-            "MISMATCHES",
-            "CONTAINS",
-            "NOT_LIKE_ESCAPE",
-            "ARRAY_EXTRACT",
-            "ARRAY_SLICE",
-            "LIST_ELEMENT",
-            "LIST_EXTRACT",
-            "STRLEN"
-        };
-    }
+std::vector<std::string> GetStaticStringFunctions() {
+  return {"ASCII",
+          "BIT_LENGTH",
+          "CHAR_LENGTH",
+          "CHARACTER_LENGTH",
+          "CHR",
+          "CONCAT",
+          "CONCAT_WS",
+          "FORMAT",
+          "INITCAP",
+          "INSTR",
+          "LCASE",
+          "LEFT",
+          "LENGTH",
+          "LIKE_ESCAPE",
+          "LOWER",
+          "LPAD",
+          "LTRIM",
+          "MD5",
+          "NFC_NORMALIZE",
+          "ORD",
+          "POSITION",
+          "PREFIX",
+          "PRINTF",
+          "REGEXP_EXTRACT",
+          "REGEXP_FULL_MATCH",
+          "REGEXP_MATCHES",
+          "REGEXP_REPLACE",
+          "REGEXP_SPLIT_TO_ARRAY",
+          "REPEAT",
+          "REPLACE",
+          "REVERSE",
+          "RIGHT",
+          "RPAD",
+          "RTRIM",
+          "STRPOS",
+          "SUBSTR",
+          "SUBSTRING",
+          "SUFFIX",
+          "TRIM",
+          "UCASE",
+          "UNICODE",
+          "UPPER",
+          "BASE64",
+          "FROM_BASE64",
+          "TO_BASE64",
+          "STRIP_ACCENTS",
+          "STR_SPLIT",
+          "STR_SPLIT_REGEX",
+          "STRING_SPLIT",
+          "STRING_SPLIT_REGEX",
+          "STRING_TO_ARRAY",
+          "EDITDIST3",
+          "HAMMING",
+          "JACCARD",
+          "LEVENSHTEIN",
+          "MISMATCHES",
+          "CONTAINS",
+          "NOT_LIKE_ESCAPE",
+          "ARRAY_EXTRACT",
+          "ARRAY_SLICE",
+          "LIST_ELEMENT",
+          "LIST_EXTRACT",
+          "STRLEN"};
+}
 
-    std::vector<std::string> GetStaticSystemFunctions()
-    {
-        return {
-            "CURRENT_CATALOG", "CURRENT_DATABASE", "CURRENT_SCHEMA",
-            "CURRENT_USER", "SESSION_USER", "USER",
-            "VERSION"
-        };
-    }
+std::vector<std::string> GetStaticSystemFunctions() {
+  return {"CURRENT_CATALOG", "CURRENT_DATABASE", "CURRENT_SCHEMA",
+          "CURRENT_USER",    "SESSION_USER",     "USER",
+          "VERSION"};
+}
 
-    std::vector<std::string> GetStaticDateTimeFunctions()
-    {
-        return {
-            "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP",
-            "NOW", "TODAY", "YESTERDAY", "TOMORROW", "DATE_PART",
-            "DATE_TRUNC", "EXTRACT", "STRFTIME", "STRPTIME", "AGE",
-            "DATE_ADD", "DATE_SUB", "DATEDIFF", "DATEADD", "DATESUB",
-            "LAST_DAY", "MONTHNAME", "DAYNAME", "DAYOFWEEK", "DAYOFYEAR",
-            "ISODOW", "ISOYEAR", "WEEKDAY", "WEEKOFYEAR", "YEARWEEK"
-        };
-    }
+std::vector<std::string> GetStaticDateTimeFunctions() {
+  return {
+      "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME",  "LOCALTIMESTAMP",
+      "NOW",          "TODAY",        "YESTERDAY",         "TOMORROW",   "DATE_PART",
+      "DATE_TRUNC",   "EXTRACT",      "STRFTIME",          "STRPTIME",   "AGE",
+      "DATE_ADD",     "DATE_SUB",     "DATEDIFF",          "DATEADD",    "DATESUB",
+      "LAST_DAY",     "MONTHNAME",    "DAYNAME",           "DAYOFWEEK",  "DAYOFYEAR",
+      "ISODOW",       "ISOYEAR",      "WEEKDAY",           "WEEKOFYEAR", "YEARWEEK"};
+}
 
 // clang-format off
 /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
 /// Uses dynamic queries to DuckDB like the Java driver.
 /// \param server The DuckDB server instance to use for dynamic queries
 /// \return the cache.
-sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server) {
+sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server,
+  const int32_t& query_timeout_seconds) {
   using SqlInfo = sql::SqlInfoOptions::SqlInfo;
   using SqlInfoOptions = sql::SqlInfoOptions;
   using SqlInfoResult = sql::SqlInfoResult;
@@ -304,20 +283,20 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server) {
                  SqlInfoOptions::SqlSupportsConvert::SQL_CONVERT_FLOAT,
                  SqlInfoOptions::SqlSupportsConvert::SQL_CONVERT_VARCHAR,
                  SqlInfoOptions::SqlSupportsConvert::SQL_CONVERT_CHAR})}}))},
-      // Additional server capability information  
+      // Additional server capability information
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_BULK_INGESTION, SqlInfoResult(false)}, // DuckDB supports bulk insert, but we don't yet support it
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_INGEST_TRANSACTIONS_SUPPORTED, SqlInfoResult(true)}, // DuckDB supports transactions
-      {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_STATEMENT_TIMEOUT, SqlInfoResult(static_cast<int32_t>(0))},
+      {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_STATEMENT_TIMEOUT, SqlInfoResult(query_timeout_seconds)},
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_TRANSACTION_TIMEOUT, SqlInfoResult(static_cast<int32_t>(0))},
       // Critical transaction isolation level metadata for Metabase compatibility
-      {SqlInfoOptions::SqlInfo::SQL_DEFAULT_TRANSACTION_ISOLATION, 
+      {SqlInfoOptions::SqlInfo::SQL_DEFAULT_TRANSACTION_ISOLATION,
        SqlInfoResult(static_cast<int64_t>(2))}, // TRANSACTION_READ_COMMITTED
       {SqlInfoOptions::SqlInfo::SQL_TRANSACTIONS_SUPPORTED, SqlInfoResult(true)},
-      {SqlInfoOptions::SqlInfo::SQL_SUPPORTED_TRANSACTIONS_ISOLATION_LEVELS, 
+      {SqlInfoOptions::SqlInfo::SQL_SUPPORTED_TRANSACTIONS_ISOLATION_LEVELS,
        SqlInfoResult(static_cast<int32_t>(14))}, // Support NONE, READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ (0b1110)
       {SqlInfoOptions::SqlInfo::SQL_DATA_DEFINITION_CAUSES_TRANSACTION_COMMIT, SqlInfoResult(false)},
       {SqlInfoOptions::SqlInfo::SQL_DATA_DEFINITIONS_IN_TRANSACTIONS_IGNORED, SqlInfoResult(false)},
-      
+
       // Database limit constants - matching DuckDB Java JDBC (all return 0 for no limit)
       {SqlInfoOptions::SqlInfo::SQL_MAX_BINARY_LITERAL_LENGTH, SqlInfoResult(static_cast<int32_t>(0))}, // 0 means no limit
       {SqlInfoOptions::SqlInfo::SQL_MAX_CHAR_LITERAL_LENGTH, SqlInfoResult(static_cast<int32_t>(0))}, // 0 means no limit
@@ -340,17 +319,17 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server) {
       {SqlInfoOptions::SqlInfo::SQL_MAX_TABLE_NAME_LENGTH, SqlInfoResult(static_cast<int32_t>(0))}, // 0 means no limit
       {SqlInfoOptions::SqlInfo::SQL_MAX_TABLES_IN_SELECT, SqlInfoResult(static_cast<int32_t>(0))}, // 0 means no limit
       {SqlInfoOptions::SqlInfo::SQL_MAX_USERNAME_LENGTH, SqlInfoResult(static_cast<int32_t>(0))}, // 0 means no limit
-      
+
       // Additional schema and catalog metadata
       {SqlInfoOptions::SqlInfo::SQL_SCHEMA_TERM, SqlInfoResult(std::string("schema"))},
       {SqlInfoOptions::SqlInfo::SQL_CATALOG_TERM, SqlInfoResult(std::string("catalog"))},
       {SqlInfoOptions::SqlInfo::SQL_CATALOG_AT_START, SqlInfoResult(true)},
       {SqlInfoOptions::SqlInfo::SQL_PROCEDURE_TERM, SqlInfoResult(std::string("procedure"))},
-      
+
       // Schema and catalog supported actions (bitmasks)
       {SqlInfoOptions::SqlInfo::SQL_SCHEMAS_SUPPORTED_ACTIONS, SqlInfoResult(static_cast<int32_t>(31))}, // All actions supported
       {SqlInfoOptions::SqlInfo::SQL_CATALOGS_SUPPORTED_ACTIONS, SqlInfoResult(static_cast<int32_t>(31))}, // All actions supported
-      
+
       // Additional boolean support flags commonly required by JDBC tools
       {SqlInfoOptions::SqlInfo::SQL_SUPPORTS_TABLE_CORRELATION_NAMES, SqlInfoResult(true)},
       {SqlInfoOptions::SqlInfo::SQL_SUPPORTS_DIFFERENT_TABLE_CORRELATION_NAMES, SqlInfoResult(true)},
@@ -366,7 +345,7 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server) {
       {SqlInfoOptions::SqlInfo::SQL_SAVEPOINTS_SUPPORTED, SqlInfoResult(false)},
       {SqlInfoOptions::SqlInfo::SQL_NAMED_PARAMETERS_SUPPORTED, SqlInfoResult(false)},
       {SqlInfoOptions::SqlInfo::SQL_STORED_FUNCTIONS_USING_CALL_SYNTAX_SUPPORTED, SqlInfoResult(false)},
-      
+
       // Grammar and subquery support (integer bitmasks)
       {SqlInfoOptions::SqlInfo::SQL_SUPPORTED_GROUP_BY, SqlInfoResult(static_cast<int32_t>(2))}, // GROUP_BY_BEYOND_SELECT
       {SqlInfoOptions::SqlInfo::SQL_SUPPORTED_GRAMMAR, SqlInfoResult(static_cast<int32_t>(3))}, // ANSI92_FULL
@@ -376,36 +355,36 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server) {
       {SqlInfoOptions::SqlInfo::SQL_SUPPORTED_UNIONS, SqlInfoResult(static_cast<int32_t>(3))}, // UNION and UNION ALL
       {SqlInfoOptions::SqlInfo::SQL_SUPPORTED_RESULT_SET_TYPES, SqlInfoResult(static_cast<int32_t>(1))}, // FORWARD_ONLY
       {SqlInfoOptions::SqlInfo::SQL_SUPPORTED_POSITIONED_COMMANDS, SqlInfoResult(static_cast<int32_t>(0))}, // None supported
-      
+
       // Additional keys required by Arrow Flight SQL JDBC to prevent NPEs
       {SqlInfoOptions::SqlInfo::SQL_LOCATORS_UPDATE_COPY, SqlInfoResult(false)}
   };
-  
+
   // Override with dynamically queried values - emulating DuckDB Java behavior exactly
   if (server != nullptr) {
     // Dynamic keyword lookup
-    result_map[SqlInfoOptions::SqlInfo::SQL_KEYWORDS] = 
+    result_map[SqlInfoOptions::SqlInfo::SQL_KEYWORDS] =
         SqlInfoResult(GetDynamicKeywords(server));
-    
+
     // Dynamic numeric functions
-    result_map[SqlInfoOptions::SqlInfo::SQL_NUMERIC_FUNCTIONS] = 
+    result_map[SqlInfoOptions::SqlInfo::SQL_NUMERIC_FUNCTIONS] =
         SqlInfoResult(GetDynamicNumericFunctions(server));
-    
+
     // Dynamic string functions
-    result_map[SqlInfoOptions::SqlInfo::SQL_STRING_FUNCTIONS] = 
+    result_map[SqlInfoOptions::SqlInfo::SQL_STRING_FUNCTIONS] =
         SqlInfoResult(GetDynamicStringFunctions(server));
-    
+
     // Dynamic system functions
-    result_map[SqlInfoOptions::SqlInfo::SQL_SYSTEM_FUNCTIONS] = 
+    result_map[SqlInfoOptions::SqlInfo::SQL_SYSTEM_FUNCTIONS] =
         SqlInfoResult(GetDynamicSystemFunctions(server));
-    
+
     // Dynamic datetime functions
-    result_map[SqlInfoOptions::SqlInfo::SQL_DATETIME_FUNCTIONS] = 
+    result_map[SqlInfoOptions::SqlInfo::SQL_DATETIME_FUNCTIONS] =
         SqlInfoResult(GetDynamicDateTimeFunctions(server));
   }
 
   return result_map;
 }
 
-    // clang-format on
-} // namespace gizmosql::ddb
+// clang-format on
+}  // namespace gizmosql::ddb
