@@ -24,7 +24,7 @@
 #include <random>
 #include <sstream>
 #include <iostream>
-#include <mutex>
+#include <shared_mutex>
 
 #include <arrow/api.h>
 #include <arrow/flight/server.h>
@@ -201,13 +201,13 @@ class DuckDBFlightSqlServer::Impl {
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
   std::default_random_engine gen_;
-  std::mutex sessions_mutex_;
-  std::mutex statements_mutex_;
-  std::mutex transactions_mutex_;
+  std::shared_mutex sessions_mutex_;
+  std::shared_mutex statements_mutex_;
+  std::shared_mutex transactions_mutex_;
 
   Result<std::shared_ptr<DuckDBStatement>> GetStatementByHandle(
       const std::string& handle) {
-    std::scoped_lock guard(statements_mutex_);
+    std::shared_lock read_lock(statements_mutex_);
     auto search = prepared_statements_.find(handle);
     if (search == prepared_statements_.end()) {
       return Status::KeyError("Prepared statement not found");
@@ -235,7 +235,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
 
-    std::scoped_lock lk(sessions_mutex_);
+    std::unique_lock write_lock(sessions_mutex_);
 
     if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
       return it->second;
@@ -379,7 +379,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const sql::ActionCreatePreparedStatementRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::scoped_lock guard(statements_mutex_);
+    std::unique_lock write_lock(statements_mutex_);
     const std::string handle =
         boost::uuids::to_string(boost::uuids::random_generator()());
 
@@ -436,7 +436,7 @@ class DuckDBFlightSqlServer::Impl {
 
   Status ClosePreparedStatement(const flight::ServerCallContext& context,
                                 const sql::ActionClosePreparedStatementRequest& request) {
-    std::scoped_lock guard(statements_mutex_);
+    std::unique_lock write_lock(statements_mutex_);
     const std::string& prepared_statement_handle = request.prepared_statement_handle;
 
     if (auto search = prepared_statements_.find(prepared_statement_handle);
@@ -453,7 +453,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const sql::PreparedStatementQuery& command,
       const flight::FlightDescriptor& descriptor) {
-    std::scoped_lock guard(statements_mutex_);
+    std::shared_lock read_lock(statements_mutex_);
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
     auto search = prepared_statements_.find(prepared_statement_handle);
@@ -471,7 +471,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetPreparedStatement(
       const flight::ServerCallContext& context,
       const sql::PreparedStatementQuery& command) {
-    std::scoped_lock guard(statements_mutex_);
+    std::shared_lock read_lock(statements_mutex_);
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
     auto search = prepared_statements_.find(prepared_statement_handle);
@@ -775,7 +775,7 @@ class DuckDBFlightSqlServer::Impl {
       const sql::ActionBeginTransactionRequest& request) {
     std::string handle = boost::uuids::to_string(boost::uuids::random_generator()());
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::scoped_lock guard(transactions_mutex_);
+    std::unique_lock write_lock(transactions_mutex_);
     open_transactions_[handle] = "";
 
     ARROW_RETURN_NOT_OK(ExecuteSql(client_session->connection, "BEGIN TRANSACTION"));
@@ -793,7 +793,7 @@ class DuckDBFlightSqlServer::Impl {
       } else {
         status = ExecuteSql(client_session->connection, "ROLLBACK");
       }
-      std::scoped_lock guard(transactions_mutex_);
+      std::unique_lock write_lock(transactions_mutex_);
       open_transactions_.erase(request.transaction_id);
     }
     return status;
@@ -883,7 +883,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::scoped_lock lk(sessions_mutex_);
+    std::unique_lock write_lock(sessions_mutex_);
     auto it = client_sessions_.find(client_session->session_id);
     if (it != client_sessions_.end()) {
       it->second.reset();
