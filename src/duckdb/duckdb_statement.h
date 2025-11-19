@@ -95,7 +95,12 @@ class DuckDBStatement {
 
   // Support for direct query execution (fallback for statements that can't be prepared)
   std::string sql_;            // Original SQL for direct execution
+  std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
+  // Cached result (needs to be mutable because GetSchema() is const)
+  mutable arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
+  // Used to ensure thread-safe lazy init
+  mutable std::once_flag schema_once_flag_;
 
   DuckDBStatement(std::shared_ptr<ClientSession> client_session,
                   const std::string& handle,
@@ -106,6 +111,7 @@ class DuckDBStatement {
     client_session_ = client_session;
     handle_ = handle;
     stmt_ = stmt;
+    logged_sql_ = redact_sql_for_logs(stmt->query);
     use_direct_execution_ = false;
     log_level_ = log_level;
     log_queries_ = log_queries;
@@ -123,6 +129,7 @@ class DuckDBStatement {
     client_session_ = client_session;
     handle_ = handle;
     sql_ = sql;
+    logged_sql_ = redact_sql_for_logs(sql);
     use_direct_execution_ = true;
     stmt_ = nullptr;
     log_level_ = log_level;
@@ -131,5 +138,7 @@ class DuckDBStatement {
     query_timeout_ = query_timeout;
     override_schema_ = override_schema;
   }
+
+  arrow::Result<std::shared_ptr<arrow::Schema>> ComputeSchema() const;
 };
 }  // namespace gizmosql::ddb
