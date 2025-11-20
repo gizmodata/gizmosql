@@ -69,7 +69,6 @@ class DuckDBStatement {
 
   arrow::Result<int> Execute();
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
-  // arrow::Result<std::shared_ptr<Schema>> GetArrowSchema();
 
   std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
 
@@ -98,10 +97,9 @@ class DuckDBStatement {
   std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
-  // Cached result (needs to be mutable because GetSchema() is const)
-  mutable arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
+  arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
   // Used to ensure thread-safe lazy init
-  mutable std::once_flag schema_once_flag_;
+  std::once_flag schema_once_flag_;
 
   DuckDBStatement(std::shared_ptr<ClientSession> client_session,
                   const std::string& handle,
