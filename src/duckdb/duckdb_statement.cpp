@@ -424,20 +424,19 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
 
     auto return_value = arrow::ImportSchema(&arrow_schema);
     return return_value;
-  } else {
-    // Traditional prepared statement schema retrieval
-    auto names = stmt_->GetNames();
-    auto types = stmt_->GetTypes();
-
-    auto client_properties = client_context_->GetClientProperties();
-
-    ArrowSchema arrow_schema;
-    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
-
-    auto return_value = arrow::ImportSchema(&arrow_schema);
-
-    return return_value;
   }
+
+  // Traditional prepared statement schema retrieval
+  auto names = stmt_->GetNames();
+  auto types = stmt_->GetTypes();
+
+  auto client_properties = client_context_->GetClientProperties();
+
+  ArrowSchema arrow_schema;
+  duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
+
+  auto return_value = arrow::ImportSchema(&arrow_schema);
+  return return_value;
 }
 
 }  // namespace gizmosql::ddb
