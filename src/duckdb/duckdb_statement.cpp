@@ -204,33 +204,32 @@ arrow::Result<int> DuckDBStatement::Execute() {
               {"query_timeout", std::to_string(query_timeout_)});
         }
         return 0;  // Success
-      } else {
-        if (!bind_parameters.empty()) {
-          client_session_->active_sql_handle = "";
-          return arrow::Status::Invalid(
-              "Direct query execution does not support bind parameters");
-        }
-
-        auto result = client_session_->connection->Query(sql_);
-
-        client_session_->active_sql_handle = "";
-
-        if (result->HasError()) {
-          if (log_queries_) {
-            GIZMOSQL_LOGKV(
-                WARNING, "Client SQL command failed direct execution",
-                {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
-                {"session_id", client_session_->session_id},
-                {"user", client_session_->username}, {"role", client_session_->role},
-                {"statement_handle", handle_}, {"error", result->GetError()},
-                {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout_)});
-          }
-          return arrow::Status::ExecutionError("Direct query execution error: ",
-                                               result->GetError());
-        }
-
-        query_result_ = std::move(result);
       }
+      if (!bind_parameters.empty()) {
+        client_session_->active_sql_handle = "";
+        return arrow::Status::Invalid(
+            "Direct query execution does not support bind parameters");
+      }
+
+      auto result = client_session_->connection->Query(sql_);
+
+      client_session_->active_sql_handle = "";
+
+      if (result->HasError()) {
+        if (log_queries_) {
+          GIZMOSQL_LOGKV(
+              WARNING, "Client SQL command failed direct execution",
+              {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
+              {"session_id", client_session_->session_id},
+              {"user", client_session_->username}, {"role", client_session_->role},
+              {"statement_handle", handle_}, {"error", result->GetError()},
+              {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout_)});
+        }
+        return arrow::Status::ExecutionError("Direct query execution error: ",
+                                             result->GetError());
+      }
+
+      query_result_ = std::move(result);
     } else {
       if (log_queries_ && !bind_parameters.empty()) {
         std::stringstream params_str;
