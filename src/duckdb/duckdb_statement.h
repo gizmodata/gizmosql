@@ -101,12 +101,12 @@ class DuckDBStatement {
   // Used to ensure thread-safe lazy init
   std::once_flag schema_once_flag_;
 
-  DuckDBStatement(std::shared_ptr<ClientSession> client_session,
+  DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle,
-                  std::shared_ptr<duckdb::PreparedStatement> stmt,
+                  const std::shared_ptr<duckdb::PreparedStatement>& stmt,
                   const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
                   const int32_t& query_timeout,
-                  std::shared_ptr<arrow::Schema> override_schema) {
+                  const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     stmt_ = stmt;
@@ -122,11 +122,11 @@ class DuckDBStatement {
   }
 
   // Constructor for direct execution mode
-  DuckDBStatement(std::shared_ptr<ClientSession> client_session,
+  DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle, const std::string& sql,
                   const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
                   const int32_t& query_timeout,
-                  std::shared_ptr<arrow::Schema> override_schema) {
+                  const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     sql_ = sql;

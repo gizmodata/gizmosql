@@ -23,7 +23,6 @@
 #include <map>
 #include <random>
 #include <sstream>
-#include <iostream>
 #include <shared_mutex>
 
 #include <arrow/api.h>
@@ -83,7 +82,7 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
 
   if (!command.table_types.empty()) {
     table_query << " and table_type IN (";
-    size_t size = command.table_types.size();
+    const size_t size = command.table_types.size();
     for (size_t i = 0; i < size; i++) {
       table_query << "?";
       bind_parameters.push_back(command.table_types[i]);
@@ -112,7 +111,7 @@ Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& st
     for (int row_index = 0; row_index < num_rows; ++row_index) {
       for (int column_index = 0; column_index < num_columns; ++column_index) {
         const std::shared_ptr<arrow::Array>& column = record_batch->column(column_index);
-        ARROW_ASSIGN_OR_RAISE(std::shared_ptr<arrow::Scalar> scalar,
+        ARROW_ASSIGN_OR_RAISE(const std::shared_ptr<arrow::Scalar> scalar,
                               column->GetScalar(row_index))
 
         stmt->bind_parameters.push_back(scalar->ToString());
@@ -147,7 +146,7 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<ClientSession>& client_session, const std::string& query,
     const std::shared_ptr<arrow::Schema>& schema, const bool& print_queries,
     const int32_t& query_timeout) {
-  duckdb::vector<duckdb::Value> bind_parameters;
+  const duckdb::vector<duckdb::Value> bind_parameters;
   return DoGetDuckDBQuery(client_session, query, schema, bind_parameters, print_queries,
                           query_timeout);
 }
