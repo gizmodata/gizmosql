@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <shared_mutex>
+
 #include "gizmosql_security.h"
 #include "request_ctx.h"
 
