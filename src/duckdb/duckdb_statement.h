@@ -34,7 +34,7 @@ using Clock = std::chrono::steady_clock;
 
 namespace gizmosql::ddb {
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
-    const duckdb::LogicalType duckdb_type);
+    const duckdb::LogicalType& duckdb_type);
 
 /// \brief Create an object ColumnMetadata using the column type and
 ///        table name.
@@ -46,7 +46,7 @@ flight::sql::ColumnMetadata GetColumnMetadata(int column_type, const char* table
 class DuckDBStatement {
  public:
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
-      std::shared_ptr<ClientSession> client_session, const std::string& handle,
+      const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
       const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
@@ -55,7 +55,7 @@ class DuckDBStatement {
 
   // Convenience method to generate a handle for the caller
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
-      std::shared_ptr<ClientSession> client_session, const std::string& sql,
+      const std::shared_ptr<ClientSession>& client_session, const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
       const bool& log_queries = false, const int32_t& query_timeout = 0,
@@ -65,11 +65,10 @@ class DuckDBStatement {
 
   /// \brief Creates an Arrow Schema based on the results of this statement.
   /// \return              The resulting Schema.
-  arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema() const;
+  arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema();
 
   arrow::Result<int> Execute();
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
-  // arrow::Result<std::shared_ptr<Schema>> GetArrowSchema();
 
   std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
 
@@ -97,17 +96,17 @@ class DuckDBStatement {
   std::string sql_;            // Original SQL for direct execution
   std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
-  // Cached result (needs to be mutable because GetSchema() is const)
-  mutable arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
+  duckdb::shared_ptr<duckdb::ClientContext> client_context_;
+  arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
   // Used to ensure thread-safe lazy init
-  mutable std::once_flag schema_once_flag_;
+  std::once_flag schema_once_flag_;
 
-  DuckDBStatement(std::shared_ptr<ClientSession> client_session,
+  DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle,
-                  std::shared_ptr<duckdb::PreparedStatement> stmt,
+                  const std::shared_ptr<duckdb::PreparedStatement>& stmt,
                   const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
                   const int32_t& query_timeout,
-                  std::shared_ptr<arrow::Schema> override_schema) {
+                  const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     stmt_ = stmt;
@@ -118,14 +117,16 @@ class DuckDBStatement {
     start_time_ = std::chrono::steady_clock::now();
     query_timeout_ = query_timeout;
     override_schema_ = override_schema;
+    query_result_ = nullptr;
+    client_context_ = stmt->context;
   }
 
   // Constructor for direct execution mode
-  DuckDBStatement(std::shared_ptr<ClientSession> client_session,
+  DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle, const std::string& sql,
                   const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
                   const int32_t& query_timeout,
-                  std::shared_ptr<arrow::Schema> override_schema) {
+                  const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     sql_ = sql;
@@ -137,8 +138,10 @@ class DuckDBStatement {
     start_time_ = std::chrono::steady_clock::now();
     query_timeout_ = query_timeout;
     override_schema_ = override_schema;
+    query_result_ = nullptr;
+    client_context_ = client_session->connection->context;
   }
 
-  arrow::Result<std::shared_ptr<arrow::Schema>> ComputeSchema() const;
+  arrow::Result<std::shared_ptr<arrow::Schema>> ComputeSchema();
 };
 }  // namespace gizmosql::ddb

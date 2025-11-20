@@ -15,8 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <mutex>
+#include <shared_mutex>
+
 #include "gizmosql_security.h"
-#include "gizmosql_logging.h"
 #include "request_ctx.h"
 
 namespace fs = std::filesystem;
@@ -31,6 +33,7 @@ const std::string kTokenUsername = "token";
 const std::string kBasicPrefix = "Basic ";
 const std::string kBearerPrefix = "Bearer ";
 const std::string kAuthHeader = "authorization";
+const int kMaxLoggedTokens = 50000;
 
 // ----------------------------------------
 Status SecurityUtilities::FlightServerTlsCertificates(
@@ -386,6 +389,37 @@ BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
     const std::string& secret_key)
     : secret_key_(secret_key) {}
 
+arrow::util::ArrowLogLevel BearerAuthServerMiddlewareFactory::GetTokenLogLevel(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) const {
+  arrow::util::ArrowLogLevel level = arrow::util::ArrowLogLevel::ARROW_DEBUG;
+  const std::string& token_id = decoded.get_id();
+  if (token_id.empty()) {
+    return level;
+  }
+
+  {
+    std::shared_lock read_lock(token_log_mutex_);
+    if (logged_token_ids_.find(token_id) != logged_token_ids_.end()) {
+      return level;  // already seen → DEBUG
+    }
+  }
+
+  {
+    std::unique_lock write_lock(token_log_mutex_);
+    auto [it, inserted] = logged_token_ids_.insert(token_id);
+    if (!inserted) {
+      return level;  // someone else raced and inserted it
+    }
+
+    if (logged_token_ids_.size() > kMaxLoggedTokens) {
+      logged_token_ids_.clear();
+      logged_token_ids_.insert(token_id);
+    }
+
+    return arrow::util::ArrowLogLevel::ARROW_INFO;
+  }
+}
+
 arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
 BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
     const std::string& token, const flight::ServerCallContext& context) const {
@@ -418,25 +452,7 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
 
     verifier.verify(decoded);
 
-    // If we got this far, the token verified successfully
-    // Only log success at INFO level once per token ID
-    arrow::util::ArrowLogLevel token_log_level = arrow::util::ArrowLogLevel::ARROW_DEBUG;
-    {
-      std::lock_guard<std::mutex> lk(token_log_mutex_);
-      const std::string& token_id = decoded.get_id();
-      if (!token_id.empty() &&
-          logged_token_ids_.find(token_id) == logged_token_ids_.end()) {
-        logged_token_ids_.insert(token_id);
-        token_log_level = arrow::util::ArrowLogLevel::ARROW_INFO;
-
-        // Optional: simple bound to avoid unbounded growth
-        if (logged_token_ids_.size() > 50000) {
-          logged_token_ids_.clear();
-          // Re-insert current id so it remains considered logged
-          logged_token_ids_.insert(token_id);
-        }
-      }
-    }
+    auto token_log_level = GetTokenLogLevel(decoded);
 
     GIZMOSQL_LOGKV_DYNAMIC(
         token_log_level,

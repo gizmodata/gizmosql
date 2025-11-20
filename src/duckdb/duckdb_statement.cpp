@@ -20,13 +20,11 @@
 #include <duckdb.h>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
-#include <iostream>
 #include <future>
 #include <chrono>
 
 #include <boost/algorithm/string.hpp>
 
-#include <arrow/flight/sql/column_metadata.h>
 #include <arrow/util/logging.h>
 #include <arrow/c/bridge.h>
 #include "duckdb_server.h"
@@ -40,15 +38,13 @@ using duckdb::QueryResult;
 
 namespace gizmosql::ddb {
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
-    const duckdb::LogicalType duckdb_type) {
-  const duckdb::LogicalTypeId column_type_id = duckdb_type.id();
-  switch (column_type_id) {
+    const duckdb::LogicalType& duckdb_type) {
+  switch (duckdb_type.id()) {
     case duckdb::LogicalTypeId::INTEGER:
       return arrow::int32();
     case duckdb::LogicalTypeId::DECIMAL: {
       uint8_t width = 0;
       uint8_t scale = 0;
-      bool dec_properties = duckdb_type.GetDecimalProperties(width, scale);
       return arrow::smallest_decimal(scale, width);
     }
     case duckdb::LogicalTypeId::FLOAT:
@@ -113,7 +109,7 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 }
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
-    std::shared_ptr<ClientSession> client_session, const std::string& handle,
+    const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
     const std::string& sql, const arrow::util::ArrowLogLevel& log_level,
     const bool& log_queries, const int32_t& query_timeout,
     const std::shared_ptr<arrow::Schema>& override_schema) {
@@ -180,7 +176,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 }
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
-    std::shared_ptr<ClientSession> client_session, const std::string& sql,
+    const std::shared_ptr<ClientSession>& client_session, const std::string& sql,
     const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
     const int32_t& query_timeout, const std::shared_ptr<arrow::Schema>& override_schema) {
   std::string handle = boost::uuids::to_string(boost::uuids::random_generator()());
@@ -194,6 +190,21 @@ arrow::Result<int> DuckDBStatement::Execute() {
   // Launch execution in a separate thread
   auto future = std::async(std::launch::async, [this]() -> arrow::Result<int> {
     if (use_direct_execution_) {
+      // The statement may have already been executed from the ComputeSchema() method - if so, just skip execution
+      if (query_result_ != nullptr) {
+        if (log_queries_) {
+          GIZMOSQL_LOGKV_DYNAMIC(
+              log_level_,
+              "Direct execution of the SQL command has already occurred, skipping "
+              "re-execution",
+              {"peer", client_session_->peer}, {"kind", "sql"},
+              {"status", "already-executed"}, {"session_id", client_session_->session_id},
+              {"user", client_session_->username}, {"role", client_session_->role},
+              {"statement_handle", handle_},
+              {"query_timeout", std::to_string(query_timeout_)});
+        }
+        return 0;  // Success
+      }
       if (!bind_parameters.empty()) {
         client_session_->active_sql_handle = "";
         return arrow::Status::Invalid(
@@ -276,7 +287,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
     // Timeout occurred - interrupt the query
     client_session_->connection->Interrupt();
 
-    // Now wait for background thread to finish cleanly
+    // Now wait for the background thread to finish cleanly
     future.wait();
 
     client_session_->active_sql_handle = "";
@@ -318,25 +329,11 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   ArrowArray res_arr;
   ArrowSchema res_schema;
 
-  // Get client context - handle both prepared statement and direct execution modes
-  duckdb::shared_ptr<duckdb::ClientContext> client_context;
-  if (use_direct_execution_) {
-    // For direct execution, get context from the connection
-    client_context = client_session_->connection->context;
-  } else {
-    // For prepared statements, get context from the statement
-    client_context = stmt_->context;
-  }
-
-  auto res_options = client_context->GetClientProperties();
+  auto res_options = client_context_->GetClientProperties();
   res_options.time_zone = query_result_->client_properties.time_zone;
 
-  if (override_schema_) {
-    ARROW_RETURN_NOT_OK(arrow::ExportSchema(*override_schema_, &res_schema));
-  } else {
-    duckdb::ArrowConverter::ToArrowSchema(&res_schema, query_result_->types,
-                                          query_result_->names, res_options);
-  }
+  ARROW_ASSIGN_OR_RAISE(auto schema, GetSchema());
+  ARROW_RETURN_NOT_OK(arrow::ExportSchema(*schema, &res_schema));
 
   duckdb::unique_ptr<duckdb::DataChunk> data_chunk;
   duckdb::ErrorData fetch_error;
@@ -396,7 +393,12 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
   return result_batch->num_rows();
 }
 
-arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() const {
+arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
+  // If there is an override schema - just return it and avoid computation...
+  if (override_schema_) {
+    return override_schema_;
+  }
+
   // Lazily compute & memoize schema exactly once
   std::call_once(schema_once_flag_, [this] {
     cached_schema_ = ComputeSchema();  // Store the Result<>
@@ -410,45 +412,31 @@ long DuckDBStatement::GetLastExecutionDurationMs() const {
       .count();
 }
 
-arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() const {
-  if (override_schema_) {
-    return override_schema_;
-  }
-
+arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   if (use_direct_execution_) {
     // For direct execution, we need to execute the query to get schema information
-    // This is a temporary execution just to get the schema
-    auto schema_sql = "SELECT * FROM (" + sql_ + ") LIMIT 0";
-    auto temp_result = client_session_->connection->Query(schema_sql);
-    if (temp_result->HasError()) {
-      return arrow::Status::ExecutionError("Failed to get schema for direct query: ",
-                                           temp_result->GetError());
-    }
-
-    auto& context = client_session_->connection->context;
-    auto client_properties = context->GetClientProperties();
+    ARROW_RETURN_NOT_OK(Execute());
+    auto client_properties = client_context_->GetClientProperties();
 
     ArrowSchema arrow_schema;
-    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, temp_result->types,
-                                          temp_result->names, client_properties);
+    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, query_result_->types,
+                                          query_result_->names, client_properties);
 
     auto return_value = arrow::ImportSchema(&arrow_schema);
-    return return_value;
-  } else {
-    // Traditional prepared statement schema retrieval
-    auto names = stmt_->GetNames();
-    auto types = stmt_->GetTypes();
-
-    auto& context = stmt_->context;
-    auto client_properties = context->GetClientProperties();
-
-    ArrowSchema arrow_schema;
-    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
-
-    auto return_value = arrow::ImportSchema(&arrow_schema);
-
     return return_value;
   }
+
+  // Traditional prepared statement schema retrieval
+  auto names = stmt_->GetNames();
+  auto types = stmt_->GetTypes();
+
+  auto client_properties = client_context_->GetClientProperties();
+
+  ArrowSchema arrow_schema;
+  duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
+
+  auto return_value = arrow::ImportSchema(&arrow_schema);
+  return return_value;
 }
 
 }  // namespace gizmosql::ddb

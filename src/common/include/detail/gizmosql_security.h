@@ -28,14 +28,15 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <mutex>
+#include <shared_mutex>
 #include <unordered_set>
 
 #include "flight_sql_fwd.h"
+#include "gizmosql_logging.h"
 
 namespace gizmosql {
 class SecurityUtilities {
-public:
+ public:
   static arrow::Status FlightServerTlsCertificates(const std::filesystem::path& cert_path,
                                                    const std::filesystem::path& key_path,
                                                    std::vector<flight::CertKeyPair>* out);
@@ -55,7 +56,7 @@ public:
 };
 
 class BasicAuthServerMiddleware : public flight::ServerMiddleware {
-public:
+ public:
   BasicAuthServerMiddleware(const std::string& username, const std::string& role,
                             const std::string& auth_method,
                             const std::string& secret_key);
@@ -70,7 +71,7 @@ public:
 
   std::string name() const override;
 
-private:
+ private:
   std::string username_;
   std::string role_;
   std::string auth_method_;
@@ -80,20 +81,18 @@ private:
 };
 
 class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory {
-public:
-  BasicAuthServerMiddlewareFactory(const std::string& username,
-                                   const std::string& password,
-                                   const std::string& secret_key,
-                                   const std::string& token_allowed_issuer,
-                                   const std::string& token_allowed_audience,
-                                   const std::filesystem::path&
-                                   token_signature_verify_cert_path);
+ public:
+  BasicAuthServerMiddlewareFactory(
+      const std::string& username, const std::string& password,
+      const std::string& secret_key, const std::string& token_allowed_issuer,
+      const std::string& token_allowed_audience,
+      const std::filesystem::path& token_signature_verify_cert_path);
 
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
                           std::shared_ptr<flight::ServerMiddleware>* middleware) override;
 
-private:
+ private:
   std::string username_;
   std::string password_;
   std::string secret_key_;
@@ -104,13 +103,12 @@ private:
   bool token_auth_enabled_ = false;
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
-  VerifyAndDecodeBootstrapToken(
-      const std::string& token,
-      const flight::ServerCallContext& context) const;
+  VerifyAndDecodeBootstrapToken(const std::string& token,
+                                const flight::ServerCallContext& context) const;
 };
 
 class BearerAuthServerMiddleware : public flight::ServerMiddleware {
-public:
+ public:
   explicit BearerAuthServerMiddleware(
       const jwt::decoded_jwt<jwt::traits::kazuho_picojson> decoded_jwt);
 
@@ -124,28 +122,29 @@ public:
 
   std::string name() const override;
 
-private:
+ private:
   jwt::decoded_jwt<jwt::traits::kazuho_picojson> decoded_jwt_;
 };
 
 class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory {
-public:
-  explicit BearerAuthServerMiddlewareFactory(
-      const std::string& secret_key);
+ public:
+  explicit BearerAuthServerMiddlewareFactory(const std::string& secret_key);
 
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
                           std::shared_ptr<flight::ServerMiddleware>* middleware) override;
 
-private:
+ private:
   std::string secret_key_;
 
   // Track tokens we've already logged as successfully validated
-  mutable std::mutex token_log_mutex_;
+  mutable std::shared_mutex token_log_mutex_;
   mutable std::unordered_set<std::string> logged_token_ids_;
 
+  arrow::util::ArrowLogLevel GetTokenLogLevel(
+      const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) const;
+
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>> VerifyAndDecodeToken(
-      const std::string& token,
-      const flight::ServerCallContext& context) const;
+      const std::string& token, const flight::ServerCallContext& context) const;
 };
-} // namespace gizmosql
+}  // namespace gizmosql
