@@ -34,7 +34,7 @@ using Clock = std::chrono::steady_clock;
 
 namespace gizmosql::ddb {
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
-    const duckdb::LogicalType duckdb_type);
+    const duckdb::LogicalType& duckdb_type);
 
 /// \brief Create an object ColumnMetadata using the column type and
 ///        table name.
@@ -46,7 +46,7 @@ flight::sql::ColumnMetadata GetColumnMetadata(int column_type, const char* table
 class DuckDBStatement {
  public:
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
-      std::shared_ptr<ClientSession> client_session, const std::string& handle,
+      const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
       const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
@@ -55,7 +55,7 @@ class DuckDBStatement {
 
   // Convenience method to generate a handle for the caller
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
-      std::shared_ptr<ClientSession> client_session, const std::string& sql,
+      const std::shared_ptr<ClientSession>& client_session, const std::string& sql,
       const arrow::util::ArrowLogLevel& log_level =
           arrow::util::ArrowLogLevel::ARROW_INFO,
       const bool& log_queries = false, const int32_t& query_timeout = 0,

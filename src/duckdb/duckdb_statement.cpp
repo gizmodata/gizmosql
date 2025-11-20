@@ -20,13 +20,11 @@
 #include <duckdb.h>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
-#include <iostream>
 #include <future>
 #include <chrono>
 
 #include <boost/algorithm/string.hpp>
 
-#include <arrow/flight/sql/column_metadata.h>
 #include <arrow/util/logging.h>
 #include <arrow/c/bridge.h>
 #include "duckdb_server.h"
@@ -40,15 +38,13 @@ using duckdb::QueryResult;
 
 namespace gizmosql::ddb {
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
-    const duckdb::LogicalType duckdb_type) {
-  const duckdb::LogicalTypeId column_type_id = duckdb_type.id();
-  switch (column_type_id) {
+    const duckdb::LogicalType& duckdb_type) {
+  switch (duckdb_type.id()) {
     case duckdb::LogicalTypeId::INTEGER:
       return arrow::int32();
     case duckdb::LogicalTypeId::DECIMAL: {
       uint8_t width = 0;
       uint8_t scale = 0;
-      bool dec_properties = duckdb_type.GetDecimalProperties(width, scale);
       return arrow::smallest_decimal(scale, width);
     }
     case duckdb::LogicalTypeId::FLOAT:
@@ -113,7 +109,7 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 }
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
-    std::shared_ptr<ClientSession> client_session, const std::string& handle,
+    const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
     const std::string& sql, const arrow::util::ArrowLogLevel& log_level,
     const bool& log_queries, const int32_t& query_timeout,
     const std::shared_ptr<arrow::Schema>& override_schema) {
@@ -180,7 +176,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 }
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
-    std::shared_ptr<ClientSession> client_session, const std::string& sql,
+    const std::shared_ptr<ClientSession>& client_session, const std::string& sql,
     const arrow::util::ArrowLogLevel& log_level, const bool& log_queries,
     const int32_t& query_timeout, const std::shared_ptr<arrow::Schema>& override_schema) {
   std::string handle = boost::uuids::to_string(boost::uuids::random_generator()());
@@ -292,7 +288,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
     // Timeout occurred - interrupt the query
     client_session_->connection->Interrupt();
 
-    // Now wait for background thread to finish cleanly
+    // Now wait for the background thread to finish cleanly
     future.wait();
 
     client_session_->active_sql_handle = "";
@@ -420,7 +416,7 @@ long DuckDBStatement::GetLastExecutionDurationMs() const {
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   if (use_direct_execution_) {
     // For direct execution, we need to execute the query to get schema information
-    ARROW_ASSIGN_OR_RAISE(auto direct_execution_result, Execute());
+    ARROW_RETURN_NOT_OK(Execute());
     auto client_properties = client_context_->GetClientProperties();
 
     ArrowSchema arrow_schema;
