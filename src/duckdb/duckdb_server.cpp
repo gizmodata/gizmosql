@@ -23,6 +23,7 @@
 #include <map>
 #include <random>
 #include <sstream>
+#include <mutex>
 #include <shared_mutex>
 
 #include <arrow/api.h>
