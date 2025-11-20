@@ -65,7 +65,7 @@ class DuckDBStatement {
 
   /// \brief Creates an Arrow Schema based on the results of this statement.
   /// \return              The resulting Schema.
-  arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema() const;
+  arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema();
 
   arrow::Result<int> Execute();
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
@@ -97,6 +97,7 @@ class DuckDBStatement {
   std::string sql_;            // Original SQL for direct execution
   std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
+  duckdb::shared_ptr<duckdb::ClientContext> client_context_;
   // Cached result (needs to be mutable because GetSchema() is const)
   mutable arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
   // Used to ensure thread-safe lazy init
@@ -118,6 +119,8 @@ class DuckDBStatement {
     start_time_ = std::chrono::steady_clock::now();
     query_timeout_ = query_timeout;
     override_schema_ = override_schema;
+    query_result_ = nullptr;
+    client_context_ = stmt->context;
   }
 
   // Constructor for direct execution mode
@@ -137,8 +140,10 @@ class DuckDBStatement {
     start_time_ = std::chrono::steady_clock::now();
     query_timeout_ = query_timeout;
     override_schema_ = override_schema;
+    query_result_ = nullptr;
+    client_context_ = client_session->connection->context;
   }
 
-  arrow::Result<std::shared_ptr<arrow::Schema>> ComputeSchema() const;
+  arrow::Result<std::shared_ptr<arrow::Schema>> ComputeSchema();
 };
 }  // namespace gizmosql::ddb
