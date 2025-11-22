@@ -407,7 +407,6 @@ class DuckDBFlightSqlServer::Impl {
         if (client_session->role == "readonly") {
           return Status::ExecutionError(
               "User '" + client_session->username +
-              "' has a readonly session and cannot run "
               "' has a readonly session and cannot run statements that modify state.");
         }
       }
