@@ -113,8 +113,16 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::string& sql, const arrow::util::ArrowLogLevel& log_level,
     const bool& log_queries, const int32_t& query_timeout,
     const std::shared_ptr<arrow::Schema>& override_schema) {
-  client_session->active_sql_handle = handle;
+  std::string status;
   auto logged_sql = redact_sql_for_logs(sql);
+
+  GIZMOSQL_LOG_SCOPE_STATUS(
+      DEBUG, "DuckDBStatement::Create", status, {"peer", client_session->peer},
+      {"session_id", client_session->session_id}, {"user", client_session->username},
+      {"role", client_session->role}, {"statement_handle", handle},
+      {"timeout_seconds", std::to_string(query_timeout)});
+
+  client_session->active_sql_handle = handle;
   if (log_queries) {
     GIZMOSQL_LOGKV_DYNAMIC(
         log_level, "Client is attempting to run a SQL command",
@@ -148,6 +156,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       std::shared_ptr<DuckDBStatement> result(
           new DuckDBStatement(client_session, handle, sql, log_level, log_queries,
                               query_timeout, override_schema));
+      status = "success";
       return result;
     }
 
@@ -172,6 +181,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       new DuckDBStatement(client_session, handle, stmt, log_level, log_queries,
                           query_timeout, override_schema));
 
+  status = "success";
   return result;
 }
 
@@ -187,6 +197,15 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 DuckDBStatement::~DuckDBStatement() {}
 
 arrow::Result<int> DuckDBStatement::Execute() {
+  std::string execute_status;
+
+  GIZMOSQL_LOG_SCOPE_STATUS(
+      DEBUG, "DuckDBStatement::Execute", execute_status, {"peer", client_session_->peer},
+      {"session_id", client_session_->session_id}, {"user", client_session_->username},
+      {"role", client_session_->role}, {"statement_handle", handle_},
+      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"direct_execution", use_direct_execution_ ? "true" : "false"});
+
   // Launch execution in a separate thread
   auto future = std::async(std::launch::async, [this]() -> arrow::Result<int> {
     if (use_direct_execution_) {
@@ -321,10 +340,20 @@ arrow::Result<int> DuckDBStatement::Execute() {
         {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_});
   }
 
+  execute_status = "success";
   return result;
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult() {
+  std::string status;
+
+  GIZMOSQL_LOG_SCOPE_STATUS(
+      DEBUG, "DuckDBStatement::FetchResult", status, {"peer", client_session_->peer},
+      {"session_id", client_session_->session_id}, {"user", client_session_->username},
+      {"role", client_session_->role}, {"statement_handle", handle_},
+      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"direct_execution", use_direct_execution_ ? "true" : "false"});
+
   std::shared_ptr<arrow::RecordBatch> record_batch;
   ArrowArray res_arr;
   ArrowSchema res_schema;
@@ -359,6 +388,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                    {"sql", logged_sql_});
   }
 
+  status = "success";
   return record_batch;
 }
 
@@ -371,10 +401,20 @@ std::shared_ptr<duckdb::PreparedStatement> DuckDBStatement::GetDuckDBStmt() cons
 }
 
 arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
+  std::string status;
+
+  GIZMOSQL_LOG_SCOPE_STATUS(
+      DEBUG, "DuckDBStatement::ExecuteUpdate", status, {"peer", client_session_->peer},
+      {"session_id", client_session_->session_id}, {"user", client_session_->username},
+      {"role", client_session_->role}, {"statement_handle", handle_},
+      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"direct_execution", use_direct_execution_ ? "true" : "false"}, );
+
   ARROW_RETURN_NOT_OK(Execute());
   ARROW_ASSIGN_OR_RAISE(auto result_batch, FetchResult());
 
   if (!result_batch) {
+    status = "success";
     return 0;
   }
 
@@ -385,17 +425,29 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
       result_batch->column(0)->type_id() == arrow::Type::INT64) {
     ARROW_ASSIGN_OR_RAISE(auto scalar, result_batch->column(0)->GetScalar(0));
     if (scalar->is_valid) {
+      status = "success";
       return std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value;
     }
   }
 
   // Fallback to previous behavior for other cases.
+  status = "success";
   return result_batch->num_rows();
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
+  std::string status;
+
+  GIZMOSQL_LOG_SCOPE_STATUS(
+      DEBUG, "DuckDBStatement::GetSchema", status, {"peer", client_session_->peer},
+      {"session_id", client_session_->session_id}, {"user", client_session_->username},
+      {"role", client_session_->role}, {"statement_handle", handle_},
+      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"direct_execution", use_direct_execution_ ? "true" : "false"});
+
   // If there is an override schema - just return it and avoid computation...
   if (override_schema_) {
+    status = "success";
     return override_schema_;
   }
 
@@ -404,6 +456,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
     cached_schema_ = ComputeSchema();  // Store the Result<>
   });
 
+  status = "success";
   return cached_schema_;
 }
 
@@ -413,6 +466,15 @@ long DuckDBStatement::GetLastExecutionDurationMs() const {
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
+  std::string status;
+
+  GIZMOSQL_LOG_SCOPE_STATUS(
+      DEBUG, "DuckDBStatement::ComputeSchema", status, {"peer", client_session_->peer},
+      {"session_id", client_session_->session_id}, {"user", client_session_->username},
+      {"role", client_session_->role}, {"statement_handle", handle_},
+      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"direct_execution", use_direct_execution_ ? "true" : "false"});
+
   if (use_direct_execution_) {
     // For direct execution, we need to execute the query to get schema information
     ARROW_RETURN_NOT_OK(Execute());
@@ -423,6 +485,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
                                           query_result_->names, client_properties);
 
     auto return_value = arrow::ImportSchema(&arrow_schema);
+    status = "success";
     return return_value;
   }
 
@@ -436,6 +499,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
 
   auto return_value = arrow::ImportSchema(&arrow_schema);
+  status = "success";
   return return_value;
 }
 

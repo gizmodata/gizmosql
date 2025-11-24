@@ -235,21 +235,34 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
 
-    std::unique_lock write_lock(sessions_mutex_);
-
-    if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
-      return it->second;
+    // Fast path: try to find existing session with shared lock
+    {
+      std::shared_lock read_lock(sessions_mutex_);
+      if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
+        return it->second;
+      }
     }
 
-    auto cs = std::make_shared<ClientSession>();
-    cs->session_id = session_id;
-    cs->username = tl_request_ctx.username.value_or("");
-    cs->role = tl_request_ctx.role.value_or("");
-    cs->peer = tl_request_ctx.peer.value_or(context.peer());
-    cs->connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    // Build the session *without* holding any lock
+    auto new_session = std::make_shared<ClientSession>();
+    new_session->session_id = session_id;
+    new_session->username = tl_request_ctx.username.value_or("");
+    new_session->role = tl_request_ctx.role.value_or("");
+    new_session->peer = tl_request_ctx.peer.value_or(context.peer());
+    new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
 
-    client_sessions_[session_id] = cs;
-    return cs;
+    // Slow path: take exclusive lock and check again
+    {
+      std::unique_lock write_lock(sessions_mutex_);
+
+      if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
+        // Another thread won the race – reuse its session
+        return it->second;
+      }
+
+      client_sessions_[session_id] = new_session;
+      return new_session;
+    }
   }
 
   // Convenience method for retrieving just a database connection:
@@ -379,15 +392,18 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const sql::ActionCreatePreparedStatementRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::unique_lock write_lock(statements_mutex_);
+
     const std::string handle =
         boost::uuids::to_string(boost::uuids::random_generator()());
 
+    // We latch the statements mutex as briefly as possible to maximize concurrency...
     ARROW_ASSIGN_OR_RAISE(auto statement,
                           DuckDBStatement::Create(client_session, handle, request.query,
                                                   arrow::util::ArrowLogLevel::ARROW_INFO,
-                                                  print_queries_, query_timeout_))
-    prepared_statements_[handle] = statement;
+                                                  print_queries_, query_timeout_)) {
+      std::unique_lock write_lock(statements_mutex_);
+      prepared_statements_[handle] = statement;
+    }
 
     ARROW_ASSIGN_OR_RAISE(auto dataset_schema, statement->GetSchema())
 
@@ -407,7 +423,6 @@ class DuckDBFlightSqlServer::Impl {
         if (client_session->role == "readonly") {
           return Status::ExecutionError(
               "User '" + client_session->username +
-              "' has a readonly session and cannot run "
               "' has a readonly session and cannot run statements that modify state.");
         }
       }
