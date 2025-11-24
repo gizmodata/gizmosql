@@ -235,33 +235,33 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
 
+    // Fast path: try to find existing session with shared lock
     {
-      // Use a read-lock for finding the session if it exists
       std::shared_lock read_lock(sessions_mutex_);
-
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
         return it->second;
       }
     }
 
-    {
-      auto cs = std::make_shared<ClientSession>();
-      cs->session_id = session_id;
-      cs->username = tl_request_ctx.username.value_or("");
-      cs->role = tl_request_ctx.role.value_or("");
-      cs->peer = tl_request_ctx.peer.value_or(context.peer());
-      cs->connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    // Build the session *without* holding any lock
+    auto new_session = std::make_shared<ClientSession>();
+    new_session->session_id = session_id;
+    new_session->username = tl_request_ctx.username.value_or("");
+    new_session->role = tl_request_ctx.role.value_or("");
+    new_session->peer = tl_request_ctx.peer.value_or(context.peer());
+    new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
 
-      // Use an exclusive write-lock for adding the session to the map
+    // Slow path: take exclusive lock and check again
+    {
       std::unique_lock write_lock(sessions_mutex_);
 
-      // Check again in case another thread created it while we were unlocked
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
+        // Another thread won the race – reuse its session
         return it->second;
       }
 
-      client_sessions_[session_id] = cs;
-      return cs;
+      client_sessions_[session_id] = new_session;
+      return new_session;
     }
   }
 
