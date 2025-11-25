@@ -451,14 +451,16 @@ class DuckDBFlightSqlServer::Impl {
 
   Status ClosePreparedStatement(const flight::ServerCallContext& context,
                                 const sql::ActionClosePreparedStatementRequest& request) {
-    std::unique_lock write_lock(statements_mutex_);
     const std::string& prepared_statement_handle = request.prepared_statement_handle;
 
-    if (auto search = prepared_statements_.find(prepared_statement_handle);
-        search != prepared_statements_.end()) {
-      prepared_statements_.erase(prepared_statement_handle);
-    } else {
-      return Status::Invalid("Prepared statement not found");
+    {
+      std::unique_lock write_lock(statements_mutex_);
+      if (auto search = prepared_statements_.find(prepared_statement_handle);
+          search != prepared_statements_.end()) {
+        prepared_statements_.erase(prepared_statement_handle);
+          } else {
+            return Status::Invalid("Prepared statement not found");
+          }
     }
 
     return Status::OK();
@@ -468,16 +470,9 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const sql::PreparedStatementQuery& command,
       const flight::FlightDescriptor& descriptor) {
-    std::shared_lock read_lock(statements_mutex_);
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
-    auto search = prepared_statements_.find(prepared_statement_handle);
-    if (search == prepared_statements_.end()) {
-      return Status::Invalid("Prepared statement not found");
-    }
-
-    std::shared_ptr<DuckDBStatement> statement = search->second;
-
+    ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle));
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
 
     return GetFlightInfoForCommand(descriptor, schema);
@@ -486,15 +481,9 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetPreparedStatement(
       const flight::ServerCallContext& context,
       const sql::PreparedStatementQuery& command) {
-    std::shared_lock read_lock(statements_mutex_);
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
-    auto search = prepared_statements_.find(prepared_statement_handle);
-    if (search == prepared_statements_.end()) {
-      return Status::Invalid("Prepared statement not found");
-    }
-
-    std::shared_ptr<DuckDBStatement> statement = search->second;
+    ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle));
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
