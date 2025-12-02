@@ -55,85 +55,6 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
-duckdb::LogicalType GetDuckDBTypeFromArrowType(
-    const std::shared_ptr<arrow::DataType>& arrow_type) {
-  using arrow::Type;
-
-  switch (arrow_type->id()) {
-    case Type::BOOL:
-      return duckdb::LogicalType::BOOLEAN;
-
-    case Type::INT8:
-      return duckdb::LogicalType::TINYINT;
-    case Type::INT16:
-      return duckdb::LogicalType::SMALLINT;
-    case Type::INT32:
-      return duckdb::LogicalType::INTEGER;
-    case Type::INT64:
-      return duckdb::LogicalType::BIGINT;
-
-    case Type::UINT8:
-      return duckdb::LogicalType::UTINYINT;
-    case Type::UINT16:
-      return duckdb::LogicalType::USMALLINT;
-    case Type::UINT32:
-      return duckdb::LogicalType::UINTEGER;
-    case Type::UINT64:
-      return duckdb::LogicalType::UBIGINT;
-
-    case Type::FLOAT:
-      return duckdb::LogicalType::FLOAT;
-    case Type::DOUBLE:
-      return duckdb::LogicalType::DOUBLE;
-
-    case Type::STRING:
-    case Type::LARGE_STRING:
-      return duckdb::LogicalType::VARCHAR;
-    case Type::BINARY:
-    case Type::LARGE_BINARY:
-      return duckdb::LogicalType::BLOB;
-
-    case Type::DATE32:
-      return duckdb::LogicalType::DATE;
-    case Type::TIME32:
-    case Type::TIME64:
-      return duckdb::LogicalType::TIME;
-
-    case Type::TIMESTAMP: {
-      auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
-      switch (ts_type->unit()) {
-        case arrow::TimeUnit::SECOND:
-          return duckdb::LogicalType::TIMESTAMP_S;
-        case arrow::TimeUnit::MILLI:
-          return duckdb::LogicalType::TIMESTAMP_MS;
-        case arrow::TimeUnit::MICRO:
-          return duckdb::LogicalType::TIMESTAMP;
-        case arrow::TimeUnit::NANO:
-          return duckdb::LogicalType::TIMESTAMP_NS;
-      }
-    }
-
-    case Type::DECIMAL128: {
-      auto dec = std::static_pointer_cast<arrow::Decimal128Type>(arrow_type);
-      return duckdb::LogicalType::DECIMAL(dec->precision(), dec->scale());
-    }
-
-    case Type::DURATION:
-      return duckdb::LogicalType::INTERVAL;
-
-    // Unsupported / complex types
-    case Type::STRUCT:
-    case Type::LIST:
-    case Type::MAP:
-    case Type::DICTIONARY:
-    case Type::SPARSE_UNION:
-    case Type::DENSE_UNION:
-
-    default:
-      return duckdb::LogicalType::SQLNULL;
-  }
-}
-
 duckdb::Value ConvertArrowCellToDuckDBValue(
     const std::shared_ptr<arrow::Array>& arr,
     int64_t row
@@ -1085,6 +1006,8 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
       flight::FlightMessageReader* reader) {
 
+      ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+
       // 1. Build fully qualified target table name
       std::string target_table;
       if (command.catalog.has_value()) {
@@ -1095,44 +1018,13 @@ class DuckDBFlightSqlServer::Impl {
       }
       target_table += "\"" + command.table + "\"";
 
-      // 2. Wrap Flight reader as a RecordBatchReader
-      auto rb_reader = std::shared_ptr<arrow::RecordBatchReader>(reader);
 
-      // 3. Export to Arrow C stream
-      ArrowArrayStream c_stream;
-      std::memset(&c_stream, 0, sizeof(c_stream));
-      ARROW_RETURN_NOT_OK(arrow::ExportRecordBatchReader(rb_reader, &c_stream));
+      duckdb::Appender appender(*client_session->connection, target_table);
 
+      auto record_batches = reader->ToRecordBatches();
+      AppendRecordBatchToDuckDB(appender, record_batches);
 
-      ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-      duckdb_connection c_conn = client_session->connection->D;
-      const char* view_name = "__flight_ingest_tmp";
-
-      duckdb_arrow_stream duck_stream =
-          reinterpret_cast<duckdb_arrow_stream>(&c_stream);
-
-      if (duckdb_arrow_scan(c_conn, view_name, duck_stream) == DuckDBError) {
-        duckdb_destroy_arrow_stream(&duck_stream);
-        return arrow::Status::ExecutionError("duckdb_arrow_scan() failed");
-      }
-
-      // 4. Use BY NAME so the Arrow column names are matched to table columns
-      std::string sql =
-          "INSERT INTO " + target_table + " BY NAME "
-          "SELECT * FROM " + view_name;
-
-      duckdb_result result;
-      if (duckdb_query(c_conn, sql.c_str(), &result) == DuckDBError) {
-        duckdb_destroy_result(&result);
-        duckdb_destroy_arrow_stream(&duck_stream);
-        return arrow::Status::ExecutionError("INSERT INTO ... BY NAME failed");
-      }
-
-      int64_t rows = duckdb_rows_changed(&result);
-      duckdb_destroy_result(&result);
-      duckdb_destroy_arrow_stream(&duck_stream);
-
-      return rows;
+      return 0;
     }
 
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
