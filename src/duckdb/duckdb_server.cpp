@@ -224,16 +224,16 @@ Result<bool> TableExists(duckdb::Connection& conn,
     return Status::Invalid("DuckDB metadata query failed: " + query_result->GetError());
   }
   auto result_set = query_result->Fetch();
-  return result_set->size() > 0;
+  return result_set && result_set->size() > 0;
 }
 
 Result<std::string> GenerateCreateTableSQLFromArrowSchema(
     const std::string& full_table_name, const std::shared_ptr<arrow::Schema>& schema,
-    const bool& temporary) {
+    const bool& temporary, const bool& replace = false) {
   std::ostringstream oss;
 
-  oss << "CREATE " << (temporary ? "TEMPORARY " : "") << "TABLE " << full_table_name
-      << " (\n";
+  oss << "CREATE " << (replace ? "OR REPLACE " : "") << (temporary ? "TEMPORARY " : "")
+      << "TABLE " << full_table_name << " (\n";
 
   for (int i = 0; i < schema->num_fields(); ++i) {
     const auto& field = schema->field(i);
@@ -1210,10 +1210,41 @@ class DuckDBFlightSqlServer::Impl {
                             print_queries_, query_timeout_);
   }
 
+  Result<std::unique_ptr<duckdb::MaterializedQueryResult>> RunAndLogQueryWithResult(
+      const std::shared_ptr<ClientSession>& client_session, const std::string& query) {
+    std::string status;
+
+    GIZMOSQL_LOG_SCOPE_STATUS(
+        DEBUG, "RunAndLogQuery", status, {"peer", client_session->peer},
+        {"session_id", client_session->session_id}, {"user", client_session->username},
+        {"role", client_session->role}, {"query", redact_sql_for_logs(query)});
+
+    auto res = client_session->connection->Query(query);
+    if (res->HasError()) {
+      return Status::Invalid("Failed to run DuckDB query: " + query + ": " +
+                             res->GetError());
+    }
+
+    status = "success";
+    return res;
+  }
+
+  Status RunAndLogQuery(const std::shared_ptr<ClientSession>& client_session,
+                        const std::string& query) {
+    ARROW_ASSIGN_OR_RAISE(auto res, RunAndLogQueryWithResult(client_session, query));
+    return Status::OK();
+  }
+
   Result<int64_t> DoPutCommandStatementIngest(const flight::ServerCallContext& context,
                                               const flight::sql::StatementIngest& command,
                                               flight::FlightMessageReader* reader) {
+    std::string status;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+
+    GIZMOSQL_LOG_SCOPE_STATUS(
+        DEBUG, "DuckDBFlightSqlServer::DoPutCommandStatementIngest", status,
+        {"peer", client_session->peer}, {"session_id", client_session->session_id},
+        {"user", client_session->username}, {"role", client_session->role});
 
     // 1. Build a fully qualified target table name
     std::string target_table;
@@ -1224,6 +1255,7 @@ class DuckDBFlightSqlServer::Impl {
       target_table += QuoteIdent(command.schema.value()) + ".";
     }
     target_table += QuoteIdent(command.table);
+    std::optional<std::string> interim_table = std::nullopt;
 
     // 2. Basic metadata up front (no transaction yet)
     ARROW_ASSIGN_OR_RAISE(auto arrow_schema, reader->GetSchema());
@@ -1257,18 +1289,25 @@ class DuckDBFlightSqlServer::Impl {
           // Rollback handled by txn destructor
           return Status::Invalid("Table: " + target_table + " already exists");
 
-        case ExistsOpt::kAppend:
+        case ExistsOpt::kAppend: {
+          interim_table =
+              command.table + "_interim_bulk_ingest_temp_" + client_session->session_id;
+          ARROW_ASSIGN_OR_RAISE(
+              auto create_table_sql,
+              GenerateCreateTableSQLFromArrowSchema(QuoteIdent(interim_table.value()),
+                                                    arrow_schema, true, true));
+          ARROW_RETURN_NOT_OK(RunAndLogQuery(client_session, create_table_sql));
+          break;
+        }
+
         case ExistsOpt::kUnspecified:
           // OK: use existing table as-is
           break;
 
         case ExistsOpt::kReplace: {
           // DROP then re-CREATE inside the same transaction
-          auto drop_res = client_session->connection->Query("DROP TABLE " + target_table);
-          if (drop_res->HasError()) {
-            return Status::Invalid("Failed to drop table " + target_table + ": " +
-                                   drop_res->GetError());
-          }
+          ARROW_RETURN_NOT_OK(
+              RunAndLogQuery(client_session, "DROP TABLE " + target_table));
           target_table_exists = false;
           break;
         }
@@ -1281,11 +1320,7 @@ class DuckDBFlightSqlServer::Impl {
                             GenerateCreateTableSQLFromArrowSchema(
                                 target_table, arrow_schema, command.temporary));
 
-      auto create_res = client_session->connection->Query(create_table_sql);
-      if (create_res->HasError()) {
-        return Status::Invalid("Failed to create table " + target_table + ": " +
-                               create_res->GetError());
-      }
+      ARROW_RETURN_NOT_OK(RunAndLogQuery(client_session, create_table_sql));
     }
 
     // 6. Ingest rows via Appender
@@ -1295,7 +1330,9 @@ class DuckDBFlightSqlServer::Impl {
     std::optional<duckdb::Appender> appender;
     try {
       // Initialize appender
-      if (command.catalog.has_value() && command.schema.has_value()) {
+      if (interim_table.has_value()) {
+        appender.emplace(*client_session->connection, interim_table.value());
+      } else if (command.catalog.has_value() && command.schema.has_value()) {
         appender.emplace(*client_session->connection, command.catalog.value(),
                          command.schema.value(), command.table);
       } else if (command.schema.has_value()) {
@@ -1322,9 +1359,32 @@ class DuckDBFlightSqlServer::Impl {
 
       appender->Close();
 
-      // 7. Commit transaction – if this fails, caller's table stays intact due to rollback
+      // 7. If this was an append - copy the data from the interim temp table (to handle default columns values, etc.)
+      if (interim_table.has_value()) {
+        auto insert_sql = "INSERT INTO " + target_table + " BY NAME SELECT * FROM " +
+                          QuoteIdent(interim_table.value());
+        ARROW_ASSIGN_OR_RAISE(auto insert_res,
+                              RunAndLogQueryWithResult(client_session, insert_sql));
+        // This shouldn't happen - but just in case...
+        auto interim_insert_row_count_value = insert_res->GetValue(0, 0);
+        auto interim_insert_row_count =
+            interim_insert_row_count_value.GetValue<int64_t>();
+        if (interim_insert_row_count != total_rows) {
+          return Status::Invalid(
+              "Row count inserted from interim table: " + interim_table.value() + " (" +
+              std::to_string(interim_insert_row_count) + ")" + " into: " + target_table +
+              " was mis-matched from rows appended (" + std::to_string(total_rows) +
+              ") !");
+        }
+        // Drop our interim table...
+        ARROW_RETURN_NOT_OK(RunAndLogQuery(
+            client_session, "DROP TABLE " + QuoteIdent(interim_table.value())));
+      }
+
+      // 8. Commit transaction – if this fails, caller's table stays intact due to rollback
       ARROW_RETURN_NOT_OK(txn.Commit());
 
+      status = "success";
       return total_rows;
     } catch (const duckdb::Exception& ex) {
       // txn destructor will rollback
