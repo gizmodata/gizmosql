@@ -55,6 +55,311 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
+duckdb::LogicalType GetDuckDBTypeFromArrowType(
+    const std::shared_ptr<arrow::DataType>& arrow_type) {
+  using arrow::Type;
+
+  switch (arrow_type->id()) {
+    case Type::BOOL:
+      return duckdb::LogicalType::BOOLEAN;
+
+    case Type::INT8:
+      return duckdb::LogicalType::TINYINT;
+    case Type::INT16:
+      return duckdb::LogicalType::SMALLINT;
+    case Type::INT32:
+      return duckdb::LogicalType::INTEGER;
+    case Type::INT64:
+      return duckdb::LogicalType::BIGINT;
+
+    case Type::UINT8:
+      return duckdb::LogicalType::UTINYINT;
+    case Type::UINT16:
+      return duckdb::LogicalType::USMALLINT;
+    case Type::UINT32:
+      return duckdb::LogicalType::UINTEGER;
+    case Type::UINT64:
+      return duckdb::LogicalType::UBIGINT;
+
+    case Type::FLOAT:
+      return duckdb::LogicalType::FLOAT;
+    case Type::DOUBLE:
+      return duckdb::LogicalType::DOUBLE;
+
+    case Type::STRING:
+    case Type::LARGE_STRING:
+      return duckdb::LogicalType::VARCHAR;
+    case Type::BINARY:
+    case Type::LARGE_BINARY:
+      return duckdb::LogicalType::BLOB;
+
+    case Type::DATE32:
+      return duckdb::LogicalType::DATE;
+    case Type::TIME32:
+    case Type::TIME64:
+      return duckdb::LogicalType::TIME;
+
+    case Type::TIMESTAMP: {
+      auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
+      switch (ts_type->unit()) {
+        case arrow::TimeUnit::SECOND:
+          return duckdb::LogicalType::TIMESTAMP_S;
+        case arrow::TimeUnit::MILLI:
+          return duckdb::LogicalType::TIMESTAMP_MS;
+        case arrow::TimeUnit::MICRO:
+          return duckdb::LogicalType::TIMESTAMP;
+        case arrow::TimeUnit::NANO:
+          return duckdb::LogicalType::TIMESTAMP_NS;
+      }
+    }
+
+    case Type::DECIMAL128: {
+      auto dec = std::static_pointer_cast<arrow::Decimal128Type>(arrow_type);
+      return duckdb::LogicalType::DECIMAL(dec->precision(), dec->scale());
+    }
+
+    case Type::DURATION:
+      return duckdb::LogicalType::INTERVAL;
+
+    // Unsupported / complex types
+    case Type::STRUCT:
+    case Type::LIST:
+    case Type::MAP:
+    case Type::DICTIONARY:
+    case Type::SPARSE_UNION:
+    case Type::DENSE_UNION:
+
+    default:
+      return duckdb::LogicalType::SQLNULL;
+  }
+}
+
+duckdb::Value ConvertArrowCellToDuckDBValue(
+    const std::shared_ptr<arrow::Array>& arr,
+    int64_t row
+) {
+  using arrow::Type;
+
+  if (!arr || arr->IsNull(row)) {
+    // NULL value
+    return duckdb::Value(); // NULL
+  }
+
+  switch (arr->type_id()) {
+
+    // -------- BOOL --------
+    case Type::BOOL: {
+      auto typed = std::static_pointer_cast<arrow::BooleanArray>(arr);
+      return duckdb::Value::BOOLEAN(typed->Value(row));
+    }
+
+    // -------- SIGNED INTS --------
+    case Type::INT8: {
+      auto typed = std::static_pointer_cast<arrow::Int8Array>(arr);
+      return duckdb::Value::TINYINT(typed->Value(row));
+    }
+    case Type::INT16: {
+      auto typed = std::static_pointer_cast<arrow::Int16Array>(arr);
+      return duckdb::Value::SMALLINT(typed->Value(row));
+    }
+    case Type::INT32: {
+      auto typed = std::static_pointer_cast<arrow::Int32Array>(arr);
+      return duckdb::Value::INTEGER(typed->Value(row));
+    }
+    case Type::INT64: {
+      auto typed = std::static_pointer_cast<arrow::Int64Array>(arr);
+      return duckdb::Value::BIGINT(typed->Value(row));
+    }
+
+    // -------- UNSIGNED INTS --------
+    case Type::UINT8: {
+      auto typed = std::static_pointer_cast<arrow::UInt8Array>(arr);
+      return duckdb::Value::UTINYINT(typed->Value(row));
+    }
+    case Type::UINT16: {
+      auto typed = std::static_pointer_cast<arrow::UInt16Array>(arr);
+      return duckdb::Value::USMALLINT(typed->Value(row));
+    }
+    case Type::UINT32: {
+      auto typed = std::static_pointer_cast<arrow::UInt32Array>(arr);
+      return duckdb::Value::UINTEGER(typed->Value(row));
+    }
+    case Type::UINT64: {
+      auto typed = std::static_pointer_cast<arrow::UInt64Array>(arr);
+      return duckdb::Value::UBIGINT(typed->Value(row));
+    }
+
+    // -------- FLOATS --------
+    case Type::FLOAT: {
+      auto typed = std::static_pointer_cast<arrow::FloatArray>(arr);
+      return duckdb::Value::FLOAT(typed->Value(row));
+    }
+    case Type::DOUBLE: {
+      auto typed = std::static_pointer_cast<arrow::DoubleArray>(arr);
+      return duckdb::Value::DOUBLE(typed->Value(row));
+    }
+
+    // -------- STRINGS --------
+    case Type::STRING:
+    case Type::LARGE_STRING: {
+      auto typed = std::static_pointer_cast<arrow::StringArray>(arr);
+      auto view  = typed->GetView(row);
+      // Arrow strings are NOT guaranteed null-terminated; use length-aware ctor.
+      return duckdb::Value(std::string(view.data(), view.size()));
+    }
+
+    // -------- BINARY (store as BLOB or VARCHAR, here: BLOB) --------
+    case Type::BINARY:
+    case Type::LARGE_BINARY: {
+      auto typed = std::static_pointer_cast<arrow::BinaryArray>(arr);
+      int32_t len = 0;
+      const uint8_t* data = typed->GetValue(row, &len);
+      return duckdb::Value::BLOB(data, len);
+    }
+
+    // -------- DATE --------
+    case Type::DATE32: {
+      auto typed = std::static_pointer_cast<arrow::Date32Array>(arr);
+      int32_t days = typed->Value(row); // days since 1970-01-01
+      int64_t epoch_seconds = static_cast<int64_t>(days) * 86400;
+      duckdb::date_t d = duckdb::Date::EpochToDate(epoch_seconds);
+      return duckdb::Value::DATE(d);
+    }
+    case Type::DATE64: {
+      auto typed = std::static_pointer_cast<arrow::Date64Array>(arr);
+      int64_t ms = typed->Value(row); // ms since 1970-01-01
+      int64_t epoch_seconds = ms / 1000;
+      duckdb::date_t d = duckdb::Date::EpochToDate(epoch_seconds);
+      return duckdb::Value::DATE(d);
+    }
+
+    // -------- TIME (TIME32/TIME64 -> microseconds since midnight) --------
+    case Type::TIME32: {
+      auto typed = std::static_pointer_cast<arrow::Time32Array>(arr);
+      int32_t v = typed->Value(row);
+      auto time_type = std::static_pointer_cast<arrow::Time32Type>(arr->type());
+
+      int64_t micros = 0;
+      switch (time_type->unit()) {
+        case arrow::TimeUnit::SECOND: micros = static_cast<int64_t>(v) * 1'000'000; break;
+        case arrow::TimeUnit::MILLI:  micros = static_cast<int64_t>(v) * 1'000;     break;
+        default:
+          throw std::runtime_error("Unsupported Time32 unit for Arrow -> DuckDB conversion");
+      }
+
+      int64_t sec_total = micros / 1'000'000;
+      int64_t usec      = micros % 1'000'000;
+      int64_t hour      = sec_total / 3600;
+      int64_t min       = (sec_total / 60) % 60;
+      int64_t sec       = sec_total % 60;
+
+      return duckdb::Value::TIME(
+          static_cast<int32_t>(hour),
+          static_cast<int32_t>(min),
+          static_cast<int32_t>(sec),
+          static_cast<int32_t>(usec)
+      );
+    }
+
+    case Type::TIME64: {
+      auto typed = std::static_pointer_cast<arrow::Time64Array>(arr);
+      int64_t v = typed->Value(row);
+      auto time_type = std::static_pointer_cast<arrow::Time64Type>(arr->type());
+
+      int64_t micros = 0;
+      switch (time_type->unit()) {
+        case arrow::TimeUnit::MICRO: micros = v;            break;
+        case arrow::TimeUnit::NANO:  micros = v / 1000;     break; // truncate
+        default:
+          throw std::runtime_error("Unsupported Time64 unit for Arrow -> DuckDB conversion");
+      }
+
+      int64_t sec_total = micros / 1'000'000;
+      int64_t usec      = micros % 1'000'000;
+      int64_t hour      = sec_total / 3600;
+      int64_t min       = (sec_total / 60) % 60;
+      int64_t sec       = sec_total % 60;
+
+      return duckdb::Value::TIME(
+          static_cast<int32_t>(hour),
+          static_cast<int32_t>(min),
+          static_cast<int32_t>(sec),
+          static_cast<int32_t>(usec)
+      );
+    }
+
+    // -------- TIMESTAMP --------
+    case Type::TIMESTAMP: {
+      auto typed   = std::static_pointer_cast<arrow::TimestampArray>(arr);
+      int64_t v    = typed->Value(row);
+      auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arr->type());
+
+      int64_t micros_since_epoch = 0;
+      switch (ts_type->unit()) {
+        case arrow::TimeUnit::SECOND: micros_since_epoch = v * 1'000'000; break;
+        case arrow::TimeUnit::MILLI:  micros_since_epoch = v * 1'000;     break;
+        case arrow::TimeUnit::MICRO:  micros_since_epoch = v;             break;
+        case arrow::TimeUnit::NANO:   micros_since_epoch = v / 1'000;     break;
+        default:
+          throw std::runtime_error("Unsupported Timestamp unit for Arrow -> DuckDB conversion");
+      }
+
+      duckdb::timestamp_t ts(micros_since_epoch);
+      return duckdb::Value::TIMESTAMP(ts);
+    }
+
+    // -------- DECIMAL128 -> DuckDB DECIMAL --------
+    case Type::DECIMAL128: {
+      auto typed = std::static_pointer_cast<arrow::Decimal128Array>(arr);
+      auto type  = std::static_pointer_cast<arrow::Decimal128Type>(arr->type());
+      int32_t precision = type->precision();
+      int32_t scale     = type->scale();
+
+      arrow::Decimal128 dec = typed->GetValue(row);
+      // We can convert to string and let DuckDB parse it into a DECIMAL
+      std::string dec_str = dec.ToString(scale); // Arrow prints with scale
+      return duckdb::Value::DECIMAL(dec_str, precision, scale);
+    }
+
+    // -------- FALLBACK: string representation --------
+    default: {
+      auto scalar_res = arr->GetScalar(row);
+      if (!scalar_res.ok()) {
+        throw std::runtime_error("Failed to get Arrow scalar for unsupported type: " +
+                                 arr->type()->ToString());
+      }
+      auto scalar = scalar_res.ValueOrDie();
+      return duckdb::Value(scalar->ToString());
+    }
+  }
+}
+
+arrow::Status AppendRecordBatchToDuckDB(
+    duckdb::Appender &appender,
+    const std::shared_ptr<arrow::RecordBatch> &batch
+) {
+  if (!batch) {
+    return arrow::Status::OK();
+  }
+
+  const int64_t nrows = batch->num_rows();
+  const int ncols = batch->num_columns();
+
+  for (int64_t row = 0; row < nrows; ++row) {
+    appender.BeginRow();
+
+    for (int col = 0; col < ncols; ++col) {
+      const auto &arr = batch->column(col);
+      duckdb::Value v = ConvertArrowCellToDuckDBValue(arr, row);
+      appender.Append(v);
+    }
+
+    appender.EndRow();
+  }
+
+  return arrow::Status::OK();
+}
+
 std::string PrepareQueryForGetTables(const sql::GetTables& command,
                                      duckdb::vector<duckdb::Value>& bind_parameters) {
   std::stringstream table_query;
@@ -774,6 +1079,60 @@ class DuckDBFlightSqlServer::Impl {
                             print_queries_, query_timeout_);
   }
 
+  Result<int64_t> DoPutCommandStatementIngest(
+      const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
+      flight::FlightMessageReader* reader) {
+
+      // 1. Build fully qualified target table name
+      std::string target_table;
+      if (command.catalog.has_value()) {
+        target_table += "\"" + command.catalog.value() + "\".";
+      }
+      if (command.schema.has_value()) {
+        target_table += "\"" + command.schema.value() + "\".";
+      }
+      target_table += "\"" + command.table + "\"";
+
+      // 2. Wrap Flight reader as a RecordBatchReader
+      auto rb_reader = std::shared_ptr<arrow::RecordBatchReader>(reader);
+
+      // 3. Export to Arrow C stream
+      ArrowArrayStream c_stream;
+      std::memset(&c_stream, 0, sizeof(c_stream));
+      ARROW_RETURN_NOT_OK(arrow::ExportRecordBatchReader(rb_reader, &c_stream));
+
+
+      ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+      duckdb_connection c_conn = client_session->connection->D;
+      const char* view_name = "__flight_ingest_tmp";
+
+      duckdb_arrow_stream duck_stream =
+          reinterpret_cast<duckdb_arrow_stream>(&c_stream);
+
+      if (duckdb_arrow_scan(c_conn, view_name, duck_stream) == DuckDBError) {
+        duckdb_destroy_arrow_stream(&duck_stream);
+        return arrow::Status::ExecutionError("duckdb_arrow_scan() failed");
+      }
+
+      // 4. Use BY NAME so the Arrow column names are matched to table columns
+      std::string sql =
+          "INSERT INTO " + target_table + " BY NAME "
+          "SELECT * FROM " + view_name;
+
+      duckdb_result result;
+      if (duckdb_query(c_conn, sql.c_str(), &result) == DuckDBError) {
+        duckdb_destroy_result(&result);
+        duckdb_destroy_arrow_stream(&duck_stream);
+        return arrow::Status::ExecutionError("INSERT INTO ... BY NAME failed");
+      }
+
+      int64_t rows = duckdb_rows_changed(&result);
+      duckdb_destroy_result(&result);
+      duckdb_destroy_arrow_stream(&duck_stream);
+
+      return rows;
+    }
+
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
       const flight::ServerCallContext& context,
       const sql::ActionBeginTransactionRequest& request) {
@@ -1159,6 +1518,13 @@ Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetCrossReference(const flight::ServerCallContext& context,
                                            const sql::GetCrossReference& command) {
   return impl_->DoGetCrossReference(context, command);
+}
+
+Result<int64_t> DuckDBFlightSqlServer::DoPutCommandStatementIngest(
+      const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
+      flight::FlightMessageReader* reader) {
+  return impl_->DoPutCommandStatementIngest(
+      context, command, reader);
 }
 
 Result<sql::ActionBeginTransactionResult> DuckDBFlightSqlServer::BeginTransaction(

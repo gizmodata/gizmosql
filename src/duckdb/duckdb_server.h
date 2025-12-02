@@ -165,6 +165,10 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
       const flight::ServerCallContext& context,
       const flight::sql::GetPrimaryKeys& command) override;
 
+  arrow::Result<int64_t> DoPutCommandStatementIngest(
+      const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
+      flight::FlightMessageReader* reader) override;
+
   arrow::Result<flight::sql::ActionBeginTransactionResult> BeginTransaction(
       const flight::ServerCallContext& context,
       const flight::sql::ActionBeginTransactionRequest& request) override;

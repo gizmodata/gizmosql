@@ -284,7 +284,7 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server,
                  SqlInfoOptions::SqlSupportsConvert::SQL_CONVERT_VARCHAR,
                  SqlInfoOptions::SqlSupportsConvert::SQL_CONVERT_CHAR})}}))},
       // Additional server capability information
-      {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_BULK_INGESTION, SqlInfoResult(false)}, // DuckDB supports bulk insert, but we don't yet support it
+      {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_BULK_INGESTION, SqlInfoResult(true)},
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_INGEST_TRANSACTIONS_SUPPORTED, SqlInfoResult(true)}, // DuckDB supports transactions
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_STATEMENT_TIMEOUT, SqlInfoResult(query_timeout_seconds)},
       {SqlInfoOptions::SqlInfo::FLIGHT_SQL_SERVER_TRANSACTION_TIMEOUT, SqlInfoResult(static_cast<int32_t>(0))},
