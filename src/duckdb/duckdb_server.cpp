@@ -229,20 +229,11 @@ Result<bool> TableExists(duckdb::Connection& conn,
 
 Result<std::string> GenerateCreateTableSQLFromArrowSchema(
     const std::string& full_table_name, const std::shared_ptr<arrow::Schema>& schema,
-    const bool& temporary, const sql::TableDefinitionOptions& table_definition_options) {
+    const bool& temporary) {
   std::ostringstream oss;
 
-  oss << "CREATE "
-      << (table_definition_options.if_exists ==
-                  sql::TableDefinitionOptionsTableExistsOption::kReplace
-              ? " OR REPLACE "
-              : "")
-      << (temporary ? "TEMPORARY" : "") << " TABLE "
-      << (table_definition_options.if_not_exist ==
-                  sql::TableDefinitionOptionsTableNotExistOption::kCreate
-              ? " IF NOT EXISTS "
-              : "")
-      << full_table_name << " (\n";
+  oss << "CREATE " << (temporary ? "TEMPORARY " : "") << "TABLE " << full_table_name
+      << " (\n";
 
   for (int i = 0; i < schema->num_fields(); ++i) {
     const auto& field = schema->field(i);
@@ -251,8 +242,8 @@ Result<std::string> GenerateCreateTableSQLFromArrowSchema(
       oss << ",\n";
     }
 
-    std::string col_name = QuoteIdent(field->name());
-    auto col_type = GetDuckDBTypeFromArrowType(field->type()).ToString();
+    const std::string col_name = QuoteIdent(field->name());
+    const auto col_type = GetDuckDBTypeFromArrowType(field->type()).ToString();
 
     oss << "    " << col_name << " " << col_type;
     if (!field->nullable()) {
@@ -1245,9 +1236,15 @@ class DuckDBFlightSqlServer::Impl {
     using NotExistsOpt = sql::TableDefinitionOptionsTableNotExistOption;
 
     // If table does NOT exist and caller insisted that it must exist, fail early
-    if (!target_table_exists &&
-        command.table_definition_options.if_not_exist == NotExistsOpt::kFail) {
-      return Status::Invalid("Table: " + target_table + " does not exist");
+    if (!target_table_exists) {
+      switch (command.table_definition_options.if_not_exist) {
+        case NotExistsOpt::kFail:
+          return Status::Invalid("Table: " + target_table + " does not exist");
+        case NotExistsOpt::kCreate:
+        case NotExistsOpt::kUnspecified:
+          // OK: nothing to do here
+          break;
+      }
     }
 
     // 3. Start transaction (RAII guard)
@@ -1282,8 +1279,7 @@ class DuckDBFlightSqlServer::Impl {
     if (!target_table_exists) {
       ARROW_ASSIGN_OR_RAISE(auto create_table_sql,
                             GenerateCreateTableSQLFromArrowSchema(
-                                target_table, arrow_schema, command.temporary,
-                                command.table_definition_options));
+                                target_table, arrow_schema, command.temporary));
 
       auto create_res = client_session->connection->Query(create_table_sql);
       if (create_res->HasError()) {
