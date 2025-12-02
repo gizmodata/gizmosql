@@ -55,6 +55,178 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
+duckdb::LogicalType GetDuckDBTypeFromArrowType(
+    const std::shared_ptr<arrow::DataType>& arrow_type) {
+  using arrow::Type;
+
+  switch (arrow_type->id()) {
+    case Type::INT8:
+      return duckdb::LogicalType::TINYINT;
+    case Type::INT16:
+      return duckdb::LogicalType::SMALLINT;
+    case Type::INT32:
+      return duckdb::LogicalType::INTEGER;
+    case Type::INT64:
+      return duckdb::LogicalType::BIGINT;
+
+    case Type::UINT8:
+      return duckdb::LogicalType::UTINYINT;
+    case Type::UINT16:
+      return duckdb::LogicalType::USMALLINT;
+    case Type::UINT32:
+      return duckdb::LogicalType::UINTEGER;
+    case Type::UINT64:
+      return duckdb::LogicalType::UBIGINT;
+
+    case Type::FLOAT:
+      return duckdb::LogicalType::FLOAT;
+    case Type::DOUBLE:
+      return duckdb::LogicalType::DOUBLE;
+
+    case Type::BOOL:
+      return duckdb::LogicalType::BOOLEAN;
+
+    case Type::STRING:
+    case Type::LARGE_STRING:
+      return duckdb::LogicalType::VARCHAR;
+
+    case Type::BINARY:
+    case Type::LARGE_BINARY:
+      return duckdb::LogicalType::BLOB;
+
+    case Type::DATE32:
+    case Type::DATE64:
+      return duckdb::LogicalType::DATE;
+
+    case Type::TIME32:
+    case Type::TIME64:
+      return duckdb::LogicalType::TIME;
+
+    case Type::TIMESTAMP: {
+      auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
+      switch (ts_type->unit()) {
+        case arrow::TimeUnit::SECOND:
+          return duckdb::LogicalType::TIMESTAMP_S;
+        case arrow::TimeUnit::MILLI:
+          return duckdb::LogicalType::TIMESTAMP_MS;
+        case arrow::TimeUnit::MICRO:
+          return duckdb::LogicalType::TIMESTAMP;
+        case arrow::TimeUnit::NANO:
+          return duckdb::LogicalType::TIMESTAMP_NS;
+      }
+      return duckdb::LogicalType::TIMESTAMP;
+    }
+
+    case Type::DURATION:
+      return duckdb::LogicalType::INTERVAL;
+
+    case Type::DECIMAL128: {
+      auto dec_type = std::static_pointer_cast<arrow::Decimal128Type>(arrow_type);
+      return duckdb::LogicalType::DECIMAL(dec_type->precision(), dec_type->scale());
+    }
+
+    case Type::DECIMAL256: {
+      auto dec_type = std::static_pointer_cast<arrow::Decimal256Type>(arrow_type);
+      return duckdb::LogicalType::DECIMAL(dec_type->precision(), dec_type->scale());
+    }
+
+    case Type::NA:
+      return duckdb::LogicalType::SQLNULL;
+
+    default:
+      return duckdb::LogicalType::VARCHAR;  // safe fallback
+  }
+}
+
+std::string QuoteIdent(const std::string& name) {
+  // simple double-quote + escape internal quotes
+  std::string q = "\"";
+  for (char c : name) {
+    if (c == '"')
+      q += "\"\"";
+    else
+      q += c;
+  }
+  q += "\"";
+  return q;
+}
+
+Result<bool> TableExists(duckdb::Connection& conn,
+                         const std::optional<std::string>& catalog_name,
+                         const std::optional<std::string>& schema_name,
+                         const std::string& table_name) {
+  duckdb::vector<duckdb::Value> bind_parameters;
+
+  std::string sql =
+      "SELECT 1 "
+      "FROM information_schema.tables "
+      "WHERE 1 = 1 ";
+
+  if (catalog_name.has_value()) {
+    sql += "AND table_catalog = ? ";
+    bind_parameters.emplace_back(catalog_name.value());
+  } else {
+    sql += "AND table_catalog = CURRENT_DATABASE() ";
+  }
+
+  if (schema_name.has_value()) {
+    sql += "AND table_schema = ? ";
+    bind_parameters.emplace_back(schema_name.value());
+  } else {
+    sql += "AND table_schema = CURRENT_SCHEMA() ";
+  }
+
+  sql +=
+      "  AND table_name = ? "
+      "LIMIT 1";
+  bind_parameters.emplace_back(table_name);
+
+  auto table_exists_statement = conn.Prepare(sql);
+  auto query_result = table_exists_statement->Execute(bind_parameters);
+  if (query_result->HasError()) {
+    return Status::Invalid("DuckDB metadata query failed: " + query_result->GetError());
+  }
+  auto result_set = query_result->Fetch();
+  return result_set->size() > 0;
+}
+
+Result<std::string> GenerateCreateTableSQLFromArrowSchema(
+    const std::string& full_table_name, const std::shared_ptr<arrow::Schema>& schema,
+    const bool& temporary, const sql::TableDefinitionOptions& table_definition_options) {
+  std::ostringstream oss;
+
+  oss << "CREATE "
+      << (table_definition_options.if_exists ==
+                  sql::TableDefinitionOptionsTableExistsOption::kReplace
+              ? " OR REPLACE "
+              : "")
+      << (temporary ? "TEMPORARY" : "") << " TABLE "
+      << (table_definition_options.if_not_exist ==
+                  sql::TableDefinitionOptionsTableNotExistOption::kCreate
+              ? " IF NOT EXISTS "
+              : "")
+      << full_table_name << " (\n";
+
+  for (int i = 0; i < schema->num_fields(); ++i) {
+    const auto& field = schema->field(i);
+
+    if (i > 0) {
+      oss << ",\n";
+    }
+
+    std::string col_name = QuoteIdent(field->name());
+    auto col_type = GetDuckDBTypeFromArrowType(field->type()).ToString();
+
+    oss << "    " << col_name << " " << col_type;
+    if (!field->nullable()) {
+      oss << " NOT NULL";
+    }
+  }
+
+  oss << "\n);";
+  return oss.str();
+}
+
 duckdb::Value ConvertArrowCellToDuckDBValue(const std::shared_ptr<arrow::Array>& arr,
                                             int64_t row) {
   using arrow::Type;
@@ -300,19 +472,19 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
   table_query << " and table_catalog = ";
   if (command.catalog.has_value()) {
     table_query << "?";
-    bind_parameters.push_back(command.catalog.value());
+    bind_parameters.emplace_back(command.catalog.value());
   } else {
     table_query << "CURRENT_DATABASE()";
   }
 
   if (command.db_schema_filter_pattern.has_value()) {
     table_query << " and table_schema LIKE ?";
-    bind_parameters.push_back(command.db_schema_filter_pattern.value());
+    bind_parameters.emplace_back(command.db_schema_filter_pattern.value());
   }
 
   if (command.table_name_filter_pattern.has_value()) {
     table_query << " and table_name LIKE ?";
-    bind_parameters.push_back(command.table_name_filter_pattern.value());
+    bind_parameters.emplace_back(command.table_name_filter_pattern.value());
   }
 
   if (!command.table_types.empty()) {
@@ -320,7 +492,7 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
     const size_t size = command.table_types.size();
     for (size_t i = 0; i < size; i++) {
       table_query << "?";
-      bind_parameters.push_back(command.table_types[i]);
+      bind_parameters.emplace_back(command.table_types[i]);
       if (size - 1 != i) {
         table_query << ",";
       }
@@ -349,7 +521,7 @@ Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& st
         ARROW_ASSIGN_OR_RAISE(const std::shared_ptr<arrow::Scalar> scalar,
                               column->GetScalar(row_index))
 
-        stmt->bind_parameters.push_back(scalar->ToString());
+        stmt->bind_parameters.emplace_back(scalar->ToString());
       }
     }
   }
@@ -605,14 +777,14 @@ class DuckDBFlightSqlServer::Impl {
     query << " AND catalog_name = ";
     if (command.catalog.has_value()) {
       query << "?";
-      bind_parameters.push_back(command.catalog.value());
+      bind_parameters.emplace_back(command.catalog.value());
     } else {
       query << "CURRENT_DATABASE()";
     }
 
     if (command.db_schema_filter_pattern.has_value()) {
       query << " AND schema_name LIKE ?";
-      bind_parameters.push_back(command.db_schema_filter_pattern.value());
+      bind_parameters.emplace_back(command.db_schema_filter_pattern.value());
     }
     query << " ORDER BY catalog_name, db_schema_name";
 
@@ -668,7 +840,7 @@ class DuckDBFlightSqlServer::Impl {
         std::string parameter_name = std::string("parameter_") + parameter_idx_str;
         auto parameter_duckdb_type = prepared_statement_data->GetType(parameter_idx_str);
         auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
-        parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
+        parameter_fields.emplace_back(field(parameter_name, parameter_arrow_type));
       }
     }
     // For direct execution mode (stmt == nullptr), parameter_fields remains empty
@@ -870,18 +1042,18 @@ class DuckDBFlightSqlServer::Impl {
     table_query << " AND catalog_name = ";
     if (table_ref.catalog.has_value()) {
       table_query << "?";
-      bind_parameters.push_back(table_ref.catalog.value());
+      bind_parameters.emplace_back(table_ref.catalog.value());
     } else {
       table_query << "CURRENT_DATABASE()";
     }
 
     if (table_ref.db_schema.has_value()) {
       table_query << " and schema_name LIKE ?";
-      bind_parameters.push_back(table_ref.db_schema.value());
+      bind_parameters.emplace_back(table_ref.db_schema.value());
     }
 
     table_query << " and table_name LIKE ?";
-    bind_parameters.push_back(table_ref.table);
+    bind_parameters.emplace_back(table_ref.table);
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, table_query.str(),
@@ -901,19 +1073,19 @@ class DuckDBFlightSqlServer::Impl {
     duckdb::vector<duckdb::Value> bind_parameters;
 
     std::string filter = "fk_table_name = ?";
-    bind_parameters.push_back(table_ref.table);
+    bind_parameters.emplace_back(table_ref.table);
 
     filter += " AND fk_catalog_name = ";
     if (table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(table_ref.catalog.value());
+      bind_parameters.emplace_back(table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (table_ref.db_schema.has_value()) {
       filter += " AND fk_schema_name = ?";
-      bind_parameters.push_back(table_ref.db_schema.value());
+      bind_parameters.emplace_back(table_ref.db_schema.value());
     }
 
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
@@ -936,20 +1108,20 @@ class DuckDBFlightSqlServer::Impl {
     duckdb::vector<duckdb::Value> bind_parameters;
 
     std::string filter = "pk_table_name = ?";
-    bind_parameters.push_back(table_ref.table);
+    bind_parameters.emplace_back(table_ref.table);
 
     filter += " AND pk_catalog_name = ";
 
     if (table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(table_ref.catalog.value());
+      bind_parameters.emplace_back(table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (table_ref.db_schema.has_value()) {
       filter += " AND pk_schema_name = ?";
-      bind_parameters.push_back(table_ref.db_schema.value());
+      bind_parameters.emplace_back(table_ref.db_schema.value());
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
@@ -971,36 +1143,36 @@ class DuckDBFlightSqlServer::Impl {
     duckdb::vector<duckdb::Value> bind_parameters;
 
     std::string filter = "pk_table_name = ?";
-    bind_parameters.push_back(pk_table_ref.table);
+    bind_parameters.emplace_back(pk_table_ref.table);
 
     filter += " AND pk_catalog_name = ";
     if (pk_table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(pk_table_ref.catalog.value());
+      bind_parameters.emplace_back(pk_table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (pk_table_ref.db_schema.has_value()) {
       filter += " AND pk_schema_name = ?";
-      bind_parameters.push_back(pk_table_ref.db_schema.value());
+      bind_parameters.emplace_back(pk_table_ref.db_schema.value());
     }
 
     const sql::TableRef& fk_table_ref = command.fk_table_ref;
     filter += " AND fk_table_name = ?";
-    bind_parameters.push_back(fk_table_ref.table);
+    bind_parameters.emplace_back(fk_table_ref.table);
 
     filter += " AND fk_catalog_name = ";
     if (fk_table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(fk_table_ref.catalog.value());
+      bind_parameters.emplace_back(fk_table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (fk_table_ref.db_schema.has_value()) {
       filter += " AND fk_schema_name = ?";
-      bind_parameters.push_back(fk_table_ref.db_schema.value());
+      bind_parameters.emplace_back(fk_table_ref.db_schema.value());
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
@@ -1013,17 +1185,43 @@ class DuckDBFlightSqlServer::Impl {
   Result<int64_t> DoPutCommandStatementIngest(const flight::ServerCallContext& context,
                                               const flight::sql::StatementIngest& command,
                                               flight::FlightMessageReader* reader) {
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+
     // 1. Build a fully qualified target table name
     std::string target_table;
     if (command.catalog.has_value()) {
-      target_table += "\"" + command.catalog.value() + "\".";
+      target_table += QuoteIdent(command.catalog.value()) + ".";
     }
     if (command.schema.has_value()) {
-      target_table += "\"" + command.schema.value() + "\".";
+      target_table += QuoteIdent(command.schema.value()) + ".";
     }
-    target_table += "\"" + command.table + "\"";
+    target_table += QuoteIdent(command.table);
 
-    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    ARROW_ASSIGN_OR_RAISE(auto arrow_schema, reader->GetSchema());
+
+    ARROW_ASSIGN_OR_RAISE(auto target_table_exists,
+                          TableExists(*client_session->connection, command.catalog,
+                                      command.schema, command.table));
+
+    if (target_table_exists) {
+      if (command.table_definition_options.if_exists ==
+          sql::TableDefinitionOptionsTableExistsOption::kFail) {
+        return Status::Invalid("Table: " + target_table + " already exists");
+      }
+      if (command.table_definition_options.if_exists != sql::TableDefinitionOptionsTableExistsOption::kAppend) {
+        ARROW_ASSIGN_OR_RAISE(auto create_table_statement,
+                              GenerateCreateTableSQLFromArrowSchema(
+                                  target_table, arrow_schema, command.temporary,
+                                  command.table_definition_options));
+      }
+    }
+
+    if (!target_table_exists) {
+      if (command.table_definition_options.if_not_exist ==
+          sql::TableDefinitionOptionsTableNotExistOption::kFail) {
+        return Status::Invalid("Table: " + target_table + " does not exist");
+      }
+    }
 
     client_session->connection->BeginTransaction();
 
@@ -1033,11 +1231,12 @@ class DuckDBFlightSqlServer::Impl {
     std::optional<duckdb::Appender> appender;
     if (command.catalog.has_value() && command.schema.has_value()) {
       appender.emplace(*client_session->connection, command.catalog.value(),
-                       command.schema.value(), target_table);
+                       command.schema.value(), command.table);
     } else if (command.schema.has_value()) {
-      appender.emplace(*client_session->connection, command.schema.value(), target_table);
+      appender.emplace(*client_session->connection, command.schema.value(),
+                       command.table);
     } else {
-      appender.emplace(*client_session->connection, target_table);
+      appender.emplace(*client_session->connection, command.table);
     }
 
     while (true) {
@@ -1222,7 +1421,7 @@ class DuckDBFlightSqlServer::Impl {
     for (size_t row_idx = 0; row_idx < result->RowCount(); row_idx++) {
       auto value = result->GetValue(0, row_idx);  // First column
       if (!value.IsNull()) {
-        string_results.push_back(value.ToString());
+        string_results.emplace_back(value.ToString());
       }
     }
 
