@@ -55,6 +55,43 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
+
+class DuckDBTransactionGuard {
+ public:
+  explicit DuckDBTransactionGuard(duckdb::Connection& conn)
+      : conn_(conn), active_(true), committed_(false) {
+    conn_.BeginTransaction();
+  }
+
+  ~DuckDBTransactionGuard() {
+    if (active_ && !committed_) {
+      try {
+        conn_.Rollback();
+      } catch (...) {
+        // Swallow exceptions in destructor; nothing we can do here.
+      }
+    }
+  }
+
+  arrow::Status Commit() {
+    if (!active_) {
+      return arrow::Status::Invalid("Transaction already finished");
+    }
+    if (committed_) {
+      return arrow::Status::Invalid("Transaction already committed");
+    }
+    conn_.Commit();
+    committed_ = true;
+    active_ = false;
+    return arrow::Status::OK();
+  }
+
+ private:
+  duckdb::Connection& conn_;
+  bool active_;
+  bool committed_;
+};
+
 duckdb::LogicalType GetDuckDBTypeFromArrowType(
     const std::shared_ptr<arrow::DataType>& arrow_type) {
   using arrow::Type;
@@ -1197,66 +1234,106 @@ class DuckDBFlightSqlServer::Impl {
     }
     target_table += QuoteIdent(command.table);
 
+    // 2. Basic metadata up front (no transaction yet)
     ARROW_ASSIGN_OR_RAISE(auto arrow_schema, reader->GetSchema());
 
     ARROW_ASSIGN_OR_RAISE(auto target_table_exists,
                           TableExists(*client_session->connection, command.catalog,
                                       command.schema, command.table));
 
+    using ExistsOpt = sql::TableDefinitionOptionsTableExistsOption;
+    using NotExistsOpt = sql::TableDefinitionOptionsTableNotExistOption;
+
+    // If table does NOT exist and caller insisted that it must exist, fail early
+    if (!target_table_exists &&
+        command.table_definition_options.if_not_exist == NotExistsOpt::kFail) {
+      return Status::Invalid("Table: " + target_table + " does not exist");
+    }
+
+    // 3. Start transaction (RAII guard)
+    DuckDBTransactionGuard txn(*client_session->connection);
+
+    // 4. Handle existence options inside the transaction
     if (target_table_exists) {
-      if (command.table_definition_options.if_exists ==
-          sql::TableDefinitionOptionsTableExistsOption::kFail) {
-        return Status::Invalid("Table: " + target_table + " already exists");
-      }
-      if (command.table_definition_options.if_exists != sql::TableDefinitionOptionsTableExistsOption::kAppend) {
-        ARROW_ASSIGN_OR_RAISE(auto create_table_statement,
-                              GenerateCreateTableSQLFromArrowSchema(
-                                  target_table, arrow_schema, command.temporary,
-                                  command.table_definition_options));
+      switch (command.table_definition_options.if_exists) {
+        case ExistsOpt::kFail:
+          // Rollback handled by txn destructor
+          return Status::Invalid("Table: " + target_table + " already exists");
+
+        case ExistsOpt::kAppend:
+        case ExistsOpt::kUnspecified:
+          // OK: use existing table as-is
+          break;
+
+        case ExistsOpt::kReplace: {
+          // DROP then re-CREATE inside the same transaction
+          auto drop_res = client_session->connection->Query("DROP TABLE " + target_table);
+          if (drop_res->HasError()) {
+            return Status::Invalid("Failed to drop table " + target_table + ": " +
+                                   drop_res->GetError());
+          }
+          target_table_exists = false;
+          break;
+        }
       }
     }
 
+    // 5. If table doesn't exist (or was just dropped for replace), create it
     if (!target_table_exists) {
-      if (command.table_definition_options.if_not_exist ==
-          sql::TableDefinitionOptionsTableNotExistOption::kFail) {
-        return Status::Invalid("Table: " + target_table + " does not exist");
+      ARROW_ASSIGN_OR_RAISE(auto create_table_sql,
+                            GenerateCreateTableSQLFromArrowSchema(
+                                target_table, arrow_schema, command.temporary,
+                                command.table_definition_options));
+
+      auto create_res = client_session->connection->Query(create_table_sql);
+      if (create_res->HasError()) {
+        return Status::Invalid("Failed to create table " + target_table + ": " +
+                               create_res->GetError());
       }
     }
 
-    client_session->connection->BeginTransaction();
-
+    // 6. Ingest rows via Appender
     int64_t total_rows = 0;
     flight::FlightStreamChunk chunk;
 
     std::optional<duckdb::Appender> appender;
-    if (command.catalog.has_value() && command.schema.has_value()) {
-      appender.emplace(*client_session->connection, command.catalog.value(),
-                       command.schema.value(), command.table);
-    } else if (command.schema.has_value()) {
-      appender.emplace(*client_session->connection, command.schema.value(),
-                       command.table);
-    } else {
-      appender.emplace(*client_session->connection, command.table);
-    }
-
-    while (true) {
-      ARROW_ASSIGN_OR_RAISE(chunk, reader->Next());
-
-      if (!chunk.data && !chunk.app_metadata) {
-        break;  // end-of-stream
+    try {
+      // Initialize appender
+      if (command.catalog.has_value() && command.schema.has_value()) {
+        appender.emplace(*client_session->connection, command.catalog.value(),
+                         command.schema.value(), command.table);
+      } else if (command.schema.has_value()) {
+        appender.emplace(*client_session->connection, command.schema.value(),
+                         command.table);
+      } else {
+        appender.emplace(*client_session->connection, command.table);
       }
 
-      if (chunk.data) {
-        total_rows += chunk.data->num_rows();
-        ARROW_RETURN_NOT_OK(AppendRecordBatchToDuckDB(*appender, chunk.data));
+      // Ingest loop
+      while (true) {
+        ARROW_ASSIGN_OR_RAISE(auto next_chunk, reader->Next());
+        chunk = std::move(next_chunk);
+
+        if (!chunk.data && !chunk.app_metadata) {
+          break;  // end-of-stream
+        }
+
+        if (chunk.data) {
+          total_rows += chunk.data->num_rows();
+          ARROW_RETURN_NOT_OK(AppendRecordBatchToDuckDB(*appender, chunk.data));
+        }
       }
+
+      appender->Close();
+
+      // 7. Commit transaction – if this fails, caller's table stays intact due to rollback
+      ARROW_RETURN_NOT_OK(txn.Commit());
+
+      return total_rows;
+    } catch (const duckdb::Exception& ex) {
+      // txn destructor will rollback
+      return Status::Invalid("DuckDB ingest failed: " + std::string(ex.what()));
     }
-
-    appender->Close();
-
-    client_session->connection->Commit();
-
-    return total_rows;
   }
 
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
