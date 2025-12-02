@@ -309,16 +309,18 @@ duckdb::Value ConvertArrowCellToDuckDBValue(
     }
 
     // -------- DECIMAL128 -> DuckDB DECIMAL --------
-    case Type::DECIMAL128: {
-      auto typed = std::static_pointer_cast<arrow::Decimal128Array>(arr);
-      auto type  = std::static_pointer_cast<arrow::Decimal128Type>(arr->type());
-      int32_t precision = type->precision();
-      int32_t scale     = type->scale();
+    case arrow::Type::DECIMAL128: {
+      auto typed    = std::static_pointer_cast<arrow::Decimal128Array>(arr);
+      auto dec_type = std::static_pointer_cast<arrow::Decimal128Type>(arr->type());
+      int32_t scale = dec_type->scale();
 
-      arrow::Decimal128 dec = typed->GetValue(row);
-      // We can convert to string and let DuckDB parse it into a DECIMAL
-      std::string dec_str = dec.ToString(scale); // Arrow prints with scale
-      return duckdb::Value::DECIMAL(dec_str, precision, scale);
+      // String representation with the scale already applied, e.g. "123.45"
+      std::string s = typed->FormatValue(row);
+
+      // Parse to double – yes, this loses exactness but is simple + robust
+      double d = std::stod(s);
+
+      return duckdb::Value::DOUBLE(d);
     }
 
     // -------- FALLBACK: string representation --------
