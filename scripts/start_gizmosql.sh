@@ -39,7 +39,7 @@ then
   READONLY_FLAG="--readonly"
 fi
 
-gizmosql_server \
+exec gizmosql_server \
   --backend="${L_DATABASE_BACKEND}" \
   --database-filename="${L_DATABASE_FILENAME}" \
   ${TLS_ARG} \
