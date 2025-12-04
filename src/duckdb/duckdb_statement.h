@@ -29,6 +29,7 @@
 #include "gizmosql_logging.h"
 #include "session_context.h"
 #include <chrono>
+#include <arrow/record_batch.h>
 
 using Clock = std::chrono::steady_clock;
 
@@ -96,8 +97,11 @@ class DuckDBStatement {
   std::string sql_;            // Original SQL for direct execution
   std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
+  bool
+      is_gizmosql_admin_;  // Flag to indicate whether the statement is a GizmoSQL administrative command
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
   arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
+  std::shared_ptr<arrow::RecordBatch> synthetic_result_batch_;
   // Used to ensure thread-safe lazy init
   std::once_flag schema_once_flag_;
 
@@ -141,6 +145,8 @@ class DuckDBStatement {
     query_result_ = nullptr;
     client_context_ = client_session->connection->context;
   }
+
+  arrow::Status HandleGizmoSQLSet();
 
   arrow::Result<std::shared_ptr<arrow::Schema>> ComputeSchema();
 };

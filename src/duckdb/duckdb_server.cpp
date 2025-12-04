@@ -627,6 +627,7 @@ std::string PrepareQueryForGetImportedOrExportedKeys(const std::string& filter) 
 
 class DuckDBFlightSqlServer::Impl {
  private:
+  DuckDBFlightSqlServer* outer_;
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   bool print_queries_;
   int32_t query_timeout_;
@@ -679,6 +680,8 @@ class DuckDBFlightSqlServer::Impl {
 
     // Build the session *without* holding any lock
     auto new_session = std::make_shared<ClientSession>();
+
+    new_session->server = outer_->shared_from_this();
     new_session->session_id = session_id;
     new_session->username = tl_request_ctx.username.value_or("");
     new_session->role = tl_request_ctx.role.value_or("");
@@ -729,9 +732,10 @@ class DuckDBFlightSqlServer::Impl {
   }
 
  public:
-  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool& print_queries,
-                const int32_t& query_timeout)
-      : db_instance_(std::move(db_instance)),
+  explicit Impl(DuckDBFlightSqlServer* outer, std::shared_ptr<duckdb::DuckDB> db_instance,
+                const bool& print_queries, const int32_t& query_timeout)
+      : outer_(outer),
+        db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
         query_timeout_(query_timeout) {}
 
@@ -1568,6 +1572,28 @@ class DuckDBFlightSqlServer::Impl {
 
     return ExecuteSqlAndGetStringVector(connection, sql);
   }
+
+  Status SetQueryTimeout(const std::shared_ptr<ClientSession>& client_session,
+                         const int& seconds) {
+    query_timeout_ = seconds;
+    return Status::OK();
+  }
+
+  Result<int32_t> GetQueryTimeout(
+      const std::shared_ptr<ClientSession>& client_session) const {
+    return query_timeout_;
+  }
+
+  Status SetPrintQueries(const std::shared_ptr<ClientSession>& client_session,
+                         const bool& enabled) {
+    print_queries_ = enabled;
+    return Status::OK();
+  }
+
+  Result<bool> GetPrintQueries(
+      const std::shared_ptr<ClientSession>& client_session) const {
+    return print_queries_;
+  }
 };
 
 DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
@@ -1826,4 +1852,25 @@ Result<flight::CloseSessionResult> DuckDBFlightSqlServer::CloseSession(
     const flight::CloseSessionRequest& request) {
   return impl_->CloseSession(context, request);
 }
+
+Status DuckDBFlightSqlServer::SetQueryTimeout(
+    const std::shared_ptr<ClientSession>& client_session, const int& seconds) {
+  return impl_->SetQueryTimeout(client_session, seconds);
+}
+
+Result<int32_t> DuckDBFlightSqlServer::GetQueryTimeout(
+    const std::shared_ptr<ClientSession>& client_session) const {
+  return impl_->GetQueryTimeout(client_session);
+}
+
+Status DuckDBFlightSqlServer::SetPrintQueries(
+    const std::shared_ptr<ClientSession>& client_session, const bool& enabled) {
+  return impl_->SetPrintQueries(client_session, enabled);
+}
+
+Result<bool> DuckDBFlightSqlServer::GetPrintQueries(
+    const std::shared_ptr<ClientSession>& client_session) const {
+  return impl_->GetPrintQueries(client_session);
+}
+
 }  // namespace gizmosql::ddb

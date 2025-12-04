@@ -20,11 +20,16 @@
 #include <duckdb.h>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
+#include <duckdb/parser/parser.hpp>
+#include <duckdb/parser/statement/set_statement.hpp>
+#include <duckdb/common/enums/set_scope.hpp>
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include <future>
 #include <chrono>
 
 #include <boost/algorithm/string.hpp>
 
+#include <arrow/api.h>
 #include <arrow/util/logging.h>
 #include <arrow/c/bridge.h>
 #include "duckdb_server.h"
@@ -35,6 +40,23 @@
 
 using arrow::Status;
 using duckdb::QueryResult;
+
+namespace {
+
+bool IsLikelyGizmoSQLSet(const std::string& sql) {
+  std::string trimmed = sql;
+  boost::algorithm::trim(trimmed);
+  if (trimmed.empty()) return false;
+
+  std::string upper = boost::to_upper_copy(trimmed);
+  if (upper.rfind("SET ", 0) != 0 && upper.rfind("SET\t", 0) != 0 &&
+      upper.rfind("SET\n", 0) != 0) {
+    return false;
+  }
+  return upper.find("GIZMOSQL.") != std::string::npos;
+}
+
+}  // namespace
 
 namespace gizmosql::ddb {
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
@@ -131,6 +153,23 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         {"role", client_session->role}, {"statement_handle", handle}, {"sql", logged_sql},
         {"query_timeout", std::to_string(query_timeout)});
   }
+
+  if (IsLikelyGizmoSQLSet(sql)) {
+    std::shared_ptr<DuckDBStatement> result(
+        new DuckDBStatement(client_session, handle, sql, log_level, log_queries,
+                            query_timeout, override_schema));
+    result->is_gizmosql_admin_ = true;
+    if (log_queries) {
+      GIZMOSQL_LOGKV_DYNAMIC(
+          log_level, "Detected GizmoSQL admin SET command",
+          {"peer", client_session->peer}, {"kind", "sql"}, {"status", "admin"},
+          {"session_id", client_session->session_id}, {"user", client_session->username},
+          {"role", client_session->role}, {"statement_handle", handle},
+          {"sql", logged_sql});
+    }
+    return result;
+  }
+
   std::shared_ptr<duckdb::PreparedStatement> stmt =
       client_session->connection->Prepare(sql);
 
@@ -194,6 +233,67 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                                  query_timeout, override_schema);
 }
 
+arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
+  duckdb::Parser parser;
+  try {
+    parser.ParseQuery(sql_);
+  } catch (const std::exception& ex) {
+    return arrow::Status::Invalid("Failed to parse GizmoSQL SET command: " + sql_ +
+                                  " - " + ex.what());
+  }
+
+  if (parser.statements.empty() ||
+      parser.statements[0]->type != duckdb::StatementType::SET_STATEMENT) {
+    return arrow::Status::Invalid("Expected SET statement: " + sql_);
+  }
+
+  auto& set_stmt = (duckdb::SetVariableStatement&)*parser.statements[0];
+
+  const std::string& name = set_stmt.name;
+  auto scope = set_stmt.scope;
+
+  auto* const_expr = dynamic_cast<duckdb::ConstantExpression*>(set_stmt.value.get());
+  if (!const_expr) return Status::Invalid("SET value is not a constant");
+
+  auto val = const_expr->value.ToString();  // duckdb::Value
+
+  if (!boost::istarts_with(name, "gizmosql.")) {
+    return arrow::Status::Invalid("Unsupported GizmoSQL parameter: " + name);
+  }
+
+  if (name == "gizmosql.query_timeout") {
+    int timeout_seconds = 0;
+    try {
+      timeout_seconds = std::stoi(val);
+    } catch (...) {
+      return arrow::Status::Invalid("Invalid value for query_timeout: " + val);
+    }
+
+    if (scope == duckdb::SetScope::SESSION) {
+      client_session_->query_timeout = timeout_seconds;
+    } else if (scope == duckdb::SetScope::GLOBAL) {
+      if (auto server = GetServer(*client_session_)) {
+        ARROW_RETURN_NOT_OK(server->SetQueryTimeout(client_session_, timeout_seconds));
+      }
+    }
+
+    std::string scope_str = (scope == duckdb::SetScope::GLOBAL) ? "global" : "session";
+    std::string msg =
+        "GizmoSQL " + scope_str + " parameter '" + name + "' successfully set to: " + val;
+
+    auto schema = arrow::schema({arrow::field("result", arrow::utf8())});
+    arrow::StringBuilder builder;
+    ARROW_RETURN_NOT_OK(builder.Append(msg));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    synthetic_result_batch_ = arrow::RecordBatch::Make(
+        schema, 1, std::vector<std::shared_ptr<arrow::Array>>{array});
+    return arrow::Status::OK();
+  }
+
+  return arrow::Status::Invalid("Unknown GizmoSQL configuration parameter: " + name);
+}
+
 DuckDBStatement::~DuckDBStatement() {}
 
 arrow::Result<int> DuckDBStatement::Execute() {
@@ -205,6 +305,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
       {"role", client_session_->role}, {"statement_handle", handle_},
       {"timeout_seconds", std::to_string(query_timeout_)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
+
+  if (is_gizmosql_admin_) {
+    ARROW_RETURN_NOT_OK(HandleGizmoSQLSet());
+    return 0;
+  }
 
   // Launch execution in a separate thread
   auto future = std::async(std::launch::async, [this]() -> arrow::Result<int> {
@@ -354,7 +459,21 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
       {"timeout_seconds", std::to_string(query_timeout_)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
+  if (synthetic_result_batch_) {
+    status = "success";
+    auto batch = synthetic_result_batch_;
+    synthetic_result_batch_.reset();
+    return batch;
+  }
+
   std::shared_ptr<arrow::RecordBatch> record_batch;
+
+  if (!query_result_) {
+    // There is nothing to fetch...
+    status = "success";
+    return record_batch;
+  }
+
   ArrowArray res_arr;
   ArrowSchema res_schema;
 
@@ -474,6 +593,11 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
       {"role", client_session_->role}, {"statement_handle", handle_},
       {"timeout_seconds", std::to_string(query_timeout_)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
+
+  if (is_gizmosql_admin_) {
+    status = "success";
+    return arrow::schema({arrow::field("result", arrow::utf8())});
+  }
 
   if (use_direct_execution_) {
     // For direct execution, we need to execute the query to get schema information

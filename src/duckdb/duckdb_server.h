@@ -25,6 +25,7 @@
 #include <arrow/api.h>
 #include <arrow/flight/sql/server.h>
 #include "flight_sql_fwd.h"
+#include "session_context.h"
 
 namespace gizmosql::ddb {
 /// \brief Convert a column type to a ArrowType.
@@ -32,10 +33,15 @@ namespace gizmosql::ddb {
 /// \return            The equivalent ArrowType.
 std::shared_ptr<arrow::DataType> GetArrowType(const char* duckdb_type);
 
+class DuckDBStatement;
+
 /// \brief Example implementation of FlightSqlServerBase backed by an in-memory DuckDB
 ///        database.
-class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
+class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
+                              public std::enable_shared_from_this<DuckDBFlightSqlServer> {
  public:
+  friend class DuckDBStatement;
+
   ~DuckDBFlightSqlServer() override;
 
   static arrow::Result<std::shared_ptr<DuckDBFlightSqlServer>> Create(
@@ -166,7 +172,8 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
       const flight::sql::GetPrimaryKeys& command) override;
 
   arrow::Result<int64_t> DoPutCommandStatementIngest(
-      const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
+      const flight::ServerCallContext& context,
+      const flight::sql::StatementIngest& command,
       flight::FlightMessageReader* reader) override;
 
   arrow::Result<flight::sql::ActionBeginTransactionResult> BeginTransaction(
@@ -197,9 +204,18 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase {
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) override;
 
+  arrow::Status SetQueryTimeout(const std::shared_ptr<ClientSession>& client_session,
+                                const int& seconds);
+  arrow::Result<int32_t> GetQueryTimeout(
+      const std::shared_ptr<ClientSession>& client_session) const;
+
+  arrow::Status SetPrintQueries(const std::shared_ptr<ClientSession>& client_session,
+                                const bool& enabled);
+  arrow::Result<bool> GetPrintQueries(
+      const std::shared_ptr<ClientSession>& client_session) const;
+
  private:
   class Impl;
-
   std::shared_ptr<Impl> impl_;
 
   explicit DuckDBFlightSqlServer(std::shared_ptr<Impl> impl);
