@@ -43,4 +43,4 @@ RUN chmod +x /usr/local/bin/gizmosql_client
 
 EXPOSE 31337
 
-ENTRYPOINT scripts/start_gizmosql_slim.sh
+ENTRYPOINT ["scripts/start_gizmosql_slim.sh"]
