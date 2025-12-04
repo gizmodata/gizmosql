@@ -281,3 +281,9 @@ target_compile_options(gizmosql_client PRIVATE "-static")
 install(TARGETS gizmosql_client
         DESTINATION bin
 )
+
+# =========================================================
+# GizmoSQL Tests
+# =========================================================
+enable_testing()
+add_subdirectory(tests)

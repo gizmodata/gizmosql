@@ -55,6 +55,440 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
+
+class DuckDBTransactionGuard {
+ public:
+  explicit DuckDBTransactionGuard(duckdb::Connection& conn)
+      : conn_(conn), active_(true), committed_(false) {
+    conn_.BeginTransaction();
+  }
+
+  ~DuckDBTransactionGuard() {
+    if (active_ && !committed_) {
+      try {
+        conn_.Rollback();
+      } catch (...) {
+        // Swallow exceptions in destructor; nothing we can do here.
+      }
+    }
+  }
+
+  arrow::Status Commit() {
+    if (!active_) {
+      return arrow::Status::Invalid("Transaction already finished");
+    }
+    if (committed_) {
+      return arrow::Status::Invalid("Transaction already committed");
+    }
+    conn_.Commit();
+    committed_ = true;
+    active_ = false;
+    return arrow::Status::OK();
+  }
+
+ private:
+  duckdb::Connection& conn_;
+  bool active_;
+  bool committed_;
+};
+
+duckdb::LogicalType GetDuckDBTypeFromArrowType(
+    const std::shared_ptr<arrow::DataType>& arrow_type) {
+  using arrow::Type;
+
+  switch (arrow_type->id()) {
+    case Type::INT8:
+      return duckdb::LogicalType::TINYINT;
+    case Type::INT16:
+      return duckdb::LogicalType::SMALLINT;
+    case Type::INT32:
+      return duckdb::LogicalType::INTEGER;
+    case Type::INT64:
+      return duckdb::LogicalType::BIGINT;
+
+    case Type::UINT8:
+      return duckdb::LogicalType::UTINYINT;
+    case Type::UINT16:
+      return duckdb::LogicalType::USMALLINT;
+    case Type::UINT32:
+      return duckdb::LogicalType::UINTEGER;
+    case Type::UINT64:
+      return duckdb::LogicalType::UBIGINT;
+
+    case Type::FLOAT:
+      return duckdb::LogicalType::FLOAT;
+    case Type::DOUBLE:
+      return duckdb::LogicalType::DOUBLE;
+
+    case Type::BOOL:
+      return duckdb::LogicalType::BOOLEAN;
+
+    case Type::STRING:
+    case Type::LARGE_STRING:
+      return duckdb::LogicalType::VARCHAR;
+
+    case Type::BINARY:
+    case Type::LARGE_BINARY:
+      return duckdb::LogicalType::BLOB;
+
+    case Type::DATE32:
+    case Type::DATE64:
+      return duckdb::LogicalType::DATE;
+
+    case Type::TIME32:
+    case Type::TIME64:
+      return duckdb::LogicalType::TIME;
+
+    case Type::TIMESTAMP: {
+      auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
+      switch (ts_type->unit()) {
+        case arrow::TimeUnit::SECOND:
+          return duckdb::LogicalType::TIMESTAMP_S;
+        case arrow::TimeUnit::MILLI:
+          return duckdb::LogicalType::TIMESTAMP_MS;
+        case arrow::TimeUnit::MICRO:
+          return duckdb::LogicalType::TIMESTAMP;
+        case arrow::TimeUnit::NANO:
+          return duckdb::LogicalType::TIMESTAMP_NS;
+      }
+      return duckdb::LogicalType::TIMESTAMP;
+    }
+
+    case Type::DURATION:
+      return duckdb::LogicalType::INTERVAL;
+
+    case Type::DECIMAL128: {
+      auto dec_type = std::static_pointer_cast<arrow::Decimal128Type>(arrow_type);
+      return duckdb::LogicalType::DECIMAL(dec_type->precision(), dec_type->scale());
+    }
+
+    case Type::DECIMAL256: {
+      auto dec_type = std::static_pointer_cast<arrow::Decimal256Type>(arrow_type);
+      return duckdb::LogicalType::DECIMAL(dec_type->precision(), dec_type->scale());
+    }
+
+    case Type::NA:
+      return duckdb::LogicalType::SQLNULL;
+
+    default:
+      return duckdb::LogicalType::VARCHAR;  // safe fallback
+  }
+}
+
+std::string QuoteIdent(const std::string& name) {
+  // simple double-quote + escape internal quotes
+  std::string q = "\"";
+  for (char c : name) {
+    if (c == '"')
+      q += "\"\"";
+    else
+      q += c;
+  }
+  q += "\"";
+  return q;
+}
+
+Result<bool> TableExists(duckdb::Connection& conn,
+                         const std::optional<std::string>& catalog_name,
+                         const std::optional<std::string>& schema_name,
+                         const std::string& table_name) {
+  duckdb::vector<duckdb::Value> bind_parameters;
+
+  std::string sql =
+      "SELECT 1 "
+      "FROM information_schema.tables "
+      "WHERE 1 = 1 ";
+
+  if (catalog_name.has_value()) {
+    sql += "AND table_catalog = ? ";
+    bind_parameters.emplace_back(catalog_name.value());
+  } else {
+    sql += "AND table_catalog = CURRENT_DATABASE() ";
+  }
+
+  if (schema_name.has_value()) {
+    sql += "AND table_schema = ? ";
+    bind_parameters.emplace_back(schema_name.value());
+  } else {
+    sql += "AND table_schema = CURRENT_SCHEMA() ";
+  }
+
+  sql +=
+      "  AND table_name = ? "
+      "LIMIT 1";
+  bind_parameters.emplace_back(table_name);
+
+  auto table_exists_statement = conn.Prepare(sql);
+  auto query_result = table_exists_statement->Execute(bind_parameters);
+  if (query_result->HasError()) {
+    return Status::Invalid("DuckDB metadata query failed: " + query_result->GetError());
+  }
+  auto result_set = query_result->Fetch();
+  return result_set && result_set->size() > 0;
+}
+
+Result<std::string> GenerateCreateTableSQLFromArrowSchema(
+    const std::string& full_table_name, const std::shared_ptr<arrow::Schema>& schema,
+    const bool& temporary, const bool& replace = false) {
+  std::ostringstream oss;
+
+  oss << "CREATE " << (replace ? "OR REPLACE " : "") << (temporary ? "TEMPORARY " : "")
+      << "TABLE " << full_table_name << " (\n";
+
+  for (int i = 0; i < schema->num_fields(); ++i) {
+    const auto& field = schema->field(i);
+
+    if (i > 0) {
+      oss << ",\n";
+    }
+
+    const std::string col_name = QuoteIdent(field->name());
+    const auto col_type = GetDuckDBTypeFromArrowType(field->type()).ToString();
+
+    oss << "    " << col_name << " " << col_type;
+    if (!field->nullable()) {
+      oss << " NOT NULL";
+    }
+  }
+
+  oss << "\n);";
+  return oss.str();
+}
+
+duckdb::Value ConvertArrowCellToDuckDBValue(const std::shared_ptr<arrow::Array>& arr,
+                                            int64_t row) {
+  using arrow::Type;
+
+  if (!arr || arr->IsNull(row)) {
+    // NULL value
+    return duckdb::Value();  // NULL
+  }
+
+  switch (arr->type_id()) {
+    // -------- BOOL --------
+    case Type::BOOL: {
+      auto typed = std::static_pointer_cast<arrow::BooleanArray>(arr);
+      return duckdb::Value::BOOLEAN(typed->Value(row));
+    }
+
+    // -------- SIGNED INTS --------
+    case Type::INT8: {
+      auto typed = std::static_pointer_cast<arrow::Int8Array>(arr);
+      return duckdb::Value::TINYINT(typed->Value(row));
+    }
+    case Type::INT16: {
+      auto typed = std::static_pointer_cast<arrow::Int16Array>(arr);
+      return duckdb::Value::SMALLINT(typed->Value(row));
+    }
+    case Type::INT32: {
+      auto typed = std::static_pointer_cast<arrow::Int32Array>(arr);
+      return duckdb::Value::INTEGER(typed->Value(row));
+    }
+    case Type::INT64: {
+      auto typed = std::static_pointer_cast<arrow::Int64Array>(arr);
+      return duckdb::Value::BIGINT(typed->Value(row));
+    }
+
+    // -------- UNSIGNED INTS --------
+    case Type::UINT8: {
+      auto typed = std::static_pointer_cast<arrow::UInt8Array>(arr);
+      return duckdb::Value::UTINYINT(typed->Value(row));
+    }
+    case Type::UINT16: {
+      auto typed = std::static_pointer_cast<arrow::UInt16Array>(arr);
+      return duckdb::Value::USMALLINT(typed->Value(row));
+    }
+    case Type::UINT32: {
+      auto typed = std::static_pointer_cast<arrow::UInt32Array>(arr);
+      return duckdb::Value::UINTEGER(typed->Value(row));
+    }
+    case Type::UINT64: {
+      auto typed = std::static_pointer_cast<arrow::UInt64Array>(arr);
+      return duckdb::Value::UBIGINT(typed->Value(row));
+    }
+
+    // -------- FLOATS --------
+    case Type::FLOAT: {
+      auto typed = std::static_pointer_cast<arrow::FloatArray>(arr);
+      return duckdb::Value::FLOAT(typed->Value(row));
+    }
+    case Type::DOUBLE: {
+      auto typed = std::static_pointer_cast<arrow::DoubleArray>(arr);
+      return duckdb::Value::DOUBLE(typed->Value(row));
+    }
+
+    // -------- STRINGS --------
+    case Type::STRING:
+    case Type::LARGE_STRING: {
+      auto typed = std::static_pointer_cast<arrow::StringArray>(arr);
+      auto view = typed->GetView(row);
+      // Arrow strings are NOT guaranteed null-terminated; use length-aware ctor.
+      return duckdb::Value(std::string(view.data(), view.size()));
+    }
+
+    // -------- BINARY (store as BLOB or VARCHAR, here: BLOB) --------
+    case Type::BINARY:
+    case Type::LARGE_BINARY: {
+      auto typed = std::static_pointer_cast<arrow::BinaryArray>(arr);
+      int32_t len = 0;
+      const uint8_t* data = typed->GetValue(row, &len);
+      return duckdb::Value::BLOB(data, len);
+    }
+
+    // -------- DATE --------
+    case Type::DATE32: {
+      auto typed = std::static_pointer_cast<arrow::Date32Array>(arr);
+      int32_t days = typed->Value(row);  // days since 1970-01-01
+      int64_t epoch_seconds = static_cast<int64_t>(days) * 86400;
+      duckdb::date_t d = duckdb::Date::EpochToDate(epoch_seconds);
+      return duckdb::Value::DATE(d);
+    }
+    case Type::DATE64: {
+      auto typed = std::static_pointer_cast<arrow::Date64Array>(arr);
+      int64_t ms = typed->Value(row);  // ms since 1970-01-01
+      int64_t epoch_seconds = ms / 1000;
+      duckdb::date_t d = duckdb::Date::EpochToDate(epoch_seconds);
+      return duckdb::Value::DATE(d);
+    }
+
+    // -------- TIME (TIME32/TIME64 -> microseconds since midnight) --------
+    case Type::TIME32: {
+      auto typed = std::static_pointer_cast<arrow::Time32Array>(arr);
+      int32_t v = typed->Value(row);
+      auto time_type = std::static_pointer_cast<arrow::Time32Type>(arr->type());
+
+      int64_t micros = 0;
+      switch (time_type->unit()) {
+        case arrow::TimeUnit::SECOND:
+          micros = static_cast<int64_t>(v) * 1'000'000;
+          break;
+        case arrow::TimeUnit::MILLI:
+          micros = static_cast<int64_t>(v) * 1'000;
+          break;
+        default:
+          throw std::runtime_error(
+              "Unsupported Time32 unit for Arrow -> DuckDB conversion");
+      }
+
+      int64_t sec_total = micros / 1'000'000;
+      int64_t usec = micros % 1'000'000;
+      int64_t hour = sec_total / 3600;
+      int64_t min = (sec_total / 60) % 60;
+      int64_t sec = sec_total % 60;
+
+      return duckdb::Value::TIME(static_cast<int32_t>(hour), static_cast<int32_t>(min),
+                                 static_cast<int32_t>(sec), static_cast<int32_t>(usec));
+    }
+
+    case Type::TIME64: {
+      auto typed = std::static_pointer_cast<arrow::Time64Array>(arr);
+      int64_t v = typed->Value(row);
+      auto time_type = std::static_pointer_cast<arrow::Time64Type>(arr->type());
+
+      int64_t micros = 0;
+      switch (time_type->unit()) {
+        case arrow::TimeUnit::MICRO:
+          micros = v;
+          break;
+        case arrow::TimeUnit::NANO:
+          micros = v / 1000;
+          break;  // truncate
+        default:
+          throw std::runtime_error(
+              "Unsupported Time64 unit for Arrow -> DuckDB conversion");
+      }
+
+      int64_t sec_total = micros / 1'000'000;
+      int64_t usec = micros % 1'000'000;
+      int64_t hour = sec_total / 3600;
+      int64_t min = (sec_total / 60) % 60;
+      int64_t sec = sec_total % 60;
+
+      return duckdb::Value::TIME(static_cast<int32_t>(hour), static_cast<int32_t>(min),
+                                 static_cast<int32_t>(sec), static_cast<int32_t>(usec));
+    }
+
+    // -------- TIMESTAMP --------
+    case Type::TIMESTAMP: {
+      auto typed = std::static_pointer_cast<arrow::TimestampArray>(arr);
+      int64_t v = typed->Value(row);
+      auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arr->type());
+
+      int64_t micros_since_epoch = 0;
+      switch (ts_type->unit()) {
+        case arrow::TimeUnit::SECOND:
+          micros_since_epoch = v * 1'000'000;
+          break;
+        case arrow::TimeUnit::MILLI:
+          micros_since_epoch = v * 1'000;
+          break;
+        case arrow::TimeUnit::MICRO:
+          micros_since_epoch = v;
+          break;
+        case arrow::TimeUnit::NANO:
+          micros_since_epoch = v / 1'000;
+          break;
+        default:
+          throw std::runtime_error(
+              "Unsupported Timestamp unit for Arrow -> DuckDB conversion");
+      }
+
+      duckdb::timestamp_t ts(micros_since_epoch);
+      return duckdb::Value::TIMESTAMP(ts);
+    }
+
+    // -------- DECIMAL128 -> DuckDB DECIMAL --------
+    case arrow::Type::DECIMAL128: {
+      auto typed = std::static_pointer_cast<arrow::Decimal128Array>(arr);
+      auto dec_type = std::static_pointer_cast<arrow::Decimal128Type>(arr->type());
+      int32_t scale = dec_type->scale();
+
+      // String representation with the scale already applied, e.g. "123.45"
+      std::string s = typed->FormatValue(row);
+
+      // Parse to double – yes, this loses exactness but is simple + robust
+      double d = std::stod(s);
+
+      return duckdb::Value::DOUBLE(d);
+    }
+
+    // -------- FALLBACK: string representation --------
+    default: {
+      auto scalar_res = arr->GetScalar(row);
+      if (!scalar_res.ok()) {
+        throw std::runtime_error("Failed to get Arrow scalar for unsupported type: " +
+                                 arr->type()->ToString());
+      }
+      auto scalar = scalar_res.ValueOrDie();
+      return duckdb::Value(scalar->ToString());
+    }
+  }
+}
+
+arrow::Status AppendRecordBatchToDuckDB(
+    duckdb::Appender& appender, const std::shared_ptr<arrow::RecordBatch>& batch) {
+  if (!batch) {
+    return arrow::Status::OK();
+  }
+
+  const int64_t nrows = batch->num_rows();
+  const int ncols = batch->num_columns();
+
+  for (int64_t row = 0; row < nrows; ++row) {
+    appender.BeginRow();
+
+    for (int col = 0; col < ncols; ++col) {
+      const auto& arr = batch->column(col);
+      duckdb::Value v = ConvertArrowCellToDuckDBValue(arr, row);
+      appender.Append(v);
+    }
+
+    appender.EndRow();
+  }
+
+  return arrow::Status::OK();
+}
+
 std::string PrepareQueryForGetTables(const sql::GetTables& command,
                                      duckdb::vector<duckdb::Value>& bind_parameters) {
   std::stringstream table_query;
@@ -66,19 +500,19 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
   table_query << " and table_catalog = ";
   if (command.catalog.has_value()) {
     table_query << "?";
-    bind_parameters.push_back(command.catalog.value());
+    bind_parameters.emplace_back(command.catalog.value());
   } else {
     table_query << "CURRENT_DATABASE()";
   }
 
   if (command.db_schema_filter_pattern.has_value()) {
     table_query << " and table_schema LIKE ?";
-    bind_parameters.push_back(command.db_schema_filter_pattern.value());
+    bind_parameters.emplace_back(command.db_schema_filter_pattern.value());
   }
 
   if (command.table_name_filter_pattern.has_value()) {
     table_query << " and table_name LIKE ?";
-    bind_parameters.push_back(command.table_name_filter_pattern.value());
+    bind_parameters.emplace_back(command.table_name_filter_pattern.value());
   }
 
   if (!command.table_types.empty()) {
@@ -86,7 +520,7 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
     const size_t size = command.table_types.size();
     for (size_t i = 0; i < size; i++) {
       table_query << "?";
-      bind_parameters.push_back(command.table_types[i]);
+      bind_parameters.emplace_back(command.table_types[i]);
       if (size - 1 != i) {
         table_query << ",";
       }
@@ -115,7 +549,7 @@ Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& st
         ARROW_ASSIGN_OR_RAISE(const std::shared_ptr<arrow::Scalar> scalar,
                               column->GetScalar(row_index))
 
-        stmt->bind_parameters.push_back(scalar->ToString());
+        stmt->bind_parameters.emplace_back(scalar->ToString());
       }
     }
   }
@@ -371,14 +805,14 @@ class DuckDBFlightSqlServer::Impl {
     query << " AND catalog_name = ";
     if (command.catalog.has_value()) {
       query << "?";
-      bind_parameters.push_back(command.catalog.value());
+      bind_parameters.emplace_back(command.catalog.value());
     } else {
       query << "CURRENT_DATABASE()";
     }
 
     if (command.db_schema_filter_pattern.has_value()) {
       query << " AND schema_name LIKE ?";
-      bind_parameters.push_back(command.db_schema_filter_pattern.value());
+      bind_parameters.emplace_back(command.db_schema_filter_pattern.value());
     }
     query << " ORDER BY catalog_name, db_schema_name";
 
@@ -434,7 +868,7 @@ class DuckDBFlightSqlServer::Impl {
         std::string parameter_name = std::string("parameter_") + parameter_idx_str;
         auto parameter_duckdb_type = prepared_statement_data->GetType(parameter_idx_str);
         auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
-        parameter_fields.push_back(field(parameter_name, parameter_arrow_type));
+        parameter_fields.emplace_back(field(parameter_name, parameter_arrow_type));
       }
     }
     // For direct execution mode (stmt == nullptr), parameter_fields remains empty
@@ -458,9 +892,9 @@ class DuckDBFlightSqlServer::Impl {
       if (auto search = prepared_statements_.find(prepared_statement_handle);
           search != prepared_statements_.end()) {
         prepared_statements_.erase(prepared_statement_handle);
-          } else {
-            return Status::Invalid("Prepared statement not found");
-          }
+      } else {
+        return Status::Invalid("Prepared statement not found");
+      }
     }
 
     return Status::OK();
@@ -472,7 +906,8 @@ class DuckDBFlightSqlServer::Impl {
       const flight::FlightDescriptor& descriptor) {
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
-    ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle));
+    ARROW_ASSIGN_OR_RAISE(auto statement,
+                          GetStatementByHandle(prepared_statement_handle));
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
 
     return GetFlightInfoForCommand(descriptor, schema);
@@ -483,7 +918,8 @@ class DuckDBFlightSqlServer::Impl {
       const sql::PreparedStatementQuery& command) {
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
-    ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle));
+    ARROW_ASSIGN_OR_RAISE(auto statement,
+                          GetStatementByHandle(prepared_statement_handle));
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
@@ -634,18 +1070,18 @@ class DuckDBFlightSqlServer::Impl {
     table_query << " AND catalog_name = ";
     if (table_ref.catalog.has_value()) {
       table_query << "?";
-      bind_parameters.push_back(table_ref.catalog.value());
+      bind_parameters.emplace_back(table_ref.catalog.value());
     } else {
       table_query << "CURRENT_DATABASE()";
     }
 
     if (table_ref.db_schema.has_value()) {
       table_query << " and schema_name LIKE ?";
-      bind_parameters.push_back(table_ref.db_schema.value());
+      bind_parameters.emplace_back(table_ref.db_schema.value());
     }
 
     table_query << " and table_name LIKE ?";
-    bind_parameters.push_back(table_ref.table);
+    bind_parameters.emplace_back(table_ref.table);
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, table_query.str(),
@@ -665,19 +1101,19 @@ class DuckDBFlightSqlServer::Impl {
     duckdb::vector<duckdb::Value> bind_parameters;
 
     std::string filter = "fk_table_name = ?";
-    bind_parameters.push_back(table_ref.table);
+    bind_parameters.emplace_back(table_ref.table);
 
     filter += " AND fk_catalog_name = ";
     if (table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(table_ref.catalog.value());
+      bind_parameters.emplace_back(table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (table_ref.db_schema.has_value()) {
       filter += " AND fk_schema_name = ?";
-      bind_parameters.push_back(table_ref.db_schema.value());
+      bind_parameters.emplace_back(table_ref.db_schema.value());
     }
 
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
@@ -700,20 +1136,20 @@ class DuckDBFlightSqlServer::Impl {
     duckdb::vector<duckdb::Value> bind_parameters;
 
     std::string filter = "pk_table_name = ?";
-    bind_parameters.push_back(table_ref.table);
+    bind_parameters.emplace_back(table_ref.table);
 
     filter += " AND pk_catalog_name = ";
 
     if (table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(table_ref.catalog.value());
+      bind_parameters.emplace_back(table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (table_ref.db_schema.has_value()) {
       filter += " AND pk_schema_name = ?";
-      bind_parameters.push_back(table_ref.db_schema.value());
+      bind_parameters.emplace_back(table_ref.db_schema.value());
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
@@ -735,36 +1171,36 @@ class DuckDBFlightSqlServer::Impl {
     duckdb::vector<duckdb::Value> bind_parameters;
 
     std::string filter = "pk_table_name = ?";
-    bind_parameters.push_back(pk_table_ref.table);
+    bind_parameters.emplace_back(pk_table_ref.table);
 
     filter += " AND pk_catalog_name = ";
     if (pk_table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(pk_table_ref.catalog.value());
+      bind_parameters.emplace_back(pk_table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (pk_table_ref.db_schema.has_value()) {
       filter += " AND pk_schema_name = ?";
-      bind_parameters.push_back(pk_table_ref.db_schema.value());
+      bind_parameters.emplace_back(pk_table_ref.db_schema.value());
     }
 
     const sql::TableRef& fk_table_ref = command.fk_table_ref;
     filter += " AND fk_table_name = ?";
-    bind_parameters.push_back(fk_table_ref.table);
+    bind_parameters.emplace_back(fk_table_ref.table);
 
     filter += " AND fk_catalog_name = ";
     if (fk_table_ref.catalog.has_value()) {
       filter += "?";
-      bind_parameters.push_back(fk_table_ref.catalog.value());
+      bind_parameters.emplace_back(fk_table_ref.catalog.value());
     } else {
       filter += "CURRENT_DATABASE()";
     }
 
     if (fk_table_ref.db_schema.has_value()) {
       filter += " AND fk_schema_name = ?";
-      bind_parameters.push_back(fk_table_ref.db_schema.value());
+      bind_parameters.emplace_back(fk_table_ref.db_schema.value());
     }
     std::string query = PrepareQueryForGetImportedOrExportedKeys(filter);
 
@@ -772,6 +1208,188 @@ class DuckDBFlightSqlServer::Impl {
     return DoGetDuckDBQuery(client_session, query,
                             sql::SqlSchema::GetCrossReferenceSchema(), bind_parameters,
                             print_queries_, query_timeout_);
+  }
+
+  Result<std::unique_ptr<duckdb::MaterializedQueryResult>> RunAndLogQueryWithResult(
+      const std::shared_ptr<ClientSession>& client_session, const std::string& query) {
+    std::string status;
+
+    GIZMOSQL_LOG_SCOPE_STATUS(
+        DEBUG, "RunAndLogQuery", status, {"peer", client_session->peer},
+        {"session_id", client_session->session_id}, {"user", client_session->username},
+        {"role", client_session->role}, {"query", redact_sql_for_logs(query)});
+
+    auto res = client_session->connection->Query(query);
+    if (res->HasError()) {
+      return Status::Invalid("Failed to run DuckDB query: " + query + ": " +
+                             res->GetError());
+    }
+
+    status = "success";
+    return res;
+  }
+
+  Status RunAndLogQuery(const std::shared_ptr<ClientSession>& client_session,
+                        const std::string& query) {
+    ARROW_ASSIGN_OR_RAISE(auto res, RunAndLogQueryWithResult(client_session, query));
+    return Status::OK();
+  }
+
+  Result<int64_t> DoPutCommandStatementIngest(const flight::ServerCallContext& context,
+                                              const flight::sql::StatementIngest& command,
+                                              flight::FlightMessageReader* reader) {
+    std::string status;
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+
+    GIZMOSQL_LOG_SCOPE_STATUS(
+        DEBUG, "DuckDBFlightSqlServer::DoPutCommandStatementIngest", status,
+        {"peer", client_session->peer}, {"session_id", client_session->session_id},
+        {"user", client_session->username}, {"role", client_session->role});
+
+    // 1. Build a fully qualified target table name
+    std::string target_table;
+    if (command.catalog.has_value()) {
+      target_table += QuoteIdent(command.catalog.value()) + ".";
+    }
+    if (command.schema.has_value()) {
+      target_table += QuoteIdent(command.schema.value()) + ".";
+    }
+    target_table += QuoteIdent(command.table);
+    std::optional<std::string> interim_table = std::nullopt;
+
+    // 2. Basic metadata up front (no transaction yet)
+    ARROW_ASSIGN_OR_RAISE(auto arrow_schema, reader->GetSchema());
+
+    ARROW_ASSIGN_OR_RAISE(auto target_table_exists,
+                          TableExists(*client_session->connection, command.catalog,
+                                      command.schema, command.table));
+
+    using ExistsOpt = sql::TableDefinitionOptionsTableExistsOption;
+    using NotExistsOpt = sql::TableDefinitionOptionsTableNotExistOption;
+
+    // If table does NOT exist and caller insisted that it must exist, fail early
+    if (!target_table_exists) {
+      switch (command.table_definition_options.if_not_exist) {
+        case NotExistsOpt::kFail:
+          return Status::Invalid("Table: " + target_table + " does not exist");
+        case NotExistsOpt::kCreate:
+        case NotExistsOpt::kUnspecified:
+          // OK: nothing to do here
+          break;
+      }
+    }
+
+    // 3. Start transaction (RAII guard)
+    DuckDBTransactionGuard txn(*client_session->connection);
+
+    // 4. Handle existence options inside the transaction
+    if (target_table_exists) {
+      switch (command.table_definition_options.if_exists) {
+        case ExistsOpt::kFail:
+          // Rollback handled by txn destructor
+          return Status::Invalid("Table: " + target_table + " already exists");
+
+        case ExistsOpt::kAppend: {
+          interim_table =
+              command.table + "_interim_bulk_ingest_temp_" + client_session->session_id;
+          ARROW_ASSIGN_OR_RAISE(
+              auto create_table_sql,
+              GenerateCreateTableSQLFromArrowSchema(QuoteIdent(interim_table.value()),
+                                                    arrow_schema, true, true));
+          ARROW_RETURN_NOT_OK(RunAndLogQuery(client_session, create_table_sql));
+          break;
+        }
+
+        case ExistsOpt::kUnspecified:
+          // OK: use existing table as-is
+          break;
+
+        case ExistsOpt::kReplace: {
+          // DROP then re-CREATE inside the same transaction
+          ARROW_RETURN_NOT_OK(
+              RunAndLogQuery(client_session, "DROP TABLE " + target_table));
+          target_table_exists = false;
+          break;
+        }
+      }
+    }
+
+    // 5. If table doesn't exist (or was just dropped for replace), create it
+    if (!target_table_exists) {
+      ARROW_ASSIGN_OR_RAISE(auto create_table_sql,
+                            GenerateCreateTableSQLFromArrowSchema(
+                                target_table, arrow_schema, command.temporary));
+
+      ARROW_RETURN_NOT_OK(RunAndLogQuery(client_session, create_table_sql));
+    }
+
+    // 6. Ingest rows via Appender
+    int64_t total_rows = 0;
+    flight::FlightStreamChunk chunk;
+
+    std::optional<duckdb::Appender> appender;
+    try {
+      // Initialize appender
+      if (interim_table.has_value()) {
+        appender.emplace(*client_session->connection, interim_table.value());
+      } else if (command.catalog.has_value() && command.schema.has_value()) {
+        appender.emplace(*client_session->connection, command.catalog.value(),
+                         command.schema.value(), command.table);
+      } else if (command.schema.has_value()) {
+        appender.emplace(*client_session->connection, command.schema.value(),
+                         command.table);
+      } else {
+        appender.emplace(*client_session->connection, command.table);
+      }
+
+      // Ingest loop
+      while (true) {
+        ARROW_ASSIGN_OR_RAISE(auto next_chunk, reader->Next());
+        chunk = std::move(next_chunk);
+
+        if (!chunk.data && !chunk.app_metadata) {
+          break;  // end-of-stream
+        }
+
+        if (chunk.data) {
+          total_rows += chunk.data->num_rows();
+          ARROW_RETURN_NOT_OK(AppendRecordBatchToDuckDB(*appender, chunk.data));
+        }
+      }
+
+      appender->Close();
+
+      // 7. If this was an append - copy the data from the interim temp table (to handle default columns values, etc.)
+      if (interim_table.has_value()) {
+        auto insert_sql = "INSERT INTO " + target_table + " BY NAME SELECT * FROM " +
+                          QuoteIdent(interim_table.value());
+        ARROW_ASSIGN_OR_RAISE(auto insert_res,
+                              RunAndLogQueryWithResult(client_session, insert_sql));
+        // This shouldn't happen - but just in case...
+        auto interim_insert_row_count_value = insert_res->GetValue(0, 0);
+        auto interim_insert_row_count =
+            interim_insert_row_count_value.GetValue<int64_t>();
+        if (interim_insert_row_count != total_rows) {
+          return Status::Invalid(
+              "Row count inserted from interim table: " + interim_table.value() + " (" +
+              std::to_string(interim_insert_row_count) + ")" + " into: " + target_table +
+              " was mis-matched from rows appended (" + std::to_string(total_rows) +
+              ") !");
+        }
+        // Drop our interim table...
+        ARROW_RETURN_NOT_OK(RunAndLogQuery(
+            client_session, "DROP TABLE " + QuoteIdent(interim_table.value())));
+      }
+
+      // 8. Commit transaction – if this fails, caller's table stays intact due to rollback
+      ARROW_RETURN_NOT_OK(txn.Commit());
+
+      status = "success";
+      return total_rows;
+    } catch (const duckdb::Exception& ex) {
+      // txn destructor will rollback
+      return Status::Invalid("DuckDB ingest failed: " + std::string(ex.what()));
+    }
   }
 
   Result<sql::ActionBeginTransactionResult> BeginTransaction(
@@ -936,7 +1554,7 @@ class DuckDBFlightSqlServer::Impl {
     for (size_t row_idx = 0; row_idx < result->RowCount(); row_idx++) {
       auto value = result->GetValue(0, row_idx);  // First column
       if (!value.IsNull()) {
-        string_results.push_back(value.ToString());
+        string_results.emplace_back(value.ToString());
       }
     }
 
@@ -1159,6 +1777,12 @@ Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetCrossReference(const flight::ServerCallContext& context,
                                            const sql::GetCrossReference& command) {
   return impl_->DoGetCrossReference(context, command);
+}
+
+Result<int64_t> DuckDBFlightSqlServer::DoPutCommandStatementIngest(
+    const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
+    flight::FlightMessageReader* reader) {
+  return impl_->DoPutCommandStatementIngest(context, command, reader);
 }
 
 Result<sql::ActionBeginTransactionResult> DuckDBFlightSqlServer::BeginTransaction(
