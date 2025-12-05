@@ -133,7 +133,6 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
     const std::string& sql, const arrow::util::ArrowLogLevel& log_level,
-    const bool& log_queries, const int32_t& query_timeout,
     const std::shared_ptr<arrow::Schema>& override_schema) {
   std::string status;
   auto logged_sql = redact_sql_for_logs(sql);
@@ -156,8 +155,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   if (IsLikelyGizmoSQLSet(sql)) {
     std::shared_ptr<DuckDBStatement> result(
-        new DuckDBStatement(client_session, handle, sql, log_level, log_queries,
-                            query_timeout, override_schema));
+        new DuckDBStatement(client_session, handle, sql, log_level, override_schema));
     result->is_gizmosql_admin_ = true;
     if (log_queries) {
       GIZMOSQL_LOGKV_DYNAMIC(
@@ -299,11 +297,14 @@ DuckDBStatement::~DuckDBStatement() {}
 arrow::Result<int> DuckDBStatement::Execute() {
   std::string execute_status;
 
+  ARROW_ASSIGN_OR_RAISE(auto log_queries, GetPrintQueries());
+  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
+
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::Execute", execute_status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (is_gizmosql_admin_) {
@@ -312,11 +313,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
   }
 
   // Launch execution in a separate thread
-  auto future = std::async(std::launch::async, [this]() -> arrow::Result<int> {
+  auto future = std::async(std::launch::async, [this, log_queries, query_timeout]() -> arrow::Result<int> {
     if (use_direct_execution_) {
       // The statement may have already been executed from the ComputeSchema() method - if so, just skip execution
       if (query_result_ != nullptr) {
-        if (log_queries_) {
+        if (log_queries) {
           GIZMOSQL_LOGKV_DYNAMIC(
               log_level_,
               "Direct execution of the SQL command has already occurred, skipping "
@@ -324,8 +325,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
               {"peer", client_session_->peer}, {"kind", "sql"},
               {"status", "already-executed"}, {"session_id", client_session_->session_id},
               {"user", client_session_->username}, {"role", client_session_->role},
-              {"statement_handle", handle_},
-              {"query_timeout", std::to_string(query_timeout_)});
+              {"statement_handle", handle_}, {"query_timeout", query_timeout});
         }
         return 0;  // Success
       }
@@ -340,14 +340,14 @@ arrow::Result<int> DuckDBStatement::Execute() {
       client_session_->active_sql_handle = "";
 
       if (result->HasError()) {
-        if (log_queries_) {
+        if (log_queries) {
           GIZMOSQL_LOGKV(
               WARNING, "Client SQL command failed direct execution",
               {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
               {"session_id", client_session_->session_id},
               {"user", client_session_->username}, {"role", client_session_->role},
               {"statement_handle", handle_}, {"error", result->GetError()},
-              {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout_)});
+              {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
         }
         return arrow::Status::ExecutionError("Direct query execution error: ",
                                              result->GetError());
@@ -355,7 +355,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
       query_result_ = std::move(result);
     } else {
-      if (log_queries_ && !bind_parameters.empty()) {
+      if (log_queries && !bind_parameters.empty()) {
         std::stringstream params_str;
         params_str << "[";
         for (size_t i = 0; i < bind_parameters.size(); i++) {
@@ -371,7 +371,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
             {"user", client_session_->username}, {"role", client_session_->role},
             {"statement_handle", handle_}, {"bind_parameters", params_str.str()},
             {"param_count", std::to_string(bind_parameters.size())},
-            {"query_timeout", std::to_string(query_timeout_)});
+            {"query_timeout", std::to_string(query_timeout)});
       }
 
       query_result_ = stmt_->Execute(bind_parameters);
@@ -379,14 +379,14 @@ arrow::Result<int> DuckDBStatement::Execute() {
       client_session_->active_sql_handle = "";
 
       if (query_result_->HasError()) {
-        if (log_queries_) {
+        if (log_queries) {
           GIZMOSQL_LOGKV(
               WARNING, "Client SQL command failed execution",
               {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
               {"session_id", client_session_->session_id},
               {"user", client_session_->username}, {"role", client_session_->role},
               {"statement_handle", handle_}, {"error", query_result_->GetError()},
-              {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout_)});
+              {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
         }
         return arrow::Status::ExecutionError("An execution error has occurred: ",
                                              query_result_->GetError());
@@ -398,9 +398,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   std::future_status status;
   // Define timeout duration
-  auto timeout_duration = std::chrono::seconds(query_timeout_);
+  auto timeout_duration = std::chrono::seconds(query_timeout);
 
-  if (query_timeout_ == 0) {
+  if (query_timeout == 0) {
     future.wait();  // Blocks until ready
     status = std::future_status::ready;
   } else {
@@ -416,13 +416,13 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
     client_session_->active_sql_handle = "";
 
-    if (log_queries_) {
+    if (log_queries) {
       GIZMOSQL_LOGKV(WARNING, "Client SQL command timed out",
                      {"peer", client_session_->peer}, {"kind", "sql"},
                      {"status", "timeout"}, {"session_id", client_session_->session_id},
                      {"user", client_session_->username}, {"role", client_session_->role},
                      {"statement_handle", handle_},
-                     {"timeout_seconds", std::to_string(query_timeout_)},
+                     {"timeout_seconds", std::to_string(query_timeout)},
                      {"sql", logged_sql_});
     }
 
@@ -435,7 +435,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
   auto result = future.get();
 
   end_time_ = std::chrono::steady_clock::now();
-  if (log_queries_ && result.ok()) {
+  if (log_queries && result.ok()) {
     GIZMOSQL_LOGKV_DYNAMIC(
         log_level_, "Client SQL command execution succeeded",
         {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "success"},
@@ -452,11 +452,13 @@ arrow::Result<int> DuckDBStatement::Execute() {
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult() {
   std::string status;
 
+  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
+
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::FetchResult", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (synthetic_result_batch_) {
@@ -522,11 +524,13 @@ std::shared_ptr<duckdb::PreparedStatement> DuckDBStatement::GetDuckDBStmt() cons
 arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
   std::string status;
 
+  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
+
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::ExecuteUpdate", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"}, );
 
   ARROW_RETURN_NOT_OK(Execute());
@@ -557,11 +561,13 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
   std::string status;
 
+  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
+
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::GetSchema", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   // If there is an override schema - just return it and avoid computation...
@@ -587,11 +593,13 @@ long DuckDBStatement::GetLastExecutionDurationMs() const {
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   std::string status;
 
+  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
+
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::ComputeSchema", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout_)},
+      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (is_gizmosql_admin_) {
@@ -626,5 +634,26 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   status = "success";
   return return_value;
 }
+
+arrow::Result<int32_t> DuckDBStatement::GetQueryTimeout() const {
+  // First, try getting the value from the user's session
+  if (client_session_->query_timeout.has_value()) {
+    return client_session_->query_timeout.value();
+  }
+  // Fall-back to the server's setting if the session setting is not set...
+  if (auto server = GetServer(*client_session_)) {
+    return server->GetQueryTimeout(client_session_);
+  } else {
+    return arrow::Status::Invalid("Unable to get server instance");
+  }
+}
+
+arrow::Result<bool> DuckDBStatement::GetPrintQueries() const {
+  if (auto server = GetServer(*client_session_)) {
+    return server->GetPrintQueries(client_session_);
+  } else {
+    return arrow::Status::Invalid("Unable to get server instance");
+  }
+};
 
 }  // namespace gizmosql::ddb
