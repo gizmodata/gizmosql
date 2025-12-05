@@ -1575,6 +1575,9 @@ class DuckDBFlightSqlServer::Impl {
 
   Status SetQueryTimeout(const std::shared_ptr<ClientSession>& client_session,
                          const int& seconds) {
+    if (client_session->role != "admin") {
+      return Status::Invalid("Only admin users can change the server query_timeout setting.");
+    }
     query_timeout_ = seconds;
     return Status::OK();
   }
@@ -1586,6 +1589,9 @@ class DuckDBFlightSqlServer::Impl {
 
   Status SetPrintQueries(const std::shared_ptr<ClientSession>& client_session,
                          const bool& enabled) {
+    if (client_session->role != "admin") {
+      return Status::Invalid("Only admin users can enable/disable query logging.");
+    }
     print_queries_ = enabled;
     return Status::OK();
   }
@@ -1595,9 +1601,6 @@ class DuckDBFlightSqlServer::Impl {
     return print_queries_;
   }
 };
-
-DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
-    : impl_(std::move(impl)) {}
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string& path, const bool& read_only, const bool& print_queries,
@@ -1620,8 +1623,9 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 
-  auto impl = std::make_shared<Impl>(db, print_queries, query_timeout);
-  std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
+  auto result = std::make_shared<DuckDBFlightSqlServer>();
+  result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
+      result.get(), db, print_queries, query_timeout);
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
   for (const auto& id_to_result : GetSqlInfoResultMap(result.get(), query_timeout)) {

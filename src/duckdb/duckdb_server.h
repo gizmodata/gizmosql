@@ -218,6 +218,5 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   class Impl;
   std::shared_ptr<Impl> impl_;
 
-  explicit DuckDBFlightSqlServer(std::shared_ptr<Impl> impl);
 };
 }  // namespace gizmosql::ddb
