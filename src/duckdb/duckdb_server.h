@@ -24,6 +24,7 @@
 
 #include <arrow/api.h>
 #include <arrow/flight/sql/server.h>
+#include <arrow/util/logger.h>
 #include "flight_sql_fwd.h"
 #include "session_context.h"
 
@@ -46,7 +47,7 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
 
   static arrow::Result<std::shared_ptr<DuckDBFlightSqlServer>> Create(
       const std::string& path, const bool& read_only, const bool& print_queries,
-      const int32_t& query_timeout);
+      const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level);
 
   /// \brief Auxiliary method used to execute an arbitrary SQL statement on the underlying
   ///        DuckDB database.
@@ -206,17 +207,24 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
 
   arrow::Status SetQueryTimeout(const std::shared_ptr<ClientSession>& client_session,
                                 const int& seconds);
+
   arrow::Result<int32_t> GetQueryTimeout(
-      const std::shared_ptr<ClientSession>& client_session) const;
+      const std::shared_ptr<ClientSession>& client_session);
 
   arrow::Status SetPrintQueries(const std::shared_ptr<ClientSession>& client_session,
                                 const bool& enabled);
+
   arrow::Result<bool> GetPrintQueries(
-      const std::shared_ptr<ClientSession>& client_session) const;
+      const std::shared_ptr<ClientSession>& client_session);
+
+  arrow::Status SetQueryLogLevel(const std::shared_ptr<ClientSession>& client_session,
+                                 const arrow::util::ArrowLogLevel& query_log_level);
+
+  arrow::Result<arrow::util::ArrowLogLevel> GetQueryLogLevel(
+      const std::shared_ptr<ClientSession>& client_session);
 
  private:
   class Impl;
   std::shared_ptr<Impl> impl_;
-
 };
 }  // namespace gizmosql::ddb

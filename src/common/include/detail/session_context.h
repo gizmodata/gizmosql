@@ -18,6 +18,7 @@ struct ClientSession {
   std::string peer; // client ip:port (ctx.peer())
   std::optional<std::string> active_sql_handle;
   std::optional<int32_t> query_timeout = std::nullopt;
+  std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;
 };
 
 // Inline utility for safe access

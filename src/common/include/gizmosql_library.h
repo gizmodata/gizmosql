@@ -60,6 +60,8 @@ enum class BackendType { duckdb, sqlite };
  * @param access_log Whether or not to log client access to the server.  It is VERY verbose.  Default is: off
  * @param log_file The log file to use.  If not set, we log to stdout.  Default is: none (stdout)
  * @param query_timeout The query timeout in seconds.  Queries running longer than this will be canceled by the server.  Default is: 0 (no timeout)
+ * @param query_log_level The logging level to use for the queries run by users.  Default is: info
+ * @param auth_log_level The logging level to use for authentication to the server.  Default is: info
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -79,5 +81,6 @@ int RunFlightSQLServer(
     std::string token_allowed_issuer = "", std::string token_allowed_audience = "",
     std::filesystem::path token_signature_verify_cert_path = std::filesystem::path(),
     std::string log_level = "", std::string log_format = "", std::string access_log = "",
-    std::string log_file = "", int32_t query_timeout = 0);
+    std::string log_file = "", int32_t query_timeout = 0,
+    std::string query_log_level = "", std::string auth_log_level = "");
 }

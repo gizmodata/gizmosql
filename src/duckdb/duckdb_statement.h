@@ -49,17 +49,15 @@ class DuckDBStatement {
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
       const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
       const std::string& sql,
-      const arrow::util::ArrowLogLevel& log_level =
-          arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = false, const int32_t& query_timeout = 0,
+      const std::optional<arrow::util::ArrowLogLevel>& log_level = std::nullopt,
+      const bool& log_queries = false,
       const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
 
   // Convenience method to generate a handle for the caller
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
       const std::shared_ptr<ClientSession>& client_session, const std::string& sql,
-      const arrow::util::ArrowLogLevel& log_level =
-          arrow::util::ArrowLogLevel::ARROW_INFO,
-      const bool& log_queries = false, const int32_t& query_timeout = 0,
+      const std::optional<arrow::util::ArrowLogLevel>& log_level = std::nullopt,
+      const bool& log_queries = false,
       const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
 
   ~DuckDBStatement();
@@ -86,17 +84,18 @@ class DuckDBStatement {
   std::string handle_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
-  arrow::util::ArrowLogLevel log_level_;
+  std::optional<arrow::util::ArrowLogLevel> log_level_;
   std::shared_ptr<arrow::Schema> override_schema_;
   std::chrono::steady_clock::time_point start_time_;
   std::chrono::steady_clock::time_point end_time_;
 
   // Support for direct query execution (fallback for statements that can't be prepared)
-  std::string sql_;            // Original SQL for direct execution
+  std::string sql_;  // Original SQL for direct execution
+  bool log_queries_;
   std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
   bool
-        is_gizmosql_admin_;  // Flag to indicate whether the statement is a GizmoSQL administrative command
+      is_gizmosql_admin_;  // Flag to indicate whether the statement is a GizmoSQL administrative command
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
   arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
   std::shared_ptr<arrow::RecordBatch> synthetic_result_batch_;
@@ -106,11 +105,13 @@ class DuckDBStatement {
   DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle,
                   const std::shared_ptr<duckdb::PreparedStatement>& stmt,
-                  const arrow::util::ArrowLogLevel& log_level,
+                  const std::optional<arrow::util::ArrowLogLevel>& log_level,
+                  const bool& log_queries,
                   const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     stmt_ = stmt;
+    log_queries_ = log_queries;
     logged_sql_ = redact_sql_for_logs(stmt->query);
     use_direct_execution_ = false;
     log_level_ = log_level;
@@ -123,11 +124,13 @@ class DuckDBStatement {
   // Constructor for direct execution mode
   DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle, const std::string& sql,
-                  const arrow::util::ArrowLogLevel& log_level,
+                  const std::optional<arrow::util::ArrowLogLevel>& log_level,
+                  const bool& log_queries,
                   const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     sql_ = sql;
+    log_queries_ = log_queries;
     logged_sql_ = redact_sql_for_logs(sql);
     use_direct_execution_ = true;
     stmt_ = nullptr;
@@ -144,6 +147,6 @@ class DuckDBStatement {
 
   arrow::Result<int32_t> GetQueryTimeout() const;
 
-  arrow::Result<bool> GetPrintQueries() const;
+  arrow::Result<arrow::util::ArrowLogLevel> GetLogLevel() const;
 };
 }  // namespace gizmosql::ddb

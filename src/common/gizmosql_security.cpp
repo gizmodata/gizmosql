@@ -176,13 +176,15 @@ BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
     const std::string& username, const std::string& password,
     const std::string& secret_key, const std::string& token_allowed_issuer,
     const std::string& token_allowed_audience,
-    const std::filesystem::path& token_signature_verify_cert_path)
+    const std::filesystem::path& token_signature_verify_cert_path,
+    const arrow::util::ArrowLogLevel& auth_log_level)
     : username_(username),
       password_(password),
       secret_key_(secret_key),
       token_allowed_issuer_(token_allowed_issuer),
       token_allowed_audience_(token_allowed_audience),
-      token_signature_verify_cert_path_(token_signature_verify_cert_path) {
+      token_signature_verify_cert_path_(token_signature_verify_cert_path),
+      auth_log_level_(auth_log_level) {
   if (username_ == kTokenUsername) {
     throw std::runtime_error("You cannot use username: '" + kTokenUsername +
                              "' for basic authentication, because it is reserved for JWT "
@@ -249,13 +251,13 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       if ((username == username_) && (password == password_)) {
         *middleware = std::make_shared<BasicAuthServerMiddleware>(username, "admin",
                                                                   "Basic", secret_key_);
-        GIZMOSQL_LOGKV(INFO,
-                       "User: " + username + " (peer " + context.peer() +
-                           ") - Successfully Basic authenticated via Username / Password",
-                       {"user", username}, {"peer", context.peer()},
-                       {"kind", "authentication"}, {"authentication_type", "basic"},
-                       {"authentication_method", "username/password"},
-                       {"result", "success"});
+        GIZMOSQL_LOGKV_DYNAMIC(
+            auth_log_level_,
+            "User: " + username + " (peer " + context.peer() +
+                ") - Successfully Basic authenticated via Username / Password",
+            {"user", username}, {"peer", context.peer()}, {"kind", "authentication"},
+            {"authentication_type", "basic"},
+            {"authentication_method", "username/password"}, {"result", "success"});
       } else {
         GIZMOSQL_LOGKV(WARNING,
                        "User: " + username + " (peer " + context.peer() +
@@ -323,17 +325,18 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
     if (!decoded.has_payload_claim("role")) {
       return Status::Invalid("Bootstrap Bearer Token MUST have a 'role' claim");
     }
-    GIZMOSQL_LOGKV(INFO,
-                   "peer=" + context.peer() +
-                       " - Bootstrap Bearer Token was validated successfully" +
-                       " - token_claims=(id=" + decoded.get_id() +
-                       " sub=" + decoded.get_subject() + " iss=" + decoded.get_issuer() +
-                       " role=" + decoded.get_payload_claim("role").as_string() + ")",
-                   {"peer", context.peer()}, {"kind", "authentication"},
-                   {"authentication_type", "bearer"}, {"result", "success"},
-                   {"token_id", decoded.get_id()}, {"token_sub", decoded.get_subject()},
-                   {"token_role", decoded.get_payload_claim("role").as_string()},
-                   {"token_iss", decoded.get_issuer()});
+    GIZMOSQL_LOGKV_DYNAMIC(
+        auth_log_level_,
+        "peer=" + context.peer() +
+            " - Bootstrap Bearer Token was validated successfully" +
+            " - token_claims=(id=" + decoded.get_id() + " sub=" + decoded.get_subject() +
+            " iss=" + decoded.get_issuer() +
+            " role=" + decoded.get_payload_claim("role").as_string() + ")",
+        {"peer", context.peer()}, {"kind", "authentication"},
+        {"authentication_type", "bearer"}, {"result", "success"},
+        {"token_id", decoded.get_id()}, {"token_sub", decoded.get_subject()},
+        {"token_role", decoded.get_payload_claim("role").as_string()},
+        {"token_iss", decoded.get_issuer()});
 
     return decoded;
   } catch (const std::exception& e) {
@@ -386,8 +389,8 @@ std::string BearerAuthServerMiddleware::name() const {
 
 // ----------------------------------------
 BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
-    const std::string& secret_key)
-    : secret_key_(secret_key) {}
+    const std::string& secret_key, const arrow::util::ArrowLogLevel& auth_log_level)
+    : secret_key_(secret_key), auth_log_level_(auth_log_level) {}
 
 arrow::util::ArrowLogLevel BearerAuthServerMiddlewareFactory::GetTokenLogLevel(
     const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) const {
@@ -416,7 +419,7 @@ arrow::util::ArrowLogLevel BearerAuthServerMiddlewareFactory::GetTokenLogLevel(
       logged_token_ids_.insert(token_id);
     }
 
-    return arrow::util::ArrowLogLevel::ARROW_INFO;
+    return auth_log_level_;
   }
 }
 
