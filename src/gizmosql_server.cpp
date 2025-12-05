@@ -82,7 +82,11 @@ int main(int argc, char** argv) {
             ("log-file",   po::value<std::string>()->default_value(""),
              "Log file path; use '-' for stdout; empty => stderr. Can also use env GIZMOSQL_LOG_FILE.")
             ("query-timeout",   po::value<int32_t>()->default_value(DEFAULT_QUERY_TIMEOUT_SECONDS),
-             "The Query Timeout limit in seconds.  A value of 0 means unlimited.");
+             "The Query Timeout limit in seconds.  A value of 0 means unlimited.")
+            ("query-log-level",  po::value<std::string>()->default_value(""),
+             "Query Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_QUERY_LOG_LEVEL or defaults to info.")
+            ("auth-log-level",  po::value<std::string>()->default_value(""),
+              "Authentication Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_AUTH_LOG_LEVEL or defaults to info.");
 
   // clang-format on
 
@@ -192,10 +196,15 @@ int main(int argc, char** argv) {
   int32_t query_timeout =
       vm.count("query-timeout") ? vm["query-timeout"].as<int32_t>() : 0;
 
-  return RunFlightSQLServer(backend, database_filename, hostname, port, username,
-                            password, secret_key, tls_cert_path, tls_key_path,
-                            mtls_ca_cert_path, init_sql_commands, init_sql_commands_file,
-                            print_queries, read_only, token_allowed_issuer,
-                            token_allowed_audience, token_signature_verify_cert_path,
-                            log_level, log_format, access_log, log_file, query_timeout);
+  std::string query_log_level =
+      vm.count("query-log-level") ? vm["query-log-level"].as<std::string>() : "";
+  std::string auth_log_level =
+      vm.count("auth-log-level") ? vm["auth-log-level"].as<std::string>() : "";
+
+  return RunFlightSQLServer(
+      backend, database_filename, hostname, port, username, password, secret_key,
+      tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
+      init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
+      token_allowed_audience, token_signature_verify_cert_path, log_level, log_format,
+      access_log, log_file, query_timeout, query_log_level, auth_log_level);
 }

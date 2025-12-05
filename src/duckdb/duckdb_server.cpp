@@ -567,7 +567,7 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
   ARROW_ASSIGN_OR_RAISE(statement,
                         DuckDBStatement::Create(client_session, query,
                                                 arrow::util::ArrowLogLevel::ARROW_DEBUG,
-                                                print_queries, query_timeout, schema))
+                                                print_queries, schema))
   statement->bind_parameters = bind_parameters;
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
@@ -627,9 +627,11 @@ std::string PrepareQueryForGetImportedOrExportedKeys(const std::string& filter) 
 
 class DuckDBFlightSqlServer::Impl {
  private:
+  DuckDBFlightSqlServer* outer_;
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   bool print_queries_;
   int32_t query_timeout_;
+  arrow::util::ArrowLogLevel query_log_level_;
 
   std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
@@ -638,6 +640,7 @@ class DuckDBFlightSqlServer::Impl {
   std::shared_mutex sessions_mutex_;
   std::shared_mutex statements_mutex_;
   std::shared_mutex transactions_mutex_;
+  std::shared_mutex config_mutex_;
 
   Result<std::shared_ptr<DuckDBStatement>> GetStatementByHandle(
       const std::string& handle) {
@@ -679,11 +682,15 @@ class DuckDBFlightSqlServer::Impl {
 
     // Build the session *without* holding any lock
     auto new_session = std::make_shared<ClientSession>();
+
+    new_session->server = outer_->shared_from_this();
     new_session->session_id = session_id;
     new_session->username = tl_request_ctx.username.value_or("");
     new_session->role = tl_request_ctx.role.value_or("");
     new_session->peer = tl_request_ctx.peer.value_or(context.peer());
     new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    new_session->query_timeout = query_timeout_;
+    new_session->query_log_level = query_log_level_;
 
     // Slow path: take exclusive lock and check again
     {
@@ -729,11 +736,14 @@ class DuckDBFlightSqlServer::Impl {
   }
 
  public:
-  explicit Impl(std::shared_ptr<duckdb::DuckDB> db_instance, const bool& print_queries,
-                const int32_t& query_timeout)
-      : db_instance_(std::move(db_instance)),
+  explicit Impl(DuckDBFlightSqlServer* outer, std::shared_ptr<duckdb::DuckDB> db_instance,
+                const bool& print_queries, const int32_t& query_timeout,
+                const arrow::util::ArrowLogLevel& query_log_level)
+      : outer_(outer),
+        db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
-        query_timeout_(query_timeout) {}
+        query_timeout_(query_timeout),
+        query_log_level_(query_log_level) {}
 
   ~Impl() = default;
 
@@ -742,10 +752,10 @@ class DuckDBFlightSqlServer::Impl {
       const flight::FlightDescriptor& descriptor) {
     const std::string& query = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(auto statement,
-                          DuckDBStatement::Create(client_session, query,
-                                                  arrow::util::ArrowLogLevel::ARROW_DEBUG,
-                                                  print_queries_, query_timeout_))
+    ARROW_ASSIGN_OR_RAISE(
+        auto statement,
+        DuckDBStatement::Create(client_session, query,
+                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_))
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
                           EncodeTransactionQuery(query, command.transaction_id))
@@ -763,10 +773,9 @@ class DuckDBFlightSqlServer::Impl {
     const std::string& sql = pair.first;
     const std::string transaction_id = pair.second;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(auto statement,
-                          DuckDBStatement::Create(client_session, sql,
-                                                  arrow::util::ArrowLogLevel::ARROW_INFO,
-                                                  print_queries_, query_timeout_))
+    ARROW_ASSIGN_OR_RAISE(
+        auto statement,
+        DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_))
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
     return std::make_unique<flight::RecordBatchStream>(reader);
@@ -833,8 +842,7 @@ class DuckDBFlightSqlServer::Impl {
     // We latch the statements mutex as briefly as possible to maximize concurrency...
     ARROW_ASSIGN_OR_RAISE(auto statement,
                           DuckDBStatement::Create(client_session, handle, request.query,
-                                                  arrow::util::ArrowLogLevel::ARROW_INFO,
-                                                  print_queries_, query_timeout_)) {
+                                                  std::nullopt, print_queries_)) {
       std::unique_lock write_lock(statements_mutex_);
       prepared_statements_[handle] = statement;
     }
@@ -959,7 +967,7 @@ class DuckDBFlightSqlServer::Impl {
         statement,
         DuckDBStatement::Create(client_session, get_tables_query,
                                 arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
-                                query_timeout_, sql::SqlSchema::GetTablesSchema()))
+                                sql::SqlSchema::GetTablesSchema()))
     statement->bind_parameters = get_tables_bind_parameters;
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
@@ -978,10 +986,9 @@ class DuckDBFlightSqlServer::Impl {
                                               const sql::StatementUpdate& command) {
     const std::string& sql = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    ARROW_ASSIGN_OR_RAISE(auto statement,
-                          DuckDBStatement::Create(client_session, sql,
-                                                  arrow::util::ArrowLogLevel::ARROW_INFO,
-                                                  print_queries_, query_timeout_))
+    ARROW_ASSIGN_OR_RAISE(
+        auto statement,
+        DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_))
     return statement->ExecuteUpdate();
   }
 
@@ -1568,14 +1575,59 @@ class DuckDBFlightSqlServer::Impl {
 
     return ExecuteSqlAndGetStringVector(connection, sql);
   }
-};
 
-DuckDBFlightSqlServer::DuckDBFlightSqlServer(std::shared_ptr<Impl> impl)
-    : impl_(std::move(impl)) {}
+  Status SetQueryTimeout(const std::shared_ptr<ClientSession>& client_session,
+                         const int& seconds) {
+    if (client_session->role != "admin") {
+      return Status::Invalid(
+          "Only admin users can change the server query_timeout setting.");
+    }
+    std::unique_lock write_lock(config_mutex_);
+    query_timeout_ = seconds;
+
+    return Status::OK();
+  }
+
+  Result<int32_t> GetQueryTimeout(const std::shared_ptr<ClientSession>& client_session) {
+    std::shared_lock read_lock(config_mutex_);
+    return query_timeout_;
+  }
+
+  Status SetPrintQueries(const std::shared_ptr<ClientSession>& client_session,
+                         const bool& enabled) {
+    if (client_session->role != "admin") {
+      return Status::Invalid("Only admin users can enable/disable server query logging.");
+    }
+    std::unique_lock write_lock(config_mutex_);
+    print_queries_ = enabled;
+    return Status::OK();
+  }
+
+  Result<bool> GetPrintQueries(const std::shared_ptr<ClientSession>& client_session) {
+    std::shared_lock read_lock(config_mutex_);
+    return print_queries_;
+  }
+
+  Status SetQueryLogLevel(const std::shared_ptr<ClientSession>& client_session,
+                          const arrow::util::ArrowLogLevel& query_log_level) {
+    if (client_session->role != "admin") {
+      return Status::Invalid("Only admin users can set the server Query Log Level.");
+    }
+    std::unique_lock write_lock(config_mutex_);
+    query_log_level_ = query_log_level;
+    return Status::OK();
+  }
+
+  Result<arrow::util::ArrowLogLevel> GetQueryLogLevel(
+      const std::shared_ptr<ClientSession>& client_session) {
+    std::shared_lock read_lock(config_mutex_);
+    return query_log_level_;
+  }
+};
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string& path, const bool& read_only, const bool& print_queries,
-    const int32_t& query_timeout) {
+    const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level) {
   GIZMOSQL_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
 
   bool in_memory = path == ":memory:";
@@ -1594,8 +1646,9 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 
-  auto impl = std::make_shared<Impl>(db, print_queries, query_timeout);
-  std::shared_ptr<DuckDBFlightSqlServer> result(new DuckDBFlightSqlServer(impl));
+  auto result = std::make_shared<DuckDBFlightSqlServer>();
+  result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
+      result.get(), db, print_queries, query_timeout, query_log_level);
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
   for (const auto& id_to_result : GetSqlInfoResultMap(result.get(), query_timeout)) {
@@ -1826,4 +1879,36 @@ Result<flight::CloseSessionResult> DuckDBFlightSqlServer::CloseSession(
     const flight::CloseSessionRequest& request) {
   return impl_->CloseSession(context, request);
 }
+
+Status DuckDBFlightSqlServer::SetQueryTimeout(
+    const std::shared_ptr<ClientSession>& client_session, const int& seconds) {
+  return impl_->SetQueryTimeout(client_session, seconds);
+}
+
+Result<int32_t> DuckDBFlightSqlServer::GetQueryTimeout(
+    const std::shared_ptr<ClientSession>& client_session) {
+  return impl_->GetQueryTimeout(client_session);
+}
+
+Status DuckDBFlightSqlServer::SetPrintQueries(
+    const std::shared_ptr<ClientSession>& client_session, const bool& enabled) {
+  return impl_->SetPrintQueries(client_session, enabled);
+}
+
+Result<bool> DuckDBFlightSqlServer::GetPrintQueries(
+    const std::shared_ptr<ClientSession>& client_session) {
+  return impl_->GetPrintQueries(client_session);
+}
+
+arrow::Status DuckDBFlightSqlServer::SetQueryLogLevel(
+    const std::shared_ptr<ClientSession>& client_session,
+    const arrow::util::ArrowLogLevel& query_log_level) {
+  return impl_->SetQueryLogLevel(client_session, query_log_level);
+}
+
+arrow::Result<arrow::util::ArrowLogLevel> DuckDBFlightSqlServer::GetQueryLogLevel(
+    const std::shared_ptr<ClientSession>& client_session) {
+  return impl_->GetQueryLogLevel(client_session);
+}
+
 }  // namespace gizmosql::ddb
