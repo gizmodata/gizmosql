@@ -73,7 +73,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const bool& read_only, const bool& print_queries,
     const std::string& token_allowed_issuer, const std::string& token_allowed_audience,
     const fs::path& token_signature_verify_cert_path, const bool& access_logging_enabled,
-    const int32_t& query_timeout) {
+    const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
+    const arrow::util::ArrowLogLevel& auth_log_level) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -95,9 +96,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   // Setup authentication middleware (using the same TLS certificate keypair)
   auto header_middleware = std::make_shared<gizmosql::BasicAuthServerMiddlewareFactory>(
       username, password, secret_key, token_allowed_issuer, token_allowed_audience,
-      token_signature_verify_cert_path);
-  auto bearer_middleware =
-      std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(secret_key);
+      token_signature_verify_cert_path, auth_log_level);
+  auto bearer_middleware = std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(
+      secret_key, auth_log_level);
 
   options.auth_handler = std::make_unique<flight::NoOpAuthHandler>();
   options.middleware.push_back({"header-auth-server", header_middleware});
@@ -131,9 +132,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   } else if (backend == BackendType::duckdb) {
     db_type = "DuckDB";
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
-    ARROW_ASSIGN_OR_RAISE(duckdb_server,
-                          gizmosql::ddb::DuckDBFlightSqlServer::Create(
-                              database_filename, read_only, print_queries, query_timeout))
+    ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
+                                             database_filename, read_only, print_queries,
+                                             query_timeout, query_log_level))
     // Run additional commands (first) for the DuckDB back-end...
     auto duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;" +
@@ -180,7 +181,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string init_sql_commands, fs::path init_sql_commands_file,
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
-    const bool& access_logging_enabled, const int32_t& query_timeout) {
+    const bool& access_logging_enabled, const int32_t& query_timeout,
+    const arrow::util::ArrowLogLevel& query_log_level,
+    const arrow::util::ArrowLogLevel& auth_log_level) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     GIZMOSQL_LOG(INFO)
@@ -322,11 +325,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   GIZMOSQL_LOG(INFO) << "Query timeout (in seconds) is set to: " << query_timeout
                      << (query_timeout == 0 ? " (unlimited)" : "");
 
+  GIZMOSQL_LOG(INFO) << "Query Log Level is set to: "
+                     << log_level_arrow_log_level_to_string(query_log_level);
+  GIZMOSQL_LOG(INFO) << "Authentication Log Level is set to: "
+                     << log_level_arrow_log_level_to_string(auth_log_level);
+
   return FlightSQLServerBuilder(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
-      token_signature_verify_cert_path, access_logging_enabled, query_timeout);
+      token_signature_verify_cert_path, access_logging_enabled, query_timeout,
+      query_log_level, auth_log_level);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -346,13 +355,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string token_allowed_audience,
                        fs::path token_signature_verify_cert_path, std::string log_level,
                        std::string log_format, std::string access_log,
-                       std::string log_file, int32_t query_timeout) {
+                       std::string log_file, int32_t query_timeout,
+                       std::string query_log_level, std::string auth_log_level) {
   // ---- Logging normalization (library-owned) ----------------
-  auto lower = [](std::string s) {
-    for (auto& c : s) c = static_cast<char>(std::tolower((unsigned char)c));
-    return s;
-  };
-
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
     auto env = gizmosql::SafeGetEnvVarValue(env_name);
@@ -364,36 +369,23 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   std::string fmt_s = pick(log_format, "GIZMOSQL_LOG_FORMAT", "text");
   std::string acc_s = pick(access_log, "GIZMOSQL_ACCESS_LOG", "off");
   std::string file_s = pick(log_file, "GIZMOSQL_LOG_FILE", "");
+  std::string query_lvl_s = pick(query_log_level, "GIZMOSQL_QUERY_LOG_LEVEL", "info");
+  std::string auth_lvl_s = pick(auth_log_level, "GIZMOSQL_AUTH_LOG_LEVEL", "info");
 
-  // level
-  arrow::util::ArrowLogLevel level = arrow::util::ArrowLogLevel::ARROW_INFO;
-  {
-    auto v = lower(lvl_s);
-    using L = arrow::util::ArrowLogLevel;
-    if (v == "debug")
-      level = L::ARROW_DEBUG;
-    else if (v == "info")
-      level = L::ARROW_INFO;
-    else if (v == "warn" || v == "warning")
-      level = L::ARROW_WARNING;
-    else if (v == "error")
-      level = L::ARROW_ERROR;
-    else if (v == "fatal")
-      level = L::ARROW_FATAL;
-    else
-      std::cerr << "Unknown log-level '" << lvl_s << "', defaulting to INFO\n";
-  }
+  auto level = gizmosql::log_level_string_to_arrow_log_level(lvl_s);
+  auto query_level = gizmosql::log_level_string_to_arrow_log_level(query_lvl_s);
+  auto auth_level = gizmosql::log_level_string_to_arrow_log_level(auth_lvl_s);
 
   // format
   gizmosql::LogFormat fmt = gizmosql::LogFormat::kText;
   {
-    auto v = lower(fmt_s);
+    auto v = gizmosql::lower(fmt_s);
     if (v == "json") fmt = gizmosql::LogFormat::kJson;
   }
 
   // access on/off
   auto parse_bool = [&](std::string s, bool& out) -> bool {
-    s = lower(std::move(s));
+    s = gizmosql::lower(std::move(s));
     if (s == "1" || s == "true" || s == "on" || s == "yes") {
       out = true;
       return true;
@@ -428,12 +420,15 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                      << "\n Licensed under the Apache License, Version 2.0"
                      << "\n https://www.apache.org/licenses/LICENSE-2.0";
 
+  GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: "
+                     << lvl_s;
+
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
-      query_timeout);
+      query_timeout, query_level, auth_level);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

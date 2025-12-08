@@ -86,7 +86,8 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
       const std::string& username, const std::string& password,
       const std::string& secret_key, const std::string& token_allowed_issuer,
       const std::string& token_allowed_audience,
-      const std::filesystem::path& token_signature_verify_cert_path);
+      const std::filesystem::path& token_signature_verify_cert_path,
+      const arrow::util::ArrowLogLevel& auth_log_level);
 
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
@@ -101,6 +102,7 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   std::filesystem::path token_signature_verify_cert_path_;
   std::string token_signature_verify_cert_file_contents_;
   bool token_auth_enabled_ = false;
+  arrow::util::ArrowLogLevel auth_log_level_;
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
   VerifyAndDecodeBootstrapToken(const std::string& token,
@@ -128,7 +130,8 @@ class BearerAuthServerMiddleware : public flight::ServerMiddleware {
 
 class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory {
  public:
-  explicit BearerAuthServerMiddlewareFactory(const std::string& secret_key);
+  explicit BearerAuthServerMiddlewareFactory(
+      const std::string& secret_key, const arrow::util::ArrowLogLevel& auth_log_level);
 
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
@@ -136,6 +139,7 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
 
  private:
   std::string secret_key_;
+  arrow::util::ArrowLogLevel auth_log_level_;
 
   // Track tokens we've already logged as successfully validated
   mutable std::shared_mutex token_log_mutex_;
