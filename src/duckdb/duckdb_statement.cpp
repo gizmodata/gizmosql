@@ -485,13 +485,10 @@ arrow::Result<int> DuckDBStatement::Execute() {
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult() {
   std::string status;
 
-  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
-
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::FetchResult", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (synthetic_result_batch_) {
