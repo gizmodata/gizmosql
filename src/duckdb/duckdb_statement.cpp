@@ -554,13 +554,10 @@ std::shared_ptr<duckdb::PreparedStatement> DuckDBStatement::GetDuckDBStmt() cons
 arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
   std::string status;
 
-  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
-
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::ExecuteUpdate", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"}, );
 
   ARROW_RETURN_NOT_OK(Execute());
@@ -591,13 +588,10 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
   std::string status;
 
-  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
-
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::GetSchema", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   // If there is an override schema - just return it and avoid computation...
@@ -623,13 +617,10 @@ long DuckDBStatement::GetLastExecutionDurationMs() const {
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   std::string status;
 
-  ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
-
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::ComputeSchema", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
       {"role", client_session_->role}, {"statement_handle", handle_},
-      {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (is_gizmosql_admin_) {
