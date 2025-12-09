@@ -95,7 +95,7 @@ class DuckDBStatement {
   std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
   bool
-      is_gizmosql_admin_;  // Flag to indicate whether the statement is a GizmoSQL administrative command
+      is_gizmosql_admin_ = false;  // Flag to indicate whether the statement is a GizmoSQL administrative command
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
   arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
   std::shared_ptr<arrow::RecordBatch> synthetic_result_batch_;
