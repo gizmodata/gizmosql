@@ -4,7 +4,7 @@ The **ADBC Scanner** is a new [DuckDB Community Extension](https://duckdb.org/co
 
 With this extension, you can connect DuckDB to any ADBC-compatible source (like **GizmoSQL**, **Snowflake**, **PostgreSQL**, or **SQLite**) and run SQL queries *remotely*, as if they were local tables.
 
-You can even use ADBC Scanner from a GizmoSQL server - allowing you to connect to remote databases from within GizmoSQL itself, including other GizmoSQL instances!
+You can even use ADBC Scanner from a GizmoSQL server - allowing you to connect to remote databases from within GizmoSQL itself, including to other GizmoSQL instances!
 
 ---
 
@@ -20,7 +20,7 @@ You can even use ADBC Scanner from a GizmoSQL server - allowing you to connect t
 ---
 
 ## ⚙️Setup ADBC Drivers
-You can get ADBC Drivers for your target platform pretty easily using columnar.tech's DBC tool: https://columnar.tech/dbc/ - under: "Which data system do you want to connect to?" - choose: "Flight SQL":   
+You can get ADBC Drivers for your target platform pretty easily using columnar.tech's `dbc` tool: https://columnar.tech/dbc/ - under: "Which data system do you want to connect to?" - choose: "Flight SQL":   
 ![img.png](img.png)
 
 ## 🧪 Example: Query GizmoSQL from DuckDB
