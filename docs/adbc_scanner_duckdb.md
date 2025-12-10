@@ -20,7 +20,7 @@ You can even use ADBC Scanner from a GizmoSQL server - allowing you to connect t
 ---
 
 ## ⚙️Setup ADBC Drivers
-You can get ADBC Drivers for your target platform pretty easily using columnar.tech's `dbc` tool: https://columnar.tech/dbc/ - under: "Which data system do you want to connect to?" - choose: "Flight SQL":   
+You can get ADBC Drivers for your target platform pretty easily using [Columnar](https://columnar.tech)'s [dbc](https://columnar.tech/dbc/) tool - under: "Which data system do you want to connect to?" - choose: "Flight SQL":   
 ![img.png](img.png)
 
 ## 🧪 Example: Query GizmoSQL from DuckDB
