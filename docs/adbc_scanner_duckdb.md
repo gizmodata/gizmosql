@@ -47,6 +47,9 @@ Connected to a transient in-memory database.
 ```sql
 INSTALL adbc_scanner FROM community;
 LOAD adbc_scanner;
+
+-- Run this to keep your extensions up to date...     
+UPDATE EXTENSIONS;     
 ```
 
 This downloads and registers the ADBC Scanner extension for your DuckDB environment.
@@ -56,30 +59,38 @@ This downloads and registers the ADBC Scanner extension for your DuckDB environm
 ### 3️⃣ Connect to a Remote GizmoSQL Instance
 
 You’ll need the [ADBC FlightSQL driver](https://columnar.tech/dbc/) for your platform.  
-Then, create a connection variable using `adbc_connect()`:
+Then, create a secret, and then a connection to the remote GizmoSQL instance:
 
 ```sql
-SET VARIABLE gizmosql_conn = (
-    SELECT adbc_connect({
-        'driver': '/path/to/libadbc_driver_flightsql.dylib',  /* Change this path as needed */
-        'uri': 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337',
-        'username': 'adbc-scanner',
-        'password': 'QueryDotFarmRules!123'
-    })
-);
+CREATE SECRET gizmosql_secret (
+     TYPE adbc,
+     SCOPE 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337',
+     driver '/Users/philip/Downloads/libadbc_driver_flightsql.dylib',  /* Change this path as needed */
+     uri 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337',
+     username 'adbc-scanner',
+     password 'QueryDotFarmRules!123'
+ );
+
+ATTACH 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337' AS gizmosql_db (
+      TYPE adbc
+  );
 ```
 
-This creates an authenticated Flight SQL connection to the **GizmoSQL** service hosted by GizmoData.
+This creates an encrypted and authenticated Flight SQL connection to the **GizmoSQL** service hosted by GizmoData.
 
 ---
 
 ### 4️⃣ Run a Remote Query!
 
-Now you can query remote data as if it were local — using the `adbc_scan()` function:
+Now you can query remote data as if it were local.
 
 ```sql
+-- Make the remote instance first on the search path so you don't have to type: catalog.schema.table for each SQL statement...
+USE gizmosql_db;
+
+-- Select from the table as if it were local
 SELECT *
-FROM adbc_scan(getvariable('gizmosql_conn')::BIGINT, 'SELECT * FROM region');
+FROM region;
 ```
 
 Output:
@@ -123,13 +134,16 @@ That means:
 
 ## 💡 Next Steps
 
-- Try substituting other remote queries:
+- Try substituting other remote queries - like this one that does predicate pushdown to the remote GizmoSQL database connection:
   ```sql
-  SELECT COUNT(*) FROM adbc_scan(getvariable('gizmosql_conn')::BIGINT, 'SELECT * FROM nation');
+  SELECT *
+    FROM lineitem 
+   WHERE l_linenumber = 3
+   LIMIT 100;
   ```
 
 - Explore **pushdown capabilities** with complex filters or aggregations.
-- Combine `adbc_scan()` with local Parquet, CSV, or in-memory data for hybrid analytics.
+- Combine ADBC remote tables with local Parquet, CSV, or in-memory data for hybrid analytics.
 - Experiment with other ADBC drivers: PostgreSQL, SQLite, Snowflake, etc.
 
 ---
