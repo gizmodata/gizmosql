@@ -153,6 +153,7 @@ set(GRPC_CPP_PLUGIN "${GRPC_INSTALL_DIR}/bin/grpc_cpp_plugin")
 set(PROTOBUF_INCLUDE_DIR "${PROTOBUF_INSTALL_DIR}/include")
 set(GRPC_INCLUDE_DIR "${GRPC_INSTALL_DIR}/include")
 set(GRPC_REFLECTION_LIBRARY "${GRPC_INSTALL_DIR}/lib/libgrpc++_reflection.a")
+set(ABSL_INCLUDE_DIR "${ARROW_BUILD_DIR}/absl_ep-install/include")
 
 # Define the proto source and output paths
 set(HEALTH_PROTO_DIR "${CMAKE_SOURCE_DIR}/src/protos")
@@ -242,6 +243,7 @@ target_include_directories(gizmosqlserver
         ${HEALTH_PROTO_GEN_DIR}
         ${PROTOBUF_INCLUDE_DIR}
         ${GRPC_INCLUDE_DIR}
+        ${ABSL_INCLUDE_DIR}
 )
 
 target_link_libraries(gizmosqlserver
