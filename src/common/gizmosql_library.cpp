@@ -482,6 +482,13 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     auto server_ptr = create_server_result.ValueOrDie();
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - started";
     ARROW_CHECK_OK(server_ptr->Serve());
+
+    // Gracefully shutdown health service to stop Watch streams
+    if (gizmosql::g_health_service) {
+      gizmosql::g_health_service->Shutdown();
+      GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
+    }
+
     return EXIT_SUCCESS;
   } else {
     // Handle the error

@@ -18,9 +18,13 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #include <grpcpp/grpcpp.h>
 #include "grpc/health/v1/health.grpc.pb.h"
@@ -32,18 +36,24 @@ namespace gizmosql {
 using HealthCheckFn = std::function<bool()>;
 
 /// Custom gRPC Health service implementation for GizmoSQL.
-/// This service performs a real-time health check by executing "SELECT 1"
-/// on the underlying database backend on each Check() call.
+/// Uses a background thread to periodically check health status, ensuring
+/// that multiple Watch streams share a single health check rather than
+/// each polling independently.
 class GizmoSQLHealthServiceImpl final : public grpc::health::v1::Health::Service {
  public:
+  /// Default health check polling interval in seconds.
+  static constexpr int kDefaultPollIntervalSeconds = 5;
+
   /// Construct a health service with the given health check function.
   /// @param health_check_fn Function that returns true if the service is healthy.
-  explicit GizmoSQLHealthServiceImpl(HealthCheckFn health_check_fn);
+  /// @param poll_interval_seconds Interval between health checks (default: 5 seconds).
+  explicit GizmoSQLHealthServiceImpl(HealthCheckFn health_check_fn,
+                                     int poll_interval_seconds = kDefaultPollIntervalSeconds);
 
-  ~GizmoSQLHealthServiceImpl() override = default;
+  ~GizmoSQLHealthServiceImpl() override;
 
   /// Perform a synchronous health check.
-  /// Calls the health_check_fn_ to determine the serving status.
+  /// Returns the cached health status from the background poller.
   /// @param context The gRPC server context.
   /// @param request The health check request (service name is ignored).
   /// @param response The health check response with serving status.
@@ -53,9 +63,9 @@ class GizmoSQLHealthServiceImpl final : public grpc::health::v1::Health::Service
                      grpc::health::v1::HealthCheckResponse* response) override;
 
   /// Watch for health status changes (streaming).
-  /// This implementation sends the current health status immediately, then
-  /// periodically (every 5 seconds) polls the health status and sends updates
-  /// to the client whenever the status changes, until the context is cancelled.
+  /// Waits on a shared condition variable for status changes, rather than
+  /// polling independently. Multiple Watch streams share the same background
+  /// health checker.
   /// @param context The gRPC server context.
   /// @param request The health check request (service name is ignored).
   /// @param writer The response writer for streaming status updates.
@@ -64,11 +74,24 @@ class GizmoSQLHealthServiceImpl final : public grpc::health::v1::Health::Service
                      const grpc::health::v1::HealthCheckRequest* request,
                      grpc::ServerWriter<grpc::health::v1::HealthCheckResponse>* writer) override;
 
-  /// Signal shutdown to stop any active Watch streams.
+  /// Signal shutdown to stop the background health checker and any active Watch streams.
   void Shutdown();
 
  private:
+  /// Background thread function that periodically checks health.
+  void HealthCheckLoop();
+
   HealthCheckFn health_check_fn_;
+  std::chrono::seconds poll_interval_;
+
+  // Shared state protected by mutex
+  std::mutex mutex_;
+  std::condition_variable status_changed_cv_;
+  bool cached_status_{false};
+  uint64_t status_version_{0};  // Incremented on each status change
+
+  // Background thread management
+  std::thread health_check_thread_;
   std::atomic<bool> shutdown_{false};
 };
 
