@@ -189,9 +189,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       // Enable gRPC reflection (must be called before building the server)
       grpc::reflection::InitProtoReflectionServerBuilderPlugin();
 
-      options.builder_hook = [](void* raw_builder) {
+      options.builder_hook = [health_service = g_health_service](void* raw_builder) {
         auto* builder = reinterpret_cast<grpc::ServerBuilder*>(raw_builder);
-        builder->RegisterService(g_health_service.get());
+        builder->RegisterService(health_service.get());
       };
       GIZMOSQL_LOG(INFO) << "gRPC Health service enabled";
       GIZMOSQL_LOG(INFO) << "gRPC Reflection service enabled";
