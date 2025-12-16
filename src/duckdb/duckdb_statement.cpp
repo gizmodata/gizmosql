@@ -441,6 +441,17 @@ arrow::Result<int> DuckDBStatement::Execute() {
   }
 
   if (status == std::future_status::timeout) {
+    if (log_queries_) {
+      GIZMOSQL_LOGKV(WARNING, "Client SQL command timed out - begin statement interruption",
+                     {"peer", client_session_->peer}, {"kind", "sql"},
+                     {"status", "timeout"}, {"session_id", client_session_->session_id},
+                     {"interruption_status", "begin"},
+                     {"user", client_session_->username}, {"role", client_session_->role},
+                     {"statement_handle", handle_},
+                     {"timeout_seconds", std::to_string(query_timeout)},
+                     {"sql", logged_sql_});
+    }
+
     // Timeout occurred - interrupt the query
     client_session_->connection->Interrupt();
 
@@ -450,9 +461,10 @@ arrow::Result<int> DuckDBStatement::Execute() {
     client_session_->active_sql_handle = "";
 
     if (log_queries_) {
-      GIZMOSQL_LOGKV(WARNING, "Client SQL command timed out",
+      GIZMOSQL_LOGKV(WARNING, "Client SQL command timed out - completed statement interruption",
                      {"peer", client_session_->peer}, {"kind", "sql"},
                      {"status", "timeout"}, {"session_id", client_session_->session_id},
+                     {"interruption_status", "end"},
                      {"user", client_session_->username}, {"role", client_session_->role},
                      {"statement_handle", handle_},
                      {"timeout_seconds", std::to_string(query_timeout)},
