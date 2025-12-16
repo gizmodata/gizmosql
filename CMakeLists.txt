@@ -178,7 +178,7 @@ add_custom_command(
         --grpc_out=${HEALTH_PROTO_GEN_DIR}
         --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
         ${HEALTH_PROTO_FILE}
-    DEPENDS ${HEALTH_PROTO_FILE}
+    DEPENDS ${HEALTH_PROTO_FILE} arrow
     COMMENT "Generating gRPC health proto files"
 )
 
