@@ -53,8 +53,9 @@ class GizmoSQLHealthServiceImpl final : public grpc::health::v1::Health::Service
                      grpc::health::v1::HealthCheckResponse* response) override;
 
   /// Watch for health status changes (streaming).
-  /// This implementation sends the current status and then waits until
-  /// the context is cancelled.
+  /// This implementation sends the current health status immediately, then
+  /// periodically (every 5 seconds) polls the health status and sends updates
+  /// to the client whenever the status changes, until the context is cancelled.
   /// @param context The gRPC server context.
   /// @param request The health check request (service name is ignored).
   /// @param writer The response writer for streaming status updates.
