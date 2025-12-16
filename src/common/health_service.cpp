@@ -93,10 +93,6 @@ grpc::Status GizmoSQLHealthServiceImpl::Watch(
   while (!context->IsCancelled() && !shutdown_.load()) {
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    if (context->IsCancelled() || shutdown_.load()) {
-      break;
-    }
-
     try {
       is_healthy = health_check_fn_();
     } catch (...) {
