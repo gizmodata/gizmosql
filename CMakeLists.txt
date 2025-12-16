@@ -142,6 +142,56 @@ find_package(Threads REQUIRED)
 set(Boost_USE_STATIC_LIBS ON)
 find_package(Boost COMPONENTS program_options REQUIRED)
 
+# --------------------- gRPC Health Proto Generation ---------------------
+# Use Arrow's bundled protobuf and gRPC for proto generation
+set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
+set(PROTOBUF_INSTALL_DIR "${ARROW_BUILD_DIR}/protobuf_ep-install")
+set(GRPC_INSTALL_DIR "${ARROW_BUILD_DIR}/grpc_ep-install")
+
+set(PROTOC_EXECUTABLE "${PROTOBUF_INSTALL_DIR}/bin/protoc")
+set(GRPC_CPP_PLUGIN "${GRPC_INSTALL_DIR}/bin/grpc_cpp_plugin")
+set(PROTOBUF_INCLUDE_DIR "${PROTOBUF_INSTALL_DIR}/include")
+set(GRPC_INCLUDE_DIR "${GRPC_INSTALL_DIR}/include")
+set(GRPC_REFLECTION_LIBRARY "${GRPC_INSTALL_DIR}/lib/libgrpc++_reflection.a")
+
+# Define the proto source and output paths
+set(HEALTH_PROTO_DIR "${CMAKE_SOURCE_DIR}/src/protos")
+set(HEALTH_PROTO_FILE "${HEALTH_PROTO_DIR}/grpc/health/v1/health.proto")
+set(HEALTH_PROTO_GEN_DIR "${CMAKE_BINARY_DIR}/generated")
+
+# Create output directory
+file(MAKE_DIRECTORY ${HEALTH_PROTO_GEN_DIR})
+
+# Generated file paths
+set(HEALTH_PROTO_SRCS "${HEALTH_PROTO_GEN_DIR}/grpc/health/v1/health.pb.cc")
+set(HEALTH_PROTO_HDRS "${HEALTH_PROTO_GEN_DIR}/grpc/health/v1/health.pb.h")
+set(HEALTH_GRPC_SRCS "${HEALTH_PROTO_GEN_DIR}/grpc/health/v1/health.grpc.pb.cc")
+set(HEALTH_GRPC_HDRS "${HEALTH_PROTO_GEN_DIR}/grpc/health/v1/health.grpc.pb.h")
+
+# Custom command to generate protobuf and gRPC files
+add_custom_command(
+    OUTPUT ${HEALTH_PROTO_SRCS} ${HEALTH_PROTO_HDRS} ${HEALTH_GRPC_SRCS} ${HEALTH_GRPC_HDRS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${HEALTH_PROTO_GEN_DIR}/grpc/health/v1"
+    COMMAND ${PROTOC_EXECUTABLE}
+        --proto_path=${HEALTH_PROTO_DIR}
+        --cpp_out=${HEALTH_PROTO_GEN_DIR}
+        --grpc_out=${HEALTH_PROTO_GEN_DIR}
+        --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
+        ${HEALTH_PROTO_FILE}
+    DEPENDS ${HEALTH_PROTO_FILE}
+    COMMENT "Generating gRPC health proto files"
+)
+
+# Custom target to ensure proto generation happens
+add_custom_target(health_proto_gen DEPENDS
+    ${HEALTH_PROTO_SRCS}
+    ${HEALTH_PROTO_HDRS}
+    ${HEALTH_GRPC_SRCS}
+    ${HEALTH_GRPC_HDRS}
+)
+
+# --------------------------------------------------
+
 set(GIZMOSQL_SQLITE_SERVER_SRCS
         src/sqlite/sqlite_sql_info.cc
         src/sqlite/sqlite_type_info.cc
@@ -165,9 +215,15 @@ add_library(gizmosqlserver STATIC
         src/common/gizmosql_library.cpp
         src/common/gizmosql_security.cpp
         src/common/access_log_middleware.cpp
+        src/common/health_service.cpp
+        ${HEALTH_PROTO_SRCS}
+        ${HEALTH_GRPC_SRCS}
         ${GIZMOSQL_SQLITE_SERVER_SRCS}
         ${GIZMOSQL_DUCKDB_SERVER_SRCS}
 )
+
+# Ensure proto generation happens before compiling gizmosqlserver
+add_dependencies(gizmosqlserver health_proto_gen)
 
 set_target_properties(gizmosqlserver PROPERTIES
         PUBLIC_HEADER src/common/include/gizmosql_library.h
@@ -183,6 +239,9 @@ target_include_directories(gizmosqlserver
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}
         ${JWT_CPP_INCLUDE_DIR}
+        ${HEALTH_PROTO_GEN_DIR}
+        ${PROTOBUF_INCLUDE_DIR}
+        ${GRPC_INCLUDE_DIR}
 )
 
 target_link_libraries(gizmosqlserver
@@ -194,6 +253,8 @@ target_link_libraries(gizmosqlserver
         ${Boost_LIBRARIES}
         nlohmann_json::nlohmann_json
         "-lresolv"
+        PUBLIC
+        ${GRPC_REFLECTION_LIBRARY}
 )
 
 if (APPLE)
