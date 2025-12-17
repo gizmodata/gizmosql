@@ -26,6 +26,7 @@
 #include <string>
 #include <thread>
 
+#include <arrow/result.h>
 #include <grpcpp/grpcpp.h>
 #include "grpc/health/v1/health.grpc.pb.h"
 
@@ -93,6 +94,33 @@ class GizmoSQLHealthServiceImpl final : public grpc::health::v1::Health::Service
   // Background thread management
   std::thread health_check_thread_;
   std::atomic<bool> shutdown_{false};
+};
+
+/// Lightweight plaintext gRPC server for Kubernetes health probes.
+/// Runs on a separate port without TLS, serving only the Health service.
+/// This allows Kubernetes to perform health checks without TLS support.
+class PlaintextHealthServer {
+ public:
+  /// Start the plaintext health server on the given port.
+  /// @param health_service The health service to register (shared with main server).
+  /// @param port The port to listen on (e.g., 31338).
+  /// @return A unique_ptr to the server, or an error status.
+  static arrow::Result<std::unique_ptr<PlaintextHealthServer>> Start(
+      std::shared_ptr<GizmoSQLHealthServiceImpl> health_service,
+      int port);
+
+  /// Shutdown the server and wait for it to stop.
+  void Shutdown();
+
+  ~PlaintextHealthServer();
+
+  // Non-copyable, non-movable
+  PlaintextHealthServer(const PlaintextHealthServer&) = delete;
+  PlaintextHealthServer& operator=(const PlaintextHealthServer&) = delete;
+
+ private:
+  PlaintextHealthServer() = default;
+  std::unique_ptr<grpc::Server> server_;
 };
 
 }  // namespace gizmosql

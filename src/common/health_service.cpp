@@ -17,6 +17,8 @@
 
 #include "health_service.h"
 
+#include <grpcpp/grpcpp.h>
+
 #include "gizmosql_logging.h"
 
 namespace gizmosql {
@@ -193,6 +195,54 @@ void GizmoSQLHealthServiceImpl::Shutdown() {
   if (health_check_thread_.joinable()) {
     health_check_thread_.join();
   }
+}
+
+// PlaintextHealthServer implementation
+
+arrow::Result<std::unique_ptr<PlaintextHealthServer>> PlaintextHealthServer::Start(
+    std::shared_ptr<GizmoSQLHealthServiceImpl> health_service,
+    int port) {
+  if (!health_service) {
+    return arrow::Status::Invalid("Health service cannot be null");
+  }
+
+  if (port <= 0 || port > 65535) {
+    return arrow::Status::Invalid("Invalid port number: " + std::to_string(port));
+  }
+
+  std::string address = "0.0.0.0:" + std::to_string(port);
+
+  grpc::ServerBuilder builder;
+  builder.AddListeningPort(address, grpc::InsecureServerCredentials());
+  builder.RegisterService(health_service.get());
+
+  // Note: Reflection is enabled via InitProtoReflectionServerBuilderPlugin()
+  // which is called once globally in gizmosql_library.cpp before server creation.
+  // The plugin automatically applies to all ServerBuilder instances.
+
+  auto server = builder.BuildAndStart();
+  if (!server) {
+    return arrow::Status::Invalid("Failed to start plaintext health server on " + address);
+  }
+
+  GIZMOSQL_LOG(INFO) << "Plaintext health server (for Kubernetes probes) listening on "
+                     << address;
+
+  auto result = std::unique_ptr<PlaintextHealthServer>(new PlaintextHealthServer());
+  result->server_ = std::move(server);
+  return result;
+}
+
+void PlaintextHealthServer::Shutdown() {
+  if (server_) {
+    server_->Shutdown();
+    server_.reset();
+    GIZMOSQL_LOG(INFO) << "Plaintext health server shutdown complete";
+  }
+}
+
+PlaintextHealthServer::~PlaintextHealthServer() {
+  Shutdown();
 }
 
 }  // namespace gizmosql

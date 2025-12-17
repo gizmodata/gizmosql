@@ -25,6 +25,7 @@ const std::string GIZMOSQL_SERVER_VERSION = PROJECT_VERSION;
 const std::string DEFAULT_GIZMOSQL_HOSTNAME = "0.0.0.0";
 const std::string DEFAULT_GIZMOSQL_USERNAME = "gizmosql_username";
 const int DEFAULT_FLIGHT_PORT = 31337;
+const int DEFAULT_HEALTH_PORT = 31338;  // Plaintext health check port for Kubernetes
 const int32_t DEFAULT_QUERY_TIMEOUT_SECONDS = 0;  // Unlimited timeout
 
 enum class BackendType { duckdb, sqlite };
@@ -62,6 +63,7 @@ enum class BackendType { duckdb, sqlite };
  * @param query_timeout The query timeout in seconds.  Queries running longer than this will be canceled by the server.  Default is: 0 (no timeout)
  * @param query_log_level The logging level to use for the queries run by users.  Default is: info
  * @param auth_log_level The logging level to use for authentication to the server.  Default is: info
+ * @param health_port The port for the plaintext gRPC health check server (for Kubernetes probes). Default is DEFAULT_HEALTH_PORT (31338). Set to 0 to disable.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -82,5 +84,6 @@ int RunFlightSQLServer(
     std::filesystem::path token_signature_verify_cert_path = std::filesystem::path(),
     std::string log_level = "", std::string log_format = "", std::string access_log = "",
     std::string log_file = "", int32_t query_timeout = 0,
-    std::string query_log_level = "", std::string auth_log_level = "");
+    std::string query_log_level = "", std::string auth_log_level = "",
+    int health_port = DEFAULT_HEALTH_PORT);
 }

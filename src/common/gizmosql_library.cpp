@@ -48,6 +48,7 @@ const int port = 31337;
 // Static storage for health service to keep it alive for the lifetime of the server
 // This is safe because only one GizmoSQL server runs per process
 static std::shared_ptr<GizmoSQLHealthServiceImpl> g_health_service;
+static std::unique_ptr<PlaintextHealthServer> g_plaintext_health_server;
 
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
   do {                                                                             \
@@ -82,7 +83,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& token_allowed_issuer, const std::string& token_allowed_audience,
     const fs::path& token_signature_verify_cert_path, const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level) {
+    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -193,7 +194,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         auto* builder = reinterpret_cast<grpc::ServerBuilder*>(raw_builder);
         builder->RegisterService(health_service.get());
       };
-      GIZMOSQL_LOG(INFO) << "gRPC Health service enabled";
+      GIZMOSQL_LOG(INFO) << "gRPC Health service enabled (on main TLS port)";
       GIZMOSQL_LOG(INFO) << "gRPC Reflection service enabled";
     }
 
@@ -201,6 +202,22 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
     // Exit with a clean error code (0) on SIGTERM or SIGINT
     ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
+
+    // Start plaintext health server for Kubernetes probes AFTER main server init succeeds.
+    // This ensures we don't leave orphaned servers if main server initialization fails.
+    if (g_health_service) {
+      if (health_port > 0) {
+        auto plaintext_result = PlaintextHealthServer::Start(g_health_service, health_port);
+        if (plaintext_result.ok()) {
+          g_plaintext_health_server = std::move(*plaintext_result);
+        } else {
+          GIZMOSQL_LOG(WARNING) << "Failed to start plaintext health server: "
+                                << plaintext_result.status().ToString();
+        }
+      } else {
+        GIZMOSQL_LOG(INFO) << "Plaintext health server disabled (health_port=0)";
+      }
+    }
 
     GIZMOSQL_LOG(INFO) << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
                        << " - with engine: " << db_type << " - will listen on "
@@ -231,7 +248,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level) {
+    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     GIZMOSQL_LOG(INFO)
@@ -383,7 +400,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, access_logging_enabled, query_timeout,
-      query_log_level, auth_log_level);
+      query_log_level, auth_log_level, health_port);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -404,7 +421,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        fs::path token_signature_verify_cert_path, std::string log_level,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
-                       std::string query_log_level, std::string auth_log_level) {
+                       std::string query_log_level, std::string auth_log_level,
+                       int health_port) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -476,14 +494,18 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
-      query_timeout, query_level, auth_level);
+      query_timeout, query_level, auth_level, health_port);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - started";
     ARROW_CHECK_OK(server_ptr->Serve());
 
-    // Gracefully shutdown health service to stop Watch streams.
+    // Gracefully shutdown health services
+    if (gizmosql::g_plaintext_health_server) {
+      gizmosql::g_plaintext_health_server->Shutdown();
+      gizmosql::g_plaintext_health_server.reset();
+    }
     if (gizmosql::g_health_service) {
       gizmosql::g_health_service->Shutdown();
       GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
