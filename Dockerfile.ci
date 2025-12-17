@@ -46,6 +46,15 @@ RUN case ${TARGETPLATFORM} in \
     mv azcopy_linux_*/azcopy /usr/bin/azcopy && \
     rm -rf azcopy_linux_* azcopy.tar.gz
 
+# Install gRPC Health probe
+ARG GRPC_HEALTH_PROBE_VERSION="v0.4.42"
+RUN case ${TARGETPLATFORM} in \
+         "linux/amd64")  GRPC_HEALTH_PROBE_FILE=https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64  ;; \
+         "linux/arm64")  GRPC_HEALTH_PROBE_FILE=https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-arm64  ;; \
+    esac && \
+    curl -L ${GRPC_HEALTH_PROBE_FILE} -o /bin/grpc_health_probe && \
+    chmod +x /bin/grpc_health_probe
+
 # Create an application user
 RUN useradd app_user --create-home
 
