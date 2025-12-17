@@ -35,11 +35,19 @@
 #include "gizmosql_logging.h"
 #include "gizmosql_security.h"
 #include "access_log_middleware.h"
+#include "health_service.h"
+
+#include <grpcpp/grpcpp.h>
+#include <grpcpp/ext/proto_server_reflection_plugin.h>
 
 namespace fs = std::filesystem;
 
 namespace gizmosql {
 const int port = 31337;
+
+// Static storage for health service to keep it alive for the lifetime of the server
+// This is safe because only one GizmoSQL server runs per process
+static std::shared_ptr<GizmoSQLHealthServiceImpl> g_health_service;
 
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
   do {                                                                             \
@@ -149,6 +157,46 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                      << print_queries;
 
   if (server != nullptr) {
+    // Create health check service
+    // The health check function will execute "SELECT 1" on the backend to verify connectivity
+    // Using g_health_service (static) to ensure the service lives as long as the server
+    if (backend == BackendType::sqlite) {
+      auto sqlite_server =
+          std::dynamic_pointer_cast<gizmosql::sqlite::SQLiteFlightSqlServer>(server);
+      g_health_service = std::make_shared<GizmoSQLHealthServiceImpl>(
+          [weak_server = std::weak_ptr<gizmosql::sqlite::SQLiteFlightSqlServer>(
+               sqlite_server)]() -> bool {
+            if (auto s = weak_server.lock()) {
+              return s->ExecuteSql("SELECT 1").ok();
+            }
+            return false;
+          });
+    } else if (backend == BackendType::duckdb) {
+      auto duckdb_server =
+          std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server);
+      g_health_service = std::make_shared<GizmoSQLHealthServiceImpl>(
+          [weak_server = std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer>(
+               duckdb_server)]() -> bool {
+            if (auto s = weak_server.lock()) {
+              return s->ExecuteSql("SELECT 1").ok();
+            }
+            return false;
+          });
+    }
+
+    // Set up builder_hook to register the health service and reflection with the gRPC server
+    if (g_health_service) {
+      // Enable gRPC reflection (must be called before building the server)
+      grpc::reflection::InitProtoReflectionServerBuilderPlugin();
+
+      options.builder_hook = [health_service = g_health_service](void* raw_builder) {
+        auto* builder = reinterpret_cast<grpc::ServerBuilder*>(raw_builder);
+        builder->RegisterService(health_service.get());
+      };
+      GIZMOSQL_LOG(INFO) << "gRPC Health service enabled";
+      GIZMOSQL_LOG(INFO) << "gRPC Reflection service enabled";
+    }
+
     ARROW_CHECK_OK(server->Init(options));
 
     // Exit with a clean error code (0) on SIGTERM or SIGINT
@@ -434,6 +482,13 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     auto server_ptr = create_server_result.ValueOrDie();
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - started";
     ARROW_CHECK_OK(server_ptr->Serve());
+
+    // Gracefully shutdown health service to stop Watch streams.
+    if (gizmosql::g_health_service) {
+      gizmosql::g_health_service->Shutdown();
+      GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
+    }
+
     return EXIT_SUCCESS;
   } else {
     // Handle the error
