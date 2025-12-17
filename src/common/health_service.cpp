@@ -26,10 +26,15 @@ GizmoSQLHealthServiceImpl::GizmoSQLHealthServiceImpl(HealthCheckFn health_check_
     : health_check_fn_(std::move(health_check_fn)),
       poll_interval_(poll_interval_seconds) {
   // Perform initial health check
+  bool initial_status = false;
   try {
-    cached_status_ = health_check_fn_();
+    initial_status = health_check_fn_();
   } catch (...) {
-    cached_status_ = false;
+    initial_status = false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cached_status_ = initial_status;
   }
 
   // Start background health check thread
