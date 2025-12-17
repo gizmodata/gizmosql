@@ -161,8 +161,8 @@ grpc::Status GizmoSQLHealthServiceImpl::Watch(
       break;
     }
 
-    // Only send update if status changed
-    if (current_version != last_version && current_status != last_status) {
+    // Send update if status differs from what we last sent to the client
+    if (current_status != last_status) {
       GIZMOSQL_LOG(DEBUG) << "Health watch sending status change: "
                           << (current_status ? "SERVING" : "NOT_SERVING");
       response.set_status(current_status ? grpc::health::v1::HealthCheckResponse::SERVING

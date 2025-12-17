@@ -254,9 +254,8 @@ target_link_libraries(gizmosqlserver
         duckdb
         ${Boost_LIBRARIES}
         nlohmann_json::nlohmann_json
-        "-lresolv"
-        PUBLIC
         ${GRPC_REFLECTION_LIBRARY}
+        "-lresolv"
 )
 
 if (APPLE)
@@ -281,6 +280,7 @@ target_link_libraries(gizmosql_server PRIVATE
         gizmosqlserver
         ${Boost_LIBRARIES}
         Arrow::arrow_static
+        ${GRPC_REFLECTION_LIBRARY}
 )
 
 target_compile_options(gizmosql_server PRIVATE "-static")
