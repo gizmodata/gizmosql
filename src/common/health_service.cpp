@@ -18,7 +18,6 @@
 #include "health_service.h"
 
 #include <grpcpp/grpcpp.h>
-#include <grpcpp/ext/proto_server_reflection_plugin.h>
 
 #include "gizmosql_logging.h"
 
@@ -217,8 +216,9 @@ arrow::Result<std::unique_ptr<PlaintextHealthServer>> PlaintextHealthServer::Sta
   builder.AddListeningPort(address, grpc::InsecureServerCredentials());
   builder.RegisterService(health_service.get());
 
-  // Enable reflection for easy debugging with grpcurl
-  grpc::reflection::InitProtoReflectionServerBuilderPlugin();
+  // Note: Reflection is enabled via InitProtoReflectionServerBuilderPlugin()
+  // which is called once globally in gizmosql_library.cpp before server creation.
+  // The plugin automatically applies to all ServerBuilder instances.
 
   auto server = builder.BuildAndStart();
   if (!server) {

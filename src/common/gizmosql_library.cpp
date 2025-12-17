@@ -196,8 +196,16 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       };
       GIZMOSQL_LOG(INFO) << "gRPC Health service enabled (on main TLS port)";
       GIZMOSQL_LOG(INFO) << "gRPC Reflection service enabled";
+    }
 
-      // Start plaintext health server for Kubernetes probes
+    ARROW_CHECK_OK(server->Init(options));
+
+    // Exit with a clean error code (0) on SIGTERM or SIGINT
+    ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
+
+    // Start plaintext health server for Kubernetes probes AFTER main server init succeeds.
+    // This ensures we don't leave orphaned servers if main server initialization fails.
+    if (g_health_service) {
       if (health_port > 0) {
         auto plaintext_result = PlaintextHealthServer::Start(g_health_service, health_port);
         if (plaintext_result.ok()) {
@@ -210,11 +218,6 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         GIZMOSQL_LOG(INFO) << "Plaintext health server disabled (health_port=0)";
       }
     }
-
-    ARROW_CHECK_OK(server->Init(options));
-
-    // Exit with a clean error code (0) on SIGTERM or SIGINT
-    ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
 
     GIZMOSQL_LOG(INFO) << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
                        << " - with engine: " << db_type << " - will listen on "
