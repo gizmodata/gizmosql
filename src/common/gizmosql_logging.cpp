@@ -49,7 +49,7 @@ inline std::string NowIso8601Utc() {
   using namespace std::chrono;
   const auto now = system_clock::now();
   const auto secs = time_point_cast<std::chrono::seconds>(now);
-  const auto ms = duration_cast<milliseconds>(now - secs).count();
+  const auto us = duration_cast<microseconds>(now - secs).count();
 
   std::time_t t = system_clock::to_time_t(now);
   std::tm tm_utc{};
@@ -60,8 +60,8 @@ inline std::string NowIso8601Utc() {
 #endif
 
   std::ostringstream oss;
-  oss << std::put_time(&tm_utc, "%Y-%m-%dT%H:%M:%S") << "." << std::setw(3)
-      << std::setfill('0') << ms << "Z";
+  oss << std::put_time(&tm_utc, "%Y-%m-%dT%H:%M:%S") << "." << std::setw(6)
+      << std::setfill('0') << us << "Z";
   return oss.str();
 }
 

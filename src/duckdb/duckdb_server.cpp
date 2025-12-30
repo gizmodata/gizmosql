@@ -1512,10 +1512,12 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    // We may have a SQL statement in-flight (or being interrupted / rolled-back) - we need to let it clean up safely
+    std::unique_lock<std::mutex> connection_lock(client_session->connection_mutex);
+
     std::unique_lock write_lock(sessions_mutex_);
     auto it = client_sessions_.find(client_session->session_id);
     if (it != client_sessions_.end()) {
-      it->second.reset();
       client_sessions_.erase(it);
       GIZMOSQL_LOGKV(INFO, "Client session was successfully closed.",
                      {"peer", client_session->peer}, {"kind", "session_close"},
