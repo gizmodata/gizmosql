@@ -1226,6 +1226,7 @@ class DuckDBFlightSqlServer::Impl {
         {"session_id", client_session->session_id}, {"user", client_session->username},
         {"role", client_session->role}, {"query", redact_sql_for_logs(query)});
 
+    std::unique_lock connection_lock(client_session->connection_mutex);
     auto res = client_session->connection->Query(query);
     if (res->HasError()) {
       return Status::Invalid("Failed to run DuckDB query: " + query + ": " +
@@ -1267,9 +1268,13 @@ class DuckDBFlightSqlServer::Impl {
     // 2. Basic metadata up front (no transaction yet)
     ARROW_ASSIGN_OR_RAISE(auto arrow_schema, reader->GetSchema());
 
-    ARROW_ASSIGN_OR_RAISE(auto target_table_exists,
-                          TableExists(*client_session->connection, command.catalog,
-                                      command.schema, command.table));
+    bool target_table_exists = false;
+    {
+      std::unique_lock connection_lock(client_session->connection_mutex);
+      ARROW_ASSIGN_OR_RAISE(target_table_exists,
+                            TableExists(*client_session->connection, command.catalog,
+                                        command.schema, command.table));
+    }
 
     using ExistsOpt = sql::TableDefinitionOptionsTableExistsOption;
     using NotExistsOpt = sql::TableDefinitionOptionsTableNotExistOption;
@@ -1407,7 +1412,7 @@ class DuckDBFlightSqlServer::Impl {
     std::unique_lock write_lock(transactions_mutex_);
     open_transactions_[handle] = "";
 
-    ARROW_RETURN_NOT_OK(ExecuteSql(client_session->connection, "BEGIN TRANSACTION"));
+    ARROW_RETURN_NOT_OK(ExecuteSql(client_session, "BEGIN TRANSACTION"));
 
     return sql::ActionBeginTransactionResult{std::move(handle)};
   }
@@ -1418,9 +1423,9 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     {
       if (request.action == sql::ActionEndTransactionRequest::kCommit) {
-        status = ExecuteSql(client_session->connection, "COMMIT");
+        status = ExecuteSql(client_session, "COMMIT");
       } else {
-        status = ExecuteSql(client_session->connection, "ROLLBACK");
+        status = ExecuteSql(client_session, "ROLLBACK");
       }
       std::unique_lock write_lock(transactions_mutex_);
       open_transactions_.erase(request.transaction_id);
@@ -1469,8 +1474,7 @@ class DuckDBFlightSqlServer::Impl {
         std::string sanitized =
             boost::algorithm::erase_all_copy(std::get<std::string>(value), "\"");
         std::string quoted_identifier = "\"" + sanitized + "\"";
-        ARROW_RETURN_NOT_OK(
-            ExecuteSql(client_session->connection, "USE " + quoted_identifier));
+        ARROW_RETURN_NOT_OK(ExecuteSql(client_session, "USE " + quoted_identifier));
       } else {
         res.errors.emplace(name, flight::SetSessionOptionsResult::Error{
                                      flight::SetSessionOptionErrorValue::kInvalidName});
@@ -1512,10 +1516,12 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    // We may have a SQL statement in-flight (or being interrupted / rolled-back) - we need to let it clean up safely
+    std::unique_lock connection_lock(client_session->connection_mutex);
+
     std::unique_lock write_lock(sessions_mutex_);
     auto it = client_sessions_.find(client_session->session_id);
     if (it != client_sessions_.end()) {
-      it->second.reset();
       client_sessions_.erase(it);
       GIZMOSQL_LOGKV(INFO, "Client session was successfully closed.",
                      {"peer", client_session->peer}, {"kind", "session_close"},
@@ -1541,10 +1547,17 @@ class DuckDBFlightSqlServer::Impl {
     return Status::OK();
   }
 
-  Status ExecuteSql(const std::string& sql) {
+  Status ExecuteSql(const std::string& sql) const {
     // We do not have a call context, so just grab a new connection to the instance
     auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
     return ExecuteSql(connection, sql);
+  }
+
+  // Convenience method to latch the connection mutex (per session)
+  static Status ExecuteSql(const std::shared_ptr<ClientSession>& client_session,
+                           const std::string& sql) {
+    std::unique_lock connection_lock(client_session->connection_mutex);
+    return ExecuteSql(client_session->connection, sql);
   }
 
   Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(

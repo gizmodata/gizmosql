@@ -20,6 +20,7 @@
 #include <duckdb.hpp>
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include <arrow/flight/sql/column_metadata.h>
@@ -81,6 +82,7 @@ class DuckDBStatement {
 
  private:
   std::shared_ptr<ClientSession> client_session_;
+  std::unique_lock<std::mutex> connection_lock_;  // Holds exclusive lock on session's connection
   std::string handle_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
@@ -107,7 +109,8 @@ class DuckDBStatement {
                   const std::shared_ptr<duckdb::PreparedStatement>& stmt,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema) {
+                  const std::shared_ptr<arrow::Schema>& override_schema)
+      : connection_lock_(client_session->connection_mutex) {
     client_session_ = client_session;
     handle_ = handle;
     stmt_ = stmt;
@@ -126,7 +129,8 @@ class DuckDBStatement {
                   const std::string& handle, const std::string& sql,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema) {
+                  const std::shared_ptr<arrow::Schema>& override_schema)
+      : connection_lock_(client_session->connection_mutex) {
     client_session_ = client_session;
     handle_ = handle;
     sql_ = sql;

@@ -1,6 +1,7 @@
 // src/common/include/session_context.h
 #pragma once
 #include <memory>
+#include <mutex>
 #include <string>
 #include <optional>
 #include <duckdb.hpp>
@@ -12,6 +13,7 @@ class DuckDBFlightSqlServer; // forward declare
 struct ClientSession {
   std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer> server;
   std::shared_ptr<duckdb::Connection> connection;
+  std::mutex connection_mutex;  // Serializes access to connection per session
   std::string session_id; // from session middleware
   std::string username; // from bearer auth middleware (JWT sub/email/etc.)
   std::string role; // from JWT claims (e.g. "role") or header
