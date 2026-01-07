@@ -91,6 +91,19 @@ docker run --name gizmosql \
            gizmodata/gizmosql:latest
 ```
 
+### Option 3: Install via Homebrew (macOS)
+
+```bash
+brew tap gizmodata/tap
+brew install gizmosql
+```
+
+Then run the server:
+
+```bash
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename ./data/your.duckdb --tls-enabled --print-queries
+```
+
 ---
 
 ## 🧰 Clients and Tools
@@ -189,13 +202,14 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 
 ## 🧩 Extensions & Integrations
 
+- 💻 [GizmoSQL UI](https://github.com/gizmodata/gizmosql-ui) 🚀 **NEW!**
 - 🔌 [SQLAlchemy dialect](https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect)
 - 💿 [Apache Superset compatible SQLAlchemy driver](https://github.com/gizmodata/superset-sqlalchemy-gizmosql-adbc-dialect)
 - 🔌 [Ibis adapter](https://github.com/gizmodata/ibis-gizmosql)
 - 🌐 [Flight SQL over WebSocket Proxy](https://github.com/gizmodata/flight-sql-websocket-proxy)
 - 📈 [Metabase driver](https://github.com/J0hnG4lt/metabase-flightsql-driver)
 - ⚙️ [dbt Adapter](https://github.com/gizmodata/dbt-gizmosql)
-- ✨ [PySpark SQLFrame adapter](https://github.com/gizmodata/sqlframe) 🚀 **NEW!**
+- ✨ [PySpark SQLFrame adapter](https://github.com/gizmodata/sqlframe)
 - 🪩 [ADBC Scanner by Query.Farm](docs/adbc_scanner_duckdb.md) 🚀 **NEW!**
 - ⚓️ [Kubernetes Operator](https://github.com/gizmodata/gizmosql-operator) 🚀 **NEW!**
 - 📺 [GizmoSQLLine JDBC CLI Client](https://github.com/gizmodata/gizmosqlline) **NEW!**

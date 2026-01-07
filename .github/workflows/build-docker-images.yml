@@ -186,6 +186,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [build-project-macos, build-project-linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -196,6 +200,26 @@ jobs:
           path: artifacts
           pattern: gizmosql_cli_*.zip
           merge-multiple: true
+
+      - name: Attest build provenance - Linux AMD64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_linux_amd64.zip
+
+      - name: Attest build provenance - Linux ARM64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_linux_arm64.zip
+
+      - name: Attest build provenance - macOS AMD64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_macos_amd64.zip
+
+      - name: Attest build provenance - macOS ARM64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_macos_arm64.zip
 
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -252,3 +276,99 @@ jobs:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
           images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
           push: true
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: gizmosql_cli_macos_*.zip
+          merge-multiple: true
+
+      - name: Calculate SHA256 checksums
+        id: checksums
+        run: |
+          ARM64_SHA=$(sha256sum artifacts/gizmosql_cli_macos_arm64.zip | cut -d ' ' -f 1)
+          AMD64_SHA=$(sha256sum artifacts/gizmosql_cli_macos_amd64.zip | cut -d ' ' -f 1)
+          echo "arm64_sha=${ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "amd64_sha=${AMD64_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: gizmodata/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARM64_SHA: ${{ steps.checksums.outputs.arm64_sha }}
+          AMD64_SHA: ${{ steps.checksums.outputs.amd64_sha }}
+        run: |
+          VERSION_NUMBER=${VERSION#v}
+          cat > homebrew-tap/Formula/gizmosql.rb << 'FORMULA_EOF'
+          # typed: false
+          # frozen_string_literal: true
+
+          class Gizmosql < Formula
+            desc "High-performance SQL server built on DuckDB/SQLite with Arrow Flight SQL"
+            homepage "https://github.com/gizmodata/gizmosql"
+            version "VERSION_PLACEHOLDER"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_arm64.zip"
+                sha256 "ARM64_SHA_PLACEHOLDER"
+              end
+              on_intel do
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_amd64.zip"
+                sha256 "AMD64_SHA_PLACEHOLDER"
+              end
+            end
+
+            def install
+              bin.install "gizmosql_server"
+              bin.install "gizmosql_client"
+            end
+
+            def caveats
+              <<~EOS
+                GizmoSQL server can be started with:
+                  gizmosql_server --database-filename /path/to/database.duckdb
+
+                GizmoSQL client can connect with:
+                  gizmosql_client --host localhost --port 31337 --command Execute --query "SELECT 1"
+
+                For TLS and authentication options, see:
+                  gizmosql_server --help
+                  gizmosql_client --help
+              EOS
+            end
+
+            test do
+              assert_match "gizmosql_server", shell_output("#{bin}/gizmosql_server --help 2>&1", 1)
+            end
+          end
+          FORMULA_EOF
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION_NUMBER}/g" homebrew-tap/Formula/gizmosql.rb
+          sed -i "s/ARM64_SHA_PLACEHOLDER/${ARM64_SHA}/g" homebrew-tap/Formula/gizmosql.rb
+          sed -i "s/AMD64_SHA_PLACEHOLDER/${AMD64_SHA}/g" homebrew-tap/Formula/gizmosql.rb
+
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/gizmosql.rb
+          git commit -m "Update gizmosql to ${{ github.ref_name }}"
+          git push
