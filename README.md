@@ -101,7 +101,7 @@ brew install gizmosql
 Then run the server:
 
 ```bash
-GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename ./data/your.duckdb --tls-enabled --print-queries
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename your.duckdb --print-queries
 ```
 
 ---
