@@ -64,6 +64,11 @@ enum class BackendType { duckdb, sqlite };
  * @param query_log_level The logging level to use for the queries run by users.  Default is: info
  * @param auth_log_level The logging level to use for authentication to the server.  Default is: info
  * @param health_port The port for the plaintext gRPC health check server (for Kubernetes probes). Default is DEFAULT_HEALTH_PORT (31338). Set to 0 to disable.
+ * @param otel_enabled Enable OpenTelemetry (on/off). Default is "" - if so, uses env GIZMOSQL_OTEL_ENABLED, fallback to off.
+ * @param otel_exporter OTLP exporter type (http). Default is "" - if so, uses env GIZMOSQL_OTEL_EXPORTER, fallback to http.
+ * @param otel_endpoint OTLP endpoint. Default is "" - if so, uses env GIZMOSQL_OTEL_ENDPOINT, fallback based on exporter type.
+ * @param otel_service_name Service name for telemetry. Default is "" - if so, uses env GIZMOSQL_OTEL_SERVICE_NAME, fallback to "gizmosql".
+ * @param otel_headers Additional headers for OTLP exporter (key1=value1,key2=value2). Default is "" - if so, uses env GIZMOSQL_OTEL_HEADERS.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -85,5 +90,8 @@ int RunFlightSQLServer(
     std::string log_level = "", std::string log_format = "", std::string access_log = "",
     std::string log_file = "", int32_t query_timeout = 0,
     std::string query_log_level = "", std::string auth_log_level = "",
-    int health_port = DEFAULT_HEALTH_PORT);
+    int health_port = DEFAULT_HEALTH_PORT,
+    std::string otel_enabled = "", std::string otel_exporter = "",
+    std::string otel_endpoint = "", std::string otel_service_name = "",
+    std::string otel_headers = "");
 }

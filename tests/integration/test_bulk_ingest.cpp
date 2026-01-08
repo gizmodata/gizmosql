@@ -111,7 +111,9 @@ class GizmoSQLServerFixture : public ::testing::Test {
           BackendType::duckdb, std::filesystem::path("tester.db"), "0.0.0.0",
           DEFAULT_FLIGHT_PORT, "tester", "tester", "", std::filesystem::path(),
           std::filesystem::path(), std::filesystem::path(), "", std::filesystem::path(),
-          true, false, "", "", std::filesystem::path(), "debug", "text", "off", "", 0);
+          true, false, "", "", std::filesystem::path(), "debug", "text", "off", "", 0,
+          "", "", DEFAULT_HEALTH_PORT,
+          "off", "", "", "", "");  // OpenTelemetry params (disabled for tests)
     });
 
     ASSERT_TRUE(WaitForPortOpen(DEFAULT_FLIGHT_PORT, 10))

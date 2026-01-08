@@ -1,0 +1,48 @@
+cmake_minimum_required(VERSION 3.25)
+project(opentelemetry)
+
+set(CMAKE_CXX_STANDARD 17)
+
+include(ExternalProject)
+
+# Path to Arrow's bundled protobuf (set by parent CMake via configure_file @ONLY)
+set(PROTOBUF_INSTALL_DIR "@ARROW_PROTOBUF_DIR@")
+
+# Parent build directory (set by parent CMake via configure_file @ONLY)
+set(PARENT_BINARY_DIR "@CMAKE_BINARY_DIR@")
+
+# Build OpenTelemetry with HTTP exporter only (no gRPC dependency)
+ExternalProject_Add(
+    opentelemetry_project
+    PREFIX ${CMAKE_BINARY_DIR}/third_party
+    GIT_REPOSITORY https://github.com/open-telemetry/opentelemetry-cpp.git
+    GIT_TAG v1.18.0
+    CMAKE_ARGS
+      -DCMAKE_INSTALL_PREFIX=${PARENT_BINARY_DIR}/third_party/opentelemetry
+      -DCMAKE_INSTALL_LIBDIR=lib
+      -DCMAKE_CXX_STANDARD=17
+      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+      -DBUILD_TESTING=OFF
+      -DWITH_EXAMPLES=OFF
+      -DWITH_BENCHMARK=OFF
+      -DWITH_FUNC_TESTS=OFF
+      # Disable gRPC exporter entirely
+      -DWITH_OTLP_GRPC=OFF
+      # Enable HTTP exporter with curl
+      -DWITH_OTLP_HTTP=ON
+      # Use Arrow's bundled protobuf
+      -DProtobuf_DIR=${PROTOBUF_INSTALL_DIR}/lib/cmake/protobuf
+      -Dprotobuf_MODULE_COMPATIBLE=ON
+      # Build static libraries
+      -DBUILD_SHARED_LIBS=OFF
+      # Disable unnecessary components
+      -DWITH_PROMETHEUS=OFF
+      -DWITH_ZIPKIN=OFF
+      -DWITH_JAEGER=OFF
+      -DWITH_ELASTICSEARCH=OFF
+      -DWITH_ETW=OFF
+      -DWITH_ZPAGES=OFF
+      -DWITH_API_ONLY=OFF
+      -DWITH_SDK=ON
+      -DWITH_LOGS_PREVIEW=OFF
+)
