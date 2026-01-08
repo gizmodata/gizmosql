@@ -60,7 +60,9 @@
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 #include "gizmosql_security.h"
+#include "gizmosql_telemetry.h"
 #include "access_log_middleware.h"
+#include "telemetry_middleware.h"
 #include "health_service.h"
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/enterprise_features.h"
@@ -430,7 +432,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& oauth_scopes,
     const int& oauth_port,
     const std::string& oauth_base_url,
-    const bool& oauth_disable_tls) {
+    const bool& oauth_disable_tls,
+    const bool& telemetry_enabled) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -595,6 +598,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     GIZMOSQL_LOG(INFO) << "Access logging enabled";
   } else {
     GIZMOSQL_LOG(INFO) << "Access logging disabled";
+  }
+
+  // Telemetry middleware (OpenTelemetry tracing)
+  if (telemetry_enabled) {
+    options.middleware.push_back({"telemetry", std::make_shared<TelemetryMiddlewareFactory>()});
+    GIZMOSQL_LOG(INFO) << "Telemetry middleware enabled";
   }
 
   if (!mtls_ca_cert_path.empty()) {
@@ -882,7 +891,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string oauth_scopes,
     int oauth_port,
     std::string oauth_base_url,
-    const bool& oauth_disable_tls) {
+    const bool& oauth_disable_tls,
+    const bool& telemetry_enabled) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1148,7 +1158,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_disable_tls);
+      oauth_disable_tls, telemetry_enabled);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1212,7 +1222,10 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string oauth_scopes,
                        int oauth_port,
                        std::string oauth_base_url,
-                       const bool& oauth_disable_tls) {
+                       const bool& oauth_disable_tls,
+                       std::string otel_enabled, std::string otel_exporter,
+                       std::string otel_endpoint, std::string otel_service_name,
+                       std::string otel_headers) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1266,6 +1279,38 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     log_config.file_path = file_s;  // "-" => stdout handled in InitLogging
   // ----------------------------------------------------------
   gizmosql::InitLogging(log_config);
+
+  // ---- OpenTelemetry initialization ----------------
+  std::string otel_enabled_s = pick(otel_enabled, "GIZMOSQL_OTEL_ENABLED", "off");
+  std::string otel_exporter_s = pick(otel_exporter, "GIZMOSQL_OTEL_EXPORTER", "http");
+  std::string otel_endpoint_s = pick(otel_endpoint, "GIZMOSQL_OTEL_ENDPOINT", "");
+  std::string otel_service_name_s = pick(otel_service_name, "GIZMOSQL_OTEL_SERVICE_NAME", "gizmosql");
+  std::string otel_headers_s = pick(otel_headers, "GIZMOSQL_OTEL_HEADERS", "");
+
+  bool telemetry_enabled = false;
+  if (!parse_bool(otel_enabled_s, telemetry_enabled)) {
+    std::cerr << "Unknown otel-enabled '" << otel_enabled_s << "', defaulting to off\n";
+    telemetry_enabled = false;
+  }
+
+  if (telemetry_enabled) {
+    gizmosql::TelemetryConfig tel_config;
+    tel_config.enabled = true;
+    tel_config.exporter_type = gizmosql::ParseExporterType(otel_exporter_s);
+    tel_config.endpoint = otel_endpoint_s;
+    tel_config.service_name = otel_service_name_s;
+    tel_config.service_version = GIZMOSQL_SERVER_VERSION;
+    tel_config.headers = otel_headers_s;
+
+    // Get deployment environment from standard env var if available
+    tel_config.deployment_environment = gizmosql::SafeGetEnvVarValue("GIZMOSQL_ENVIRONMENT");
+    if (tel_config.deployment_environment.empty()) {
+      tel_config.deployment_environment = gizmosql::SafeGetEnvVarValue("ENVIRONMENT");
+    }
+
+    gizmosql::InitTelemetry(tel_config);
+  }
+  // ----------------------------------------------------------
 
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
@@ -1324,7 +1369,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_disable_tls);
+      oauth_disable_tls, telemetry_enabled);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
@@ -1375,6 +1420,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
 #endif
 
     // Now safe to destroy the server
+    gizmosql::ShutdownTelemetry();
     server_ptr.reset();
 
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - shutdown complete";

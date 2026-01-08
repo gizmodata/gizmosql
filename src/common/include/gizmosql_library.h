@@ -81,6 +81,11 @@ enum class BackendType { duckdb, sqlite };
  * @param oauth_port [Enterprise] Port for the OAuth HTTP(S) server. Default is DEFAULT_OAUTH_PORT (31339). Set to 0 to disable. If not set, uses env var GIZMOSQL_OAUTH_PORT.
  * @param oauth_base_url [Enterprise] Override the base URL for the OAuth HTTP server (e.g., "https://my-proxy:443"). When set, the redirect URI (/oauth/callback) and discovery URL advertised to clients are derived from this. Auto-constructed from scheme + localhost + oauth_port if empty. Use this when the server is behind a reverse proxy or accessed remotely. If not set, uses env var GIZMOSQL_OAUTH_BASE_URL.
  * @param oauth_disable_tls [Enterprise] Disable TLS on the OAuth HTTP callback server even when the main Flight server uses TLS. WARNING: This should ONLY be used for localhost development/testing. If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).
+ * @param otel_enabled Enable OpenTelemetry (on/off). Default is "" - if so, uses env GIZMOSQL_OTEL_ENABLED, fallback to off.
+ * @param otel_exporter OTLP exporter type (http). Default is "" - if so, uses env GIZMOSQL_OTEL_EXPORTER, fallback to http.
+ * @param otel_endpoint OTLP endpoint. Default is "" - if so, uses env GIZMOSQL_OTEL_ENDPOINT, fallback based on exporter type.
+ * @param otel_service_name Service name for telemetry. Default is "" - if so, uses env GIZMOSQL_OTEL_SERVICE_NAME, fallback to "gizmosql".
+ * @param otel_headers Additional headers for OTLP exporter (key1=value1,key2=value2). Default is "" - if so, uses env GIZMOSQL_OTEL_HEADERS.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -124,5 +129,8 @@ int RunFlightSQLServer(
     std::string oauth_scopes = "",
     int oauth_port = 0,
     std::string oauth_base_url = "",
-    const bool& oauth_disable_tls = false);
+    const bool& oauth_disable_tls = false,
+    std::string otel_enabled = "", std::string otel_exporter = "",
+    std::string otel_endpoint = "", std::string otel_service_name = "",
+    std::string otel_headers = "");
 }
