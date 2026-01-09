@@ -123,15 +123,33 @@ For developers who want to build GizmoSQL from source:
 git clone https://github.com/gizmodata/gizmosql --recurse-submodules
 cd gizmosql
 ```
+### Step 2: Install Dependencies
 
-### Step 2: Build with CMake
+- Mac OS
+```bash
+brew install automake boost gflags
+```
+- Linux
+```bash
+sudo apt-get install -y \
+            build-essential \
+            ninja-build \
+            automake \
+            cmake \
+            gcc \
+            git \
+            libboost-all-dev \
+            libgflags-dev \
+            libssl-dev
+```
+### Step 3: Build with CMake
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --build build --target install
 ```
 
-### Step 3: Install Python Requirements
+### Step 4: Install Python Requirements
 
 ```bash
 python3 -m venv .venv
@@ -139,8 +157,6 @@ source .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install --requirement ./requirements.txt
 ```
-
-### Step 4: Get Sample Data
 
 <!-- tabs:start -->
 

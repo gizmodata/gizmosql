@@ -18,7 +18,6 @@
 * Advanced Topics
   * [Security & Authentication](security.md)
   * [Backend Selection](configuration.md#backend-selection)
-  * [Performance Tuning](performance.md)
   * [Troubleshooting](troubleshooting.md)
 
 * Integrations
