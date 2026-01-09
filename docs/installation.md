@@ -75,36 +75,6 @@ docker run --name gizmosql \
 
 <!-- tabs:end -->
 
-### Docker with Initialization Commands
-
-You can run SQL initialization commands on startup:
-
-```bash
-docker run --name gizmosql \
-           --detach \
-           --rm \
-           --tty \
-           --init \
-           --publish 31337:31337 \
-           --env TLS_ENABLED="1" \
-           --env GIZMOSQL_PASSWORD="gizmosql_password" \
-           --env PRINT_QUERIES="1" \
-           --env INIT_SQL_COMMANDS="SET threads = 1; SET memory_limit = '1GB';" \
-           --pull always \
-           gizmodata/gizmosql:latest
-```
-
-!> **Important**: Init commands that SELECT data will not show results. Failed init commands will cause the server to exit.
-
-You can also use a file for initialization:
-
-```bash
---env INIT_SQL_COMMANDS_FILE="/path/to/init.sql"
-```
-
-> **Tip**: For DuckDB backend, these commands are automatically run:  
-> `SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;`
-
 ### Stop the Container
 
 ```bash

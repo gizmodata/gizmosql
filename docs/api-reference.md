@@ -41,7 +41,6 @@ gizmosql_server [OPTIONS]
 | `GIZMOSQL_PASSWORD` | Server password (required) | - |
 | `DATABASE_FILENAME` | Database file path | `--database-filename` |
 | `GIZMOSQL_HOST` | Host address | `--host` |
-| `GIZMOSQL_PORT` | Port number | `--port` |
 | `TLS_ENABLED` | Enable/disable TLS (1/0) | - |
 | `TLS_CERT` | TLS certificate path | `--tls-cert` |
 | `TLS_KEY` | TLS key path | `--tls-key` |
