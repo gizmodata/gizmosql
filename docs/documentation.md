@@ -8,7 +8,7 @@ Welcome to the official documentation for **GizmoSQL**, a high-performance, embe
 
 1. [Overview](#overview)
 2. [Component Versions](#component-versions)
-3. [Installation & Deployment](#installation--deployment)
+3. [Installation & Deployment](#installation-amp-deployment)
    - [Docker](#running-from-docker-image)
    - [CLI Binary](#option-2---download-and-run-the-gizmosql-cli-executable)
    - [Manual Build](#option-3---steps-to-build-the-solution-manually)
@@ -39,11 +39,11 @@ It was forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) and has
 
 ## 📦 Installation & Deployment
 
-# [GizmoSQL](https://gizmodata.com/gizmosql) - by [GizmoData™](https://gizmodata.com)
+#### [GizmoSQL](https://gizmodata.com/gizmosql) - by [GizmoData™](https://gizmodata.com)
 
-### Copyright © 2025 GizmoData LLC
+#### Copyright © 2025 GizmoData LLC
 
-## An [Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with [DuckDB](https://duckdb.org) or [SQLite](https://sqlite.org) back-end execution engines
+#### An [Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with [DuckDB](https://duckdb.org) or [SQLite](https://sqlite.org) back-end execution engines
 
 [<img src="https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker">](https://hub.docker.com/r/gizmodata/gizmosql)
 [<img src="https://img.shields.io/badge/github--package-container--image-green.svg?logo=Docker">](https://github.com/gizmodata/gizmosql/pkgs/container/gizmosql)

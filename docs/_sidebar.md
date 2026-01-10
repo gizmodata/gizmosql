@@ -1,0 +1,15 @@
+<!-- docs/_sidebar.md -->
+
+* [Home](/)
+
+* Integrations
+  * [Extensions & Tools](integrations.md)
+  * [ADBC Scanner extension DuckDB](adbc_scanner_duckdb.md)
+
+* Additional Resources
+  * [One Trillion Row Challenge](one_trillion_row_challenge.md)
+
+* Links
+  * [GitHub](https://github.com/gizmodata/gizmosql)
+  * [Docker Hub](https://hub.docker.com/r/gizmodata/gizmosql)
+  * [GizmoData™](https://gizmodata.com)
