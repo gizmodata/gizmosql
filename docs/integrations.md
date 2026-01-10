@@ -24,14 +24,6 @@ GizmoSQL provides seamless integration with:
 
 ---
 
-## Next Steps
-
-- [Client connections](clients.md)
-- [Configuration](configuration.md)
-- [Performance tuning](performance.md)
-
----
-
 ## Additional Resources
 
 - [Apache Arrow Flight SQL](https://arrow.apache.org/docs/format/FlightSql.html)
