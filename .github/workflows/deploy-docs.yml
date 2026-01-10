@@ -51,7 +51,7 @@ jobs:
           echo ""
           echo "Checking for required files..."
           test -f docs/index.html && echo "✓ index.html found" || echo "✗ index.html missing"
-          test -f docs/README.md && echo "✓ README.md found" || echo "✗ README.md missing"
+          test -f docs/documentation.md && echo "✓ documentation.md found" || echo "✗ documentation.md missing"
           test -f docs/_sidebar.md && echo "✓ _sidebar.md found" || echo "✗ _sidebar.md missing"
 
       - name: Upload artifact
