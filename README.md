@@ -48,7 +48,7 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 
 For detailed instructions and configuration information, see our full documentation:
 
-[GizmoSQL Documentation](docs/documentation.md)
+[GizmoSQL Documentation](https://docs.gizmosql.com)
 
 ---
 
