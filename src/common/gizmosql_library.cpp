@@ -43,7 +43,7 @@
 namespace fs = std::filesystem;
 
 namespace gizmosql {
-const int port = 31337;
+int port = 31337;
 
 // Static storage for health service to keep it alive for the lifetime of the server
 // This is safe because only one GizmoSQL server runs per process
@@ -240,8 +240,8 @@ std::string SafeGetEnvVarValue(const std::string& env_var_name) {
 }
 
 arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQLServer(
-    const BackendType backend, fs::path& database_filename, std::string hostname,
-    const int& port, std::string username, std::string password, std::string secret_key,
+  const BackendType backend, fs::path& database_filename, std::string hostname,
+  int port, std::string username, std::string password, std::string secret_key,
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
@@ -265,6 +265,26 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     hostname = SafeGetEnvVarValue("GIZMOSQL_HOSTNAME");
     if (hostname.empty()) {
       hostname = DEFAULT_GIZMOSQL_HOSTNAME;
+    }
+  }
+
+  if (SafeGetEnvVarValue("GIZMOSQL_PORT") != "") {
+    try {
+      int env_port = std::stoi(SafeGetEnvVarValue("GIZMOSQL_PORT"));
+      if (env_port == health_port) {
+        return arrow::Status::Invalid(
+            "GIZMOSQL_PORT environment variable cannot be the same as health_port");
+      }
+      if (env_port > 0 && env_port < 65536) {
+        GIZMOSQL_LOG(INFO) << "Using GizmoSQL port from env var GIZMOSQL_PORT: " << env_port;
+        port = env_port;
+      } else {
+        return arrow::Status::Invalid(
+            "GIZMOSQL_PORT environment variable is set but is not a valid port number");
+      }
+    } catch (const std::exception& e) {
+      return arrow::Status::Invalid(
+          "GIZMOSQL_PORT environment variable is set but is not a valid integer");
     }
   }
 

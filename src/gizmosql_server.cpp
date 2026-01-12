@@ -38,7 +38,8 @@ int main(int argc, char** argv) {
              "Specify the hostname to listen on for the GizmoSQL Server.  If not set, we will use env var: 'GIZMOSQL_HOSTNAME'.  "
              "If that isn't set, we will use the default of: '0.0.0.0'.")
             ("port,R", po::value<int>()->default_value(DEFAULT_FLIGHT_PORT),
-             "Specify the port to listen on for the GizmoSQL Server.")
+             "Specify the port to listen on for the GizmoSQL Server. Alternatively, you can set the env var: 'GIZMOSQL_PORT'.  "
+             "If neither is set, we will use the default of: 31337.")
             ("database-filename,D", po::value<std::string>()->default_value(""),
              "Specify the database filename (absolute or relative to the current working directory).  If not set, we will open an in-memory database.")
             ("username,U", po::value<std::string>()->default_value(""),
