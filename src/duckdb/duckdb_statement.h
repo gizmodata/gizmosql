@@ -20,7 +20,6 @@
 #include <duckdb.hpp>
 
 #include <memory>
-#include <mutex>
 #include <string>
 
 #include <arrow/flight/sql/column_metadata.h>
@@ -82,7 +81,6 @@ class DuckDBStatement {
 
  private:
   std::shared_ptr<ClientSession> client_session_;
-  std::unique_lock<std::mutex> connection_lock_;  // Holds exclusive lock on session's connection
   std::string handle_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
@@ -96,8 +94,8 @@ class DuckDBStatement {
   bool log_queries_;
   std::string logged_sql_;     // Redacted SQL safe for logging
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
-  bool
-      is_gizmosql_admin_ = false;  // Flag to indicate whether the statement is a GizmoSQL administrative command
+  bool is_gizmosql_admin_ =
+      false;  // Flag to indicate whether the statement is a GizmoSQL administrative command
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
   arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
   std::shared_ptr<arrow::RecordBatch> synthetic_result_batch_;
@@ -109,8 +107,7 @@ class DuckDBStatement {
                   const std::shared_ptr<duckdb::PreparedStatement>& stmt,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema)
-      : connection_lock_(client_session->connection_mutex) {
+                  const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     stmt_ = stmt;
@@ -129,8 +126,7 @@ class DuckDBStatement {
                   const std::string& handle, const std::string& sql,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema)
-      : connection_lock_(client_session->connection_mutex) {
+                  const std::shared_ptr<arrow::Schema>& override_schema) {
     client_session_ = client_session;
     handle_ = handle;
     sql_ = sql;
