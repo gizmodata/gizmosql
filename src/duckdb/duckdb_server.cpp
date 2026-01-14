@@ -1226,7 +1226,6 @@ class DuckDBFlightSqlServer::Impl {
         {"session_id", client_session->session_id}, {"user", client_session->username},
         {"role", client_session->role}, {"query", redact_sql_for_logs(query)});
 
-    std::unique_lock connection_lock(client_session->connection_mutex);
     auto res = client_session->connection->Query(query);
     if (res->HasError()) {
       return Status::Invalid("Failed to run DuckDB query: " + query + ": " +
@@ -1270,7 +1269,6 @@ class DuckDBFlightSqlServer::Impl {
 
     bool target_table_exists = false;
     {
-      std::unique_lock connection_lock(client_session->connection_mutex);
       ARROW_ASSIGN_OR_RAISE(target_table_exists,
                             TableExists(*client_session->connection, command.catalog,
                                         command.schema, command.table));
@@ -1516,9 +1514,6 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    // We may have a SQL statement in-flight (or being interrupted / rolled-back) - we need to let it clean up safely
-    std::unique_lock connection_lock(client_session->connection_mutex);
-
     std::unique_lock write_lock(sessions_mutex_);
     auto it = client_sessions_.find(client_session->session_id);
     if (it != client_sessions_.end()) {
@@ -1556,7 +1551,6 @@ class DuckDBFlightSqlServer::Impl {
   // Convenience method to latch the connection mutex (per session)
   static Status ExecuteSql(const std::shared_ptr<ClientSession>& client_session,
                            const std::string& sql) {
-    std::unique_lock connection_lock(client_session->connection_mutex);
     return ExecuteSql(client_session->connection, sql);
   }
 
