@@ -8,22 +8,22 @@ Welcome to the official documentation for **GizmoSQL**, a high-performance, embe
 
 1. [Overview](#overview)
 2. [Component Versions](#component-versions)
-3. [Installation & Deployment](#installation-amp-deployment)
+3. [Installation & Deployment](#📦-installation-amp-deployment)
    - [Docker](#running-from-docker-image)
-   - [CLI Binary](#option-2---download-and-run-the-gizmosql-cli-executable)
-   - [Manual Build](#option-3---steps-to-build-the-solution-manually)
+   - [CLI Binary](#option-2-download-and-run-the-gizmosql-cli-executable)
+   - [Manual Build](#option-3-steps-to-build-the-solution-manually)
 4. [Client Connections](#client-connections)
    - [JDBC](#connecting-to-the-server-via-jdbc)
    - [ADBC Python](#connecting-to-the-server-via-the-new-adbc-python-flight-sql-driver)
    - [CLI](#connecting-via-the-new-gizmosql_client-cli-tool)
    - [Ibis](#connecting-via-ibis)
    - [SQLAlchemy](#connecting-via-sqlalchemy)
-5. [Configuration & Environment Variables](#configuration--environment-variables)
-6. [Backend Selection](#selecting-different-backends)
-7. [Security](#security)
-8. [Slim Docker Image](#slim-docker-image)
-9. [Help & Support](#help--support)
-10. [License](#license)
+5. [Configuration & Environment Variables](#⚙️-configuration-amp-environment-variables)
+6. [Backend Selection](#🛠-backend-selection)
+7. [Security](#🔐-Security)
+8. [Slim Docker Image](#🧪-slim-docker-image)
+9. [Help & Support](#🆘-help-amp-support)
+10. [License](#🪪-license)
 
 ---
 
@@ -167,6 +167,8 @@ You can also specify a file containing initialization SQL commands by setting en
 **Note**: Initialization SQL commands which SELECT data will NOT show the results (this is not supported).
 
 **Note**: Initialization SQL commands which fail will cause the Flight SQL server to abort and exit with a non-zero exit code. 
+
+## Client Connections
 
 ### Connecting to the server via JDBC
 Download the [Apache Arrow Flight SQL JDBC driver](https://search.maven.org/search?q=a:flight-sql-jdbc-driver)
@@ -314,7 +316,6 @@ Follow these steps to do so (thanks to David Li!).
 ```bash
 git clone https://github.com/gizmodata/gizmosql --recurse-submodules
 cd gizmosql
-
 # Build and install the static library and executable
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --build build --target install
@@ -326,7 +327,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install --requirement ./requirements.txt
-````
+```
 
 3. Get some SQLite3 sample data.
 ```bash
@@ -358,7 +359,61 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/T
 
 ---
 
-## ⚙️ Backend Selection
+## ⚙️ Configuration & Environment Variables
+GizmoSQL can be configured via environment variables or CLI flags. Below are the supported options, their env var fallbacks and defaults.
+
+| Option / Env Var | Description | Default / behavior | CLI flag |
+|:---|:---|:---|:---|
+| backend / BACKEND | Choose database engine: duckdb or sqlite | duckdb | --backend, -B |
+| hostname / GIZMOSQL_HOSTNAME | Hostname to listen on. If empty, falls back to env then 0.0.0.0 | 0.0.0.0 (if unset) | --hostname, -H |
+| port / GIZMOSQL_PORT | Flight gRPC port | 31337 | --port, -R |
+| database-filename / DATABASE_FILENAME | Path to DB file (absolute or relative). Empty => in-memory DB | "" (in-memory) | --database-filename, -D |
+| username / GIZMOSQL_USERNAME | Default connection username | gizmosql_username | --username, -U |
+| password / GIZMOSQL_PASSWORD | Server password (required). If unset server will exit | (required) | --password, -P |
+| secret-key / SECRET_KEY | Secret used to sign JWTs. If unset, env SECRET_KEY used; else random key generated | "" (random if unset) | --secret-key, -S |
+| tls cert/key / TLS_CERT, TLS_KEY | TLS cert and key paths (or provide via --tls cert key) | none (disabled if not set) | --tls, -T (cert key) |
+| mtls CA / TLS_CA or mtls-ca-cert-filename | CA cert path for verifying client certs (PEM) | none | --mtls-ca-cert-filename, -M |
+| print-queries / PRINT_QUERIES | Print incoming SQL to stdout | false | --print-queries, -Q |
+| readonly | Open DB read-only | false | --readonly, -O |
+| init-sql-commands / INIT_SQL_COMMANDS | Semicolon-separated SQL commands to run at startup | none | --init-sql-commands, -I |
+| init-sql-commands-file / INIT_SQL_COMMANDS_FILE | File (mounted) containing init SQL commands | none | --init-sql-commands-file, -F |
+| token-allowed-issuer / TOKEN_ALLOWED_ISSUER | Allowed JWT issuer for token auth | none | --token-allowed-issuer |
+| token-allowed-audience / TOKEN_ALLOWED_AUDIENCE | Allowed JWT audience for token auth | none | --token-allowed-audience |
+| token-signature-verify-cert-path / TOKEN_SIGNATURE_VERIFY_CERT_PATH | RSA PEM cert to verify token signatures | none | --token-signature-verify-cert-path |
+| log-level / GIZMOSQL_LOG_LEVEL | Log level: debug|info|warn|error|fatal | info (if unset) | --log-level |
+| log-format / GIZMOSQL_LOG_FORMAT | Log format: text|json | text (if unset) | --log-format |
+| access-log / GIZMOSQL_ACCESS_LOG | Per-RPC access logging: on|off | off (if unset) | --access-log |
+| log-file / GIZMOSQL_LOG_FILE | Log file path; '-' => stdout; empty => stderr | stderr (if unset) | --log-file |
+| query-timeout | Query timeout in seconds (0 = unlimited) | DEFAULT_QUERY_TIMEOUT_SECONDS | --query-timeout |
+| query-log-level / GIZMOSQL_QUERY_LOG_LEVEL | Query log level | info (if unset) | --query-log-level |
+| auth-log-level / GIZMOSQL_AUTH_LOG_LEVEL | Authentication log level | info (if unset) | --auth-log-level |
+| health-port | Plaintext gRPC health check port (0 = disable) | DEFAULT_HEALTH_PORT | --health-port |
+
+Notes and best practices:
+- Always set GIZMOSQL_PASSWORD in production.
+- Provide TLS cert/key via --tls cert key or TLS_CERT/TLS_KEY and prefer a trusted CA. Use an mTLS CA via --mtls-ca-cert-filename / TLS_CA and enable client verification as needed.
+- Use INIT_SQL_COMMANDS or INIT_SQL_COMMANDS_FILE for startup tuning (SELECTs in init commands do not display results).
+- If SECRET_KEY is not provided, the server will create a random signing key; persist SECRET_KEY if you need stable JWTs across restarts.
+- For logging and fine-grained runtime tuning prefer the CLI flags; corresponding GIZMOSQL_* env vars are supported for containerized deployments.
+- When rotating instances, rotate GIZMOSQL_PASSWORD to avoid stale cached tokens from clients.
+
+Example (disable TLS, set password):
+```bash
+docker run -e TLS_ENABLED="0" -e GIZMOSQL_PASSWORD="secret" gizmodata/gizmosql:latest
+```
+
+Example (mount DB and TLS certs):
+```bash
+docker run -e TLS_CERT="/certs/server.crt" -e TLS_KEY="/certs/server.key" \
+  -e DATABASE_FILENAME="data/custom.duckdb" -e GIZMOSQL_PASSWORD="secret" \
+  --mount type=bind,source=/host/certs,target=/certs \
+  --mount type=bind,source=/host/data,target=/opt/gizmosql/data \
+  gizmodata/gizmosql:latest
+```
+
+---
+
+## 🛠 Backend Selection
 
 
 This option allows choosing from two backends: SQLite and DuckDB. It defaults to DuckDB.
@@ -453,7 +508,7 @@ docker run --name gizmosql-slim \
            gizmodata/gizmosql:latest-slim
 ```
 
-See [start_gizmosql_slim.sh](scripts/start_gizmosql_slim.sh) - the container's entrypoint script for more details.
+See [start_gizmosql_slim.sh](https://github.com/gizmodata/gizmosql/blob/main/scripts/start_gizmosql.sh) - the container's entrypoint script for more details.
 
 
 ---
