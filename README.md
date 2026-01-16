@@ -209,6 +209,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 🌐 [Flight SQL over WebSocket Proxy](https://github.com/gizmodata/flight-sql-websocket-proxy)
 - 📈 [Metabase driver](https://github.com/J0hnG4lt/metabase-flightsql-driver)
 - ⚙️ [dbt Adapter](https://github.com/gizmodata/dbt-gizmosql)
+- 🥅 [SQLMesh Adapter](https://github.com/gizmodata/sqlmesh-gizmosql) 🚀 **NEW!**
 - ✨ [PySpark SQLFrame adapter](https://github.com/gizmodata/sqlframe)
 - 🪩 [ADBC Scanner by Query.Farm](docs/adbc_scanner_duckdb.md) 🚀 **NEW!**
 - ⚓️ [Kubernetes Operator](https://github.com/gizmodata/gizmosql-operator) 🚀 **NEW!**
