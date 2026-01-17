@@ -208,7 +208,9 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_statement.cpp
         src/duckdb/duckdb_statement_batch_reader.cpp
         src/duckdb/duckdb_server.cpp
-        src/duckdb/duckdb_tables_schema_batch_reader.cpp)
+        src/duckdb/duckdb_tables_schema_batch_reader.cpp
+        src/duckdb/instrumentation/instrumentation_manager.cpp
+        src/duckdb/instrumentation/instrumentation_records.cpp)
 
 # Add a library target
 add_library(gizmosqlserver STATIC
@@ -236,6 +238,7 @@ target_include_directories(gizmosqlserver
         PRIVATE
         src/sqlite
         src/duckdb
+        src/duckdb/instrumentation
         src/common/include/detail
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}

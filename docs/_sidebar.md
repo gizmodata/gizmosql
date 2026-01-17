@@ -2,6 +2,9 @@
 
 * [Home](/)
 
+* Features
+  * [Session Instrumentation](session_instrumentation.md)
+
 * Integrations
   * [Extensions & Tools](integrations.md)
   * [ADBC Scanner extension DuckDB](adbc_scanner_duckdb.md)

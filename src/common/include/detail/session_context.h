@@ -1,5 +1,6 @@
 // src/common/include/session_context.h
 #pragma once
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -8,6 +9,7 @@
 
 namespace gizmosql::ddb {
 class DuckDBFlightSqlServer;  // forward declare
+class SessionInstrumentation;  // forward declare
 }
 
 struct ClientSession {
@@ -20,6 +22,12 @@ struct ClientSession {
   std::optional<std::string> active_sql_handle;
   std::optional<int32_t> query_timeout = std::nullopt;
   std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;
+
+  // Instrumentation for session lifecycle tracking
+  std::unique_ptr<gizmosql::ddb::SessionInstrumentation> instrumentation;
+
+  // Flag for KILL SESSION support - when set, the session should be terminated
+  std::atomic<bool> kill_requested{false};
 };
 
 // Inline utility for safe access

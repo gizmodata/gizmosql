@@ -36,6 +36,9 @@
 #include "gizmosql_security.h"
 #include "access_log_middleware.h"
 #include "health_service.h"
+#include "instrumentation_manager.h"
+#include "instrumentation_records.h"
+#include "version.h"
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -49,6 +52,9 @@ int port = 31337;
 // This is safe because only one GizmoSQL server runs per process
 static std::shared_ptr<GizmoSQLHealthServiceImpl> g_health_service;
 static std::unique_ptr<PlaintextHealthServer> g_plaintext_health_server;
+
+// Static storage for instrumentation
+static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_manager;
 
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
   do {                                                                             \
@@ -140,15 +146,47 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
     db_type = "DuckDB";
+
+    // Create DuckDB server first (without instrumentation manager)
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
                                              database_filename, read_only, print_queries,
-                                             query_timeout, query_log_level))
-    // Run additional commands (first) for the DuckDB back-end...
-    auto duckdb_init_sql_commands =
-        "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;" +
-        init_sql_commands;
+                                             query_timeout, query_log_level,
+                                             nullptr))  // No instrumentation manager yet
+
+    // Run DuckDB init commands first
+    std::string duckdb_init_sql_commands =
+        "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;";
+
+    // Get instrumentation DB path and ATTACH it (not READ_ONLY - we need to write to it)
+    // The instrumentation DB is placed in the same directory as the user database
+    std::string instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
+        database_filename.string());
+    GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
+    duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
+
+    duckdb_init_sql_commands += init_sql_commands;
     RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands);
+
+    // Now initialize instrumentation manager using the server's DuckDB instance
+    auto db_instance = duckdb_server->GetDuckDBInstance();
+    auto instr_result = gizmosql::ddb::InstrumentationManager::Create(db_instance, instr_db_path);
+    if (instr_result.ok()) {
+      g_instrumentation_manager = *instr_result;
+      duckdb_server->SetInstrumentationManager(g_instrumentation_manager);
+      GIZMOSQL_LOG(INFO) << "Instrumentation enabled at: "
+                         << g_instrumentation_manager->GetDbPath();
+
+      // Create instance instrumentation record and pass to server
+      auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
+          g_instrumentation_manager, PROJECT_VERSION, duckdb_library_version(), hostname,
+          port, database_filename.string());
+      duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
+    } else {
+      GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "
+                            << instr_result.status().ToString();
+    }
+
     server = duckdb_server;
   }
 
@@ -427,6 +465,24 @@ arrow::Status StartFlightSQLServer(
     std::shared_ptr<flight::sql::FlightSqlServerBase> server) {
   return arrow::Status::OK();
 }
+
+void CleanupServerResources() {
+  // Shutdown and reset health services
+  if (g_plaintext_health_server) {
+    g_plaintext_health_server->Shutdown();
+    g_plaintext_health_server.reset();
+  }
+  if (g_health_service) {
+    g_health_service->Shutdown();
+    g_health_service.reset();
+  }
+
+  // Shutdown and reset instrumentation manager
+  if (g_instrumentation_manager) {
+    g_instrumentation_manager->Shutdown();
+    g_instrumentation_manager.reset();
+  }
+}
 }  // namespace gizmosql
 
 extern "C" {
@@ -529,6 +585,17 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     if (gizmosql::g_health_service) {
       gizmosql::g_health_service->Shutdown();
       GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
+    }
+
+    // Destroy server first to trigger instance instrumentation cleanup
+    // (the server's Impl owns the InstanceInstrumentation, whose destructor writes stop_time)
+    server_ptr.reset();
+    GIZMOSQL_LOG(INFO) << "Instance instrumentation shutdown complete";
+
+    if (gizmosql::g_instrumentation_manager) {
+      gizmosql::g_instrumentation_manager->Shutdown();
+      gizmosql::g_instrumentation_manager.reset();
+      GIZMOSQL_LOG(INFO) << "Instrumentation manager shutdown complete";
     }
 
     return EXIT_SUCCESS;

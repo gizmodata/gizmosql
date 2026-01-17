@@ -26,6 +26,7 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include <future>
 #include <chrono>
+#include <regex>
 
 #include <boost/algorithm/string.hpp>
 
@@ -37,6 +38,8 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include "instrumentation/instrumentation_manager.h"
+#include "instrumentation/instrumentation_records.h"
 
 using arrow::Status;
 using duckdb::QueryResult;
@@ -54,6 +57,103 @@ bool IsLikelyGizmoSQLSet(const std::string& sql) {
     return false;
   }
   return upper.find("GIZMOSQL.") != std::string::npos;
+}
+
+bool IsDetachInstrumentationDb(const std::string& sql) {
+  std::string trimmed = sql;
+  boost::algorithm::trim(trimmed);
+  if (trimmed.empty()) return false;
+
+  // Case-insensitive check for DETACH commands targeting instrumentation DB
+  std::string upper = boost::to_upper_copy(trimmed);
+  if (upper.find("DETACH") == std::string::npos) {
+    return false;
+  }
+  // Check for instrumentation DB aliases/names
+  return upper.find("_GIZMOSQL_INSTR") != std::string::npos ||
+         upper.find("GIZMOSQL_INSTRUMENTATION") != std::string::npos;
+}
+
+bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id) {
+  std::string trimmed = sql;
+  boost::algorithm::trim(trimmed);
+  if (trimmed.empty()) return false;
+
+  // Match: KILL SESSION 'uuid' or KILL SESSION "uuid" or KILL SESSION uuid
+  std::regex kill_pattern(R"(^\s*KILL\s+SESSION\s+['\"]?([0-9a-fA-F-]+)['\"]?\s*;?\s*$)",
+                          std::regex_constants::icase);
+  std::smatch match;
+  if (std::regex_match(trimmed, match, kill_pattern)) {
+    target_session_id = match[1].str();
+    return true;
+  }
+  return false;
+}
+
+// Replace GIZMOSQL_CURRENT_SESSION() with the actual session ID
+// Only replaces occurrences that are NOT within quoted strings
+std::string ReplaceCurrentSessionFunction(const std::string& sql,
+                                          const std::string& session_id) {
+  // Simple approach: use regex that matches GIZMOSQL_CURRENT_SESSION() outside of quotes
+  // We replace all occurrences case-insensitively
+  std::string result;
+  result.reserve(sql.size());
+
+  size_t i = 0;
+  while (i < sql.size()) {
+    // Skip single-quoted strings
+    if (sql[i] == '\'') {
+      result += sql[i++];
+      while (i < sql.size() && sql[i] != '\'') {
+        if (sql[i] == '\\' && i + 1 < sql.size()) {
+          result += sql[i++];
+        }
+        if (i < sql.size()) {
+          result += sql[i++];
+        }
+      }
+      if (i < sql.size()) {
+        result += sql[i++];  // closing quote
+      }
+      continue;
+    }
+
+    // Skip double-quoted strings (identifiers in DuckDB)
+    if (sql[i] == '"') {
+      result += sql[i++];
+      while (i < sql.size() && sql[i] != '"') {
+        if (sql[i] == '\\' && i + 1 < sql.size()) {
+          result += sql[i++];
+        }
+        if (i < sql.size()) {
+          result += sql[i++];
+        }
+      }
+      if (i < sql.size()) {
+        result += sql[i++];  // closing quote
+      }
+      continue;
+    }
+
+    // Check for GIZMOSQL_CURRENT_SESSION() at this position
+    constexpr size_t kFuncLen = 26;  // length of "GIZMOSQL_CURRENT_SESSION()"
+    if (i + kFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_CURRENT_SESSION()") {
+        // Replace with the quoted session ID
+        result += '\'';
+        result += session_id;
+        result += '\'';
+        i += kFuncLen;
+        continue;
+      }
+    }
+
+    result += sql[i++];
+  }
+
+  return result;
 }
 
 }  // namespace
@@ -163,6 +263,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       {"role", client_session->role}, {"statement_handle", handle});
 
   client_session->active_sql_handle = handle;
+
+  // Replace GIZMOSQL_CURRENT_SESSION() with the actual session ID
+  std::string effective_sql =
+      ReplaceCurrentSessionFunction(sql, client_session->session_id);
+
   if (log_queries) {
     GIZMOSQL_LOGKV_DYNAMIC(
         effective_log_level, "Client is attempting to run a SQL command",
@@ -172,10 +277,93 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         {"sql", logged_sql});
   }
 
+  // Prevent DETACH of instrumentation database
+  if (IsDetachInstrumentationDb(sql)) {
+    GIZMOSQL_LOGKV(WARNING, "Client attempted to DETACH instrumentation database",
+                   {"peer", client_session->peer}, {"kind", "sql"},
+                   {"status", "rejected"}, {"session_id", client_session->session_id},
+                   {"user", client_session->username}, {"role", client_session->role},
+                   {"statement_handle", handle}, {"sql", logged_sql});
+    return Status::Invalid("Cannot DETACH the instrumentation database");
+  }
+
+  // Handle KILL SESSION command
+  std::string target_session_id;
+  if (IsKillSessionCommand(sql, target_session_id)) {
+    // Only admin users can kill sessions
+    if (client_session->role != "admin") {
+      GIZMOSQL_LOGKV(WARNING, "Non-admin user attempted KILL SESSION",
+                     {"peer", client_session->peer}, {"kind", "sql"},
+                     {"status", "rejected"}, {"session_id", client_session->session_id},
+                     {"user", client_session->username}, {"role", client_session->role},
+                     {"target_session_id", target_session_id});
+      return Status::Invalid("Only admin users can execute KILL SESSION");
+    }
+
+    // Cannot kill own session
+    if (target_session_id == client_session->session_id) {
+      return Status::Invalid("Cannot kill your own session");
+    }
+
+    // Find and kill the target session
+    auto server = GetServer(*client_session);
+    if (!server) {
+      return Status::Invalid("Unable to get server instance for KILL SESSION");
+    }
+
+    auto target = server->FindSession(target_session_id);
+    if (!target) {
+      return Status::KeyError("Session not found: " + target_session_id);
+    }
+
+    // Mark session for termination and interrupt its connection
+    target->kill_requested = true;
+    target->connection->Interrupt();
+
+    // Update instrumentation stop reason
+    if (target->instrumentation) {
+      target->instrumentation->SetStopReason("killed");
+    }
+
+    // Remove from session map
+    ARROW_RETURN_NOT_OK(server->RemoveSession(target_session_id));
+
+    GIZMOSQL_LOGKV(INFO, "Session killed successfully",
+                   {"peer", client_session->peer}, {"kind", "sql"},
+                   {"status", "success"}, {"session_id", client_session->session_id},
+                   {"user", client_session->username}, {"role", client_session->role},
+                   {"target_session_id", target_session_id});
+
+    // Return a synthetic result for the KILL SESSION command
+    std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
+        client_session, handle, sql, effective_log_level, log_queries, override_schema));
+    result->is_gizmosql_admin_ = true;
+
+    // Create a synthetic result batch with success message
+    auto schema = arrow::schema({arrow::field("result", arrow::utf8())});
+    arrow::StringBuilder builder;
+    ARROW_RETURN_NOT_OK(builder.Append("Session " + target_session_id + " killed successfully"));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    result->synthetic_result_batch_ = arrow::RecordBatch::Make(
+        schema, 1, std::vector<std::shared_ptr<arrow::Array>>{array});
+
+    return result;
+  }
+
   if (IsLikelyGizmoSQLSet(sql)) {
     std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
         client_session, handle, sql, effective_log_level, log_queries, override_schema));
     result->is_gizmosql_admin_ = true;
+
+    // Create statement instrumentation (admin commands are still tracked)
+    if (auto server = GetServer(*client_session)) {
+      if (auto mgr = server->GetInstrumentationManager()) {
+        result->instrumentation_ = std::make_unique<StatementInstrumentation>(
+            mgr, client_session->session_id, logged_sql, handle);
+      }
+    }
+
     if (log_queries) {
       GIZMOSQL_LOGKV_DYNAMIC(
           effective_log_level, "Detected GizmoSQL admin SET command",
@@ -188,7 +376,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   }
 
   std::shared_ptr<duckdb::PreparedStatement> stmt =
-      client_session->connection->Prepare(sql);
+      client_session->connection->Prepare(effective_sql);
 
   if (not stmt->success) {
     std::string error_message = stmt->error.Message();
@@ -210,6 +398,15 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
       std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
           client_session, handle, sql, log_level, log_queries, override_schema));
+
+      // Create statement instrumentation for direct execution
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          result->instrumentation_ = std::make_unique<StatementInstrumentation>(
+              mgr, client_session->session_id, logged_sql, handle);
+        }
+      }
+
       status = "success";
       return result;
     }
@@ -232,6 +429,14 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
       client_session, handle, stmt, log_level, log_queries, override_schema));
+
+  // Create statement instrumentation for prepared statement
+  if (auto server = GetServer(*client_session)) {
+    if (auto mgr = server->GetInstrumentationManager()) {
+      result->instrumentation_ = std::make_unique<StatementInstrumentation>(
+          mgr, client_session->session_id, logged_sql, handle);
+    }
+  }
 
   status = "success";
   return result;
@@ -324,6 +529,44 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
 }
 
 DuckDBStatement::~DuckDBStatement() {}
+
+DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
+                                 const std::string& handle,
+                                 const std::shared_ptr<duckdb::PreparedStatement>& stmt,
+                                 const std::optional<arrow::util::ArrowLogLevel>& log_level,
+                                 const bool& log_queries,
+                                 const std::shared_ptr<arrow::Schema>& override_schema) {
+  client_session_ = client_session;
+  handle_ = handle;
+  stmt_ = stmt;
+  log_queries_ = log_queries;
+  logged_sql_ = redact_sql_for_logs(stmt->query);
+  use_direct_execution_ = false;
+  log_level_ = log_level;
+  start_time_ = std::chrono::steady_clock::now();
+  override_schema_ = override_schema;
+  query_result_ = nullptr;
+  client_context_ = stmt->context;
+}
+
+DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
+                                 const std::string& handle, const std::string& sql,
+                                 const std::optional<arrow::util::ArrowLogLevel>& log_level,
+                                 const bool& log_queries,
+                                 const std::shared_ptr<arrow::Schema>& override_schema) {
+  client_session_ = client_session;
+  handle_ = handle;
+  sql_ = sql;
+  log_queries_ = log_queries;
+  logged_sql_ = redact_sql_for_logs(sql);
+  use_direct_execution_ = true;
+  stmt_ = nullptr;
+  log_level_ = log_level;
+  start_time_ = std::chrono::steady_clock::now();
+  override_schema_ = override_schema;
+  query_result_ = nullptr;
+  client_context_ = client_session->connection->context;
+}
 
 arrow::Result<int> DuckDBStatement::Execute() {
   std::string execute_status;
@@ -471,6 +714,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
                      {"sql", logged_sql_});
     }
 
+    // Record timeout in instrumentation
+    if (instrumentation_) {
+      instrumentation_->SetTimeout();
+    }
+
     return arrow::Status::ExecutionError("Query execution timed out after ",
                                          std::to_string(timeout_duration.count()),
                                          " seconds");
@@ -480,6 +728,17 @@ arrow::Result<int> DuckDBStatement::Execute() {
   auto result = future.get();
 
   end_time_ = std::chrono::steady_clock::now();
+
+  // Record success or error in instrumentation
+  if (instrumentation_) {
+    if (result.ok()) {
+      // Note: rows_fetched will be updated incrementally during FetchResult calls
+      instrumentation_->SetCompleted(0, GetLastExecutionDurationMs());
+    } else {
+      instrumentation_->SetError(result.status().ToString());
+    }
+  }
+
   if (log_queries_ && result.ok()) {
     GIZMOSQL_LOGKV_DYNAMIC(
         log_level, "Client SQL command execution succeeded",

@@ -29,6 +29,9 @@
 #include "session_context.h"
 
 namespace gizmosql::ddb {
+
+class InstrumentationManager;
+class InstanceInstrumentation;
 /// \brief Convert a column type to a ArrowType.
 /// \param duckdb_type the duckdb type.
 /// \return            The equivalent ArrowType.
@@ -47,7 +50,8 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
 
   static arrow::Result<std::shared_ptr<DuckDBFlightSqlServer>> Create(
       const std::string& path, const bool& read_only, const bool& print_queries,
-      const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level);
+      const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
+      std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr);
 
   /// \brief Auxiliary method used to execute an arbitrary SQL statement on the underlying
   ///        DuckDB database.
@@ -222,6 +226,19 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
 
   arrow::Result<arrow::util::ArrowLogLevel> GetQueryLogLevel(
       const std::shared_ptr<ClientSession>& client_session);
+
+  // Instrumentation accessors
+  std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const;
+  std::string GetInstanceId() const;
+  void SetInstanceInstrumentation(std::unique_ptr<InstanceInstrumentation> instr);
+  void SetInstrumentationManager(std::shared_ptr<InstrumentationManager> manager);
+
+  // Get the underlying DuckDB instance (for instrumentation setup)
+  std::shared_ptr<duckdb::DuckDB> GetDuckDBInstance() const;
+
+  // Session management for KILL SESSION
+  std::shared_ptr<ClientSession> FindSession(const std::string& session_id);
+  arrow::Status RemoveSession(const std::string& session_id);
 
  private:
   class Impl;

@@ -34,6 +34,9 @@
 using Clock = std::chrono::steady_clock;
 
 namespace gizmosql::ddb {
+
+class StatementInstrumentation;
+
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType& duckdb_type);
 
@@ -79,7 +82,10 @@ class DuckDBStatement {
 
   duckdb::vector<duckdb::Value> bind_parameters;
 
+  StatementInstrumentation* GetInstrumentation() const { return instrumentation_.get(); }
+
  private:
+  std::unique_ptr<StatementInstrumentation> instrumentation_;
   std::shared_ptr<ClientSession> client_session_;
   std::string handle_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
@@ -107,39 +113,14 @@ class DuckDBStatement {
                   const std::shared_ptr<duckdb::PreparedStatement>& stmt,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema) {
-    client_session_ = client_session;
-    handle_ = handle;
-    stmt_ = stmt;
-    log_queries_ = log_queries;
-    logged_sql_ = redact_sql_for_logs(stmt->query);
-    use_direct_execution_ = false;
-    log_level_ = log_level;
-    start_time_ = std::chrono::steady_clock::now();
-    override_schema_ = override_schema;
-    query_result_ = nullptr;
-    client_context_ = stmt->context;
-  }
+                  const std::shared_ptr<arrow::Schema>& override_schema);
 
   // Constructor for direct execution mode
   DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle, const std::string& sql,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema) {
-    client_session_ = client_session;
-    handle_ = handle;
-    sql_ = sql;
-    log_queries_ = log_queries;
-    logged_sql_ = redact_sql_for_logs(sql);
-    use_direct_execution_ = true;
-    stmt_ = nullptr;
-    log_level_ = log_level;
-    start_time_ = std::chrono::steady_clock::now();
-    override_schema_ = override_schema;
-    query_result_ = nullptr;
-    client_context_ = client_session->connection->context;
-  }
+                  const std::shared_ptr<arrow::Schema>& override_schema);
 
   arrow::Status HandleGizmoSQLSet();
 

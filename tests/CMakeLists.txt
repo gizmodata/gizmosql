@@ -19,6 +19,8 @@ enable_testing()
 # ---------------------------------------------------------
 add_executable(gizmosql_integration_tests
         integration/test_bulk_ingest.cpp
+        integration/test_instrumentation.cpp
+        integration/test_kill_session.cpp
 )
 
 # ---------------------------------------------------------
