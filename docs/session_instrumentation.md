@@ -187,7 +187,13 @@ When a session is killed:
 
 ### Read-Only Access
 
-The instrumentation database is attached as read-only (`READ_ONLY` mode). Users can query instrumentation data but cannot modify it.
+The instrumentation database is protected from client modifications. Users can query instrumentation data but cannot modify it. Any attempt to INSERT, UPDATE, DELETE, or otherwise modify data in `_gizmosql_instr` will be rejected:
+
+```sql
+DELETE FROM _gizmosql_instr.sql_statements;
+-- Error: Cannot modify the instrumentation database (_gizmosql_instr).
+-- It is read-only for client sessions.
+```
 
 ### DETACH Prevention
 
