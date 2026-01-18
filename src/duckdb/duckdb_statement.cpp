@@ -605,6 +605,10 @@ arrow::Result<int> DuckDBStatement::Execute() {
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (is_gizmosql_admin_) {
+    // If we have a synthetic result (e.g., from KILL SESSION), execution is already done
+    if (synthetic_result_batch_) {
+      return 0;
+    }
     ARROW_RETURN_NOT_OK(HandleGizmoSQLSet());
     return 0;
   }
