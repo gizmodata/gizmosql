@@ -68,6 +68,12 @@ enum class BackendType { duckdb, sqlite };
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
 
+namespace gizmosql {
+/// Clean up global server resources (health services, instrumentation manager).
+/// This is primarily for testing use where multiple servers may be created.
+void CleanupServerResources();
+}  // namespace gizmosql
+
 extern "C" {
 int RunFlightSQLServer(
     const BackendType backend,
