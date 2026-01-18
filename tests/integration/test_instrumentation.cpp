@@ -154,6 +154,55 @@ TEST_F(InstrumentationServerFixture, DetachInstrumentationPrevented) {
       << "Expected error message about DETACH prevention";
 }
 
+// Test that modification of instrumentation database is prevented
+TEST_F(InstrumentationServerFixture, ModifyInstrumentationPrevented) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // Test DELETE - should fail
+  auto delete_result =
+      sql_client.Execute(call_options, "DELETE FROM _gizmosql_instr.sql_statements");
+  ASSERT_FALSE(delete_result.ok()) << "DELETE from instrumentation should have been rejected";
+  ASSERT_TRUE(delete_result.status().ToString().find("Cannot modify") != std::string::npos ||
+              delete_result.status().ToString().find("read-only") != std::string::npos)
+      << "Expected error message about modification prevention: "
+      << delete_result.status().ToString();
+
+  // Test INSERT - should fail
+  auto insert_result = sql_client.Execute(
+      call_options,
+      "INSERT INTO _gizmosql_instr.sessions (session_id, instance_id, username, role, peer) "
+      "VALUES ('00000000-0000-0000-0000-000000000000', "
+      "'00000000-0000-0000-0000-000000000000', 'fake', 'fake', 'fake')");
+  ASSERT_FALSE(insert_result.ok()) << "INSERT into instrumentation should have been rejected";
+  ASSERT_TRUE(insert_result.status().ToString().find("Cannot modify") != std::string::npos ||
+              insert_result.status().ToString().find("read-only") != std::string::npos)
+      << "Expected error message about modification prevention: "
+      << insert_result.status().ToString();
+
+  // Test UPDATE - should fail
+  auto update_result = sql_client.Execute(
+      call_options, "UPDATE _gizmosql_instr.sessions SET username = 'hacked'");
+  ASSERT_FALSE(update_result.ok()) << "UPDATE on instrumentation should have been rejected";
+  ASSERT_TRUE(update_result.status().ToString().find("Cannot modify") != std::string::npos ||
+              update_result.status().ToString().find("read-only") != std::string::npos)
+      << "Expected error message about modification prevention: "
+      << update_result.status().ToString();
+}
+
 // Test that active_sessions view works
 TEST_F(InstrumentationServerFixture, ActiveSessionsView) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";

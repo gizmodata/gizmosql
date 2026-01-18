@@ -19,6 +19,7 @@
 
 #include <duckdb.h>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
@@ -377,6 +378,28 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   std::shared_ptr<duckdb::PreparedStatement> stmt =
       client_session->connection->Prepare(effective_sql);
+
+  if (stmt->success) {
+    // Check if the statement modifies the instrumentation database
+    const auto& modified_dbs = stmt->data->properties.modified_databases;
+    if (modified_dbs.find("_gizmosql_instr") != modified_dbs.end()) {
+      GIZMOSQL_LOGKV(WARNING, "Client attempted to modify instrumentation database",
+                     {"peer", client_session->peer}, {"kind", "sql"},
+                     {"status", "rejected"}, {"session_id", client_session->session_id},
+                     {"user", client_session->username}, {"role", client_session->role},
+                     {"statement_handle", handle}, {"sql", logged_sql});
+      return Status::Invalid(
+          "Cannot modify the instrumentation database (_gizmosql_instr). "
+          "It is read-only for client sessions.");
+    }
+
+    // Check for readonly role trying to modify data
+    if (!stmt->data->properties.IsReadOnly() && client_session->role == "readonly") {
+      return Status::ExecutionError(
+          "User '" + client_session->username +
+          "' has a readonly session and cannot run statements that modify state.");
+    }
+  }
 
   if (not stmt->success) {
     std::string error_message = stmt->error.Message();

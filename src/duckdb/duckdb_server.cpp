@@ -928,13 +928,8 @@ class DuckDBFlightSqlServer::Impl {
       duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data =
           stmt->data;
 
-      if (!prepared_statement_data->properties.IsReadOnly()) {
-        if (client_session->role == "readonly") {
-          return Status::ExecutionError(
-              "User '" + client_session->username +
-              "' has a readonly session and cannot run statements that modify state.");
-        }
-      }
+      // Note: Readonly role check and instrumentation database protection are
+      // handled in DuckDBStatement::Create which is called before this point
 
       auto bind_parameter_map = prepared_statement_data->value_map;
 
