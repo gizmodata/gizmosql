@@ -568,13 +568,15 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<ClientSession>& client_session, const std::string& query,
     const std::shared_ptr<arrow::Schema>& schema,
     const duckdb::vector<duckdb::Value>& bind_parameters, const bool& print_queries,
-    const int32_t& query_timeout) {
+    const int32_t& query_timeout, const std::string& flight_method = "",
+    bool is_internal = false) {
   std::shared_ptr<DuckDBStatement> statement;
 
   ARROW_ASSIGN_OR_RAISE(statement,
                         DuckDBStatement::Create(client_session, query,
                                                 arrow::util::ArrowLogLevel::ARROW_DEBUG,
-                                                print_queries, schema))
+                                                print_queries, schema, flight_method,
+                                                is_internal))
   statement->bind_parameters = bind_parameters;
 
   std::shared_ptr<DuckDBStatementBatchReader> reader;
@@ -587,10 +589,11 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<ClientSession>& client_session, const std::string& query,
     const std::shared_ptr<arrow::Schema>& schema, const bool& print_queries,
-    const int32_t& query_timeout) {
+    const int32_t& query_timeout, const std::string& flight_method = "",
+    bool is_internal = false) {
   const duckdb::vector<duckdb::Value> bind_parameters;
   return DoGetDuckDBQuery(client_session, query, schema, bind_parameters, print_queries,
-                          query_timeout);
+                          query_timeout, flight_method, is_internal);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
@@ -873,7 +876,8 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(
         auto statement,
         DuckDBStatement::Create(client_session, query,
-                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_))
+                                arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
+                                nullptr, "GetFlightInfoStatement", false))
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
                           EncodeTransactionQuery(query, command.transaction_id))
@@ -893,7 +897,8 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     ARROW_ASSIGN_OR_RAISE(
         auto statement,
-        DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_))
+        DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_,
+                                nullptr, "DoGetStatement", false))
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
     return std::make_unique<flight::RecordBatchStream>(reader);
@@ -913,7 +918,7 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetCatalogsSchema(),
-                            print_queries_, query_timeout_);
+                            print_queries_, query_timeout_, "DoGetCatalogs", true);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoSchemas(
@@ -946,7 +951,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query.str(),
                             sql::SqlSchema::GetDbSchemasSchema(), bind_parameters,
-                            print_queries_, query_timeout_);
+                            print_queries_, query_timeout_, "DoGetDbSchemas", true);
   }
 
   Result<sql::ActionCreatePreparedStatementResult> CreatePreparedStatement(
@@ -960,7 +965,8 @@ class DuckDBFlightSqlServer::Impl {
     // We latch the statements mutex as briefly as possible to maximize concurrency...
     ARROW_ASSIGN_OR_RAISE(auto statement,
                           DuckDBStatement::Create(client_session, handle, request.query,
-                                                  std::nullopt, print_queries_)) {
+                                                  std::nullopt, print_queries_, nullptr,
+                                                  "CreatePreparedStatement", false)) {
       std::unique_lock write_lock(statements_mutex_);
       prepared_statements_[handle] = statement;
     }
@@ -1080,7 +1086,7 @@ class DuckDBFlightSqlServer::Impl {
         statement,
         DuckDBStatement::Create(client_session, get_tables_query,
                                 arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
-                                sql::SqlSchema::GetTablesSchema()))
+                                sql::SqlSchema::GetTablesSchema(), "DoGetTables", true))
     statement->bind_parameters = get_tables_bind_parameters;
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(
@@ -1101,7 +1107,8 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     ARROW_ASSIGN_OR_RAISE(
         auto statement,
-        DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_))
+        DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_,
+                                nullptr, "DoPutCommandStatementUpdate", false))
     return statement->ExecuteUpdate();
   }
 
@@ -1156,7 +1163,7 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query, sql::SqlSchema::GetTableTypesSchema(),
-                            print_queries_, query_timeout_);
+                            print_queries_, query_timeout_, "DoGetTableTypes", true);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoPrimaryKeys(
@@ -1206,7 +1213,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, table_query.str(),
                             sql::SqlSchema::GetPrimaryKeysSchema(), bind_parameters,
-                            print_queries_, query_timeout_);
+                            print_queries_, query_timeout_, "DoGetPrimaryKeys", true);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoImportedKeys(
@@ -1241,7 +1248,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
                             sql::SqlSchema::GetImportedKeysSchema(), bind_parameters,
-                            print_queries_, query_timeout_);
+                            print_queries_, query_timeout_, "DoGetImportedKeys", true);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoExportedKeys(
@@ -1276,7 +1283,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
                             sql::SqlSchema::GetExportedKeysSchema(), bind_parameters,
-                            print_queries_, query_timeout_);
+                            print_queries_, query_timeout_, "DoGetExportedKeys", true);
   }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoCrossReference(
@@ -1327,7 +1334,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query,
                             sql::SqlSchema::GetCrossReferenceSchema(), bind_parameters,
-                            print_queries_, query_timeout_);
+                            print_queries_, query_timeout_, "DoGetCrossReference", true);
   }
 
   Result<std::unique_ptr<duckdb::MaterializedQueryResult>> RunAndLogQueryWithResult(

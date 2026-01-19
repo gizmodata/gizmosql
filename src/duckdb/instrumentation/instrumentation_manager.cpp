@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     peer_identity VARCHAR,
     user_agent VARCHAR,
     connection_protocol connection_protocol NOT NULL DEFAULT 'plaintext',
+    connection_protocol_text VARCHAR GENERATED ALWAYS AS (CAST(connection_protocol AS VARCHAR)) VIRTUAL,
     start_time TIMESTAMP NOT NULL DEFAULT now(),
     stop_time TIMESTAMP,
     status session_status NOT NULL DEFAULT 'active',
@@ -112,6 +113,10 @@ CREATE TABLE IF NOT EXISTS sql_statements (
     statement_id UUID PRIMARY KEY,
     session_id UUID NOT NULL,
     sql_text VARCHAR NOT NULL,
+    flight_method VARCHAR,
+    is_internal BOOLEAN NOT NULL DEFAULT false,
+    prepare_success BOOLEAN NOT NULL DEFAULT true,
+    prepare_error VARCHAR,
     created_time TIMESTAMP NOT NULL DEFAULT now()
 );
 

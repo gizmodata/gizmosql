@@ -394,7 +394,8 @@ arrow::Result<arrow::util::ArrowLogLevel> GetSessionOrServerLogLevel(
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
     const std::string& sql, const std::optional<arrow::util::ArrowLogLevel>& log_level,
-    const bool& log_queries, const std::shared_ptr<arrow::Schema>& override_schema) {
+    const bool& log_queries, const std::shared_ptr<arrow::Schema>& override_schema,
+    const std::string& flight_method, bool is_internal) {
   std::string status;
   auto logged_sql = redact_sql_for_logs(sql);
   arrow::util::ArrowLogLevel effective_log_level;
@@ -438,12 +439,30 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                    {"status", "rejected"}, {"session_id", client_session->session_id},
                    {"user", client_session->username}, {"role", client_session->role},
                    {"statement_id", handle}, {"sql", logged_sql});
-    return Status::Invalid("Cannot DETACH the instrumentation database");
+    std::string error_msg = "Cannot DETACH the instrumentation database";
+    // Record the rejected DETACH attempt
+    if (auto server = GetServer(*client_session)) {
+      if (auto mgr = server->GetInstrumentationManager()) {
+        StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                 flight_method, is_internal, error_msg);
+      }
+    }
+    return Status::Invalid(error_msg);
   }
 
   // Handle KILL SESSION command
   std::string target_session_id;
   if (IsKillSessionCommand(sql, target_session_id)) {
+    // Helper to record KILL SESSION attempts (both successful and failed)
+    auto record_kill_session = [&](const std::string& error_msg = "") {
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, error_msg);
+        }
+      }
+    };
+
     // Only admin users can kill sessions
     if (client_session->role != "admin") {
       GIZMOSQL_LOGKV(WARNING, "Non-admin user attempted KILL SESSION",
@@ -451,23 +470,31 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                      {"status", "rejected"}, {"session_id", client_session->session_id},
                      {"user", client_session->username}, {"role", client_session->role},
                      {"target_session_id", target_session_id});
-      return Status::Invalid("Only admin users can execute KILL SESSION");
+      std::string error_msg = "Only admin users can execute KILL SESSION";
+      record_kill_session(error_msg);
+      return Status::Invalid(error_msg);
     }
 
     // Cannot kill own session
     if (target_session_id == client_session->session_id) {
-      return Status::Invalid("Cannot kill your own session");
+      std::string error_msg = "Cannot kill your own session";
+      record_kill_session(error_msg);
+      return Status::Invalid(error_msg);
     }
 
     // Find and kill the target session
     auto server = GetServer(*client_session);
     if (!server) {
-      return Status::Invalid("Unable to get server instance for KILL SESSION");
+      std::string error_msg = "Unable to get server instance for KILL SESSION";
+      record_kill_session(error_msg);
+      return Status::Invalid(error_msg);
     }
 
     auto target = server->FindSession(target_session_id);
     if (!target) {
-      return Status::KeyError("Session not found: " + target_session_id);
+      std::string error_msg = "Session not found: " + target_session_id;
+      record_kill_session(error_msg);
+      return Status::KeyError(error_msg);
     }
 
     // Mark session for termination and interrupt its connection
@@ -493,6 +520,12 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         client_session, handle, sql, effective_log_level, log_queries, override_schema));
     result->is_gizmosql_admin_ = true;
 
+    // Create statement instrumentation for successful KILL SESSION
+    if (auto mgr = server->GetInstrumentationManager()) {
+      result->instrumentation_ = std::make_unique<StatementInstrumentation>(
+          mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
+    }
+
     // Create a synthetic result batch with success message
     auto schema = arrow::schema({arrow::field("result", arrow::utf8())});
     arrow::StringBuilder builder;
@@ -514,7 +547,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     if (auto server = GetServer(*client_session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
         result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-            mgr, handle, client_session->session_id, logged_sql);
+            mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
       }
     }
 
@@ -541,16 +574,32 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                      {"status", "rejected"}, {"session_id", client_session->session_id},
                      {"user", client_session->username}, {"role", client_session->role},
                      {"statement_id", handle}, {"sql", logged_sql});
-      return Status::Invalid(
+      std::string error_msg =
           "Cannot modify the instrumentation database (_gizmosql_instr). "
-          "It is read-only for client sessions.");
+          "It is read-only for client sessions.";
+      // Record the rejected modification attempt
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, error_msg);
+        }
+      }
+      return Status::Invalid(error_msg);
     }
 
     // Check for readonly role trying to modify data
     if (!stmt->data->properties.IsReadOnly() && client_session->role == "readonly") {
-      return Status::ExecutionError(
+      std::string error_msg =
           "User '" + client_session->username +
-          "' has a readonly session and cannot run statements that modify state.");
+          "' has a readonly session and cannot run statements that modify state.";
+      // Record the rejected modification attempt by readonly user
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, error_msg);
+        }
+      }
+      return Status::ExecutionError(error_msg);
     }
   }
 
@@ -579,7 +628,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {
           result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-              mgr, handle, client_session->session_id, logged_sql);
+              mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
         }
       }
 
@@ -600,6 +649,15 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                      {"sql", logged_sql});
     }
 
+    // Record the failed statement in instrumentation with the error message
+    if (auto server = GetServer(*client_session)) {
+      if (auto mgr = server->GetInstrumentationManager()) {
+        // Create instrumentation record for the failed statement (fire and forget)
+        StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                 flight_method, is_internal, error_message);
+      }
+    }
+
     return Status::Invalid(err_msg);
   }
 
@@ -610,7 +668,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   if (auto server = GetServer(*client_session)) {
     if (auto mgr = server->GetInstrumentationManager()) {
       result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-          mgr, handle, client_session->session_id, logged_sql);
+          mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
     }
   }
 
@@ -621,10 +679,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::shared_ptr<ClientSession>& client_session, const std::string& sql,
     const std::optional<arrow::util::ArrowLogLevel>& log_level, const bool& log_queries,
-    const std::shared_ptr<arrow::Schema>& override_schema) {
+    const std::shared_ptr<arrow::Schema>& override_schema,
+    const std::string& flight_method, bool is_internal) {
   std::string handle = boost::uuids::to_string(boost::uuids::random_generator()());
   return DuckDBStatement::Create(client_session, handle, sql, log_level, log_queries,
-                                 override_schema);
+                                 override_schema, flight_method, is_internal);
 }
 
 arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
@@ -787,9 +846,24 @@ arrow::Result<int> DuckDBStatement::Execute() {
   if (is_gizmosql_admin_) {
     // If we have a synthetic result (e.g., from KILL SESSION), execution is already done
     if (synthetic_result_batch_) {
+      // Mark execution as complete for admin commands
+      if (execution_instrumentation_) {
+        execution_instrumentation_->SetCompleted(0);
+      }
       return 0;
     }
-    ARROW_RETURN_NOT_OK(HandleGizmoSQLSet());
+    auto set_status = HandleGizmoSQLSet();
+    if (!set_status.ok()) {
+      // Mark execution as failed for SET command errors
+      if (execution_instrumentation_) {
+        execution_instrumentation_->SetError(set_status.ToString());
+      }
+      return set_status;
+    }
+    // Mark execution as complete for successful SET commands
+    if (execution_instrumentation_) {
+      execution_instrumentation_->SetCompleted(0);
+    }
     return 0;
   }
 

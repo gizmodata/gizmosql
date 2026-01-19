@@ -92,10 +92,16 @@ class StatementInstrumentation {
   /// @param statement_id The unique ID for this statement (used in logging and DB)
   /// @param session_id The session this statement belongs to
   /// @param sql_text The SQL text of the statement
+  /// @param flight_method The Flight SQL method that created this statement (e.g., "Execute", "DoGetTables")
+  /// @param is_internal Whether this is an internal statement (metadata queries, etc.)
+  /// @param prepare_error If non-empty, the error message from a failed prepare
   StatementInstrumentation(std::shared_ptr<InstrumentationManager> manager,
                            const std::string& statement_id,
                            const std::string& session_id,
-                           const std::string& sql_text);
+                           const std::string& sql_text,
+                           const std::string& flight_method,
+                           bool is_internal = false,
+                           const std::string& prepare_error = "");
 
   std::string GetStatementId() const { return statement_id_; }
 

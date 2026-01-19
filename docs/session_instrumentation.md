@@ -30,6 +30,34 @@ You can override the location using the environment variable:
 export GIZMOSQL_INSTRUMENTATION_DB_PATH=/custom/path/instrumentation.db
 ```
 
+### Enabling/Disabling Instrumentation
+
+Session instrumentation is enabled by default. To disable it, use the `--enable-instrumentation` flag:
+
+```bash
+# Instrumentation enabled (default)
+gizmosql_server --database-filename /path/to/mydb.db --password mypassword
+
+# Explicitly enabled
+gizmosql_server --database-filename /path/to/mydb.db --password mypassword --enable-instrumentation=true
+
+# Disabled
+gizmosql_server --database-filename /path/to/mydb.db --password mypassword --enable-instrumentation=false
+```
+
+When instrumentation is disabled:
+- No instrumentation database is created
+- The `_gizmosql_instr` schema is not attached to user sessions
+- Session, statement, and execution tracking is disabled
+- Queries to `_gizmosql_instr.*` tables/views will fail (schema doesn't exist)
+
+Note that `GIZMOSQL_CURRENT_SESSION()`, `GIZMOSQL_CURRENT_INSTANCE()`, `GIZMOSQL_VERSION()`, and `KILL SESSION` still work when instrumentation is disabled - they just won't be recorded in the instrumentation tables.
+
+Disabling instrumentation may be useful for:
+- Development/testing environments where audit trails are not needed
+- Performance-sensitive deployments where the overhead of instrumentation is undesirable
+- Environments where the additional database file is not desired
+
 ---
 
 ## Schema
@@ -78,6 +106,7 @@ Tracks client session lifecycle.
 | `peer_identity` | VARCHAR | mTLS client certificate identity (NULL if not using mTLS) |
 | `user_agent` | VARCHAR | Client user-agent header (e.g., 'ADBC Flight SQL Driver v1.10.0', 'grpc-java-netty/1.65.0') |
 | `connection_protocol` | ENUM | 'plaintext', 'tls', or 'mtls' |
+| `connection_protocol_text` | VARCHAR | Virtual column with text representation of connection_protocol |
 | `start_time` | TIMESTAMP | When session started |
 | `stop_time` | TIMESTAMP | When session ended (NULL if active) |
 | `status` | ENUM | 'active', 'closed', 'killed', 'timeout', 'error' |
@@ -93,7 +122,25 @@ Tracks prepared statement definitions (one per prepared statement).
 | `statement_id` | UUID | Primary key (same as used in logs) |
 | `session_id` | UUID | Reference to sessions |
 | `sql_text` | VARCHAR | The SQL query text |
+| `flight_method` | VARCHAR | The Flight SQL method that created the statement (e.g., 'DoGetTables', 'CreatePreparedStatement') |
+| `is_internal` | BOOLEAN | Whether this is an internal statement (metadata queries, etc.) |
+| `prepare_success` | BOOLEAN | Whether statement preparation succeeded |
+| `prepare_error` | VARCHAR | Error message if statement preparation failed (NULL if successful) |
 | `created_time` | TIMESTAMP | When statement was created |
+
+**Internal vs Client Statements:**
+- `is_internal = true`: Statements created by GizmoSQL for metadata queries (DoGetTables, DoGetCatalogs, DoGetPrimaryKeys, etc.)
+- `is_internal = false`: Statements explicitly created by the client (CreatePreparedStatement, GetFlightInfoStatement, etc.)
+
+The `flight_method` column tracks which Flight SQL method created the statement for tracing purposes.
+
+**Failed Statements:**
+All SQL statements are recorded, including those that fail. The `prepare_success` column indicates whether preparation succeeded, and `prepare_error` contains the error message for failures. This captures:
+- Parse/syntax errors
+- Unknown table/column references
+- Permission violations (readonly user attempting writes, modifying instrumentation database)
+- Administrative command failures (KILL SESSION permission denied, session not found)
+- Attempts to DETACH the instrumentation database
 
 #### `_gizmosql_instr.sql_executions`
 
@@ -341,6 +388,22 @@ ORDER BY execution_start_time DESC
 LIMIT 20;
 ```
 
+### Find failed statement preparations (parse errors, permission errors)
+
+```sql
+SELECT
+    st.sql_text,
+    st.prepare_error,
+    st.created_time,
+    s.username,
+    s.peer
+FROM _gizmosql_instr.sql_statements st
+JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id
+WHERE st.prepare_success = false
+ORDER BY st.created_time DESC
+LIMIT 20;
+```
+
 ### Monitor currently executing queries
 
 ```sql
@@ -373,6 +436,37 @@ GROUP BY st.statement_id, st.sql_text
 HAVING COUNT(e.execution_id) > 1
 ORDER BY execution_count DESC
 LIMIT 20;
+```
+
+### Filter client-issued vs internal statements
+
+Exclude internal metadata queries to focus on client-issued SQL:
+
+```sql
+-- Only client-issued statements
+SELECT
+    st.sql_text,
+    st.flight_method,
+    e.duration_ms,
+    e.rows_fetched,
+    s.username
+FROM _gizmosql_instr.sql_statements st
+JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
+JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id
+WHERE st.is_internal = false
+ORDER BY e.execution_start_time DESC
+LIMIT 20;
+
+-- Only internal metadata queries
+SELECT
+    st.flight_method,
+    COUNT(*) as query_count,
+    AVG(e.duration_ms) as avg_duration_ms
+FROM _gizmosql_instr.sql_statements st
+JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
+WHERE st.is_internal = true
+GROUP BY st.flight_method
+ORDER BY query_count DESC;
 ```
 
 ---

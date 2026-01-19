@@ -46,7 +46,8 @@ CreateFlightSQLServer(
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port);
+    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const bool& enable_instrumentation);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -129,7 +130,8 @@ class ServerTestFixture : public ::testing::Test {
         /*query_timeout=*/0,
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*auth_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
-        /*health_port=*/config_.health_port);
+        /*health_port=*/config_.health_port,
+        /*enable_instrumentation=*/true);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

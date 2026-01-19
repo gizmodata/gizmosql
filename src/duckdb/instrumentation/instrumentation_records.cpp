@@ -144,18 +144,25 @@ void SessionInstrumentation::SetStopReason(const std::string& reason) {
 
 StatementInstrumentation::StatementInstrumentation(
     std::shared_ptr<InstrumentationManager> manager, const std::string& statement_id,
-    const std::string& session_id, const std::string& sql_text)
+    const std::string& session_id, const std::string& sql_text,
+    const std::string& flight_method, bool is_internal, const std::string& prepare_error)
     : manager_(std::move(manager)), statement_id_(statement_id) {
   if (!manager_ || !manager_->IsEnabled()) {
     return;
   }
 
-  manager_->QueueWrite([statement_id, session_id, sql_text](duckdb::Connection& conn) {
+  bool prepare_success = prepare_error.empty();
+  manager_->QueueWrite([statement_id, session_id, sql_text, flight_method,
+                        is_internal, prepare_success, prepare_error](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.sql_statements (statement_id, session_id, sql_text) "
-        "VALUES ($1, $2, $3)");
+        "INSERT INTO _gizmosql_instr.sql_statements (statement_id, session_id, sql_text, "
+        "flight_method, is_internal, prepare_success, prepare_error) VALUES ($1, $2, $3, $4, $5, $6, $7)");
     stmt->Execute(duckdb::Value::UUID(statement_id), duckdb::Value::UUID(session_id),
-                  duckdb::Value(sql_text));
+                  duckdb::Value(sql_text),
+                  flight_method.empty() ? duckdb::Value() : duckdb::Value(flight_method),
+                  duckdb::Value::BOOLEAN(is_internal),
+                  duckdb::Value::BOOLEAN(prepare_success),
+                  prepare_error.empty() ? duckdb::Value() : duckdb::Value(prepare_error));
   });
 }
 

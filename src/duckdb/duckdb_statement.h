@@ -55,14 +55,18 @@ class DuckDBStatement {
       const std::string& sql,
       const std::optional<arrow::util::ArrowLogLevel>& log_level = std::nullopt,
       const bool& log_queries = false,
-      const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
+      const std::shared_ptr<arrow::Schema>& override_schema = nullptr,
+      const std::string& flight_method = "",
+      bool is_internal = false);
 
   // Convenience method to generate a handle for the caller
   static arrow::Result<std::shared_ptr<DuckDBStatement>> Create(
       const std::shared_ptr<ClientSession>& client_session, const std::string& sql,
       const std::optional<arrow::util::ArrowLogLevel>& log_level = std::nullopt,
       const bool& log_queries = false,
-      const std::shared_ptr<arrow::Schema>& override_schema = nullptr);
+      const std::shared_ptr<arrow::Schema>& override_schema = nullptr,
+      const std::string& flight_method = "",
+      bool is_internal = false);
 
   ~DuckDBStatement();
 

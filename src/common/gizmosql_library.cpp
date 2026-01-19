@@ -90,7 +90,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& token_allowed_issuer, const std::string& token_allowed_audience,
     const fs::path& token_signature_verify_cert_path, const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port) {
+    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const bool& enable_instrumentation) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -161,48 +162,56 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;";
 
-    // Get instrumentation DB path and ATTACH it (not READ_ONLY - we need to write to it)
-    // The instrumentation DB is placed in the same directory as the user database
-    std::string instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
-        database_filename.string());
-    GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
-    duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
+    // Instrumentation setup (conditional)
+    std::string instr_db_path;
+    if (enable_instrumentation) {
+      // Get instrumentation DB path and ATTACH it (not READ_ONLY - we need to write to it)
+      // The instrumentation DB is placed in the same directory as the user database
+      instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
+          database_filename.string());
+      GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
+      duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
+    } else {
+      GIZMOSQL_LOG(INFO) << "Instrumentation is disabled";
+    }
 
     duckdb_init_sql_commands += init_sql_commands;
     RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands);
 
-    // Now initialize instrumentation manager using the server's DuckDB instance
-    auto db_instance = duckdb_server->GetDuckDBInstance();
-    auto instr_result = gizmosql::ddb::InstrumentationManager::Create(db_instance, instr_db_path);
-    if (instr_result.ok()) {
-      g_instrumentation_manager = *instr_result;
-      duckdb_server->SetInstrumentationManager(g_instrumentation_manager);
-      GIZMOSQL_LOG(INFO) << "Instrumentation enabled at: "
-                         << g_instrumentation_manager->GetDbPath();
+    // Now initialize instrumentation manager using the server's DuckDB instance (if enabled)
+    if (enable_instrumentation) {
+      auto db_instance = duckdb_server->GetDuckDBInstance();
+      auto instr_result = gizmosql::ddb::InstrumentationManager::Create(db_instance, instr_db_path);
+      if (instr_result.ok()) {
+        g_instrumentation_manager = *instr_result;
+        duckdb_server->SetInstrumentationManager(g_instrumentation_manager);
+        GIZMOSQL_LOG(INFO) << "Instrumentation enabled at: "
+                           << g_instrumentation_manager->GetDbPath();
 
-      // Create instance instrumentation record and pass to server
-      // The server owns the instance_id - instrumentation receives it, not generates it
-      gizmosql::ddb::InstanceConfig instance_config{
-          .instance_id = duckdb_server->GetInstanceId(),
-          .gizmosql_version = PROJECT_VERSION,
-          .duckdb_version = duckdb_library_version(),
-          .arrow_version = ARROW_VERSION_STRING,
-          .hostname = hostname,
-          .port = port,
-          .database_path = database_filename.string(),
-          .tls_enabled = !tls_cert_path.empty(),
-          .tls_cert_path = tls_cert_path.string(),
-          .tls_key_path = tls_key_path.string(),
-          .mtls_required = !mtls_ca_cert_path.empty(),
-          .mtls_ca_cert_path = mtls_ca_cert_path.string(),
-          .readonly = read_only,
-      };
-      auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
-          g_instrumentation_manager, instance_config);
-      duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
-    } else {
-      GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "
-                            << instr_result.status().ToString();
+        // Create instance instrumentation record and pass to server
+        // The server owns the instance_id - instrumentation receives it, not generates it
+        gizmosql::ddb::InstanceConfig instance_config{
+            .instance_id = duckdb_server->GetInstanceId(),
+            .gizmosql_version = PROJECT_VERSION,
+            .duckdb_version = duckdb_library_version(),
+            .arrow_version = ARROW_VERSION_STRING,
+            .hostname = hostname,
+            .port = port,
+            .database_path = database_filename.string(),
+            .tls_enabled = !tls_cert_path.empty(),
+            .tls_cert_path = tls_cert_path.string(),
+            .tls_key_path = tls_key_path.string(),
+            .mtls_required = !mtls_ca_cert_path.empty(),
+            .mtls_ca_cert_path = mtls_ca_cert_path.string(),
+            .readonly = read_only,
+        };
+        auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
+            g_instrumentation_manager, instance_config);
+        duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
+      } else {
+        GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "
+                              << instr_result.status().ToString();
+      }
     }
 
     server = duckdb_server;
@@ -304,7 +313,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port) {
+    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const bool& enable_instrumentation) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     GIZMOSQL_LOG(INFO)
@@ -476,7 +486,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, access_logging_enabled, query_timeout,
-      query_log_level, auth_log_level, health_port);
+      query_log_level, auth_log_level, health_port, enable_instrumentation);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -516,7 +526,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
-                       int health_port) {
+                       int health_port, const bool& enable_instrumentation) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -588,7 +598,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
-      query_timeout, query_level, auth_level, health_port);
+      query_timeout, query_level, auth_level, health_port, enable_instrumentation);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

@@ -47,7 +47,8 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
 
     ARROW_ASSIGN_OR_RAISE(schema_statement, DuckDBStatement::Create(
                                                 client_session_, main_query_,
-                                                arrow::util::ArrowLogLevel::ARROW_DEBUG));
+                                                arrow::util::ArrowLogLevel::ARROW_DEBUG,
+                                                false, nullptr, "DoGetTables", true));
 
     std::shared_ptr<arrow::RecordBatch> first_batch;
 
@@ -87,7 +88,8 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
                                   "SELECT * FROM \"" + catalog_name + "\".\"" +
                                       schema_name + "\".\"" + table_name + "\"" +
                                       " LIMIT 0",
-                                  arrow::util::ArrowLogLevel::ARROW_DEBUG));
+                                  arrow::util::ArrowLogLevel::ARROW_DEBUG,
+                                  false, nullptr, "DoGetTables", true));
 
       ARROW_ASSIGN_OR_RAISE(auto table_schema, table_schema_statement->GetSchema());
 
