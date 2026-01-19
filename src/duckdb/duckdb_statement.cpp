@@ -348,8 +348,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       target->instrumentation->SetStopReason("killed");
     }
 
-    // Remove from session map
-    ARROW_RETURN_NOT_OK(server->RemoveSession(target_session_id));
+    // Remove from session map and mark as killed to prevent reconnection
+    ARROW_RETURN_NOT_OK(server->RemoveSession(target_session_id, /*was_killed=*/true));
 
     GIZMOSQL_LOGKV(INFO, "Session killed successfully",
                    {"peer", client_session->peer}, {"kind", "sql"},

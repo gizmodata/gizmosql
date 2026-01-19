@@ -26,6 +26,7 @@
 #include <sstream>
 #include <mutex>
 #include <shared_mutex>
+#include <unordered_set>
 
 #include <arrow/api.h>
 #include <arrow/flight/server.h>
@@ -652,6 +653,9 @@ class DuckDBFlightSqlServer::Impl {
   std::shared_ptr<InstrumentationManager> instrumentation_manager_;
   std::unique_ptr<InstanceInstrumentation> instance_instrumentation_;
 
+  // Set of killed session IDs - prevents reconnection with a killed session
+  std::unordered_set<std::string> killed_session_ids_;
+
   Result<std::shared_ptr<DuckDBStatement>> GetStatementByHandle(
       const std::string& handle) {
     std::shared_lock read_lock(statements_mutex_);
@@ -685,6 +689,13 @@ class DuckDBFlightSqlServer::Impl {
     // Fast path: try to find existing session with shared lock
     {
       std::shared_lock read_lock(sessions_mutex_);
+
+      // Check if this session was killed (even if it's no longer in the map)
+      if (killed_session_ids_.count(session_id) > 0) {
+        return Status::Invalid(
+            "Your session has been killed. Please re-authenticate.");
+      }
+
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
         // Check if the session has been killed
         if (it->second->kill_requested) {
@@ -694,6 +705,7 @@ class DuckDBFlightSqlServer::Impl {
           {
             std::unique_lock write_lock(sessions_mutex_);
             client_sessions_.erase(session_id);
+            killed_session_ids_.insert(session_id);
           }
           return Status::Invalid(
               "Your session has been killed. Please re-authenticate.");
@@ -734,10 +746,17 @@ class DuckDBFlightSqlServer::Impl {
     {
       std::unique_lock write_lock(sessions_mutex_);
 
+      // Check again if this session was killed (might have happened while building the session)
+      if (killed_session_ids_.count(session_id) > 0) {
+        return Status::Invalid(
+            "Your session has been killed. Please re-authenticate.");
+      }
+
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
         // Another thread won the race – but check if it was killed
         if (it->second->kill_requested) {
           client_sessions_.erase(session_id);
+          killed_session_ids_.insert(session_id);
           return Status::Invalid(
               "Your session has been killed. Please re-authenticate.");
         }
@@ -823,11 +842,15 @@ class DuckDBFlightSqlServer::Impl {
     return nullptr;
   }
 
-  arrow::Status RemoveSession(const std::string& session_id) {
+  arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false) {
     std::unique_lock write_lock(sessions_mutex_);
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
       client_sessions_.erase(it);
+      // If the session was killed, remember the session_id to prevent reconnection
+      if (was_killed) {
+        killed_session_ids_.insert(session_id);
+      }
       return arrow::Status::OK();
     }
     return arrow::Status::KeyError("Session not found: " + session_id);
@@ -2031,8 +2054,9 @@ std::shared_ptr<ClientSession> DuckDBFlightSqlServer::FindSession(
   return impl_->FindSession(session_id);
 }
 
-arrow::Status DuckDBFlightSqlServer::RemoveSession(const std::string& session_id) {
-  return impl_->RemoveSession(session_id);
+arrow::Status DuckDBFlightSqlServer::RemoveSession(const std::string& session_id,
+                                                    bool was_killed) {
+  return impl_->RemoveSession(session_id, was_killed);
 }
 
 }  // namespace gizmosql::ddb

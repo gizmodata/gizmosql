@@ -238,7 +238,7 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
 
   // Session management for KILL SESSION
   std::shared_ptr<ClientSession> FindSession(const std::string& session_id);
-  arrow::Status RemoveSession(const std::string& session_id);
+  arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false);
 
  private:
   class Impl;
