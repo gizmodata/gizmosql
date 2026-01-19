@@ -9,7 +9,8 @@ GizmoSQL provides built-in session instrumentation for tracking server instances
 Session instrumentation automatically tracks:
 - **Server instances**: When the server starts and stops
 - **Client sessions**: When clients connect and disconnect, including authentication details
-- **SQL statements**: Every SQL query executed, including execution time and row counts
+- **SQL statements**: Prepared statements created during a session
+- **SQL executions**: Every execution of a statement, including bind parameters, execution time, and row counts
 
 All instrumentation data is stored in a separate DuckDB database and exposed as read-only views accessible via SQL queries.
 
@@ -35,7 +36,7 @@ export GIZMOSQL_INSTRUMENTATION_DB_PATH=/custom/path/instrumentation.db
 
 ### Tables
 
-The instrumentation database contains three core tables:
+The instrumentation database contains four core tables:
 
 #### `_gizmosql_instr.instances`
 
@@ -49,8 +50,8 @@ Tracks server instance lifecycle.
 | `hostname` | VARCHAR | Server hostname |
 | `port` | INTEGER | Server port |
 | `database_path` | VARCHAR | Path to main database |
-| `start_time` | TIMESTAMPTZ | When server started |
-| `stop_time` | TIMESTAMPTZ | When server stopped (NULL if running) |
+| `start_time` | TIMESTAMP | When server started |
+| `stop_time` | TIMESTAMP | When server stopped (NULL if running) |
 | `status` | ENUM | 'running' or 'stopped' |
 | `stop_reason` | VARCHAR | Reason for shutdown |
 
@@ -61,27 +62,37 @@ Tracks client session lifecycle.
 | Column | Type | Description |
 |--------|------|-------------|
 | `session_id` | UUID | Primary key |
-| `instance_id` | UUID | Foreign key to instances |
+| `instance_id` | UUID | Reference to instances |
 | `username` | VARCHAR | Authenticated username |
 | `role` | VARCHAR | User's role (e.g., 'admin', 'user') |
 | `peer` | VARCHAR | Client IP/hostname |
-| `start_time` | TIMESTAMPTZ | When session started |
-| `stop_time` | TIMESTAMPTZ | When session ended (NULL if active) |
+| `start_time` | TIMESTAMP | When session started |
+| `stop_time` | TIMESTAMP | When session ended (NULL if active) |
 | `status` | ENUM | 'active', 'closed', 'killed', 'timeout', 'error' |
 | `stop_reason` | VARCHAR | Reason session ended |
 
 #### `_gizmosql_instr.sql_statements`
 
-Tracks individual SQL statement execution.
+Tracks prepared statement definitions (one per prepared statement).
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `statement_id` | UUID | Primary key |
-| `session_id` | UUID | Foreign key to sessions |
+| `statement_id` | UUID | Primary key (same as used in logs) |
+| `session_id` | UUID | Reference to sessions |
 | `sql_text` | VARCHAR | The SQL query text |
-| `statement_handle` | VARCHAR | Internal statement handle |
-| `execution_start_time` | TIMESTAMPTZ | When execution started |
-| `execution_end_time` | TIMESTAMPTZ | When execution completed |
+| `created_time` | TIMESTAMP | When statement was created |
+
+#### `_gizmosql_instr.sql_executions`
+
+Tracks individual executions of statements (one per execution).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `execution_id` | UUID | Primary key (same as used in logs) |
+| `statement_id` | UUID | Reference to sql_statements |
+| `bind_parameters` | VARCHAR | JSON array of bind parameters (NULL if none) |
+| `execution_start_time` | TIMESTAMP | When execution started |
+| `execution_end_time` | TIMESTAMP | When execution completed |
 | `rows_fetched` | BIGINT | Number of rows returned |
 | `status` | ENUM | 'executing', 'success', 'error', 'timeout', 'cancelled' |
 | `error_message` | VARCHAR | Error message if failed |
@@ -103,7 +114,7 @@ Returns: `session_id`, `instance_id`, `username`, `role`, `peer`, `start_time`, 
 
 #### `_gizmosql_instr.session_activity`
 
-Complete view joining instances, sessions, and statements.
+Complete view joining instances, sessions, statements, and executions.
 
 ```sql
 SELECT * FROM _gizmosql_instr.session_activity
@@ -120,11 +131,31 @@ Aggregated statistics per session.
 SELECT
     username,
     total_statements,
-    successful_statements,
-    failed_statements,
+    total_executions,
+    successful_executions,
+    failed_executions,
     total_rows_fetched,
     avg_duration_ms
 FROM _gizmosql_instr.session_stats;
+```
+
+#### `_gizmosql_instr.execution_details`
+
+Detailed view of executions with statement and session info.
+
+```sql
+SELECT
+    execution_id,
+    statement_id,
+    sql_text,
+    bind_parameters,
+    execution_start_time,
+    duration_ms,
+    status,
+    username
+FROM _gizmosql_instr.execution_details
+WHERE status = 'error'
+LIMIT 20;
 ```
 
 ---
@@ -145,7 +176,24 @@ Useful for filtering instrumentation data to the current session:
 ```sql
 SELECT * FROM _gizmosql_instr.sql_statements
 WHERE session_id = GIZMOSQL_CURRENT_SESSION()
-ORDER BY execution_start_time DESC;
+ORDER BY created_time DESC;
+```
+
+### `GIZMOSQL_CURRENT_INSTANCE()`
+
+Returns the UUID of the current server instance.
+
+```sql
+SELECT GIZMOSQL_CURRENT_INSTANCE();
+-- Returns: '7b2a3c4d-5e6f-7890-abcd-ef1234567890'
+```
+
+Useful for filtering instrumentation data to the current server instance:
+
+```sql
+SELECT * FROM _gizmosql_instr.sessions
+WHERE instance_id = GIZMOSQL_CURRENT_INSTANCE()
+ORDER BY start_time DESC;
 ```
 
 ---
@@ -190,7 +238,7 @@ When a session is killed:
 The instrumentation database is protected from client modifications. Users can query instrumentation data but cannot modify it. Any attempt to INSERT, UPDATE, DELETE, or otherwise modify data in `_gizmosql_instr` will be rejected:
 
 ```sql
-DELETE FROM _gizmosql_instr.sql_statements;
+DELETE FROM _gizmosql_instr.sql_executions;
 -- Error: Cannot modify the instrumentation database (_gizmosql_instr).
 -- It is read-only for client sessions.
 ```
@@ -212,15 +260,16 @@ DETACH _gizmosql_instr;  -- Error: Cannot DETACH the instrumentation database
 
 ## Example Queries
 
-### Find slow queries
+### Find slow executions
 
 ```sql
 SELECT
     sql_text,
+    bind_parameters,
     duration_ms,
     rows_fetched,
     execution_start_time
-FROM _gizmosql_instr.sql_statements
+FROM _gizmosql_instr.execution_details
 WHERE status = 'success'
 ORDER BY duration_ms DESC
 LIMIT 10;
@@ -232,27 +281,29 @@ LIMIT 10;
 SELECT
     s.username,
     s.peer,
-    COUNT(st.statement_id) as query_count,
-    SUM(st.rows_fetched) as total_rows,
-    AVG(st.duration_ms) as avg_duration_ms
+    COUNT(DISTINCT st.statement_id) as statement_count,
+    COUNT(e.execution_id) as execution_count,
+    SUM(e.rows_fetched) as total_rows,
+    AVG(e.duration_ms) as avg_duration_ms
 FROM _gizmosql_instr.sessions s
 LEFT JOIN _gizmosql_instr.sql_statements st ON s.session_id = st.session_id
+LEFT JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
 WHERE s.start_time > now() - INTERVAL '1 day'
 GROUP BY s.username, s.peer
-ORDER BY query_count DESC;
+ORDER BY execution_count DESC;
 ```
 
-### Find failed queries
+### Find failed executions
 
 ```sql
 SELECT
     sql_text,
+    bind_parameters,
     error_message,
     execution_start_time,
     username
-FROM _gizmosql_instr.sql_statements st
-JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id
-WHERE st.status = 'error'
+FROM _gizmosql_instr.execution_details
+WHERE status = 'error'
 ORDER BY execution_start_time DESC
 LIMIT 20;
 ```
@@ -262,14 +313,45 @@ LIMIT 20;
 ```sql
 SELECT
     st.sql_text,
+    e.bind_parameters,
     s.username,
     s.peer,
-    st.execution_start_time,
-    EPOCH(now()) - EPOCH(st.execution_start_time) as running_seconds
-FROM _gizmosql_instr.sql_statements st
+    e.execution_start_time,
+    EPOCH(now()) - EPOCH(e.execution_start_time) as running_seconds
+FROM _gizmosql_instr.sql_executions e
+JOIN _gizmosql_instr.sql_statements st ON e.statement_id = st.statement_id
 JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id
-WHERE st.status = 'executing'
+WHERE e.status = 'executing'
 ORDER BY running_seconds DESC;
+```
+
+### Track prepared statement reuse
+
+```sql
+SELECT
+    st.statement_id,
+    st.sql_text,
+    COUNT(e.execution_id) as execution_count,
+    AVG(e.duration_ms) as avg_duration_ms,
+    SUM(e.rows_fetched) as total_rows
+FROM _gizmosql_instr.sql_statements st
+JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
+GROUP BY st.statement_id, st.sql_text
+HAVING COUNT(e.execution_id) > 1
+ORDER BY execution_count DESC
+LIMIT 20;
+```
+
+---
+
+## Tracing
+
+The `statement_id` and `execution_id` fields in the instrumentation tables match the IDs used in GizmoSQL logs. This allows you to correlate log entries with instrumentation records for debugging:
+
+```sql
+-- Find all executions for a statement_id from the logs
+SELECT * FROM _gizmosql_instr.execution_details
+WHERE statement_id = '12345678-1234-1234-1234-123456789012';
 ```
 
 ---

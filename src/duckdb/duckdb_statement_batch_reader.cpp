@@ -73,8 +73,8 @@ arrow::Status DuckDBStatementBatchReader::ReadNext(
   ARROW_ASSIGN_OR_RAISE(*out, statement_->FetchResult());
 
   // Track rows fetched for instrumentation
-  if (*out && statement_->GetInstrumentation()) {
-    statement_->GetInstrumentation()->IncrementRowsFetched((*out)->num_rows());
+  if (*out && statement_->GetExecutionInstrumentation()) {
+    statement_->GetExecutionInstrumentation()->IncrementRowsFetched((*out)->num_rows());
   }
 
   return arrow::Status::OK();

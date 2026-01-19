@@ -66,15 +66,42 @@ class SessionInstrumentation {
   std::string stop_reason_{"closed"};
 };
 
+/// Tracks prepared statement creation (once per statement)
 class StatementInstrumentation {
  public:
+  /// Creates a statement instrumentation record.
+  /// @param manager The instrumentation manager
+  /// @param statement_id The unique ID for this statement (used in logging and DB)
+  /// @param session_id The session this statement belongs to
+  /// @param sql_text The SQL text of the statement
   StatementInstrumentation(std::shared_ptr<InstrumentationManager> manager,
-                           const std::string& session_id, const std::string& sql_text,
-                           const std::string& statement_handle);
-
-  ~StatementInstrumentation();
+                           const std::string& statement_id,
+                           const std::string& session_id,
+                           const std::string& sql_text);
 
   std::string GetStatementId() const { return statement_id_; }
+
+ private:
+  std::shared_ptr<InstrumentationManager> manager_;
+  std::string statement_id_;
+};
+
+/// Tracks individual executions of a statement (once per Execute call)
+class ExecutionInstrumentation {
+ public:
+  /// Creates an execution instrumentation record.
+  /// @param manager The instrumentation manager
+  /// @param execution_id The unique ID for this execution (used in logging and DB)
+  /// @param statement_id The statement being executed
+  /// @param bind_parameters JSON-formatted bind parameters (empty string if none)
+  ExecutionInstrumentation(std::shared_ptr<InstrumentationManager> manager,
+                           const std::string& execution_id,
+                           const std::string& statement_id,
+                           const std::string& bind_parameters);
+
+  ~ExecutionInstrumentation();
+
+  std::string GetExecutionId() const { return execution_id_; }
 
   void SetCompleted(int64_t rows_fetched, int64_t duration_ms);
   void SetError(const std::string& error_message);
@@ -86,8 +113,8 @@ class StatementInstrumentation {
   void Finalize();
 
   std::shared_ptr<InstrumentationManager> manager_;
+  std::string execution_id_;
   std::string statement_id_;
-  std::string session_id_;
   std::atomic<int64_t> rows_fetched_{0};
   std::string status_{"executing"};
   std::string error_message_;

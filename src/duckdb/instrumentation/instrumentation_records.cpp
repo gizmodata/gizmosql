@@ -126,60 +126,81 @@ void SessionInstrumentation::SetStopReason(const std::string& reason) {
 // ============================================================================
 
 StatementInstrumentation::StatementInstrumentation(
-    std::shared_ptr<InstrumentationManager> manager, const std::string& session_id,
-    const std::string& sql_text, const std::string& statement_handle)
+    std::shared_ptr<InstrumentationManager> manager, const std::string& statement_id,
+    const std::string& session_id, const std::string& sql_text)
+    : manager_(std::move(manager)), statement_id_(statement_id) {
+  if (!manager_ || !manager_->IsEnabled()) {
+    return;
+  }
+
+  manager_->QueueWrite([statement_id, session_id, sql_text](duckdb::Connection& conn) {
+    auto stmt = conn.Prepare(
+        "INSERT INTO _gizmosql_instr.sql_statements (statement_id, session_id, sql_text) "
+        "VALUES ($1, $2, $3)");
+    stmt->Execute(duckdb::Value::UUID(statement_id), duckdb::Value::UUID(session_id),
+                  duckdb::Value(sql_text));
+  });
+}
+
+// ============================================================================
+// ExecutionInstrumentation
+// ============================================================================
+
+ExecutionInstrumentation::ExecutionInstrumentation(
+    std::shared_ptr<InstrumentationManager> manager, const std::string& execution_id,
+    const std::string& statement_id, const std::string& bind_parameters)
     : manager_(std::move(manager)),
-      statement_id_(GenerateUUID()),
-      session_id_(session_id),
+      execution_id_(execution_id),
+      statement_id_(statement_id),
       start_time_(std::chrono::steady_clock::now()) {
   if (!manager_ || !manager_->IsEnabled()) {
     return;
   }
 
-  manager_->QueueWrite([stmt_id = statement_id_, session_id, sql_text,
-                        statement_handle](duckdb::Connection& conn) {
+  manager_->QueueWrite([execution_id, statement_id,
+                        bind_parameters](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.sql_statements (statement_id, session_id, sql_text, "
-        "statement_handle, execution_start_time) VALUES ($1, $2, $3, $4, now())");
-    stmt->Execute(duckdb::Value::UUID(stmt_id), duckdb::Value::UUID(session_id),
-                  duckdb::Value(sql_text), duckdb::Value(statement_handle));
+        "INSERT INTO _gizmosql_instr.sql_executions (execution_id, statement_id, "
+        "bind_parameters) VALUES ($1, $2, $3)");
+    stmt->Execute(duckdb::Value::UUID(execution_id), duckdb::Value::UUID(statement_id),
+                  bind_parameters.empty() ? duckdb::Value() : duckdb::Value(bind_parameters));
   });
 }
 
-StatementInstrumentation::~StatementInstrumentation() {
+ExecutionInstrumentation::~ExecutionInstrumentation() {
   if (!finalized_) {
     Finalize();
   }
 }
 
-void StatementInstrumentation::SetCompleted(int64_t rows_fetched, int64_t duration_ms) {
+void ExecutionInstrumentation::SetCompleted(int64_t rows_fetched, int64_t duration_ms) {
   rows_fetched_ = rows_fetched;
   duration_ms_ = duration_ms;
   status_ = "success";
   Finalize();
 }
 
-void StatementInstrumentation::SetError(const std::string& error_message) {
+void ExecutionInstrumentation::SetError(const std::string& error_message) {
   error_message_ = error_message;
   status_ = "error";
   Finalize();
 }
 
-void StatementInstrumentation::SetTimeout() {
+void ExecutionInstrumentation::SetTimeout() {
   status_ = "timeout";
   Finalize();
 }
 
-void StatementInstrumentation::SetCancelled() {
+void ExecutionInstrumentation::SetCancelled() {
   status_ = "cancelled";
   Finalize();
 }
 
-void StatementInstrumentation::IncrementRowsFetched(int64_t count) {
+void ExecutionInstrumentation::IncrementRowsFetched(int64_t count) {
   rows_fetched_.fetch_add(count, std::memory_order_relaxed);
 }
 
-void StatementInstrumentation::Finalize() {
+void ExecutionInstrumentation::Finalize() {
   if (finalized_) {
     return;
   }
@@ -193,13 +214,14 @@ void StatementInstrumentation::Finalize() {
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time_);
   int64_t final_duration_ms = duration_ms_ > 0 ? duration_ms_ : duration.count();
 
-  manager_->QueueWrite([stmt_id = statement_id_, rows = rows_fetched_.load(),
+  manager_->QueueWrite([exec_id = execution_id_, rows = rows_fetched_.load(),
                         status = status_, error_msg = error_message_,
                         final_duration_ms](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "UPDATE _gizmosql_instr.sql_statements SET execution_end_time = now(), rows_fetched = $2, "
-        "status = $3::_gizmosql_instr.sql_statement_status, error_message = $4, duration_ms = $5 WHERE statement_id = $1");
-    stmt->Execute(duckdb::Value::UUID(stmt_id), duckdb::Value::BIGINT(rows),
+        "UPDATE _gizmosql_instr.sql_executions SET execution_end_time = now(), rows_fetched = $2, "
+        "status = $3::_gizmosql_instr.execution_status, error_message = $4, duration_ms = $5 "
+        "WHERE execution_id = $1");
+    stmt->Execute(duckdb::Value::UUID(exec_id), duckdb::Value::BIGINT(rows),
                   duckdb::Value(status),
                   error_msg.empty() ? duckdb::Value() : duckdb::Value(error_msg),
                   duckdb::Value::BIGINT(final_duration_ms));

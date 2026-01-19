@@ -59,7 +59,7 @@ constexpr const char* kSchemaSQL = R"SQL(
 -- ENUM types for status fields (in the attached _gizmosql_instr database)
 CREATE TYPE IF NOT EXISTS _gizmosql_instr.instance_status AS ENUM ('running', 'stopped');
 CREATE TYPE IF NOT EXISTS _gizmosql_instr.session_status AS ENUM ('active', 'closed', 'killed', 'timeout', 'error');
-CREATE TYPE IF NOT EXISTS _gizmosql_instr.sql_statement_status AS ENUM ('executing', 'success', 'error', 'timeout', 'cancelled');
+CREATE TYPE IF NOT EXISTS _gizmosql_instr.execution_status AS ENUM ('executing', 'success', 'error', 'timeout', 'cancelled');
 
 -- Server instance lifecycle
 CREATE TABLE IF NOT EXISTS _gizmosql_instr.instances (
@@ -69,8 +69,8 @@ CREATE TABLE IF NOT EXISTS _gizmosql_instr.instances (
     hostname VARCHAR,
     port INTEGER,
     database_path VARCHAR,
-    start_time TIMESTAMPTZ NOT NULL DEFAULT now(),
-    stop_time TIMESTAMPTZ,
+    start_time TIMESTAMP NOT NULL DEFAULT now(),
+    stop_time TIMESTAMP,
     status _gizmosql_instr.instance_status NOT NULL DEFAULT 'running',
     stop_reason VARCHAR
 );
@@ -82,22 +82,29 @@ CREATE TABLE IF NOT EXISTS _gizmosql_instr.sessions (
     username VARCHAR NOT NULL,
     role VARCHAR NOT NULL,
     peer VARCHAR NOT NULL,
-    start_time TIMESTAMPTZ NOT NULL DEFAULT now(),
-    stop_time TIMESTAMPTZ,
+    start_time TIMESTAMP NOT NULL DEFAULT now(),
+    stop_time TIMESTAMP,
     status _gizmosql_instr.session_status NOT NULL DEFAULT 'active',
     stop_reason VARCHAR
 );
 
--- SQL statement execution
+-- SQL statement definitions (prepared statements)
 CREATE TABLE IF NOT EXISTS _gizmosql_instr.sql_statements (
-    statement_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    statement_id UUID PRIMARY KEY,
     session_id UUID NOT NULL,
     sql_text VARCHAR NOT NULL,
-    statement_handle VARCHAR,
-    execution_start_time TIMESTAMPTZ NOT NULL,
-    execution_end_time TIMESTAMPTZ,
+    created_time TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- SQL statement executions (each execution of a statement)
+CREATE TABLE IF NOT EXISTS _gizmosql_instr.sql_executions (
+    execution_id UUID PRIMARY KEY,
+    statement_id UUID NOT NULL,
+    bind_parameters VARCHAR,
+    execution_start_time TIMESTAMP NOT NULL DEFAULT now(),
+    execution_end_time TIMESTAMP,
     rows_fetched BIGINT DEFAULT 0,
-    status _gizmosql_instr.sql_statement_status NOT NULL DEFAULT 'executing',
+    status _gizmosql_instr.execution_status NOT NULL DEFAULT 'executing',
     error_message VARCHAR,
     duration_ms BIGINT
 );
@@ -107,10 +114,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_instance_id ON _gizmosql_instr.sessions(
 CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON _gizmosql_instr.sessions(start_time);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON _gizmosql_instr.sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sql_statements_session_id ON _gizmosql_instr.sql_statements(session_id);
-CREATE INDEX IF NOT EXISTS idx_sql_statements_execution_start_time ON _gizmosql_instr.sql_statements(execution_start_time);
-CREATE INDEX IF NOT EXISTS idx_sql_statements_status ON _gizmosql_instr.sql_statements(status);
+CREATE INDEX IF NOT EXISTS idx_sql_statements_created_time ON _gizmosql_instr.sql_statements(created_time);
+CREATE INDEX IF NOT EXISTS idx_sql_executions_statement_id ON _gizmosql_instr.sql_executions(statement_id);
+CREATE INDEX IF NOT EXISTS idx_sql_executions_execution_start_time ON _gizmosql_instr.sql_executions(execution_start_time);
+CREATE INDEX IF NOT EXISTS idx_sql_executions_status ON _gizmosql_instr.sql_executions(status);
 
--- View: Complete session activity
+-- View: Complete session activity (with executions)
 CREATE OR REPLACE VIEW _gizmosql_instr.session_activity AS
 SELECT
     i.instance_id,
@@ -133,16 +142,19 @@ SELECT
     s.stop_reason AS session_stop_reason,
     st.statement_id,
     st.sql_text,
-    st.statement_handle,
-    st.execution_start_time,
-    st.execution_end_time,
-    st.rows_fetched,
-    st.status AS statement_status,
-    st.error_message,
-    st.duration_ms
+    st.created_time AS statement_created_time,
+    e.execution_id,
+    e.bind_parameters,
+    e.execution_start_time,
+    e.execution_end_time,
+    e.rows_fetched,
+    e.status AS execution_status,
+    e.error_message,
+    e.duration_ms
 FROM _gizmosql_instr.instances i
 LEFT JOIN _gizmosql_instr.sessions s ON i.instance_id = s.instance_id
-LEFT JOIN _gizmosql_instr.sql_statements st ON s.session_id = st.session_id;
+LEFT JOIN _gizmosql_instr.sql_statements st ON s.session_id = st.session_id
+LEFT JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id;
 
 -- View: Currently active sessions
 CREATE OR REPLACE VIEW _gizmosql_instr.active_sessions AS
@@ -163,7 +175,7 @@ JOIN _gizmosql_instr.instances i ON s.instance_id = i.instance_id
 WHERE s.status = 'active'
   AND i.status = 'running';
 
--- View: Session statistics
+-- View: Session statistics (aggregated from executions)
 CREATE OR REPLACE VIEW _gizmosql_instr.session_stats AS
 SELECT
     s.session_id,
@@ -173,17 +185,39 @@ SELECT
     s.start_time,
     s.stop_time,
     s.status AS session_status,
-    COUNT(st.statement_id) AS total_statements,
-    SUM(CASE WHEN st.status = 'success' THEN 1 ELSE 0 END) AS successful_statements,
-    SUM(CASE WHEN st.status = 'error' THEN 1 ELSE 0 END) AS failed_statements,
-    SUM(CASE WHEN st.status = 'timeout' THEN 1 ELSE 0 END) AS timed_out_statements,
-    SUM(CASE WHEN st.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_statements,
-    SUM(st.rows_fetched) AS total_rows_fetched,
-    AVG(st.duration_ms) AS avg_duration_ms,
-    MAX(st.duration_ms) AS max_duration_ms
+    COUNT(DISTINCT st.statement_id) AS total_statements,
+    COUNT(e.execution_id) AS total_executions,
+    SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS successful_executions,
+    SUM(CASE WHEN e.status = 'error' THEN 1 ELSE 0 END) AS failed_executions,
+    SUM(CASE WHEN e.status = 'timeout' THEN 1 ELSE 0 END) AS timed_out_executions,
+    SUM(CASE WHEN e.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_executions,
+    SUM(e.rows_fetched) AS total_rows_fetched,
+    AVG(e.duration_ms) AS avg_duration_ms,
+    MAX(e.duration_ms) AS max_duration_ms
 FROM _gizmosql_instr.sessions s
 LEFT JOIN _gizmosql_instr.sql_statements st ON s.session_id = st.session_id
+LEFT JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
 GROUP BY s.session_id, s.username, s.role, s.peer, s.start_time, s.stop_time, s.status;
+
+-- View: Execution details (joins statement with execution for convenience)
+CREATE OR REPLACE VIEW _gizmosql_instr.execution_details AS
+SELECT
+    e.execution_id,
+    e.statement_id,
+    st.session_id,
+    st.sql_text,
+    e.bind_parameters,
+    e.execution_start_time,
+    e.execution_end_time,
+    e.rows_fetched,
+    e.status,
+    e.error_message,
+    e.duration_ms,
+    s.username,
+    s.peer
+FROM _gizmosql_instr.sql_executions e
+JOIN _gizmosql_instr.sql_statements st ON e.statement_id = st.statement_id
+JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id;
 )SQL";
 
 }  // namespace
@@ -208,6 +242,15 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
   try {
     // Create a dedicated connection for instrumentation writes
     auto writer_connection = std::make_unique<duckdb::Connection>(*db_instance);
+
+    // ATTACH the instrumentation database on this connection
+    // (ATTACH is connection-specific in DuckDB)
+    auto attach_result = writer_connection->Query(
+        "ATTACH IF NOT EXISTS '" + db_path + "' AS _gizmosql_instr");
+    if (attach_result->HasError()) {
+      return arrow::Status::Invalid("Failed to attach instrumentation database: ",
+                                    attach_result->GetError());
+    }
 
     auto manager = std::shared_ptr<InstrumentationManager>(new InstrumentationManager(
         db_path, std::move(db_instance), std::move(writer_connection)));

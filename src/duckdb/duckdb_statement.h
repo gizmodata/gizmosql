@@ -36,6 +36,7 @@ using Clock = std::chrono::steady_clock;
 namespace gizmosql::ddb {
 
 class StatementInstrumentation;
+class ExecutionInstrumentation;
 
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType& duckdb_type);
@@ -83,9 +84,13 @@ class DuckDBStatement {
   duckdb::vector<duckdb::Value> bind_parameters;
 
   StatementInstrumentation* GetInstrumentation() const { return instrumentation_.get(); }
+  ExecutionInstrumentation* GetExecutionInstrumentation() const {
+    return execution_instrumentation_.get();
+  }
 
  private:
   std::unique_ptr<StatementInstrumentation> instrumentation_;
+  std::unique_ptr<ExecutionInstrumentation> execution_instrumentation_;
   std::shared_ptr<ClientSession> client_session_;
   std::string handle_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;

@@ -538,6 +538,9 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
 
 Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& stmt,
                                       flight::FlightMessageReader* reader) {
+  // Clear existing parameters for re-execution of the same prepared statement
+  stmt->bind_parameters.clear();
+
   while (true) {
     ARROW_ASSIGN_OR_RAISE(flight::FlightStreamChunk chunk, reader->Next())
     const std::shared_ptr<arrow::RecordBatch>& record_batch = chunk.data;
@@ -683,6 +686,18 @@ class DuckDBFlightSqlServer::Impl {
     {
       std::shared_lock read_lock(sessions_mutex_);
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
+        // Check if the session has been killed
+        if (it->second->kill_requested) {
+          // Release the read lock before taking the write lock
+          read_lock.unlock();
+          // Remove the killed session from the map
+          {
+            std::unique_lock write_lock(sessions_mutex_);
+            client_sessions_.erase(session_id);
+          }
+          return Status::Invalid(
+              "Your session has been killed. Please re-authenticate.");
+        }
         return it->second;
       }
     }
@@ -720,7 +735,13 @@ class DuckDBFlightSqlServer::Impl {
       std::unique_lock write_lock(sessions_mutex_);
 
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
-        // Another thread won the race – reuse its session
+        // Another thread won the race – but check if it was killed
+        if (it->second->kill_requested) {
+          client_sessions_.erase(session_id);
+          return Status::Invalid(
+              "Your session has been killed. Please re-authenticate.");
+        }
+        // Reuse the valid session
         return it->second;
       }
 
