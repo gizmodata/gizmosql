@@ -92,6 +92,20 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: ducklake_catalog
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
