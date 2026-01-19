@@ -119,7 +119,9 @@ class ExecutionInstrumentation {
   std::string status_{"executing"};
   std::string error_message_;
   int64_t duration_ms_{0};
-  std::chrono::steady_clock::time_point start_time_;
+  // Wall-clock timestamps captured synchronously (not affected by async queue delays)
+  std::chrono::system_clock::time_point start_timestamp_;
+  std::chrono::system_clock::time_point end_timestamp_;
   bool finalized_{false};
 };
 

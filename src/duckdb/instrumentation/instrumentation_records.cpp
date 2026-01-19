@@ -152,18 +152,24 @@ ExecutionInstrumentation::ExecutionInstrumentation(
     : manager_(std::move(manager)),
       execution_id_(execution_id),
       statement_id_(statement_id),
-      start_time_(std::chrono::steady_clock::now()) {
+      start_timestamp_(std::chrono::system_clock::now()) {
   if (!manager_ || !manager_->IsEnabled()) {
     return;
   }
 
-  manager_->QueueWrite([execution_id, statement_id,
-                        bind_parameters](duckdb::Connection& conn) {
+  // Convert wall-clock time to DuckDB timestamp (microseconds since epoch)
+  auto start_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      start_timestamp_.time_since_epoch())
+                      .count();
+
+  manager_->QueueWrite([execution_id, statement_id, bind_parameters,
+                        start_us](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
         "INSERT INTO _gizmosql_instr.sql_executions (execution_id, statement_id, "
-        "bind_parameters) VALUES ($1, $2, $3)");
+        "bind_parameters, execution_start_time) VALUES ($1, $2, $3, make_timestamp($4))");
     stmt->Execute(duckdb::Value::UUID(execution_id), duckdb::Value::UUID(statement_id),
-                  bind_parameters.empty() ? duckdb::Value() : duckdb::Value(bind_parameters));
+                  bind_parameters.empty() ? duckdb::Value() : duckdb::Value(bind_parameters),
+                  duckdb::Value::BIGINT(start_us));
   });
 }
 
@@ -174,6 +180,7 @@ ExecutionInstrumentation::~ExecutionInstrumentation() {
 }
 
 void ExecutionInstrumentation::SetCompleted(int64_t rows_fetched, int64_t duration_ms) {
+  end_timestamp_ = std::chrono::system_clock::now();
   rows_fetched_ = rows_fetched;
   duration_ms_ = duration_ms;
   status_ = "success";
@@ -181,17 +188,20 @@ void ExecutionInstrumentation::SetCompleted(int64_t rows_fetched, int64_t durati
 }
 
 void ExecutionInstrumentation::SetError(const std::string& error_message) {
+  end_timestamp_ = std::chrono::system_clock::now();
   error_message_ = error_message;
   status_ = "error";
   Finalize();
 }
 
 void ExecutionInstrumentation::SetTimeout() {
+  end_timestamp_ = std::chrono::system_clock::now();
   status_ = "timeout";
   Finalize();
 }
 
 void ExecutionInstrumentation::SetCancelled() {
+  end_timestamp_ = std::chrono::system_clock::now();
   status_ = "cancelled";
   Finalize();
 }
@@ -210,19 +220,33 @@ void ExecutionInstrumentation::Finalize() {
     return;
   }
 
-  auto end_time = std::chrono::steady_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time_);
-  int64_t final_duration_ms = duration_ms_ > 0 ? duration_ms_ : duration.count();
+  // If end_timestamp_ wasn't set (destructor path), capture it now
+  if (end_timestamp_.time_since_epoch().count() == 0) {
+    end_timestamp_ = std::chrono::system_clock::now();
+  }
+
+  // Convert wall-clock end time to DuckDB timestamp (microseconds since epoch)
+  auto end_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                    end_timestamp_.time_since_epoch())
+                    .count();
+
+  // Calculate duration from wall-clock times if not explicitly provided
+  int64_t final_duration_ms = duration_ms_;
+  if (final_duration_ms == 0) {
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end_timestamp_ - start_timestamp_);
+    final_duration_ms = duration.count();
+  }
 
   manager_->QueueWrite([exec_id = execution_id_, rows = rows_fetched_.load(),
                         status = status_, error_msg = error_message_,
-                        final_duration_ms](duckdb::Connection& conn) {
+                        end_us, final_duration_ms](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "UPDATE _gizmosql_instr.sql_executions SET execution_end_time = now(), rows_fetched = $2, "
-        "status = $3::_gizmosql_instr.execution_status, error_message = $4, duration_ms = $5 "
-        "WHERE execution_id = $1");
-    stmt->Execute(duckdb::Value::UUID(exec_id), duckdb::Value::BIGINT(rows),
-                  duckdb::Value(status),
+        "UPDATE _gizmosql_instr.sql_executions SET execution_end_time = make_timestamp($2), "
+        "rows_fetched = $3, status = $4::_gizmosql_instr.execution_status, error_message = $5, "
+        "duration_ms = $6 WHERE execution_id = $1");
+    stmt->Execute(duckdb::Value::UUID(exec_id), duckdb::Value::BIGINT(end_us),
+                  duckdb::Value::BIGINT(rows), duckdb::Value(status),
                   error_msg.empty() ? duckdb::Value() : duckdb::Value(error_msg),
                   duckdb::Value::BIGINT(final_duration_ms));
   });
