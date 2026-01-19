@@ -65,6 +65,10 @@ class InstrumentationManager {
 
   arrow::Status InitializeSchema();
 
+  /// Clean up any stale 'running' instances and 'active' sessions from previous
+  /// unclean shutdowns. Called during startup.
+  arrow::Status CleanupStaleRecords();
+
   void WriterThreadLoop();
 
   std::string db_path_;

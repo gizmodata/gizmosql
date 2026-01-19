@@ -9,7 +9,7 @@ struct RequestCtx
     std::optional<std::string> role;
     std::optional<std::string> peer;
     std::optional<std::string> session_id;
-
+    std::optional<std::string> auth_method;
 };
 
 // One scratchpad per RPC thread

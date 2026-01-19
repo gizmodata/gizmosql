@@ -507,6 +507,7 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       tl_request_ctx.role = decoded_jwt.get_payload_claim("role").as_string();
       tl_request_ctx.peer = context.peer();
       tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").as_string();
+      tl_request_ctx.auth_method = decoded_jwt.get_payload_claim("auth_method").as_string();
     }
   }
   return Status::OK();

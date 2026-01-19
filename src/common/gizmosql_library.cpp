@@ -25,6 +25,7 @@
 #include <vector>
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/server.h>
+#include <arrow/util/config.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -178,9 +179,24 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                          << g_instrumentation_manager->GetDbPath();
 
       // Create instance instrumentation record and pass to server
+      // The server owns the instance_id - instrumentation receives it, not generates it
+      gizmosql::ddb::InstanceConfig instance_config{
+          .instance_id = duckdb_server->GetInstanceId(),
+          .gizmosql_version = PROJECT_VERSION,
+          .duckdb_version = duckdb_library_version(),
+          .arrow_version = ARROW_VERSION_STRING,
+          .hostname = hostname,
+          .port = port,
+          .database_path = database_filename.string(),
+          .tls_enabled = !tls_cert_path.empty(),
+          .tls_cert_path = tls_cert_path.string(),
+          .tls_key_path = tls_key_path.string(),
+          .mtls_required = !mtls_ca_cert_path.empty(),
+          .mtls_ca_cert_path = mtls_ca_cert_path.string(),
+          .readonly = read_only,
+      };
       auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
-          g_instrumentation_manager, PROJECT_VERSION, duckdb_library_version(), hostname,
-          port, database_filename.string());
+          g_instrumentation_manager, instance_config);
       duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
     } else {
       GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "

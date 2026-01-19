@@ -92,7 +92,7 @@ class DuckDBStatement {
   std::unique_ptr<StatementInstrumentation> instrumentation_;
   std::unique_ptr<ExecutionInstrumentation> execution_instrumentation_;
   std::shared_ptr<ClientSession> client_session_;
-  std::string handle_;
+  std::string statement_id_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
   std::optional<arrow::util::ArrowLogLevel> log_level_;

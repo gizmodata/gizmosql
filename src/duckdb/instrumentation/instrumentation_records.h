@@ -26,17 +26,32 @@ namespace gizmosql::ddb {
 
 class InstrumentationManager;
 
+/// Configuration for instance instrumentation record
+struct InstanceConfig {
+  std::string instance_id;
+  std::string gizmosql_version;
+  std::string duckdb_version;
+  std::string arrow_version;
+  std::string hostname;
+  int port;
+  std::string database_path;
+  bool tls_enabled;
+  std::string tls_cert_path;
+  std::string tls_key_path;
+  bool mtls_required;
+  std::string mtls_ca_cert_path;
+  bool readonly;
+};
+
 class InstanceInstrumentation {
  public:
+  /// Creates instance instrumentation record.
+  /// @param manager The instrumentation manager
+  /// @param config The instance configuration
   InstanceInstrumentation(std::shared_ptr<InstrumentationManager> manager,
-                          const std::string& gizmosql_version,
-                          const std::string& duckdb_version,
-                          const std::string& hostname, int port,
-                          const std::string& database_path);
+                          const InstanceConfig& config);
 
   ~InstanceInstrumentation();
-
-  std::string GetInstanceId() const { return instance_id_; }
 
   void SetStopReason(const std::string& reason);
 
@@ -51,7 +66,8 @@ class SessionInstrumentation {
   SessionInstrumentation(std::shared_ptr<InstrumentationManager> manager,
                          const std::string& instance_id,
                          const std::string& session_id, const std::string& username,
-                         const std::string& role, const std::string& peer);
+                         const std::string& role, const std::string& auth_method,
+                         const std::string& peer);
 
   ~SessionInstrumentation();
 
@@ -103,7 +119,7 @@ class ExecutionInstrumentation {
 
   std::string GetExecutionId() const { return execution_id_; }
 
-  void SetCompleted(int64_t rows_fetched, int64_t duration_ms);
+  void SetCompleted(int64_t duration_ms);
   void SetError(const std::string& error_message);
   void SetTimeout();
   void SetCancelled();

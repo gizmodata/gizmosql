@@ -47,12 +47,20 @@ Tracks server instance lifecycle.
 | `instance_id` | UUID | Primary key |
 | `gizmosql_version` | VARCHAR | GizmoSQL version |
 | `duckdb_version` | VARCHAR | DuckDB version |
+| `arrow_version` | VARCHAR | Apache Arrow version |
 | `hostname` | VARCHAR | Server hostname |
 | `port` | INTEGER | Server port |
 | `database_path` | VARCHAR | Path to main database |
+| `tls_enabled` | BOOLEAN | Whether TLS is enabled |
+| `tls_cert_path` | VARCHAR | Path to TLS certificate file (NULL if TLS disabled) |
+| `tls_key_path` | VARCHAR | Path to TLS key file (NULL if TLS disabled) |
+| `mtls_required` | BOOLEAN | Whether mutual TLS (mTLS) is required |
+| `mtls_ca_cert_path` | VARCHAR | Path to mTLS CA certificate file (NULL if mTLS disabled) |
+| `readonly` | BOOLEAN | Whether the instance is started in read-only mode |
 | `start_time` | TIMESTAMP | When server started |
 | `stop_time` | TIMESTAMP | When server stopped (NULL if running) |
 | `status` | ENUM | 'running' or 'stopped' |
+| `status_text` | VARCHAR | Virtual column with text representation of status |
 | `stop_reason` | VARCHAR | Reason for shutdown |
 
 #### `_gizmosql_instr.sessions`
@@ -65,10 +73,12 @@ Tracks client session lifecycle.
 | `instance_id` | UUID | Reference to instances |
 | `username` | VARCHAR | Authenticated username |
 | `role` | VARCHAR | User's role (e.g., 'admin', 'user') |
+| `auth_method` | VARCHAR | Authentication method (e.g., 'Basic', 'BootstrapToken') |
 | `peer` | VARCHAR | Client IP/hostname |
 | `start_time` | TIMESTAMP | When session started |
 | `stop_time` | TIMESTAMP | When session ended (NULL if active) |
 | `status` | ENUM | 'active', 'closed', 'killed', 'timeout', 'error' |
+| `status_text` | VARCHAR | Virtual column with text representation of status |
 | `stop_reason` | VARCHAR | Reason session ended |
 
 #### `_gizmosql_instr.sql_statements`
@@ -95,6 +105,7 @@ Tracks individual executions of statements (one per execution).
 | `execution_end_time` | TIMESTAMP | When execution completed |
 | `rows_fetched` | BIGINT | Number of rows returned |
 | `status` | ENUM | 'executing', 'success', 'error', 'timeout', 'cancelled' |
+| `status_text` | VARCHAR | Virtual column with text representation of status |
 | `error_message` | VARCHAR | Error message if failed |
 | `duration_ms` | BIGINT | Execution duration in milliseconds |
 
@@ -110,7 +121,7 @@ Shows currently active sessions.
 SELECT * FROM _gizmosql_instr.active_sessions;
 ```
 
-Returns: `session_id`, `instance_id`, `username`, `role`, `peer`, `start_time`, `status`, `hostname`, `port`, `database_path`, `session_duration_seconds`
+Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `start_time`, `status`, `hostname`, `port`, `database_path`, `session_duration_seconds`
 
 #### `_gizmosql_instr.session_activity`
 
@@ -161,6 +172,25 @@ LIMIT 20;
 ---
 
 ## SQL Functions
+
+GizmoSQL provides several pseudo-functions that are replaced with actual values at query execution time. These functions work in any SQL context (SELECT, WHERE, etc.) and are case-insensitive.
+
+### `GIZMOSQL_VERSION()`
+
+Returns the version string of the GizmoSQL server.
+
+```sql
+SELECT GIZMOSQL_VERSION();
+-- Returns: 'v1.14.0'
+```
+
+Useful for version checking in scripts or diagnostics:
+
+```sql
+SELECT
+    GIZMOSQL_VERSION() AS gizmosql_version,
+    (SELECT version FROM pragma_version()) AS duckdb_version;
+```
 
 ### `GIZMOSQL_CURRENT_SESSION()`
 
@@ -369,3 +399,17 @@ Ensure you're querying from the same connection. Each connection has a unique se
 ### Performance impact
 
 Instrumentation writes are asynchronous and have minimal impact on query performance. The instrumentation database is separate from your main database, so instrumentation I/O does not block your queries.
+
+### Unclean shutdown recovery
+
+If the GizmoSQL server terminates unexpectedly (e.g., SIGKILL, crash, power loss), some records may remain in an incomplete state:
+- Instances may show `status = 'running'`
+- Sessions may show `status = 'active'`
+- Executions may show `status = 'executing'`
+
+On the next server startup, GizmoSQL automatically cleans up these stale records:
+- Stale instances are marked as `stopped` with `stop_reason = 'unclean_shutdown'`
+- Stale sessions are marked as `closed` with `stop_reason = 'unclean_shutdown'`
+- Stale executions are marked as `error` with `error_message = 'Server shutdown unexpectedly'`
+
+This cleanup happens before the server accepts new connections, ensuring instrumentation data remains consistent.

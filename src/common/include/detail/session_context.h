@@ -19,6 +19,7 @@ struct ClientSession {
   std::string username;    // from bearer auth middleware (JWT sub/email/etc.)
   std::string role;        // from JWT claims (e.g. "role") or header
   std::string peer;        // client ip:port (ctx.peer())
+  std::string auth_method; // authentication method (e.g. "Basic", "BootstrapToken")
   std::optional<std::string> active_sql_handle;
   std::optional<int32_t> query_timeout = std::nullopt;
   std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;

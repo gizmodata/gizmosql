@@ -38,22 +38,32 @@ std::string GenerateUUID() {
 // ============================================================================
 
 InstanceInstrumentation::InstanceInstrumentation(
-    std::shared_ptr<InstrumentationManager> manager, const std::string& gizmosql_version,
-    const std::string& duckdb_version, const std::string& hostname, int port,
-    const std::string& database_path)
-    : manager_(std::move(manager)), instance_id_(GenerateUUID()) {
+    std::shared_ptr<InstrumentationManager> manager, const InstanceConfig& config)
+    : manager_(std::move(manager)), instance_id_(config.instance_id) {
   if (!manager_ || !manager_->IsEnabled()) {
     return;
   }
 
-  manager_->QueueWrite([id = instance_id_, gizmosql_version, duckdb_version, hostname,
-                        port, database_path](duckdb::Connection& conn) {
+  manager_->QueueWrite([config](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
         "INSERT INTO _gizmosql_instr.instances (instance_id, gizmosql_version, duckdb_version, "
-        "hostname, port, database_path) VALUES ($1, $2, $3, $4, $5, $6)");
-    stmt->Execute(duckdb::Value::UUID(id), duckdb::Value(gizmosql_version),
-                  duckdb::Value(duckdb_version), duckdb::Value(hostname),
-                  duckdb::Value(port), duckdb::Value(database_path));
+        "arrow_version, hostname, port, database_path, tls_enabled, tls_cert_path, tls_key_path, "
+        "mtls_required, mtls_ca_cert_path, readonly) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)");
+    stmt->Execute(
+        duckdb::Value::UUID(config.instance_id),
+        duckdb::Value(config.gizmosql_version),
+        duckdb::Value(config.duckdb_version),
+        duckdb::Value(config.arrow_version),
+        duckdb::Value(config.hostname),
+        duckdb::Value(config.port),
+        duckdb::Value(config.database_path),
+        duckdb::Value::BOOLEAN(config.tls_enabled),
+        config.tls_cert_path.empty() ? duckdb::Value() : duckdb::Value(config.tls_cert_path),
+        config.tls_key_path.empty() ? duckdb::Value() : duckdb::Value(config.tls_key_path),
+        duckdb::Value::BOOLEAN(config.mtls_required),
+        config.mtls_ca_cert_path.empty() ? duckdb::Value() : duckdb::Value(config.mtls_ca_cert_path),
+        duckdb::Value::BOOLEAN(config.readonly));
   });
 }
 
@@ -81,19 +91,20 @@ void InstanceInstrumentation::SetStopReason(const std::string& reason) {
 SessionInstrumentation::SessionInstrumentation(
     std::shared_ptr<InstrumentationManager> manager, const std::string& instance_id,
     const std::string& session_id, const std::string& username, const std::string& role,
-    const std::string& peer)
+    const std::string& auth_method, const std::string& peer)
     : manager_(std::move(manager)), instance_id_(instance_id), session_id_(session_id) {
   if (!manager_ || !manager_->IsEnabled()) {
     return;
   }
 
-  manager_->QueueWrite([instance_id, session_id, username, role,
+  manager_->QueueWrite([instance_id, session_id, username, role, auth_method,
                         peer](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.sessions (session_id, instance_id, username, role, peer) "
-        "VALUES ($1, $2, $3, $4, $5)");
+        "INSERT INTO _gizmosql_instr.sessions (session_id, instance_id, username, role, auth_method, peer) "
+        "VALUES ($1, $2, $3, $4, $5, $6)");
     stmt->Execute(duckdb::Value::UUID(session_id), duckdb::Value::UUID(instance_id),
-                  duckdb::Value(username), duckdb::Value(role), duckdb::Value(peer));
+                  duckdb::Value(username), duckdb::Value(role), duckdb::Value(auth_method),
+                  duckdb::Value(peer));
   });
 }
 
@@ -179,12 +190,12 @@ ExecutionInstrumentation::~ExecutionInstrumentation() {
   }
 }
 
-void ExecutionInstrumentation::SetCompleted(int64_t rows_fetched, int64_t duration_ms) {
+void ExecutionInstrumentation::SetCompleted(int64_t duration_ms) {
   end_timestamp_ = std::chrono::system_clock::now();
-  rows_fetched_ = rows_fetched;
   duration_ms_ = duration_ms;
   status_ = "success";
-  Finalize();
+  // Don't finalize here - let the destructor handle it after all rows have been fetched
+  // via IncrementRowsFetched() calls in the batch reader
 }
 
 void ExecutionInstrumentation::SetError(const std::string& error_message) {

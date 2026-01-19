@@ -649,6 +649,9 @@ class DuckDBFlightSqlServer::Impl {
   std::shared_mutex transactions_mutex_;
   std::shared_mutex config_mutex_;
 
+  // Server instance ID - generated on server creation, independent of instrumentation
+  std::string instance_id_;
+
   // Instrumentation
   std::shared_ptr<InstrumentationManager> instrumentation_manager_;
   std::unique_ptr<InstanceInstrumentation> instance_instrumentation_;
@@ -693,7 +696,7 @@ class DuckDBFlightSqlServer::Impl {
       // Check if this session was killed (even if it's no longer in the map)
       if (killed_session_ids_.count(session_id) > 0) {
         return Status::Invalid(
-            "Your session has been killed. Please re-authenticate.");
+            "Your session has been killed. Please re-connect.");
       }
 
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
@@ -708,7 +711,7 @@ class DuckDBFlightSqlServer::Impl {
             killed_session_ids_.insert(session_id);
           }
           return Status::Invalid(
-              "Your session has been killed. Please re-authenticate.");
+              "Your session has been killed. Please re-connect.");
         }
         return it->second;
       }
@@ -721,6 +724,7 @@ class DuckDBFlightSqlServer::Impl {
     new_session->session_id = session_id;
     new_session->username = tl_request_ctx.username.value_or("");
     new_session->role = tl_request_ctx.role.value_or("");
+    new_session->auth_method = tl_request_ctx.auth_method.value_or("");
     new_session->peer = tl_request_ctx.peer.value_or(context.peer());
     new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
     new_session->query_timeout = query_timeout_;
@@ -732,7 +736,8 @@ class DuckDBFlightSqlServer::Impl {
       if (!instance_id.empty()) {
         new_session->instrumentation = std::make_unique<SessionInstrumentation>(
             instrumentation_manager_, instance_id, session_id,
-            new_session->username, new_session->role, new_session->peer);
+            new_session->username, new_session->role, new_session->auth_method,
+            new_session->peer);
       } else {
         GIZMOSQL_LOG(WARNING) << "Cannot create session instrumentation - instance_id is empty";
       }
@@ -749,7 +754,7 @@ class DuckDBFlightSqlServer::Impl {
       // Check again if this session was killed (might have happened while building the session)
       if (killed_session_ids_.count(session_id) > 0) {
         return Status::Invalid(
-            "Your session has been killed. Please re-authenticate.");
+            "Your session has been killed. Please re-connect.");
       }
 
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
@@ -758,7 +763,7 @@ class DuckDBFlightSqlServer::Impl {
           client_sessions_.erase(session_id);
           killed_session_ids_.insert(session_id);
           return Status::Invalid(
-              "Your session has been killed. Please re-authenticate.");
+              "Your session has been killed. Please re-connect.");
         }
         // Reuse the valid session
         return it->second;
@@ -808,6 +813,7 @@ class DuckDBFlightSqlServer::Impl {
         print_queries_(print_queries),
         query_timeout_(query_timeout),
         query_log_level_(query_log_level),
+        instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())),
         instrumentation_manager_(std::move(instrumentation_manager)) {}
 
   std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const {
@@ -823,10 +829,7 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   std::string GetInstanceId() const {
-    if (instance_instrumentation_) {
-      return instance_instrumentation_->GetInstanceId();
-    }
-    return "";
+    return instance_id_;
   }
 
   std::shared_ptr<duckdb::DuckDB> GetDuckDBInstance() const {

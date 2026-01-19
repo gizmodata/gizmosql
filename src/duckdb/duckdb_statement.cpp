@@ -41,6 +41,7 @@
 #include <boost/uuid/uuid_io.hpp>
 #include "instrumentation/instrumentation_manager.h"
 #include "instrumentation/instrumentation_records.h"
+#include "version.h"
 
 using arrow::Status;
 using duckdb::QueryResult;
@@ -91,15 +92,120 @@ bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id
   return false;
 }
 
-// Replace GIZMOSQL_CURRENT_SESSION() and GIZMOSQL_CURRENT_INSTANCE() with actual values
-// Only replaces occurrences that are NOT within quoted strings
+// Replace GizmoSQL pseudo-functions with actual values:
+//   GIZMOSQL_CURRENT_SESSION() -> current session UUID
+//   GIZMOSQL_CURRENT_INSTANCE() -> current server instance UUID
+//   GIZMOSQL_VERSION() -> GizmoSQL version string
+// Only replaces occurrences that are NOT within quoted strings.
+// When in a SELECT expression context, adds an alias matching the function name.
+
+// Check if we should add an alias based on context (what precedes and follows).
+// Returns true if in a SELECT expression context, false if in a condition context.
+bool ShouldAddAlias(const std::string& sql, size_t func_start, size_t func_end) {
+  // First check what precedes the function - if preceded by comparison operator, don't alias
+  if (func_start > 0) {
+    size_t prev_pos = func_start - 1;
+    // Skip whitespace backwards
+    while (prev_pos > 0 && std::isspace(sql[prev_pos])) {
+      prev_pos--;
+    }
+
+    if (prev_pos < sql.size()) {
+      char prev_char = sql[prev_pos];
+      // If preceded by comparison operators, we're in a condition context
+      if (prev_char == '=' || prev_char == '<' || prev_char == '>' || prev_char == '!') {
+        return false;
+      }
+      // Check for multi-char operators like !=, <>, <=, >=
+      if (prev_pos > 0) {
+        std::string two_char = sql.substr(prev_pos - 1, 2);
+        if (two_char == "!=" || two_char == "<>" || two_char == "<=" || two_char == ">=") {
+          return false;
+        }
+      }
+    }
+  }
+
+  // Check what follows the function
+  size_t pos = func_end;
+  // Skip whitespace
+  while (pos < sql.size() && std::isspace(sql[pos])) {
+    pos++;
+  }
+
+  if (pos >= sql.size()) {
+    return true;  // End of string - likely SELECT expression
+  }
+
+  char next_char = sql[pos];
+
+  // These characters indicate end of a SELECT expression
+  if (next_char == ',' || next_char == ';') {
+    return true;
+  }
+
+  // Closing paren could be either context - check what follows it
+  if (next_char == ')') {
+    return true;  // Typically fine to alias inside parens in SELECT
+  }
+
+  // Check for user-provided AS alias
+  std::string rest = sql.substr(pos);
+  std::string upper_rest = boost::to_upper_copy(rest);
+  if (upper_rest.rfind("AS ", 0) == 0 || upper_rest.rfind("AS\t", 0) == 0 ||
+      upper_rest.rfind("AS\n", 0) == 0 || upper_rest.rfind("AS\r", 0) == 0) {
+    return false;  // User providing their own alias
+  }
+
+  // Check for SQL keywords that follow SELECT expressions
+  static const std::vector<std::string> select_terminators = {
+      "FROM ", "FROM\t", "FROM\n", "FROM\r",
+      "WHERE ", "WHERE\t", "WHERE\n", "WHERE\r",
+      "ORDER ", "ORDER\t", "ORDER\n", "ORDER\r",
+      "GROUP ", "GROUP\t", "GROUP\n", "GROUP\r",
+      "HAVING ", "HAVING\t", "HAVING\n", "HAVING\r",
+      "LIMIT ", "LIMIT\t", "LIMIT\n", "LIMIT\r",
+      "UNION ", "UNION\t", "UNION\n", "UNION\r",
+      "EXCEPT ", "EXCEPT\t", "EXCEPT\n", "EXCEPT\r",
+      "INTERSECT ", "INTERSECT\t", "INTERSECT\n", "INTERSECT\r",
+  };
+
+  for (const auto& terminator : select_terminators) {
+    if (upper_rest.rfind(terminator, 0) == 0) {
+      return true;
+    }
+  }
+
+  // Check for condition keywords/operators that indicate we're NOT in a SELECT expression
+  static const std::vector<std::string> condition_indicators = {
+      "AND ", "AND\t", "AND\n", "AND\r",
+      "OR ", "OR\t", "OR\n", "OR\r",
+      "IN ", "IN\t", "IN\n", "IN\r", "IN(",
+      "LIKE ", "LIKE\t", "LIKE\n", "LIKE\r",
+      "BETWEEN ", "BETWEEN\t", "BETWEEN\n", "BETWEEN\r",
+      "IS ", "IS\t", "IS\n", "IS\r",
+  };
+
+  for (const auto& indicator : condition_indicators) {
+    if (upper_rest.rfind(indicator, 0) == 0) {
+      return false;
+    }
+  }
+
+  // If followed by comparison operators, we're in a condition
+  if (next_char == '=' || next_char == '<' || next_char == '>' || next_char == '!') {
+    return false;
+  }
+
+  // Default: don't add alias to be safe
+  return false;
+}
+
 std::string ReplaceGizmoSQLFunctions(const std::string& sql,
                                      const std::string& session_id,
                                      const std::string& instance_id) {
-  // Simple approach: use regex that matches GIZMOSQL_CURRENT_SESSION() outside of quotes
-  // We replace all occurrences case-insensitively
   std::string result;
-  result.reserve(sql.size());
+  result.reserve(sql.size() * 2);  // Extra space for potential aliases
 
   size_t i = 0;
   while (i < sql.size()) {
@@ -143,10 +249,12 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
       std::string candidate = sql.substr(i, kSessionFuncLen);
       std::string upper_candidate = boost::to_upper_copy(candidate);
       if (upper_candidate == "GIZMOSQL_CURRENT_SESSION()") {
-        // Replace with the quoted session ID
         result += '\'';
         result += session_id;
         result += '\'';
+        if (ShouldAddAlias(sql, i, i + kSessionFuncLen)) {
+          result += " AS \"GIZMOSQL_CURRENT_SESSION()\"";
+        }
         i += kSessionFuncLen;
         continue;
       }
@@ -158,7 +266,6 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
       std::string candidate = sql.substr(i, kInstanceFuncLen);
       std::string upper_candidate = boost::to_upper_copy(candidate);
       if (upper_candidate == "GIZMOSQL_CURRENT_INSTANCE()") {
-        // Replace with the quoted instance ID, or NULL if not available
         if (instance_id.empty()) {
           result += "NULL";
         } else {
@@ -166,7 +273,27 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
           result += instance_id;
           result += '\'';
         }
+        if (ShouldAddAlias(sql, i, i + kInstanceFuncLen)) {
+          result += " AS \"GIZMOSQL_CURRENT_INSTANCE()\"";
+        }
         i += kInstanceFuncLen;
+        continue;
+      }
+    }
+
+    // Check for GIZMOSQL_VERSION() at this position
+    constexpr size_t kVersionFuncLen = 18;  // length of "GIZMOSQL_VERSION()"
+    if (i + kVersionFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kVersionFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_VERSION()") {
+        result += '\'';
+        result += PROJECT_VERSION;
+        result += '\'';
+        if (ShouldAddAlias(sql, i, i + kVersionFuncLen)) {
+          result += " AS \"GIZMOSQL_VERSION()\"";
+        }
+        i += kVersionFuncLen;
         continue;
       }
     }
@@ -586,7 +713,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const bool& log_queries,
                                  const std::shared_ptr<arrow::Schema>& override_schema) {
   client_session_ = client_session;
-  handle_ = handle;
+  statement_id_ = handle;
   stmt_ = stmt;
   log_queries_ = log_queries;
   logged_sql_ = redact_sql_for_logs(stmt->query);
@@ -604,7 +731,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const bool& log_queries,
                                  const std::shared_ptr<arrow::Schema>& override_schema) {
   client_session_ = client_session;
-  handle_ = handle;
+  statement_id_ = handle;
   sql_ = sql;
   log_queries_ = log_queries;
   logged_sql_ = redact_sql_for_logs(sql);
@@ -644,7 +771,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
     if (auto server = GetServer(*client_session_)) {
       if (auto mgr = server->GetInstrumentationManager()) {
         execution_instrumentation_ = std::make_unique<ExecutionInstrumentation>(
-            mgr, execution_id, handle_, bind_params_str);
+            mgr, execution_id, statement_id_, bind_params_str);
       }
     }
   }
@@ -652,7 +779,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::Execute", execute_status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", handle_},
+      {"role", client_session_->role}, {"statement_id", statement_id_},
       {"execution_id", execution_id},
       {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
@@ -681,7 +808,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                   {"status", "already-executed"},
                   {"session_id", client_session_->session_id},
                   {"user", client_session_->username}, {"role", client_session_->role},
-                  {"statement_id", handle_}, {"query_timeout", query_timeout});
+                  {"statement_id", statement_id_}, {"query_timeout", query_timeout});
             }
             return 0;  // Success
           }
@@ -702,7 +829,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                   {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
                   {"session_id", client_session_->session_id},
                   {"user", client_session_->username}, {"role", client_session_->role},
-                  {"statement_id", handle_}, {"error", result->GetError()},
+                  {"statement_id", statement_id_}, {"error", result->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
             }
             return arrow::Status::ExecutionError("Direct query execution error: ",
@@ -725,7 +852,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                 {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "executing"},
                 {"session_id", client_session_->session_id},
                 {"user", client_session_->username}, {"role", client_session_->role},
-                {"statement_id", handle_}, {"bind_parameters", params_str.str()},
+                {"statement_id", statement_id_}, {"bind_parameters", params_str.str()},
                 {"param_count", std::to_string(bind_parameters.size())},
                 {"query_timeout", std::to_string(query_timeout)});
           }
@@ -741,7 +868,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                   {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
                   {"session_id", client_session_->session_id},
                   {"user", client_session_->username}, {"role", client_session_->role},
-                  {"statement_id", handle_}, {"error", query_result_->GetError()},
+                  {"statement_id", statement_id_}, {"error", query_result_->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
             }
             return arrow::Status::ExecutionError("An execution error has occurred: ",
@@ -770,7 +897,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                      {"status", "timeout"}, {"session_id", client_session_->session_id},
                      {"interruption_status", "begin"},
                      {"user", client_session_->username}, {"role", client_session_->role},
-                     {"statement_id", handle_},
+                     {"statement_id", statement_id_},
                      {"timeout_seconds", std::to_string(query_timeout)},
                      {"sql", logged_sql_});
     }
@@ -789,7 +916,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                      {"status", "timeout"}, {"session_id", client_session_->session_id},
                      {"interruption_status", "end"},
                      {"user", client_session_->username}, {"role", client_session_->role},
-                     {"statement_id", handle_},
+                     {"statement_id", statement_id_},
                      {"timeout_seconds", std::to_string(query_timeout)},
                      {"sql", logged_sql_});
     }
@@ -810,10 +937,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
   end_time_ = std::chrono::steady_clock::now();
 
   // Record success or error in instrumentation
+  // Note: rows_fetched will be updated incrementally during FetchResult calls in the batch reader,
+  // and the final record will be written when the ExecutionInstrumentation is destroyed
   if (execution_instrumentation_) {
     if (result.ok()) {
-      // Note: rows_fetched will be updated incrementally during FetchResult calls
-      execution_instrumentation_->SetCompleted(0, GetLastExecutionDurationMs());
+      execution_instrumentation_->SetCompleted(GetLastExecutionDurationMs());
     } else {
       execution_instrumentation_->SetError(result.status().ToString());
     }
@@ -824,7 +952,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
         log_level, "Client SQL command execution succeeded",
         {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "success"},
         {"session_id", client_session_->session_id}, {"user", client_session_->username},
-        {"role", client_session_->role}, {"statement_id", handle_},
+        {"role", client_session_->role}, {"statement_id", statement_id_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
         {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_});
   }
@@ -839,7 +967,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::FetchResult", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", handle_},
+      {"role", client_session_->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (synthetic_result_batch_) {
@@ -884,7 +1012,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                    {"kind", "fetch"}, {"status", "success"},
                    {"session_id", client_session_->session_id},
                    {"user", client_session_->username}, {"role", client_session_->role},
-                   {"statement_id", handle_},
+                   {"statement_id", statement_id_},
                    {"num_rows", std::to_string(record_batch->num_rows())},
                    {"num_columns", std::to_string(record_batch->num_columns())},
                    {"sql", logged_sql_});
@@ -908,7 +1036,7 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::ExecuteUpdate", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", handle_},
+      {"role", client_session_->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"}, );
 
   ARROW_RETURN_NOT_OK(Execute());
@@ -942,7 +1070,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::GetSchema", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", handle_},
+      {"role", client_session_->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   // If there is an override schema - just return it and avoid computation...
@@ -971,7 +1099,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::ComputeSchema", status, {"peer", client_session_->peer},
       {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", handle_},
+      {"role", client_session_->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (is_gizmosql_admin_) {
