@@ -87,7 +87,8 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
       const std::string& secret_key, const std::string& token_allowed_issuer,
       const std::string& token_allowed_audience,
       const std::filesystem::path& token_signature_verify_cert_path,
-      const arrow::util::ArrowLogLevel& auth_log_level);
+      const arrow::util::ArrowLogLevel& auth_log_level,
+      bool tls_enabled = false, bool mtls_enabled = false);
 
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
@@ -102,6 +103,8 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   std::filesystem::path token_signature_verify_cert_path_;
   std::string token_signature_verify_cert_file_contents_;
   bool token_auth_enabled_ = false;
+  bool tls_enabled_ = false;
+  bool mtls_enabled_ = false;
   arrow::util::ArrowLogLevel auth_log_level_;
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>

@@ -74,7 +74,10 @@ Tracks client session lifecycle.
 | `username` | VARCHAR | Authenticated username |
 | `role` | VARCHAR | User's role (e.g., 'admin', 'user') |
 | `auth_method` | VARCHAR | Authentication method (e.g., 'Basic', 'BootstrapToken') |
-| `peer` | VARCHAR | Client IP/hostname |
+| `peer` | VARCHAR | Client IP:port (network address) |
+| `peer_identity` | VARCHAR | mTLS client certificate identity (NULL if not using mTLS) |
+| `user_agent` | VARCHAR | Client user-agent header (e.g., 'ADBC Flight SQL Driver v1.10.0', 'grpc-java-netty/1.65.0') |
+| `connection_protocol` | ENUM | 'plaintext', 'tls', or 'mtls' |
 | `start_time` | TIMESTAMP | When session started |
 | `stop_time` | TIMESTAMP | When session ended (NULL if active) |
 | `status` | ENUM | 'active', 'closed', 'killed', 'timeout', 'error' |
@@ -121,7 +124,7 @@ Shows currently active sessions.
 SELECT * FROM _gizmosql_instr.active_sessions;
 ```
 
-Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `start_time`, `status`, `hostname`, `port`, `database_path`, `session_duration_seconds`
+Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `peer_identity`, `user_agent`, `connection_protocol`, `start_time`, `status`, `hostname`, `port`, `database_path`, `session_duration_seconds`
 
 #### `_gizmosql_instr.session_activity`
 

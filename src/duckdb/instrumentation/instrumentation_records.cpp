@@ -91,20 +91,26 @@ void InstanceInstrumentation::SetStopReason(const std::string& reason) {
 SessionInstrumentation::SessionInstrumentation(
     std::shared_ptr<InstrumentationManager> manager, const std::string& instance_id,
     const std::string& session_id, const std::string& username, const std::string& role,
-    const std::string& auth_method, const std::string& peer)
+    const std::string& auth_method, const std::string& peer, const std::string& peer_identity,
+    const std::string& user_agent, const std::string& connection_protocol)
     : manager_(std::move(manager)), instance_id_(instance_id), session_id_(session_id) {
   if (!manager_ || !manager_->IsEnabled()) {
     return;
   }
 
   manager_->QueueWrite([instance_id, session_id, username, role, auth_method,
-                        peer](duckdb::Connection& conn) {
+                        peer, peer_identity, user_agent,
+                        connection_protocol](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.sessions (session_id, instance_id, username, role, auth_method, peer) "
-        "VALUES ($1, $2, $3, $4, $5, $6)");
+        "INSERT INTO _gizmosql_instr.sessions (session_id, instance_id, username, role, "
+        "auth_method, peer, peer_identity, user_agent, connection_protocol) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::_gizmosql_instr.connection_protocol)");
     stmt->Execute(duckdb::Value::UUID(session_id), duckdb::Value::UUID(instance_id),
                   duckdb::Value(username), duckdb::Value(role), duckdb::Value(auth_method),
-                  duckdb::Value(peer));
+                  duckdb::Value(peer),
+                  peer_identity.empty() ? duckdb::Value() : duckdb::Value(peer_identity),
+                  user_agent.empty() ? duckdb::Value() : duckdb::Value(user_agent),
+                  duckdb::Value(connection_protocol));
   });
 }
 

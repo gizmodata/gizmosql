@@ -67,7 +67,9 @@ class SessionInstrumentation {
                          const std::string& instance_id,
                          const std::string& session_id, const std::string& username,
                          const std::string& role, const std::string& auth_method,
-                         const std::string& peer);
+                         const std::string& peer, const std::string& peer_identity,
+                         const std::string& user_agent,
+                         const std::string& connection_protocol);
 
   ~SessionInstrumentation();
 

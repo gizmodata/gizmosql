@@ -726,6 +726,9 @@ class DuckDBFlightSqlServer::Impl {
     new_session->role = tl_request_ctx.role.value_or("");
     new_session->auth_method = tl_request_ctx.auth_method.value_or("");
     new_session->peer = tl_request_ctx.peer.value_or(context.peer());
+    new_session->peer_identity = tl_request_ctx.peer_identity.value_or("");
+    new_session->user_agent = tl_request_ctx.user_agent.value_or("");
+    new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
     new_session->query_timeout = query_timeout_;
     new_session->query_log_level = query_log_level_;
@@ -737,7 +740,8 @@ class DuckDBFlightSqlServer::Impl {
         new_session->instrumentation = std::make_unique<SessionInstrumentation>(
             instrumentation_manager_, instance_id, session_id,
             new_session->username, new_session->role, new_session->auth_method,
-            new_session->peer);
+            new_session->peer, new_session->peer_identity, new_session->user_agent,
+            new_session->connection_protocol);
       } else {
         GIZMOSQL_LOG(WARNING) << "Cannot create session instrumentation - instance_id is empty";
       }

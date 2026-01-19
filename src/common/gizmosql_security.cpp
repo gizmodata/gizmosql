@@ -177,13 +177,16 @@ BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
     const std::string& secret_key, const std::string& token_allowed_issuer,
     const std::string& token_allowed_audience,
     const std::filesystem::path& token_signature_verify_cert_path,
-    const arrow::util::ArrowLogLevel& auth_log_level)
+    const arrow::util::ArrowLogLevel& auth_log_level,
+    bool tls_enabled, bool mtls_enabled)
     : username_(username),
       password_(password),
       secret_key_(secret_key),
       token_allowed_issuer_(token_allowed_issuer),
       token_allowed_audience_(token_allowed_audience),
       token_signature_verify_cert_path_(token_signature_verify_cert_path),
+      tls_enabled_(tls_enabled),
+      mtls_enabled_(mtls_enabled),
       auth_log_level_(auth_log_level) {
   if (username_ == kTokenUsername) {
     throw std::runtime_error("You cannot use username: '" + kTokenUsername +
@@ -220,6 +223,31 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
   std::string auth_header_type;
 
   auto incoming_headers = context.incoming_headers();
+
+  // Extract user-agent header for client identification
+  auto user_agent_iter = incoming_headers.find("user-agent");
+  if (user_agent_iter != incoming_headers.end()) {
+    tl_request_ctx.user_agent = std::string(user_agent_iter->second);
+  } else {
+    tl_request_ctx.user_agent = std::nullopt;
+  }
+
+  // Extract peer identity (mTLS client certificate CN)
+  auto peer_identity = context.peer_identity();
+  if (!peer_identity.empty()) {
+    tl_request_ctx.peer_identity = peer_identity;
+  } else {
+    tl_request_ctx.peer_identity = std::nullopt;
+  }
+
+  // Determine connection protocol
+  if (mtls_enabled_ && !peer_identity.empty()) {
+    tl_request_ctx.connection_protocol = "mtls";
+  } else if (tls_enabled_) {
+    tl_request_ctx.connection_protocol = "tls";
+  } else {
+    tl_request_ctx.connection_protocol = "plaintext";
+  }
 
   ARROW_RETURN_NOT_OK(
       SecurityUtilities::GetAuthHeaderType(incoming_headers, &auth_header_type));

@@ -86,6 +86,9 @@ CREATE TABLE IF NOT EXISTS instances (
     stop_reason VARCHAR
 );
 
+-- Connection protocol enum
+CREATE TYPE IF NOT EXISTS connection_protocol AS ENUM ('plaintext', 'tls', 'mtls');
+
 -- Client session lifecycle
 CREATE TABLE IF NOT EXISTS sessions (
     session_id UUID PRIMARY KEY,
@@ -94,6 +97,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     role VARCHAR NOT NULL,
     auth_method VARCHAR NOT NULL,
     peer VARCHAR NOT NULL,
+    peer_identity VARCHAR,
+    user_agent VARCHAR,
+    connection_protocol connection_protocol NOT NULL DEFAULT 'plaintext',
     start_time TIMESTAMP NOT NULL DEFAULT now(),
     stop_time TIMESTAMP,
     status session_status NOT NULL DEFAULT 'active',
@@ -184,6 +190,9 @@ SELECT
     s.role,
     s.auth_method,
     s.peer,
+    s.peer_identity,
+    s.user_agent,
+    s.connection_protocol,
     s.start_time,
     s.status,
     s.status_text,
