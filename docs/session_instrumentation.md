@@ -213,9 +213,10 @@ SELECT
     execution_start_time,
     duration_ms,
     status,
+    status_text,
     username
 FROM _gizmosql_instr.execution_details
-WHERE status = 'error'
+WHERE status_text = 'error'
 LIMIT 20;
 ```
 
@@ -239,7 +240,7 @@ Useful for version checking in scripts or diagnostics:
 ```sql
 SELECT
     GIZMOSQL_VERSION() AS gizmosql_version,
-    (SELECT version FROM pragma_version()) AS duckdb_version;
+    VERSION() AS duckdb_version;
 ```
 
 ### `GIZMOSQL_CURRENT_SESSION()`
