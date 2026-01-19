@@ -21,6 +21,8 @@ RUN apt-get update && \
     ninja-build \
     libboost-all-dev \
     libssl-dev \
+    libcurl4-openssl-dev \
+    zlib1g-dev \
     numactl \
     sqlite3 \
     vim && \
@@ -97,9 +99,11 @@ COPY --chown=app_user:app_user third_party third_party
 COPY --chown=app_user:app_user src src
 
 # Run the CMake build (then cleanup)
+# Note: WITH_OPENTELEMETRY requires libcurl (installed above as libcurl4-openssl-dev)
 RUN cmake -S . -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DWITH_OPENTELEMETRY=ON && \
     cmake --build build --target install && \
     rm -rf build src third_party CMakeLists.txt
 

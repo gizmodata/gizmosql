@@ -28,4 +28,7 @@ ExternalProject_Add(
       -DARROW_DEPENDENCY_SOURCE=BUNDLED
       -DARROW_DEPENDENCY_USE_SHARED=OFF
       -Dxsimd_SOURCE=BUNDLED
+      # Use system ZLIB to avoid conflicts with bundled build
+      -DZLIB_SOURCE=SYSTEM
+      -DARROW_WITH_ZLIB=ON
 )
