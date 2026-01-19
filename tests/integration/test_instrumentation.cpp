@@ -292,3 +292,76 @@ TEST_F(InstrumentationServerFixture, CurrentSessionFunction) {
   // Verify it looks like a UUID (36 chars with hyphens)
   ASSERT_EQ(session_id.length(), 36) << "Session ID should be a UUID";
 }
+
+// Test GIZMOSQL_CURRENT_INSTANCE() function returns current server instance ID
+TEST_F(InstrumentationServerFixture, CurrentInstanceFunction) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // First, test that GIZMOSQL_CURRENT_INSTANCE() returns a valid UUID
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto direct_info,
+      sql_client.Execute(call_options, "SELECT GIZMOSQL_CURRENT_INSTANCE()"));
+
+  std::string direct_instance_id;
+  for (const auto& endpoint : direct_info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    std::shared_ptr<arrow::Table> table;
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+    if (table->num_rows() > 0) {
+      auto column = table->column(0);
+      auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
+      direct_instance_id = array->GetString(0);
+    }
+  }
+  ASSERT_FALSE(direct_instance_id.empty())
+      << "GIZMOSQL_CURRENT_INSTANCE() should return a non-empty value";
+  // Verify it looks like a UUID (36 chars with hyphens)
+  ASSERT_EQ(direct_instance_id.length(), 36)
+      << "Instance ID should be a UUID, got: " << direct_instance_id;
+
+  // Allow async write queue to flush instrumentation records
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  // Use GIZMOSQL_CURRENT_INSTANCE() to get current instance ID and verify it exists
+  // in the instances table
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info,
+      sql_client.Execute(call_options,
+                         "SELECT instance_id FROM _gizmosql_instr.instances "
+                         "WHERE instance_id = GIZMOSQL_CURRENT_INSTANCE()"));
+
+  bool found_instance = false;
+  std::string instance_id;
+  for (const auto& endpoint : info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    std::shared_ptr<arrow::Table> table;
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+    if (table->num_rows() > 0) {
+      found_instance = true;
+      auto column = table->column(0);
+      auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
+      instance_id = array->GetString(0);
+    }
+  }
+  ASSERT_TRUE(found_instance)
+      << "GIZMOSQL_CURRENT_INSTANCE() should return current instance ID that exists in instances table";
+  ASSERT_FALSE(instance_id.empty()) << "Instance ID should not be empty";
+  ASSERT_EQ(instance_id, direct_instance_id)
+      << "Instance ID from instances table should match direct query result";
+}
