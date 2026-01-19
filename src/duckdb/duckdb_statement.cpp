@@ -158,10 +158,14 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
       std::string candidate = sql.substr(i, kInstanceFuncLen);
       std::string upper_candidate = boost::to_upper_copy(candidate);
       if (upper_candidate == "GIZMOSQL_CURRENT_INSTANCE()") {
-        // Replace with the quoted instance ID
-        result += '\'';
-        result += instance_id;
-        result += '\'';
+        // Replace with the quoted instance ID, or NULL if not available
+        if (instance_id.empty()) {
+          result += "NULL";
+        } else {
+          result += '\'';
+          result += instance_id;
+          result += '\'';
+        }
         i += kInstanceFuncLen;
         continue;
       }
