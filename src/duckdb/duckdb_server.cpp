@@ -732,6 +732,7 @@ class DuckDBFlightSqlServer::Impl {
     new_session->peer_identity = tl_request_ctx.peer_identity.value_or("");
     new_session->user_agent = tl_request_ctx.user_agent.value_or("");
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
+    new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
     new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
     new_session->query_timeout = query_timeout_;
     new_session->query_log_level = query_log_level_;

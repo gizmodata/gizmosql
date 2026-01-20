@@ -35,6 +35,72 @@ const std::string kBearerPrefix = "Bearer ";
 const std::string kAuthHeader = "authorization";
 const int kMaxLoggedTokens = 50000;
 
+// Helper function to parse catalog_access claim from JWT token
+// Expected format: [{"catalog": "name", "access": "read|write|none"}, ...]
+std::optional<std::vector<CatalogAccessRule>> ParseCatalogAccessClaim(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) {
+  if (!decoded.has_payload_claim("catalog_access")) {
+    return std::nullopt;
+  }
+
+  try {
+    auto claim = decoded.get_payload_claim("catalog_access");
+    auto json_value = claim.to_json();
+
+    if (!json_value.is<picojson::array>()) {
+      GIZMOSQL_LOG(WARNING) << "catalog_access claim is not an array";
+      return std::nullopt;
+    }
+
+    std::vector<CatalogAccessRule> rules;
+    const auto& arr = json_value.get<picojson::array>();
+
+    for (const auto& item : arr) {
+      if (!item.is<picojson::object>()) {
+        GIZMOSQL_LOG(WARNING) << "catalog_access item is not an object";
+        continue;
+      }
+
+      const auto& obj = item.get<picojson::object>();
+
+      auto catalog_it = obj.find("catalog");
+      auto access_it = obj.find("access");
+
+      if (catalog_it == obj.end() || access_it == obj.end()) {
+        GIZMOSQL_LOG(WARNING) << "catalog_access item missing 'catalog' or 'access' field";
+        continue;
+      }
+
+      if (!catalog_it->second.is<std::string>() || !access_it->second.is<std::string>()) {
+        GIZMOSQL_LOG(WARNING) << "catalog_access 'catalog' or 'access' is not a string";
+        continue;
+      }
+
+      CatalogAccessRule rule;
+      rule.catalog = catalog_it->second.get<std::string>();
+      const auto& access_str = access_it->second.get<std::string>();
+
+      if (access_str == "write") {
+        rule.access = CatalogAccessLevel::kWrite;
+      } else if (access_str == "read") {
+        rule.access = CatalogAccessLevel::kRead;
+      } else if (access_str == "none") {
+        rule.access = CatalogAccessLevel::kNone;
+      } else {
+        GIZMOSQL_LOG(WARNING) << "Unknown access level: " << access_str << " - defaulting to none";
+        rule.access = CatalogAccessLevel::kNone;
+      }
+
+      rules.push_back(std::move(rule));
+    }
+
+    return rules;
+  } catch (const std::exception& e) {
+    GIZMOSQL_LOG(WARNING) << "Failed to parse catalog_access claim: " << e.what();
+    return std::nullopt;
+  }
+}
+
 // ----------------------------------------
 Status SecurityUtilities::FlightServerTlsCertificates(
     const fs::path& cert_path, const fs::path& key_path,
@@ -554,6 +620,7 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       tl_request_ctx.peer = context.peer();
       tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").as_string();
       tl_request_ctx.auth_method = decoded_jwt.get_payload_claim("auth_method").as_string();
+      tl_request_ctx.catalog_access = ParseCatalogAccessClaim(decoded_jwt);
     }
   }
   return Status::OK();

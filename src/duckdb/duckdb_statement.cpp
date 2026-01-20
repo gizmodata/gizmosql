@@ -566,50 +566,53 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session->connection->Prepare(effective_sql);
 
   if (stmt->success) {
-    // Check if the statement modifies the instrumentation database
+    // Check catalog-level write access for all databases the statement will modify
+    // modified_databases is a map of catalog_name -> CatalogIdentity
     const auto& modified_dbs = stmt->data->properties.modified_databases;
-    if (modified_dbs.find("_gizmosql_instr") != modified_dbs.end()) {
-      GIZMOSQL_LOGKV(WARNING, "Client attempted to modify instrumentation database",
-                     {"peer", client_session->peer}, {"kind", "sql"},
-                     {"status", "rejected"}, {"session_id", client_session->session_id},
-                     {"user", client_session->username}, {"role", client_session->role},
-                     {"statement_id", handle}, {"sql", logged_sql});
-      std::string error_msg =
-          "Cannot modify the instrumentation database (_gizmosql_instr). "
-          "It is read-only for client sessions.";
-      // Record the rejected modification attempt
-      if (auto server = GetServer(*client_session)) {
-        if (auto mgr = server->GetInstrumentationManager()) {
-          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                   flight_method, is_internal, error_msg);
+    for (const auto& [catalog_name, catalog_identity] : modified_dbs) {
+      if (!client_session->HasWriteAccess(catalog_name)) {
+        GIZMOSQL_LOGKV(WARNING, "Access denied: user lacks write access to catalog",
+                       {"peer", client_session->peer}, {"kind", "sql"},
+                       {"status", "rejected"}, {"session_id", client_session->session_id},
+                       {"user", client_session->username}, {"role", client_session->role},
+                       {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
+        std::string error_msg =
+            "Access denied: You do not have write access to catalog '" + catalog_name + "'.";
+        // Record the rejected modification attempt
+        if (auto server = GetServer(*client_session)) {
+          if (auto mgr = server->GetInstrumentationManager()) {
+            StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                     flight_method, is_internal, error_msg);
+          }
         }
+        return Status::Invalid(error_msg);
       }
-      return Status::Invalid(error_msg);
     }
 
-    // Check if non-admin user attempts to read from instrumentation database
+    // Check catalog-level read access for all databases the statement will read
+    // read_databases is a map of catalog_name -> CatalogIdentity
     const auto& read_dbs = stmt->data->properties.read_databases;
-    if (read_dbs.find("_gizmosql_instr") != read_dbs.end() &&
-        client_session->role != "admin") {
-      GIZMOSQL_LOGKV(WARNING, "Non-admin user attempted to read instrumentation database",
-                     {"peer", client_session->peer}, {"kind", "sql"},
-                     {"status", "rejected"}, {"session_id", client_session->session_id},
-                     {"user", client_session->username}, {"role", client_session->role},
-                     {"statement_id", handle}, {"sql", logged_sql});
-      std::string error_msg =
-          "Access denied: Only users with the 'admin' role can query the "
-          "instrumentation database (_gizmosql_instr).";
-      // Record the rejected read attempt
-      if (auto server = GetServer(*client_session)) {
-        if (auto mgr = server->GetInstrumentationManager()) {
-          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                   flight_method, is_internal, error_msg);
+    for (const auto& [catalog_name, catalog_identity] : read_dbs) {
+      if (!client_session->HasReadAccess(catalog_name)) {
+        GIZMOSQL_LOGKV(WARNING, "Access denied: user lacks read access to catalog",
+                       {"peer", client_session->peer}, {"kind", "sql"},
+                       {"status", "rejected"}, {"session_id", client_session->session_id},
+                       {"user", client_session->username}, {"role", client_session->role},
+                       {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
+        std::string error_msg =
+            "Access denied: You do not have read access to catalog '" + catalog_name + "'.";
+        // Record the rejected read attempt
+        if (auto server = GetServer(*client_session)) {
+          if (auto mgr = server->GetInstrumentationManager()) {
+            StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                     flight_method, is_internal, error_msg);
+          }
         }
+        return Status::Invalid(error_msg);
       }
-      return Status::Invalid(error_msg);
     }
 
-    // Check for readonly role trying to modify data
+    // Check for readonly role trying to modify data (legacy support)
     if (!stmt->data->properties.IsReadOnly() && client_session->role == "readonly") {
       std::string error_msg =
           "User '" + client_session->username +

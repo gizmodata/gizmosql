@@ -181,7 +181,8 @@ TEST_F(InstrumentationServerFixture, ModifyInstrumentationPrevented) {
       sql_client.Execute(call_options, "DELETE FROM _gizmosql_instr.sql_statements");
   ASSERT_FALSE(delete_result.ok()) << "DELETE from instrumentation should have been rejected";
   ASSERT_TRUE(delete_result.status().ToString().find("Cannot modify") != std::string::npos ||
-              delete_result.status().ToString().find("read-only") != std::string::npos)
+              delete_result.status().ToString().find("read-only") != std::string::npos ||
+              delete_result.status().ToString().find("Access denied") != std::string::npos)
       << "Expected error message about modification prevention: "
       << delete_result.status().ToString();
 
@@ -193,7 +194,8 @@ TEST_F(InstrumentationServerFixture, ModifyInstrumentationPrevented) {
       "'00000000-0000-0000-0000-000000000000', 'fake', 'fake', 'fake')");
   ASSERT_FALSE(insert_result.ok()) << "INSERT into instrumentation should have been rejected";
   ASSERT_TRUE(insert_result.status().ToString().find("Cannot modify") != std::string::npos ||
-              insert_result.status().ToString().find("read-only") != std::string::npos)
+              insert_result.status().ToString().find("read-only") != std::string::npos ||
+              insert_result.status().ToString().find("Access denied") != std::string::npos)
       << "Expected error message about modification prevention: "
       << insert_result.status().ToString();
 
@@ -202,7 +204,8 @@ TEST_F(InstrumentationServerFixture, ModifyInstrumentationPrevented) {
       call_options, "UPDATE _gizmosql_instr.sessions SET username = 'hacked'");
   ASSERT_FALSE(update_result.ok()) << "UPDATE on instrumentation should have been rejected";
   ASSERT_TRUE(update_result.status().ToString().find("Cannot modify") != std::string::npos ||
-              update_result.status().ToString().find("read-only") != std::string::npos)
+              update_result.status().ToString().find("read-only") != std::string::npos ||
+              update_result.status().ToString().find("Access denied") != std::string::npos)
       << "Expected error message about modification prevention: "
       << update_result.status().ToString();
 }
