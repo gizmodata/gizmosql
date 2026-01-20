@@ -777,6 +777,11 @@ class DuckDBFlightSqlServer::Impl {
       }
 
       client_sessions_[session_id] = new_session;
+      GIZMOSQL_LOGKV(INFO, "Client session was successfully created.",
+                     {"peer", new_session->peer}, {"kind", "session_create"},
+                     {"status", "success"}, {"session_id", new_session->session_id},
+                     {"user", new_session->username}, {"role", new_session->role},
+                     {"auth_method", new_session->auth_method});
       return new_session;
     }
   }
