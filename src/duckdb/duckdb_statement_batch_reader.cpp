@@ -40,6 +40,7 @@ DuckDBStatementBatchReader::DuckDBStatementBatchReader(
   : statement_(std::move(statement)),
     schema_(std::move(schema)),
     rc_(DuckDBSuccess),
+    already_executed_(false),
     results_read_(false) {
 }
 
@@ -64,6 +65,11 @@ DuckDBStatementBatchReader::Create(const std::shared_ptr<DuckDBStatement>& state
 
 arrow::Status DuckDBStatementBatchReader::ReadNext(
     std::shared_ptr<arrow::RecordBatch>* out) {
+  if (!already_executed_) {
+    ARROW_RETURN_NOT_OK(statement_->Execute());
+    already_executed_ = true;
+  }
+
   ARROW_ASSIGN_OR_RAISE(*out, statement_->FetchResult());
 
   // Track rows fetched for instrumentation

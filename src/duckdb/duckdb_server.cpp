@@ -1067,7 +1067,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle))
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
 
-    return statement->Execute();
+    return Status::OK();
   }
 
   Result<int64_t> DoPutPreparedStatementUpdate(

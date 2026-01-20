@@ -48,6 +48,7 @@ private:
   std::shared_ptr<DuckDBStatement> statement_;
   std::shared_ptr<arrow::Schema> schema_;
   int rc_;
+  bool already_executed_;
   bool results_read_;
 
   DuckDBStatementBatchReader(std::shared_ptr<DuckDBStatement> statement,
