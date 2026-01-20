@@ -28,8 +28,25 @@ configure_file(
 )
 
 # --------------------- Arrow ---------------------
+# Platform-specific Arrow dependency handling:
+# - macOS: Use system gRPC stack to avoid Arrow 23 bug with c-ares alias targets
+# - Linux: Use bundled dependencies for fully static builds
+if(APPLE)
+    set(ARROW_PLATFORM_DEPS_ARGS
+        "-DgRPC_SOURCE=SYSTEM"
+        "-DProtobuf_SOURCE=SYSTEM"
+        "-Dabsl_SOURCE=SYSTEM"
+        "-Dc-ares_SOURCE=SYSTEM"
+        "-Dre2_SOURCE=SYSTEM"
+        "-DZLIB_SOURCE=SYSTEM"
+    )
+else()
+    set(ARROW_PLATFORM_DEPS_ARGS "")
+endif()
+
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
+        @ONLY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
