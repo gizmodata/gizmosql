@@ -96,6 +96,8 @@ bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id
 //   GIZMOSQL_CURRENT_SESSION() -> current session UUID
 //   GIZMOSQL_CURRENT_INSTANCE() -> current server instance UUID
 //   GIZMOSQL_VERSION() -> GizmoSQL version string
+//   GIZMOSQL_USER() -> current username
+//   GIZMOSQL_ROLE() -> current user's role
 // Only replaces occurrences that are NOT within quoted strings.
 // When in a SELECT expression context, adds an alias matching the function name.
 
@@ -203,7 +205,9 @@ bool ShouldAddAlias(const std::string& sql, size_t func_start, size_t func_end) 
 
 std::string ReplaceGizmoSQLFunctions(const std::string& sql,
                                      const std::string& session_id,
-                                     const std::string& instance_id) {
+                                     const std::string& instance_id,
+                                     const std::string& username,
+                                     const std::string& role) {
   std::string result;
   result.reserve(sql.size() * 2);  // Extra space for potential aliases
 
@@ -294,6 +298,40 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
           result += " AS \"GIZMOSQL_VERSION()\"";
         }
         i += kVersionFuncLen;
+        continue;
+      }
+    }
+
+    // Check for GIZMOSQL_USER() at this position
+    constexpr size_t kUserFuncLen = 15;  // length of "GIZMOSQL_USER()"
+    if (i + kUserFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kUserFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_USER()") {
+        result += '\'';
+        result += username;
+        result += '\'';
+        if (ShouldAddAlias(sql, i, i + kUserFuncLen)) {
+          result += " AS \"GIZMOSQL_USER()\"";
+        }
+        i += kUserFuncLen;
+        continue;
+      }
+    }
+
+    // Check for GIZMOSQL_ROLE() at this position
+    constexpr size_t kRoleFuncLen = 15;  // length of "GIZMOSQL_ROLE()"
+    if (i + kRoleFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kRoleFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_ROLE()") {
+        result += '\'';
+        result += role;
+        result += '\'';
+        if (ShouldAddAlias(sql, i, i + kRoleFuncLen)) {
+          result += " AS \"GIZMOSQL_ROLE()\"";
+        }
+        i += kRoleFuncLen;
         continue;
       }
     }
@@ -419,9 +457,10 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     instance_id = server->GetInstanceId();
   }
 
-  // Replace GIZMOSQL_CURRENT_SESSION() and GIZMOSQL_CURRENT_INSTANCE() with actual values
-  std::string effective_sql =
-      ReplaceGizmoSQLFunctions(sql, client_session->session_id, instance_id);
+  // Replace GIZMOSQL_* pseudo-functions with actual values
+  std::string effective_sql = ReplaceGizmoSQLFunctions(
+      sql, client_session->session_id, instance_id, client_session->username,
+      client_session->role);
 
   if (log_queries) {
     GIZMOSQL_LOGKV_DYNAMIC(

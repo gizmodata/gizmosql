@@ -51,7 +51,7 @@ When instrumentation is disabled:
 - Session, statement, and execution tracking is disabled
 - Queries to `_gizmosql_instr.*` tables/views will fail (schema doesn't exist)
 
-Note that `GIZMOSQL_CURRENT_SESSION()`, `GIZMOSQL_CURRENT_INSTANCE()`, `GIZMOSQL_VERSION()`, and `KILL SESSION` still work when instrumentation is disabled - they just won't be recorded in the instrumentation tables.
+Note that `GIZMOSQL_CURRENT_SESSION()`, `GIZMOSQL_CURRENT_INSTANCE()`, `GIZMOSQL_VERSION()`, `GIZMOSQL_USER()`, `GIZMOSQL_ROLE()`, and `KILL SESSION` still work when instrumentation is disabled - they just won't be recorded in the instrumentation tables.
 
 Disabling instrumentation may be useful for:
 - Development/testing environments where audit trails are not needed
@@ -275,6 +275,43 @@ Useful for filtering instrumentation data to the current server instance:
 SELECT * FROM _gizmosql_instr.sessions
 WHERE instance_id = GIZMOSQL_CURRENT_INSTANCE()
 ORDER BY start_time DESC;
+```
+
+### `GIZMOSQL_USER()`
+
+Returns the username of the current authenticated user.
+
+```sql
+SELECT GIZMOSQL_USER();
+-- Returns: 'alice'
+```
+
+Useful for logging or auditing which user is executing queries:
+
+```sql
+SELECT GIZMOSQL_USER() AS current_user,
+       GIZMOSQL_ROLE() AS current_role,
+       now() AS query_time;
+```
+
+### `GIZMOSQL_ROLE()`
+
+Returns the role of the current authenticated user (e.g., `admin`, `user`, `readonly`).
+
+```sql
+SELECT GIZMOSQL_ROLE();
+-- Returns: 'admin'
+```
+
+Useful for conditional logic based on user permissions:
+
+```sql
+-- Check if current user has admin privileges
+SELECT CASE
+    WHEN GIZMOSQL_ROLE() = 'admin' THEN 'Full access'
+    WHEN GIZMOSQL_ROLE() = 'readonly' THEN 'Read-only access'
+    ELSE 'Standard access'
+END AS access_level;
 ```
 
 ---

@@ -384,6 +384,82 @@ TEST_F(InstrumentationServerFixture, CurrentInstanceFunction) {
       << "Instance ID from instances table should match direct query result";
 }
 
+// Test GIZMOSQL_USER() function returns current username
+TEST_F(InstrumentationServerFixture, UserFunction) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // Test that GIZMOSQL_USER() returns the expected username
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info,
+                             sql_client.Execute(call_options, "SELECT GIZMOSQL_USER()"));
+
+  std::string username;
+  for (const auto& endpoint : info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    std::shared_ptr<arrow::Table> table;
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+    if (table->num_rows() > 0) {
+      auto column = table->column(0);
+      auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
+      username = array->GetString(0);
+    }
+  }
+  ASSERT_EQ(username, GetUsername())
+      << "GIZMOSQL_USER() should return the authenticated username";
+}
+
+// Test GIZMOSQL_ROLE() function returns current user's role
+TEST_F(InstrumentationServerFixture, RoleFunction) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // Test that GIZMOSQL_ROLE() returns the expected role (admin for system user)
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info,
+                             sql_client.Execute(call_options, "SELECT GIZMOSQL_ROLE()"));
+
+  std::string role;
+  for (const auto& endpoint : info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    std::shared_ptr<arrow::Table> table;
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+    if (table->num_rows() > 0) {
+      auto column = table->column(0);
+      auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
+      role = array->GetString(0);
+    }
+  }
+  // System user (username/password auth) should have admin role
+  ASSERT_EQ(role, "admin") << "GIZMOSQL_ROLE() should return 'admin' for system user";
+}
+
 // Test that stale 'running' instances from previous unclean shutdowns are cleaned up
 // This is a unit test that directly tests InstrumentationManager::CleanupStaleRecords
 TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
