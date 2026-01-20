@@ -345,10 +345,10 @@ jobs:
             def caveats
               <<~EOS
                 GizmoSQL server can be started with:
-                  gizmosql_server --database-filename /path/to/database.duckdb
+                  GIZMOSQL_PASSWORD=tiger gizmosql_server --database-filename /path/to/database.duckdb --username scott
 
                 GizmoSQL client can connect with:
-                  gizmosql_client --host localhost --port 31337 --command Execute --query "SELECT 1"
+                  gizmosql_client --host localhost --port 31337 --username scott --password tiger --command Execute --query "SELECT 1"
 
                 For TLS and authentication options, see:
                   gizmosql_server --help
