@@ -5,28 +5,32 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
+# Arrow 23 has a macOS-specific bug where it tries to set_target_properties on
+# c-ares::cares (an ALIAS target). This patch fixes it. On Linux, the pattern
+# won't match (no if(APPLE) block executes), so the patch is harmless.
+
 ExternalProject_Add(
     arrow_project
-    PREFIX @CMAKE_BINARY_DIR@/third_party
+    PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/apache/arrow.git
     GIT_TAG apache-arrow-23.0.0
     SOURCE_SUBDIR cpp
+    PATCH_COMMAND sed -i.bak -e "/set_target_properties.*c-ares::cares.*PROPERTIES/d" -e "/LIBRESOLV_LIBRARY/d" <SOURCE_DIR>/cpp/cmake_modules/ThirdpartyToolchain.cmake
     CMAKE_ARGS
-        -DCMAKE_INSTALL_PREFIX=@CMAKE_BINARY_DIR@/third_party/arrow
-        -DCMAKE_INSTALL_LIBDIR=lib
-        -DCMAKE_INSTALL_INCLUDEDIR=include
-        -DARROW_BUILD_TESTS=OFF
-        -DARROW_BUILD_STATIC=ON
-        -DARROW_BUILD_SHARED=OFF
-        -DARROW_COMPUTE=ON
-        -DARROW_CSV=ON
-        -DARROW_JSON=ON
-        -DARROW_DATASET=ON
-        -DARROW_FILESYSTEM=ON
-        -DARROW_FLIGHT=ON
-        -DARROW_FLIGHT_SQL=ON
-        -DARROW_DEPENDENCY_SOURCE=BUNDLED
-        -DARROW_DEPENDENCY_USE_SHARED=OFF
-        -Dxsimd_SOURCE=BUNDLED
-        @ARROW_PLATFORM_DEPS_ARGS@
+      -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/arrow
+      -DCMAKE_INSTALL_LIBDIR=lib
+      -DCMAKE_INSTALL_INCLUDEDIR=include
+      -DARROW_BUILD_TESTS=OFF
+      -DARROW_BUILD_STATIC=ON
+      -DARROW_BUILD_SHARED=OFF
+      -DARROW_COMPUTE=ON
+      -DARROW_CSV=ON
+      -DARROW_JSON=ON
+      -DARROW_DATASET=ON
+      -DARROW_FILESYSTEM=ON
+      -DARROW_FLIGHT=ON
+      -DARROW_FLIGHT_SQL=ON
+      -DARROW_DEPENDENCY_SOURCE=BUNDLED
+      -DARROW_DEPENDENCY_USE_SHARED=OFF
+      -Dxsimd_SOURCE=BUNDLED
 )

@@ -18,6 +18,7 @@ enable_testing()
 # Integration tests
 # ---------------------------------------------------------
 add_executable(gizmosql_integration_tests
+        integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
         integration/test_instrumentation.cpp
         integration/test_kill_session.cpp
@@ -43,6 +44,7 @@ target_link_libraries(gizmosql_integration_tests PRIVATE
         GTest::gtest_main
         Arrow::arrow_static
         ArrowFlightSql::arrow_flight_sql_static
+        arrow_absl              # Arrow 23 abseil libraries
         Threads::Threads
 )
 

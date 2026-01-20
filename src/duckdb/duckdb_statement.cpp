@@ -587,6 +587,28 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       return Status::Invalid(error_msg);
     }
 
+    // Check if non-admin user attempts to read from instrumentation database
+    const auto& read_dbs = stmt->data->properties.read_databases;
+    if (read_dbs.find("_gizmosql_instr") != read_dbs.end() &&
+        client_session->role != "admin") {
+      GIZMOSQL_LOGKV(WARNING, "Non-admin user attempted to read instrumentation database",
+                     {"peer", client_session->peer}, {"kind", "sql"},
+                     {"status", "rejected"}, {"session_id", client_session->session_id},
+                     {"user", client_session->username}, {"role", client_session->role},
+                     {"statement_id", handle}, {"sql", logged_sql});
+      std::string error_msg =
+          "Access denied: Only users with the 'admin' role can query the "
+          "instrumentation database (_gizmosql_instr).";
+      // Record the rejected read attempt
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, error_msg);
+        }
+      }
+      return Status::Invalid(error_msg);
+    }
+
     // Check for readonly role trying to modify data
     if (!stmt->data->properties.IsReadOnly() && client_session->role == "readonly") {
       std::string error_msg =

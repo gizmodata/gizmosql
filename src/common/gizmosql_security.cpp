@@ -129,6 +129,22 @@ void SecurityUtilities::ParseBasicHeader(const flight::CallHeaders& incoming_hea
   std::getline(decoded_stream, password, ':');
 }
 
+std::string SecurityUtilities::HMAC_SHA256(const std::string& key,
+                                           const std::string& data) {
+  unsigned char hash[EVP_MAX_MD_SIZE];
+  unsigned int hash_len = 0;
+
+  HMAC(EVP_sha256(), key.c_str(), static_cast<int>(key.length()),
+       reinterpret_cast<const unsigned char*>(data.c_str()), data.length(), hash,
+       &hash_len);
+
+  std::stringstream ss;
+  for (unsigned int i = 0; i < hash_len; i++) {
+    ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+  }
+  return ss.str();
+}
+
 // ----------------------------------------
 BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
                                                      const std::string& role,
@@ -180,7 +196,7 @@ BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
     const arrow::util::ArrowLogLevel& auth_log_level,
     bool tls_enabled, bool mtls_enabled)
     : username_(username),
-      password_(password),
+      password_(SecurityUtilities::HMAC_SHA256(secret_key, password)),  // Store HMAC-hashed password
       secret_key_(secret_key),
       token_allowed_issuer_(token_allowed_issuer),
       token_allowed_audience_(token_allowed_audience),
@@ -276,7 +292,9 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
     }
 
     if (username != kTokenUsername) {
-      if ((username == username_) && (password == password_)) {
+      // HMAC-hash the incoming password with secret_key and compare with stored hash
+      std::string password_hash = SecurityUtilities::HMAC_SHA256(secret_key_, password);
+      if ((username == username_) && (password_hash == password_)) {
         *middleware = std::make_shared<BasicAuthServerMiddleware>(username, "admin",
                                                                   "Basic", secret_key_);
         GIZMOSQL_LOGKV_DYNAMIC(

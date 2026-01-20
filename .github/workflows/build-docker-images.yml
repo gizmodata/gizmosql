@@ -122,7 +122,8 @@ jobs:
             git \
             libboost-all-dev \
             libgflags-dev \
-            libssl-dev
+            libssl-dev \
+            zlib1g-dev
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 

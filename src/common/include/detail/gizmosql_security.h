@@ -24,12 +24,15 @@
 #include <sstream>
 #include <iostream>
 #include <fstream>
+#include <iomanip>
 #include "jwt-cpp/jwt.h"
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <shared_mutex>
 #include <unordered_set>
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
 
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
@@ -53,6 +56,9 @@ class SecurityUtilities {
 
   static void ParseBasicHeader(const flight::CallHeaders& incoming_headers,
                                std::string& username, std::string& password);
+
+  // Compute HMAC-SHA256 of data using the provided key, return hex-encoded result
+  static std::string HMAC_SHA256(const std::string& key, const std::string& data);
 };
 
 class BasicAuthServerMiddleware : public flight::ServerMiddleware {
@@ -96,7 +102,7 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
 
  private:
   std::string username_;
-  std::string password_;
+  std::string password_;  // Stores SHA256 hash of password, not plaintext
   std::string secret_key_;
   std::string token_allowed_issuer_;
   std::string token_allowed_audience_;
