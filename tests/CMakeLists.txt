@@ -20,6 +20,7 @@ enable_testing()
 add_executable(gizmosql_integration_tests
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
+        integration/test_catalog_access.cpp
         integration/test_instrumentation.cpp
         integration/test_kill_session.cpp
         integration/test_tpch_benchmark.cpp
@@ -34,6 +35,7 @@ target_include_directories(gizmosql_integration_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/common/include
         ${DUCKDB_INCLUDE_DIR}
         ${SQLITE_INCLUDE_DIR}
+        ${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include
 )
 
 # ---------------------------------------------------------
