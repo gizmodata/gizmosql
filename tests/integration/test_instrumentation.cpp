@@ -267,8 +267,19 @@ TEST_F(InstrumentationServerFixture, CurrentSessionFunction) {
 
   FlightSqlClient sql_client(std::move(client));
 
+  // Run a simple query first to ensure the session is fully established
+  // This triggers session creation in the instrumentation database
+  ASSERT_ARROW_OK_AND_ASSIGN(auto warmup_info,
+                             sql_client.Execute(call_options, "SELECT 1"));
+  for (const auto& endpoint : warmup_info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    ASSERT_ARROW_OK(reader->ToTable().status());
+  }
+
   // Allow async write queue to flush instrumentation records
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  // Use a longer wait for CI environments which may be slower
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
   // Use GIZMOSQL_CURRENT_SESSION() to get current session ID and verify it exists
   // in the sessions table
