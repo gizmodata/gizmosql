@@ -1067,7 +1067,7 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle))
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
 
-    return Status::OK();
+    return statement->Execute();
   }
 
   Result<int64_t> DoPutPreparedStatementUpdate(
@@ -1674,7 +1674,6 @@ class DuckDBFlightSqlServer::Impl {
     return ExecuteSql(connection, sql);
   }
 
-  // Convenience method to latch the connection mutex (per session)
   static Status ExecuteSql(const std::shared_ptr<ClientSession>& client_session,
                            const std::string& sql) {
     return ExecuteSql(client_session->connection, sql);
