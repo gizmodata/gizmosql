@@ -48,10 +48,21 @@ Provide your license key file when starting the server:
     --enable-instrumentation 1
 ```
 
-Or set via environment variable:
+Or set via environment variables (ideal for containers):
 ```bash
 export GIZMOSQL_LICENSE_KEY_FILE=/path/to/license.jwt
-./gizmosql_server --database-filename mydb.db --enable-instrumentation 1
+export GIZMOSQL_ENABLE_INSTRUMENTATION=1
+./gizmosql_server --database-filename mydb.db
+```
+
+**Docker example:**
+```bash
+docker run --name gizmosql \
+    -e GIZMOSQL_LICENSE_KEY_FILE=/opt/gizmosql/license.jwt \
+    -e GIZMOSQL_ENABLE_INSTRUMENTATION=1 \
+    -e GIZMOSQL_PASSWORD=mypassword \
+    -v /path/to/license.jwt:/opt/gizmosql/license.jwt:ro \
+    gizmodata/gizmosql:latest
 ```
 
 ### License Key Format

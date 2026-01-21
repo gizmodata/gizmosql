@@ -782,3 +782,123 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 }
+
+// Test that GIZMOSQL_ENABLE_INSTRUMENTATION env var enables instrumentation
+// without needing the --enable-instrumentation CLI argument
+TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
+  namespace fs = std::filesystem;
+
+  // Skip if no license available (instrumentation requires enterprise license)
+  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  if (!license_file || std::string(license_file).empty()) {
+    GTEST_SKIP() << "Skipping env var test - no enterprise license available. "
+                 << "Set GIZMOSQL_LICENSE_KEY_FILE environment variable.";
+  }
+
+  // Use unique database files for this test
+  std::string test_db = "envvar_test.db";
+  std::string instr_db = "envvar_instr_test.db";
+  int test_port = 31352;
+  int health_port = 31353;
+
+  // Clean up any existing test files
+  fs::remove(test_db);
+  fs::remove(test_db + ".wal");
+  fs::remove(instr_db);
+  fs::remove(instr_db + ".wal");
+
+  // Get path to the server executable
+  fs::path server_exe = fs::current_path().parent_path() / "gizmosql_server";
+  if (!fs::exists(server_exe)) {
+    server_exe = fs::current_path() / "gizmosql_server";
+  }
+  if (!fs::exists(server_exe)) {
+    GTEST_SKIP() << "Server executable not found, skipping env var test";
+  }
+
+  // Build command to start server WITH env var but WITHOUT --enable-instrumentation arg
+  // The env var should enable instrumentation
+  std::string cmd = "GIZMOSQL_ENABLE_INSTRUMENTATION=1 " +
+                    server_exe.string() +
+                    " --database-filename " + test_db +
+                    " --port " + std::to_string(test_port) +
+                    " --health-port " + std::to_string(health_port) +
+                    " --username tester --password tester" +
+                    " --instrumentation-db-path " + instr_db +
+                    " --license-key-file " + std::string(license_file) +
+                    " 2>&1 &";
+
+  // Start the server as a background process
+  int ret = std::system(cmd.c_str());
+  ASSERT_EQ(ret, 0) << "Failed to start server subprocess";
+
+  // Wait for server to start
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+
+  // Connect and run a simple query to create session/statement records
+  {
+    arrow::flight::FlightClientOptions options;
+    auto location_result = arrow::flight::Location::ForGrpcTcp("localhost", test_port);
+    ASSERT_TRUE(location_result.ok()) << location_result.status().ToString();
+
+    auto client_result = arrow::flight::FlightClient::Connect(*location_result, options);
+    ASSERT_TRUE(client_result.ok()) << client_result.status().ToString();
+    auto client = std::move(*client_result);
+
+    // Authenticate
+    arrow::flight::FlightCallOptions call_options;
+    auto auth_result = client->AuthenticateBasicToken({}, "tester", "tester");
+    ASSERT_TRUE(auth_result.ok()) << auth_result.status().ToString();
+    call_options.headers.push_back(*auth_result);
+
+    // Run a simple query
+    arrow::flight::sql::FlightSqlClient sql_client(std::move(client));
+    auto info_result = sql_client.Execute(call_options, "SELECT 1 AS test");
+    ASSERT_TRUE(info_result.ok()) << info_result.status().ToString();
+  }
+
+  // Find and kill the server process
+  std::string find_cmd = "pgrep -f 'gizmosql_server.*" + std::to_string(test_port) + "'";
+  FILE* pipe = popen(find_cmd.c_str(), "r");
+  ASSERT_NE(pipe, nullptr);
+  char buffer[128];
+  std::string pid_str;
+  if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+    pid_str = buffer;
+  }
+  pclose(pipe);
+
+  if (!pid_str.empty()) {
+    std::string kill_cmd = "kill -TERM " + pid_str;
+    std::system(kill_cmd.c_str());
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
+
+  // Verify the instrumentation database was created and has records
+  ASSERT_TRUE(fs::exists(instr_db)) << "Instrumentation DB should exist when enabled via env var";
+
+  {
+    duckdb::DuckDB db(instr_db);
+    duckdb::Connection conn(db);
+
+    // Verify at least one instance was recorded
+    auto instance_result = conn.Query("SELECT COUNT(*) FROM instances");
+    ASSERT_FALSE(instance_result->HasError()) << instance_result->GetError();
+    auto instance_count = instance_result->GetValue(0, 0).GetValue<int64_t>();
+    ASSERT_GE(instance_count, 1)
+        << "Expected at least one instance record when instrumentation enabled via env var";
+
+    // Verify at least one session was recorded
+    auto session_result = conn.Query("SELECT COUNT(*) FROM sessions");
+    ASSERT_FALSE(session_result->HasError()) << session_result->GetError();
+    auto session_count = session_result->GetValue(0, 0).GetValue<int64_t>();
+    ASSERT_GE(session_count, 1)
+        << "Expected at least one session record when instrumentation enabled via env var";
+  }
+
+  // Clean up test files
+  fs::remove(test_db);
+  fs::remove(test_db + ".wal");
+  fs::remove(instr_db);
+  fs::remove(instr_db + ".wal");
+}
