@@ -43,13 +43,22 @@ jobs:
           options: |
             GIZMOSQL_ENTERPRISE=ON
 
-      - name: Setup Enterprise License
-        if: ${{ secrets.GIZMOSQL_LICENSE_KEY != '' }}
+      - name: Run Tests (Core Edition - No License)
         run: |
-          echo "${{ secrets.GIZMOSQL_LICENSE_KEY }}" > /tmp/gizmosql_license.jwt
+          ./build/tests/gizmosql_integration_tests
+
+      - name: Setup Enterprise License
+        env:
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+        if: env.GIZMOSQL_LICENSE_KEY != ''
+        run: |
+          echo "$GIZMOSQL_LICENSE_KEY" > /tmp/gizmosql_license.jwt
           echo "GIZMOSQL_LICENSE_KEY_FILE=/tmp/gizmosql_license.jwt" >> $GITHUB_ENV
 
-      - name: Run Tests
+      - name: Run Tests (Enterprise Edition - With License)
+        env:
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+        if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests
 
@@ -144,13 +153,22 @@ jobs:
             CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
             GIZMOSQL_ENTERPRISE=ON
 
-      - name: Setup Enterprise License
-        if: ${{ secrets.GIZMOSQL_LICENSE_KEY != '' }}
+      - name: Run Tests (Core Edition - No License)
         run: |
-          echo "${{ secrets.GIZMOSQL_LICENSE_KEY }}" > /tmp/gizmosql_license.jwt
+          ./build/tests/gizmosql_integration_tests
+
+      - name: Setup Enterprise License
+        env:
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+        if: env.GIZMOSQL_LICENSE_KEY != ''
+        run: |
+          echo "$GIZMOSQL_LICENSE_KEY" > /tmp/gizmosql_license.jwt
           echo "GIZMOSQL_LICENSE_KEY_FILE=/tmp/gizmosql_license.jwt" >> $GITHUB_ENV
 
-      - name: Run Tests
+      - name: Run Tests (Enterprise Edition - With License)
+        env:
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+        if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests
 
