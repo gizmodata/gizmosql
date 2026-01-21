@@ -17,6 +17,7 @@
 
 #include "gizmosql_library.h"
 #include "common/include/detail/gizmosql_logging.h"
+#include <cstdlib>
 #include <iostream>
 #include <boost/program_options.hpp>
 
@@ -95,7 +96,7 @@ int main(int argc, char** argv) {
               "If that isn't set, defaults to 'SELECT 1'.")
             ("enable-instrumentation", po::value<bool>()->default_value(false),
               "[Enterprise] Enable session instrumentation (tracking instances, sessions, SQL statements). "
-              "Requires a valid enterprise license. Use --enable-instrumentation=true to enable.")
+              "Requires a valid enterprise license. If not set, uses env var GIZMOSQL_ENABLE_INSTRUMENTATION (1/true to enable).")
             ("instrumentation-db-path", po::value<std::string>()->default_value(""),
               "[Enterprise] Path for the instrumentation database. If not set, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH. "
               "If that isn't set, defaults to gizmosql_instrumentation.db in the same directory as the main database.")
@@ -223,6 +224,13 @@ int main(int argc, char** argv) {
       vm.count("health-check-query") ? vm["health-check-query"].as<std::string>() : "";
 
   bool enable_instrumentation = vm["enable-instrumentation"].as<bool>();
+  if (!enable_instrumentation) {
+    // Check env var fallback
+    if (const char* env_val = std::getenv("GIZMOSQL_ENABLE_INSTRUMENTATION")) {
+      std::string val(env_val);
+      enable_instrumentation = (val == "1" || val == "true" || val == "TRUE" || val == "True");
+    }
+  }
 
   std::string instrumentation_db_path =
       vm.count("instrumentation-db-path") ? vm["instrumentation-db-path"].as<std::string>() : "";
