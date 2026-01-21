@@ -47,15 +47,17 @@ InstanceInstrumentation::InstanceInstrumentation(
   manager_->QueueWrite([config](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
         "INSERT INTO _gizmosql_instr.instances (instance_id, gizmosql_version, duckdb_version, "
-        "arrow_version, hostname, port, database_path, tls_enabled, tls_cert_path, tls_key_path, "
-        "mtls_required, mtls_ca_cert_path, readonly) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)");
+        "arrow_version, hostname, hostname_arg, server_ip, port, database_path, tls_enabled, "
+        "tls_cert_path, tls_key_path, mtls_required, mtls_ca_cert_path, readonly) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)");
     stmt->Execute(
         duckdb::Value::UUID(config.instance_id),
         duckdb::Value(config.gizmosql_version),
         duckdb::Value(config.duckdb_version),
         duckdb::Value(config.arrow_version),
-        duckdb::Value(config.hostname),
+        config.hostname.empty() ? duckdb::Value() : duckdb::Value(config.hostname),
+        config.hostname_arg.empty() ? duckdb::Value() : duckdb::Value(config.hostname_arg),
+        config.server_ip.empty() ? duckdb::Value() : duckdb::Value(config.server_ip),
         duckdb::Value(config.port),
         duckdb::Value(config.database_path),
         duckdb::Value::BOOLEAN(config.tls_enabled),

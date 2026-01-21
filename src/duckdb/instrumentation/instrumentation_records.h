@@ -32,7 +32,9 @@ struct InstanceConfig {
   std::string gizmosql_version;
   std::string duckdb_version;
   std::string arrow_version;
-  std::string hostname;
+  std::string hostname;       // Actual machine hostname (from OS)
+  std::string hostname_arg;   // Hostname argument used to start server (e.g., "0.0.0.0")
+  std::string server_ip;      // Actual IP address of the server
   int port;
   std::string database_path;
   bool tls_enabled;

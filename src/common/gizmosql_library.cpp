@@ -23,6 +23,10 @@
 #include <filesystem>
 #include <regex>
 #include <vector>
+#include <unistd.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/util/config.h>
@@ -78,6 +82,59 @@ static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_
 
 static std::string MakeSessionId() {
   return boost::uuids::to_string(boost::uuids::random_generator()());
+}
+
+// Get the actual hostname of the machine from the OS
+static std::string GetActualHostname() {
+  char hostname[256];
+  if (gethostname(hostname, sizeof(hostname)) == 0) {
+    return std::string(hostname);
+  }
+  return "";
+}
+
+// Get the primary IP address of the server
+// Prioritizes common primary interface names (en0/eth0), falls back to any non-loopback IPv4
+static std::string GetPrimaryIPAddress() {
+  struct ifaddrs* ifaddr = nullptr;
+  if (getifaddrs(&ifaddr) == -1) {
+    return "";
+  }
+
+  std::string primary_ip;
+  std::string fallback_ip;
+
+  for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr == nullptr) continue;
+
+    // Only consider IPv4 addresses
+    if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+    auto* addr = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr->sin_addr, ip_str, sizeof(ip_str));
+
+    std::string ip(ip_str);
+    std::string name(ifa->ifa_name);
+
+    // Skip loopback
+    if (ip.rfind("127.", 0) == 0) continue;
+
+    // Prioritize common primary interfaces (macOS: en0, Linux: eth0, ens*, enp*)
+    if (name == "en0" || name == "eth0" || name.rfind("ens", 0) == 0 ||
+        name.rfind("enp", 0) == 0) {
+      primary_ip = ip;
+      break;  // Found a primary interface, use it
+    }
+
+    // Keep track of any non-loopback IP as fallback
+    if (fallback_ip.empty()) {
+      fallback_ip = ip;
+    }
+  }
+
+  freeifaddrs(ifaddr);
+  return primary_ip.empty() ? fallback_ip : primary_ip;
 }
 
 arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServerBuilder(
@@ -195,7 +252,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             .gizmosql_version = PROJECT_VERSION,
             .duckdb_version = duckdb_library_version(),
             .arrow_version = ARROW_VERSION_STRING,
-            .hostname = hostname,
+            .hostname = GetActualHostname(),
+            .hostname_arg = hostname,
+            .server_ip = GetPrimaryIPAddress(),
             .port = port,
             .database_path = database_filename.string(),
             .tls_enabled = !tls_cert_path.empty(),
