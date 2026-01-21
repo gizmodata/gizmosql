@@ -218,16 +218,16 @@ ScopeGuard<F> MakeScopeGuard(F f) {
 // -----------------------------------------------------------------------------
 // Session-aware logging macros (DRY helpers for ClientSession context)
 // -----------------------------------------------------------------------------
-// These macros automatically include instance_id, session_id, user, role, and peer
+// These macros automatically include session_id, user, role, and peer
 // from a ClientSession pointer, reducing repetition in logging calls.
+// Note: instance_id is logged once at server startup (process-level), not per-session.
 
 // Common session KV fields - expands to Field initializers for use in FieldList
-// Usage: SESSION_KV_FIELDS(client_session) expands to the 5 common fields
-#define SESSION_KV_FIELDS(s)           \
-    {"instance_id", (s)->instance_id}, \
-    {"session_id", (s)->session_id},   \
-    {"user", (s)->username},           \
-    {"role", (s)->role},               \
+// Usage: SESSION_KV_FIELDS(client_session) expands to the 4 common session fields
+#define SESSION_KV_FIELDS(s)         \
+    {"session_id", (s)->session_id}, \
+    {"user", (s)->username},         \
+    {"role", (s)->role},             \
     {"peer", (s)->peer}
 
 // Session-aware structured logging - includes all session fields automatically

@@ -216,6 +216,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                                              query_timeout, query_log_level,
                                              nullptr))  // No instrumentation manager yet
 
+    // Log instance_id as structured KV entry for log correlation (as early as possible)
+    GIZMOSQL_LOGKV(INFO, "Server instance created",
+                   {"instance_id", duckdb_server->GetInstanceId()});
+
     // Run DuckDB init commands first
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;";
@@ -272,7 +276,6 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
             g_instrumentation_manager, instance_config);
         duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
-        GIZMOSQL_LOG(INFO) << "Instance ID: " << duckdb_server->GetInstanceId();
       } else {
         GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "
                               << instr_result.status().ToString();
