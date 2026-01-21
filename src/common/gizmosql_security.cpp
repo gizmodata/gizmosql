@@ -215,11 +215,13 @@ std::string SecurityUtilities::HMAC_SHA256(const std::string& key,
 BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
                                                      const std::string& role,
                                                      const std::string& auth_method,
-                                                     const std::string& secret_key)
+                                                     const std::string& secret_key,
+                                                     const std::string& instance_id)
     : username_(username),
       role_(role),
       auth_method_(auth_method),
-      secret_key_(secret_key) {}
+      secret_key_(secret_key),
+      instance_id_(instance_id) {}
 
 void BasicAuthServerMiddleware::SendingHeaders(flight::AddCallHeaders* outgoing_headers) {
   auto token = CreateJWTToken();
@@ -245,6 +247,7 @@ std::string BasicAuthServerMiddleware::CreateJWTToken() const {
           .set_payload_claim("sub", jwt::claim(username_))
           .set_payload_claim("role", jwt::claim(role_))
           .set_payload_claim("auth_method", jwt::claim(auth_method_))
+          .set_payload_claim("instance_id", jwt::claim(instance_id_))
           .set_payload_claim(
               "session_id",
               jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
@@ -362,7 +365,8 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       std::string password_hash = SecurityUtilities::HMAC_SHA256(secret_key_, password);
       if ((username == username_) && (password_hash == password_)) {
         *middleware = std::make_shared<BasicAuthServerMiddleware>(username, "admin",
-                                                                  "Basic", secret_key_);
+                                                                  "Basic", secret_key_,
+                                                                  instance_id_);
         GIZMOSQL_LOGKV_DYNAMIC(
             auth_log_level_,
             "User: " + username + " (peer " + context.peer() +
@@ -393,7 +397,7 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       *middleware = std::make_shared<BasicAuthServerMiddleware>(
           bootstrap_decoded_token.get_subject(),
           bootstrap_decoded_token.get_payload_claim("role").as_string(), "BootstrapToken",
-          secret_key_);
+          secret_key_, instance_id_);
     }
   }
   return Status::OK();
@@ -566,6 +570,27 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
     }
 
     verifier.verify(decoded);
+
+    // Validate instance_id: token must be from this server instance
+    if (!instance_id_.empty() && decoded.has_payload_claim("instance_id")) {
+      auto token_instance_id = decoded.get_payload_claim("instance_id").as_string();
+      if (token_instance_id != instance_id_) {
+        GIZMOSQL_LOGKV(
+            WARNING,
+            "peer=" + context.peer() +
+                " - Bearer Token instance_id mismatch: token was issued by instance " +
+                token_instance_id + " but this is instance " + instance_id_,
+            {"peer", context.peer()}, {"kind", "authentication"},
+            {"authentication_type", "bearer"}, {"result", "failure"},
+            {"reason", "instance_id_mismatch"}, {"token_id", decoded.get_id()},
+            {"token_sub", decoded.get_subject()}, {"token_instance_id", token_instance_id},
+            {"server_instance_id", instance_id_});
+        return MakeFlightError(
+            flight::FlightStatusCode::Unauthenticated,
+            "Session not associated with this server instance (" + instance_id_ +
+                "). Please reconnect to establish a new session.");
+      }
+    }
 
     auto token_log_level = GetTokenLogLevel(decoded);
 

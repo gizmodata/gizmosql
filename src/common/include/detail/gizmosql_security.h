@@ -65,7 +65,8 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
  public:
   BasicAuthServerMiddleware(const std::string& username, const std::string& role,
                             const std::string& auth_method,
-                            const std::string& secret_key);
+                            const std::string& secret_key,
+                            const std::string& instance_id);
 
   const jwt::decoded_jwt<jwt::traits::kazuho_picojson> GetJWT();
   const std::string GetUsername() const;
@@ -82,6 +83,7 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
   std::string role_;
   std::string auth_method_;
   std::string secret_key_;
+  std::string instance_id_;
 
   std::string CreateJWTToken() const;
 };
@@ -95,6 +97,9 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
       const std::filesystem::path& token_signature_verify_cert_path,
       const arrow::util::ArrowLogLevel& auth_log_level,
       bool tls_enabled = false, bool mtls_enabled = false);
+
+  /// Set the instance ID for JWT tokens. Must be called before any requests are processed.
+  void SetInstanceId(const std::string& instance_id) { instance_id_ = instance_id; }
 
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
@@ -112,6 +117,7 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   bool tls_enabled_ = false;
   bool mtls_enabled_ = false;
   arrow::util::ArrowLogLevel auth_log_level_;
+  std::string instance_id_;
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
   VerifyAndDecodeBootstrapToken(const std::string& token,
@@ -142,6 +148,9 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
   explicit BearerAuthServerMiddlewareFactory(
       const std::string& secret_key, const arrow::util::ArrowLogLevel& auth_log_level);
 
+  /// Set the instance ID for JWT validation. Must be called before any requests are processed.
+  void SetInstanceId(const std::string& instance_id) { instance_id_ = instance_id; }
+
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
                           std::shared_ptr<flight::ServerMiddleware>* middleware) override;
@@ -149,6 +158,7 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
  private:
   std::string secret_key_;
   arrow::util::ArrowLogLevel auth_log_level_;
+  std::string instance_id_;
 
   // Track tokens we've already logged as successfully validated
   mutable std::shared_mutex token_log_mutex_;

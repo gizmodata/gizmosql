@@ -217,7 +217,13 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                                              nullptr))  // No instrumentation manager yet
 
     // Set instance_id for all future log entries (enables log correlation)
-    gizmosql::SetInstanceId(duckdb_server->GetInstanceId());
+    auto instance_id = duckdb_server->GetInstanceId();
+    gizmosql::SetInstanceId(instance_id);
+
+    // Set instance_id on auth middleware for JWT token creation and validation
+    header_middleware->SetInstanceId(instance_id);
+    bearer_middleware->SetInstanceId(instance_id);
+
     GIZMOSQL_LOG(INFO) << "Server instance created";
 
     // Run DuckDB init commands first
