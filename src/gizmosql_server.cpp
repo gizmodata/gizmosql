@@ -90,6 +90,9 @@ int main(int argc, char** argv) {
               "Authentication Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_AUTH_LOG_LEVEL or defaults to info.")
             ("health-port",  po::value<int>()->default_value(DEFAULT_HEALTH_PORT),
               "Port for plaintext gRPC health check server (for Kubernetes probes). Set to 0 to disable.")
+            ("health-check-query", po::value<std::string>()->default_value(""),
+              "SQL query used for health checks. If not set, uses env var GIZMOSQL_HEALTH_CHECK_QUERY. "
+              "If that isn't set, defaults to 'SELECT 1'.")
             ("enable-instrumentation", po::value<bool>()->default_value(true),
               "Enable session instrumentation (tracking instances, sessions, SQL statements). "
               "Use --enable-instrumentation=false to disable.")
@@ -212,6 +215,9 @@ int main(int argc, char** argv) {
 
   int health_port = vm["health-port"].as<int>();
 
+  std::string health_check_query =
+      vm.count("health-check-query") ? vm["health-check-query"].as<std::string>() : "";
+
   bool enable_instrumentation = vm["enable-instrumentation"].as<bool>();
 
   std::string instrumentation_db_path =
@@ -223,5 +229,5 @@ int main(int argc, char** argv) {
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
-      enable_instrumentation, instrumentation_db_path);
+      health_check_query, enable_instrumentation, instrumentation_db_path);
 }

@@ -148,6 +148,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const fs::path& token_signature_verify_cert_path, const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const std::string& health_check_query,
     const bool& enable_instrumentation,
     const std::string& instrumentation_db_path) {
   ARROW_ASSIGN_OR_RAISE(auto location,
@@ -298,16 +299,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
   if (server != nullptr) {
     // Create health check service
-    // The health check function will execute "SELECT 1" on the backend to verify connectivity
+    // The health check function will execute the configured query on the backend to verify connectivity
     // Using g_health_service (static) to ensure the service lives as long as the server
+    GIZMOSQL_LOG(INFO) << "Health check query: " << health_check_query;
     if (backend == BackendType::sqlite) {
       auto sqlite_server =
           std::dynamic_pointer_cast<gizmosql::sqlite::SQLiteFlightSqlServer>(server);
       g_health_service = std::make_shared<GizmoSQLHealthServiceImpl>(
           [weak_server = std::weak_ptr<gizmosql::sqlite::SQLiteFlightSqlServer>(
-               sqlite_server)]() -> bool {
+               sqlite_server), health_check_query]() -> bool {
             if (auto s = weak_server.lock()) {
-              return s->ExecuteSql("SELECT 1").ok();
+              return s->ExecuteSql(health_check_query).ok();
             }
             return false;
           });
@@ -316,9 +318,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
           std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server);
       g_health_service = std::make_shared<GizmoSQLHealthServiceImpl>(
           [weak_server = std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer>(
-               duckdb_server)]() -> bool {
+               duckdb_server), health_check_query]() -> bool {
             if (auto s = weak_server.lock()) {
-              return s->ExecuteSql("SELECT 1").ok();
+              return s->ExecuteSql(health_check_query).ok();
             }
             return false;
           });
@@ -388,6 +390,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    std::string health_check_query,
     const bool& enable_instrumentation,
     std::string instrumentation_db_path) {
   // Validate and default the arguments to env var values where applicable
@@ -556,13 +559,21 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   GIZMOSQL_LOG(INFO) << "Authentication Log Level is set to: "
                      << log_level_arrow_log_level_to_string(auth_log_level);
 
+  // Resolve health check query: CLI arg > env var > default
+  if (health_check_query.empty()) {
+    health_check_query = SafeGetEnvVarValue("GIZMOSQL_HEALTH_CHECK_QUERY");
+  }
+  if (health_check_query.empty()) {
+    health_check_query = "SELECT 1";
+  }
+
   return FlightSQLServerBuilder(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, access_logging_enabled, query_timeout,
-      query_log_level, auth_log_level, health_port, enable_instrumentation,
-      instrumentation_db_path);
+      query_log_level, auth_log_level, health_port, health_check_query,
+      enable_instrumentation, instrumentation_db_path);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -602,7 +613,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
-                       int health_port, const bool& enable_instrumentation,
+                       int health_port, std::string health_check_query,
+                       const bool& enable_instrumentation,
                        std::string instrumentation_db_path) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
@@ -675,8 +687,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
-      query_timeout, query_level, auth_level, health_port, enable_instrumentation,
-      instrumentation_db_path);
+      query_timeout, query_level, auth_level, health_port, health_check_query,
+      enable_instrumentation, instrumentation_db_path);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

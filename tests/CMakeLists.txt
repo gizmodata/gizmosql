@@ -21,6 +21,7 @@ add_executable(gizmosql_integration_tests
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
         integration/test_catalog_access.cpp
+        integration/test_health_check.cpp
         integration/test_instrumentation.cpp
         integration/test_kill_session.cpp
         integration/test_sqlite_backend.cpp
@@ -37,6 +38,10 @@ target_include_directories(gizmosql_integration_tests PRIVATE
         ${DUCKDB_INCLUDE_DIR}
         ${SQLITE_INCLUDE_DIR}
         ${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include
+        ${HEALTH_PROTO_GEN_DIR}
+        ${PROTOBUF_INCLUDE_DIR}
+        ${GRPC_INCLUDE_DIR}
+        ${ABSL_INCLUDE_DIR}
 )
 
 # ---------------------------------------------------------

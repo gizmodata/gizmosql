@@ -64,6 +64,7 @@ enum class BackendType { duckdb, sqlite };
  * @param query_log_level The logging level to use for the queries run by users.  Default is: info
  * @param auth_log_level The logging level to use for authentication to the server.  Default is: info
  * @param health_port The port for the plaintext gRPC health check server (for Kubernetes probes). Default is DEFAULT_HEALTH_PORT (31338). Set to 0 to disable.
+ * @param health_check_query The SQL query to use for health checks. If empty, uses env var GIZMOSQL_HEALTH_CHECK_QUERY, or defaults to "SELECT 1".
  * @param enable_instrumentation Whether to enable session instrumentation (tracking instances, sessions, SQL statements). Default is true.
  * @param instrumentation_db_path Path for the instrumentation database. If empty, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH, or defaults to gizmosql_instrumentation.db in the same directory as the main database.
  *
@@ -94,6 +95,7 @@ int RunFlightSQLServer(
     std::string log_file = "", int32_t query_timeout = 0,
     std::string query_log_level = "", std::string auth_log_level = "",
     int health_port = DEFAULT_HEALTH_PORT,
+    std::string health_check_query = "",
     const bool& enable_instrumentation = true,
     std::string instrumentation_db_path = "");
 }

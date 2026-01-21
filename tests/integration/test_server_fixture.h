@@ -47,6 +47,7 @@ CreateFlightSQLServer(
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    std::string health_check_query,
     const bool& enable_instrumentation,
     std::string instrumentation_db_path = "");
 
@@ -65,6 +66,7 @@ struct TestServerConfig {
   std::string password;
   BackendType backend = BackendType::duckdb;  // Default to DuckDB for existing tests
   bool enable_instrumentation = true;         // SQLite doesn't support instrumentation
+  std::string health_check_query = "";        // Empty uses default "SELECT 1"
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -134,6 +136,7 @@ class ServerTestFixture : public ::testing::Test {
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*auth_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*health_port=*/config_.health_port,
+        /*health_check_query=*/config_.health_check_query,
         /*enable_instrumentation=*/config_.enable_instrumentation,
         /*instrumentation_db_path=*/"");
 
@@ -207,6 +210,8 @@ class ServerTestFixture : public ::testing::Test {
   bool IsServerReady() const { return server_ready_; }
 
   int GetPort() const { return config_.port; }
+
+  int GetHealthPort() const { return config_.health_port; }
 
   const std::string& GetUsername() const { return config_.username; }
 

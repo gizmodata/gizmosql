@@ -193,9 +193,14 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 ```
 
 > [!TIP]
-> You can now use the: `--query-timeout` argument to set a maximum query timeout in seconds for the server.  Queries running longer than the timeout will be killed.  The default value of: `0` means "unlimited".   
-> Example: `gizmosql_server (other args...) --query-timeout 10`   
+> You can now use the: `--query-timeout` argument to set a maximum query timeout in seconds for the server.  Queries running longer than the timeout will be killed.  The default value of: `0` means "unlimited".
+> Example: `gizmosql_server (other args...) --query-timeout 10`
 > will set a timeout of 10 seconds for all queries.
+
+> [!TIP]
+> The health check query can be customized using `--health-check-query` or the `GIZMOSQL_HEALTH_CHECK_QUERY` environment variable.
+> The default is `SELECT 1`. This is useful when you need a more specific health check for your deployment.
+> Example: `gizmosql_server (other args...) --health-check-query "SELECT 1 FROM my_table LIMIT 1"`
 
 ---
 
