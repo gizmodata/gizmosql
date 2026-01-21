@@ -23,6 +23,28 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 
 ---
 
+## 📦 Editions
+
+GizmoSQL is available in two editions:
+
+| Feature | Core | Enterprise |
+|---------|:----:|:----------:|
+| DuckDB & SQLite backends | ✅ | ✅ |
+| Arrow Flight SQL protocol | ✅ | ✅ |
+| TLS & mTLS authentication | ✅ | ✅ |
+| JWT token authentication | ✅ | ✅ |
+| Query timeout | ✅ | ✅ |
+| Session Instrumentation | ❌ | ✅ |
+| Kill Session | ❌ | ✅ |
+
+**GizmoSQL Core** is free and open source under the Apache 2.0 license.
+
+**GizmoSQL Enterprise** requires a commercial license. Contact [sales@gizmodata.com](mailto:sales@gizmodata.com) for licensing information.
+
+For more details, see the [Editions documentation](https://docs.gizmosql.com/#/editions).
+
+---
+
 ## 🧠 Why GizmoSQL?
 
 - 🛰️ **Deploy Anywhere** — Run as a container, native binary, or in Kubernetes
@@ -40,7 +62,7 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 |----------------------------------------------------------------------------------|---------|
 | [DuckDB](https://duckdb.org)                                                     | v1.4.3  |
 | [SQLite](https://sqlite.org)                                                     | 3.51.1  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 22.0.0 |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.0 |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.1  |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
 
@@ -193,9 +215,14 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 ```
 
 > [!TIP]
-> You can now use the: `--query-timeout` argument to set a maximum query timeout in seconds for the server.  Queries running longer than the timeout will be killed.  The default value of: `0` means "unlimited".   
-> Example: `gizmosql_server (other args...) --query-timeout 10`   
+> You can now use the: `--query-timeout` argument to set a maximum query timeout in seconds for the server.  Queries running longer than the timeout will be killed.  The default value of: `0` means "unlimited".
+> Example: `gizmosql_server (other args...) --query-timeout 10`
 > will set a timeout of 10 seconds for all queries.
+
+> [!TIP]
+> The health check query can be customized using `--health-check-query` or the `GIZMOSQL_HEALTH_CHECK_QUERY` environment variable.
+> The default is `SELECT 1`. This is useful when you need a more specific health check for your deployment.
+> Example: `gizmosql_server (other args...) --health-check-query "SELECT 1 FROM my_table LIMIT 1"`
 
 ---
 
@@ -232,10 +259,9 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 
 ## 🔒 License
 
-```
-Apache License, Version 2.0
-https://www.apache.org/licenses/LICENSE-2.0
-```
+**GizmoSQL Core** is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+**Enterprise features** (in `src/enterprise/`) are proprietary and require a commercial license from GizmoData LLC. See [src/enterprise/LICENSE](src/enterprise/LICENSE) for details.
 
 ---
 

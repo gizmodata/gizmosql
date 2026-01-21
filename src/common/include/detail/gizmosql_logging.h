@@ -84,6 +84,11 @@ void SetLogLevel(arrow::util::ArrowLogLevel level);
 void LogWithFields(arrow::util::ArrowLogLevel level, const char* file, int line,
                    std::string_view msg, const FieldList& fields = {});
 
+/// Set the instance ID for log correlation. Once set, this ID will be included
+/// in every log entry (both JSON and text formats). Call this as early as possible
+/// after the server instance is created.
+void SetInstanceId(const std::string& instance_id);
+
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
@@ -212,6 +217,37 @@ ScopeGuard<F> MakeScopeGuard(F f) {
     if (_logger && (SEV >= _logger->severity_threshold())) {             \
       ::gizmosql::LogWithFields(SEV, __FILE__, __LINE__, MSG,            \
                                 ::gizmosql::FieldList{__VA_ARGS__});     \
+    }                                                                    \
+  } while (0)
+
+// -----------------------------------------------------------------------------
+// Session-aware logging macros (DRY helpers for ClientSession context)
+// -----------------------------------------------------------------------------
+// These macros automatically include session_id, user, role, and peer
+// from a ClientSession pointer, reducing repetition in logging calls.
+// Note: instance_id is logged once at server startup (process-level), not per-session.
+
+// Common session KV fields - expands to Field initializers for use in FieldList
+// Usage: SESSION_KV_FIELDS(client_session) expands to the 4 common session fields
+#define SESSION_KV_FIELDS(s)         \
+    {"session_id", (s)->session_id}, \
+    {"user", (s)->username},         \
+    {"role", (s)->role},             \
+    {"peer", (s)->peer}
+
+// Session-aware structured logging - includes all session fields automatically
+// Usage: GIZMOSQL_LOGKV_SESSION(INFO, client_session, "message", {"extra", "field"})
+#define GIZMOSQL_LOGKV_SESSION(SEV, SESSION, MSG, ...) \
+    GIZMOSQL_LOGKV(SEV, MSG, SESSION_KV_FIELDS(SESSION), __VA_ARGS__)
+
+// Session-aware dynamic-level logging variant
+#define GIZMOSQL_LOGKV_SESSION_DYNAMIC(SEV, SESSION, MSG, ...)           \
+  do {                                                                   \
+    auto _logger_sp = ::arrow::util::LoggerRegistry::GetDefaultLogger(); \
+    auto* _logger = _logger_sp.get();                                    \
+    if (_logger && (SEV >= _logger->severity_threshold())) {             \
+      ::gizmosql::LogWithFields(SEV, __FILE__, __LINE__, MSG,            \
+          ::gizmosql::FieldList{SESSION_KV_FIELDS(SESSION), __VA_ARGS__}); \
     }                                                                    \
   } while (0)
 

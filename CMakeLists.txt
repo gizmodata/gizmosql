@@ -3,6 +3,15 @@ project(gizmosql)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# --------------------- Enterprise Edition Option ---------------------
+option(GIZMOSQL_ENTERPRISE "Build with enterprise features (instrumentation, kill session)" ON)
+
+if(GIZMOSQL_ENTERPRISE)
+    message(STATUS "Building GizmoSQL Enterprise Edition")
+else()
+    message(STATUS "Building GizmoSQL Core Edition")
+endif()
+
 # Function to retrieve the latest Git tag
 function(get_latest_git_tag OUTPUT_VARIABLE)
     execute_process(
@@ -39,11 +48,33 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
         COMMAND_ERROR_IS_FATAL ANY
 )
+# Arrow 23 doesn't build grpc++_reflection by default, but we need it for gRPC server reflection
+execute_process(COMMAND "${CMAKE_COMMAND}" --build . --target grpc++_reflection
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build"
+        COMMAND_ERROR_IS_FATAL ANY
+)
 set(ARROW_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
 
 find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlight REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
+
+# Arrow 23's bundled_dependencies archive doesn't include all abseil symbols.
+# We need to link the abseil libraries that Arrow built separately.
+# On Linux, abseil libraries have circular dependencies, so we use link groups.
+set(ABSL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/_deps/absl-build")
+file(GLOB_RECURSE ABSL_LIBRARIES "${ABSL_BUILD_DIR}/absl/*.a")
+add_library(arrow_absl INTERFACE)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Use linker groups to handle circular dependencies in abseil
+    target_link_libraries(arrow_absl INTERFACE
+        -Wl,--start-group
+        ${ABSL_LIBRARIES}
+        -Wl,--end-group
+    )
+else()
+    target_link_libraries(arrow_absl INTERFACE ${ABSL_LIBRARIES})
+endif()
 
 # --------------------- SQLite ---------------------
 configure_file(third_party/SQLite_CMakeLists.txt.in sqlite/CMakeLists.txt)
@@ -144,16 +175,16 @@ find_package(Boost COMPONENTS program_options REQUIRED)
 
 # --------------------- gRPC Health Proto Generation ---------------------
 # Use Arrow's bundled protobuf and gRPC for proto generation
+# Arrow 23 uses FetchContent instead of ExternalProject, so paths changed
 set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
-set(PROTOBUF_INSTALL_DIR "${ARROW_BUILD_DIR}/protobuf_ep-install")
-set(GRPC_INSTALL_DIR "${ARROW_BUILD_DIR}/grpc_ep-install")
 
-set(PROTOC_EXECUTABLE "${PROTOBUF_INSTALL_DIR}/bin/protoc")
-set(GRPC_CPP_PLUGIN "${GRPC_INSTALL_DIR}/bin/grpc_cpp_plugin")
-set(PROTOBUF_INCLUDE_DIR "${PROTOBUF_INSTALL_DIR}/include")
-set(GRPC_INCLUDE_DIR "${GRPC_INSTALL_DIR}/include")
-set(GRPC_REFLECTION_LIBRARY "${GRPC_INSTALL_DIR}/lib/libgrpc++_reflection.a")
-set(ABSL_INCLUDE_DIR "${ARROW_BUILD_DIR}/absl_ep-install/include")
+# Arrow 23 FetchContent paths
+set(PROTOC_EXECUTABLE "${ARROW_BUILD_DIR}/_deps/protobuf-build/protoc")
+set(GRPC_CPP_PLUGIN "${ARROW_BUILD_DIR}/_deps/grpc-build/grpc_cpp_plugin")
+set(PROTOBUF_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/protobuf-src/src")
+set(GRPC_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/grpc-src/include")
+set(GRPC_REFLECTION_LIBRARY "${ARROW_BUILD_DIR}/_deps/grpc-build/libgrpc++_reflection.a")
+set(ABSL_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/absl-src")
 
 # Define the proto source and output paths
 set(HEALTH_PROTO_DIR "${CMAKE_SOURCE_DIR}/src/protos")
@@ -210,6 +241,22 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_server.cpp
         src/duckdb/duckdb_tables_schema_batch_reader.cpp)
 
+# Enterprise vs Core: instrumentation source files
+if(GIZMOSQL_ENTERPRISE)
+    # Enterprise edition: instrumentation from enterprise directory
+    set(GIZMOSQL_ENTERPRISE_SRCS
+            src/enterprise/enterprise_features.cpp
+            src/enterprise/license_mgr/license_manager.cpp
+            src/enterprise/instrumentation/instrumentation_manager.cpp
+            src/enterprise/instrumentation/instrumentation_records.cpp
+            src/enterprise/kill_session/kill_session_handler.cpp)
+else()
+    # Core edition: instrumentation from duckdb directory (stubs or full for compatibility)
+    set(GIZMOSQL_DUCKDB_SERVER_SRCS ${GIZMOSQL_DUCKDB_SERVER_SRCS}
+            src/duckdb/instrumentation/instrumentation_manager.cpp
+            src/duckdb/instrumentation/instrumentation_records.cpp)
+endif()
+
 # Add a library target
 add_library(gizmosqlserver STATIC
         src/common/gizmosql_logging.cpp
@@ -221,6 +268,7 @@ add_library(gizmosqlserver STATIC
         ${HEALTH_GRPC_SRCS}
         ${GIZMOSQL_SQLITE_SERVER_SRCS}
         ${GIZMOSQL_DUCKDB_SERVER_SRCS}
+        ${GIZMOSQL_ENTERPRISE_SRCS}
 )
 
 # Ensure proto generation happens before compiling gizmosqlserver
@@ -245,6 +293,22 @@ target_include_directories(gizmosqlserver
         ${GRPC_INCLUDE_DIR}
         ${ABSL_INCLUDE_DIR}
 )
+
+# Add enterprise-specific include directories and compile definition
+if(GIZMOSQL_ENTERPRISE)
+    target_include_directories(gizmosqlserver PRIVATE
+            src
+            src/enterprise
+            src/enterprise/license_mgr
+            src/enterprise/instrumentation
+            src/enterprise/kill_session
+    )
+    target_compile_definitions(gizmosqlserver PUBLIC GIZMOSQL_ENTERPRISE)
+else()
+    target_include_directories(gizmosqlserver PRIVATE
+            src/duckdb/instrumentation
+    )
+endif()
 
 target_link_libraries(gizmosqlserver
         PRIVATE
@@ -280,6 +344,7 @@ target_link_libraries(gizmosql_server PRIVATE
         gizmosqlserver
         ${Boost_LIBRARIES}
         Arrow::arrow_static
+        arrow_absl
         ${GRPC_REFLECTION_LIBRARY}
 )
 
@@ -327,6 +392,7 @@ target_link_libraries(gizmosql_client PRIVATE
         Threads::Threads
         Arrow::arrow_static
         ArrowFlightSql::arrow_flight_sql_static
+        arrow_absl
         gflags
         ${Boost_LIBRARIES}
         "-lresolv"

@@ -35,6 +35,72 @@ const std::string kBearerPrefix = "Bearer ";
 const std::string kAuthHeader = "authorization";
 const int kMaxLoggedTokens = 50000;
 
+// Helper function to parse catalog_access claim from JWT token
+// Expected format: [{"catalog": "name", "access": "read|write|none"}, ...]
+std::optional<std::vector<CatalogAccessRule>> ParseCatalogAccessClaim(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) {
+  if (!decoded.has_payload_claim("catalog_access")) {
+    return std::nullopt;
+  }
+
+  try {
+    auto claim = decoded.get_payload_claim("catalog_access");
+    auto json_value = claim.to_json();
+
+    if (!json_value.is<picojson::array>()) {
+      GIZMOSQL_LOG(WARNING) << "catalog_access claim is not an array";
+      return std::nullopt;
+    }
+
+    std::vector<CatalogAccessRule> rules;
+    const auto& arr = json_value.get<picojson::array>();
+
+    for (const auto& item : arr) {
+      if (!item.is<picojson::object>()) {
+        GIZMOSQL_LOG(WARNING) << "catalog_access item is not an object";
+        continue;
+      }
+
+      const auto& obj = item.get<picojson::object>();
+
+      auto catalog_it = obj.find("catalog");
+      auto access_it = obj.find("access");
+
+      if (catalog_it == obj.end() || access_it == obj.end()) {
+        GIZMOSQL_LOG(WARNING) << "catalog_access item missing 'catalog' or 'access' field";
+        continue;
+      }
+
+      if (!catalog_it->second.is<std::string>() || !access_it->second.is<std::string>()) {
+        GIZMOSQL_LOG(WARNING) << "catalog_access 'catalog' or 'access' is not a string";
+        continue;
+      }
+
+      CatalogAccessRule rule;
+      rule.catalog = catalog_it->second.get<std::string>();
+      const auto& access_str = access_it->second.get<std::string>();
+
+      if (access_str == "write") {
+        rule.access = CatalogAccessLevel::kWrite;
+      } else if (access_str == "read") {
+        rule.access = CatalogAccessLevel::kRead;
+      } else if (access_str == "none") {
+        rule.access = CatalogAccessLevel::kNone;
+      } else {
+        GIZMOSQL_LOG(WARNING) << "Unknown access level: " << access_str << " - defaulting to none";
+        rule.access = CatalogAccessLevel::kNone;
+      }
+
+      rules.push_back(std::move(rule));
+    }
+
+    return rules;
+  } catch (const std::exception& e) {
+    GIZMOSQL_LOG(WARNING) << "Failed to parse catalog_access claim: " << e.what();
+    return std::nullopt;
+  }
+}
+
 // ----------------------------------------
 Status SecurityUtilities::FlightServerTlsCertificates(
     const fs::path& cert_path, const fs::path& key_path,
@@ -129,15 +195,33 @@ void SecurityUtilities::ParseBasicHeader(const flight::CallHeaders& incoming_hea
   std::getline(decoded_stream, password, ':');
 }
 
+std::string SecurityUtilities::HMAC_SHA256(const std::string& key,
+                                           const std::string& data) {
+  unsigned char hash[EVP_MAX_MD_SIZE];
+  unsigned int hash_len = 0;
+
+  HMAC(EVP_sha256(), key.c_str(), static_cast<int>(key.length()),
+       reinterpret_cast<const unsigned char*>(data.c_str()), data.length(), hash,
+       &hash_len);
+
+  std::stringstream ss;
+  for (unsigned int i = 0; i < hash_len; i++) {
+    ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+  }
+  return ss.str();
+}
+
 // ----------------------------------------
 BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
                                                      const std::string& role,
                                                      const std::string& auth_method,
-                                                     const std::string& secret_key)
+                                                     const std::string& secret_key,
+                                                     const std::string& instance_id)
     : username_(username),
       role_(role),
       auth_method_(auth_method),
-      secret_key_(secret_key) {}
+      secret_key_(secret_key),
+      instance_id_(instance_id) {}
 
 void BasicAuthServerMiddleware::SendingHeaders(flight::AddCallHeaders* outgoing_headers) {
   auto token = CreateJWTToken();
@@ -163,6 +247,7 @@ std::string BasicAuthServerMiddleware::CreateJWTToken() const {
           .set_payload_claim("sub", jwt::claim(username_))
           .set_payload_claim("role", jwt::claim(role_))
           .set_payload_claim("auth_method", jwt::claim(auth_method_))
+          .set_payload_claim("instance_id", jwt::claim(instance_id_))
           .set_payload_claim(
               "session_id",
               jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
@@ -177,13 +262,16 @@ BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
     const std::string& secret_key, const std::string& token_allowed_issuer,
     const std::string& token_allowed_audience,
     const std::filesystem::path& token_signature_verify_cert_path,
-    const arrow::util::ArrowLogLevel& auth_log_level)
+    const arrow::util::ArrowLogLevel& auth_log_level,
+    bool tls_enabled, bool mtls_enabled)
     : username_(username),
-      password_(password),
+      password_(SecurityUtilities::HMAC_SHA256(secret_key, password)),  // Store HMAC-hashed password
       secret_key_(secret_key),
       token_allowed_issuer_(token_allowed_issuer),
       token_allowed_audience_(token_allowed_audience),
       token_signature_verify_cert_path_(token_signature_verify_cert_path),
+      tls_enabled_(tls_enabled),
+      mtls_enabled_(mtls_enabled),
       auth_log_level_(auth_log_level) {
   if (username_ == kTokenUsername) {
     throw std::runtime_error("You cannot use username: '" + kTokenUsername +
@@ -221,6 +309,31 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
 
   auto incoming_headers = context.incoming_headers();
 
+  // Extract user-agent header for client identification
+  auto user_agent_iter = incoming_headers.find("user-agent");
+  if (user_agent_iter != incoming_headers.end()) {
+    tl_request_ctx.user_agent = std::string(user_agent_iter->second);
+  } else {
+    tl_request_ctx.user_agent = std::nullopt;
+  }
+
+  // Extract peer identity (mTLS client certificate CN)
+  auto peer_identity = context.peer_identity();
+  if (!peer_identity.empty()) {
+    tl_request_ctx.peer_identity = peer_identity;
+  } else {
+    tl_request_ctx.peer_identity = std::nullopt;
+  }
+
+  // Determine connection protocol
+  if (mtls_enabled_ && !peer_identity.empty()) {
+    tl_request_ctx.connection_protocol = "mtls";
+  } else if (tls_enabled_) {
+    tl_request_ctx.connection_protocol = "tls";
+  } else {
+    tl_request_ctx.connection_protocol = "plaintext";
+  }
+
   ARROW_RETURN_NOT_OK(
       SecurityUtilities::GetAuthHeaderType(incoming_headers, &auth_header_type));
   if (auth_header_type == "Basic") {
@@ -248,9 +361,12 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
     }
 
     if (username != kTokenUsername) {
-      if ((username == username_) && (password == password_)) {
+      // HMAC-hash the incoming password with secret_key and compare with stored hash
+      std::string password_hash = SecurityUtilities::HMAC_SHA256(secret_key_, password);
+      if ((username == username_) && (password_hash == password_)) {
         *middleware = std::make_shared<BasicAuthServerMiddleware>(username, "admin",
-                                                                  "Basic", secret_key_);
+                                                                  "Basic", secret_key_,
+                                                                  instance_id_);
         GIZMOSQL_LOGKV_DYNAMIC(
             auth_log_level_,
             "User: " + username + " (peer " + context.peer() +
@@ -281,7 +397,7 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       *middleware = std::make_shared<BasicAuthServerMiddleware>(
           bootstrap_decoded_token.get_subject(),
           bootstrap_decoded_token.get_payload_claim("role").as_string(), "BootstrapToken",
-          secret_key_);
+          secret_key_, instance_id_);
     }
   }
   return Status::OK();
@@ -455,6 +571,27 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
 
     verifier.verify(decoded);
 
+    // Validate instance_id: token must be from this server instance
+    if (!instance_id_.empty() && decoded.has_payload_claim("instance_id")) {
+      auto token_instance_id = decoded.get_payload_claim("instance_id").as_string();
+      if (token_instance_id != instance_id_) {
+        GIZMOSQL_LOGKV(
+            WARNING,
+            "peer=" + context.peer() +
+                " - Bearer Token instance_id mismatch: token was issued by instance " +
+                token_instance_id + " but this is instance " + instance_id_,
+            {"peer", context.peer()}, {"kind", "authentication"},
+            {"authentication_type", "bearer"}, {"result", "failure"},
+            {"reason", "instance_id_mismatch"}, {"token_id", decoded.get_id()},
+            {"token_sub", decoded.get_subject()}, {"token_instance_id", token_instance_id},
+            {"server_instance_id", instance_id_});
+        return MakeFlightError(
+            flight::FlightStatusCode::Unauthenticated,
+            "Session not associated with this server instance (" + instance_id_ +
+                "). Please reconnect to establish a new session.");
+      }
+    }
+
     auto token_log_level = GetTokenLogLevel(decoded);
 
     GIZMOSQL_LOGKV_DYNAMIC(
@@ -507,6 +644,8 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       tl_request_ctx.role = decoded_jwt.get_payload_claim("role").as_string();
       tl_request_ctx.peer = context.peer();
       tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").as_string();
+      tl_request_ctx.auth_method = decoded_jwt.get_payload_claim("auth_method").as_string();
+      tl_request_ctx.catalog_access = ParseCatalogAccessClaim(decoded_jwt);
     }
   }
   return Status::OK();

@@ -23,8 +23,13 @@
 #include <filesystem>
 #include <regex>
 #include <vector>
+#include <unistd.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/server.h>
+#include <arrow/util/config.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -36,6 +41,15 @@
 #include "gizmosql_security.h"
 #include "access_log_middleware.h"
 #include "health_service.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/enterprise_features.h"
+#include "enterprise/instrumentation/instrumentation_manager.h"
+#include "enterprise/instrumentation/instrumentation_records.h"
+#else
+#include "instrumentation/instrumentation_manager.h"
+#include "instrumentation/instrumentation_records.h"
+#endif
+#include "version.h"
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -49,6 +63,9 @@ int port = 31337;
 // This is safe because only one GizmoSQL server runs per process
 static std::shared_ptr<GizmoSQLHealthServiceImpl> g_health_service;
 static std::unique_ptr<PlaintextHealthServer> g_plaintext_health_server;
+
+// Static storage for instrumentation
+static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_manager;
 
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
   do {                                                                             \
@@ -73,6 +90,59 @@ static std::string MakeSessionId() {
   return boost::uuids::to_string(boost::uuids::random_generator()());
 }
 
+// Get the actual hostname of the machine from the OS
+static std::string GetActualHostname() {
+  char hostname[256];
+  if (gethostname(hostname, sizeof(hostname)) == 0) {
+    return std::string(hostname);
+  }
+  return "";
+}
+
+// Get the primary IP address of the server
+// Prioritizes common primary interface names (en0/eth0), falls back to any non-loopback IPv4
+static std::string GetPrimaryIPAddress() {
+  struct ifaddrs* ifaddr = nullptr;
+  if (getifaddrs(&ifaddr) == -1) {
+    return "";
+  }
+
+  std::string primary_ip;
+  std::string fallback_ip;
+
+  for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr == nullptr) continue;
+
+    // Only consider IPv4 addresses
+    if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+    auto* addr = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr->sin_addr, ip_str, sizeof(ip_str));
+
+    std::string ip(ip_str);
+    std::string name(ifa->ifa_name);
+
+    // Skip loopback
+    if (ip.rfind("127.", 0) == 0) continue;
+
+    // Prioritize common primary interfaces (macOS: en0, Linux: eth0, ens*, enp*)
+    if (name == "en0" || name == "eth0" || name.rfind("ens", 0) == 0 ||
+        name.rfind("enp", 0) == 0) {
+      primary_ip = ip;
+      break;  // Found a primary interface, use it
+    }
+
+    // Keep track of any non-loopback IP as fallback
+    if (fallback_ip.empty()) {
+      fallback_ip = ip;
+    }
+  }
+
+  freeifaddrs(ifaddr);
+  return primary_ip.empty() ? fallback_ip : primary_ip;
+}
+
 arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServerBuilder(
     const BackendType backend, const fs::path& database_filename,
     const std::string& hostname, const int& port, const std::string& username,
@@ -83,7 +153,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& token_allowed_issuer, const std::string& token_allowed_audience,
     const fs::path& token_signature_verify_cert_path, const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port) {
+    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const std::string& health_check_query,
+    const bool& enable_instrumentation,
+    const std::string& instrumentation_db_path) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -103,9 +176,11 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   }
 
   // Setup authentication middleware (using the same TLS certificate keypair)
+  bool tls_enabled = !tls_cert_path.empty();
+  bool mtls_enabled = !mtls_ca_cert_path.empty();
   auto header_middleware = std::make_shared<gizmosql::BasicAuthServerMiddlewareFactory>(
       username, password, secret_key, token_allowed_issuer, token_allowed_audience,
-      token_signature_verify_cert_path, auth_log_level);
+      token_signature_verify_cert_path, auth_log_level, tls_enabled, mtls_enabled);
   auto bearer_middleware = std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(
       secret_key, auth_log_level);
 
@@ -140,15 +215,87 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
     db_type = "DuckDB";
+
+    // Create DuckDB server first (without instrumentation manager)
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
                                              database_filename, read_only, print_queries,
-                                             query_timeout, query_log_level))
-    // Run additional commands (first) for the DuckDB back-end...
-    auto duckdb_init_sql_commands =
-        "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;" +
-        init_sql_commands;
+                                             query_timeout, query_log_level,
+                                             nullptr))  // No instrumentation manager yet
+
+    // Set instance_id for all future log entries (enables log correlation)
+    auto instance_id = duckdb_server->GetInstanceId();
+    gizmosql::SetInstanceId(instance_id);
+
+    // Set instance_id on auth middleware for JWT token creation and validation
+    header_middleware->SetInstanceId(instance_id);
+    bearer_middleware->SetInstanceId(instance_id);
+
+    GIZMOSQL_LOG(INFO) << "Server instance created";
+
+    // Run DuckDB init commands first
+    std::string duckdb_init_sql_commands =
+        "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;";
+
+    // Instrumentation setup (conditional)
+    std::string instr_db_path;
+    if (enable_instrumentation) {
+      // Get instrumentation DB path: CLI arg > env var > default
+      if (!instrumentation_db_path.empty()) {
+        instr_db_path = instrumentation_db_path;
+      } else {
+        // GetDefaultDbPath checks GIZMOSQL_INSTRUMENTATION_DB_PATH env var internally
+        instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
+            database_filename.string());
+      }
+      GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
+      duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
+    } else {
+      GIZMOSQL_LOG(INFO) << "Instrumentation is disabled";
+    }
+
+    duckdb_init_sql_commands += init_sql_commands;
     RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands);
+
+    // Now initialize instrumentation manager using the server's DuckDB instance (if enabled)
+    if (enable_instrumentation) {
+      auto db_instance = duckdb_server->GetDuckDBInstance();
+      auto instr_result = gizmosql::ddb::InstrumentationManager::Create(db_instance, instr_db_path);
+      if (instr_result.ok()) {
+        g_instrumentation_manager = *instr_result;
+        duckdb_server->SetInstrumentationManager(g_instrumentation_manager);
+        GIZMOSQL_LOG(INFO) << "Instrumentation enabled at: "
+                           << g_instrumentation_manager->GetDbPath();
+
+        // Create instance instrumentation record and pass to server
+        // The server owns the instance_id - instrumentation receives it, not generates it
+        gizmosql::ddb::InstanceConfig instance_config{
+            .instance_id = duckdb_server->GetInstanceId(),
+            .gizmosql_version = PROJECT_VERSION,
+            .gizmosql_edition = gizmosql::enterprise::EnterpriseFeatures::Instance().GetEditionName(),
+            .duckdb_version = duckdb_library_version(),
+            .arrow_version = ARROW_VERSION_STRING,
+            .hostname = GetActualHostname(),
+            .hostname_arg = hostname,
+            .server_ip = GetPrimaryIPAddress(),
+            .port = port,
+            .database_path = database_filename.string(),
+            .tls_enabled = !tls_cert_path.empty(),
+            .tls_cert_path = tls_cert_path.string(),
+            .tls_key_path = tls_key_path.string(),
+            .mtls_required = !mtls_ca_cert_path.empty(),
+            .mtls_ca_cert_path = mtls_ca_cert_path.string(),
+            .readonly = read_only,
+        };
+        auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
+            g_instrumentation_manager, instance_config);
+        duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
+      } else {
+        GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "
+                              << instr_result.status().ToString();
+      }
+    }
+
     server = duckdb_server;
   }
 
@@ -159,16 +306,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
   if (server != nullptr) {
     // Create health check service
-    // The health check function will execute "SELECT 1" on the backend to verify connectivity
+    // The health check function will execute the configured query on the backend to verify connectivity
     // Using g_health_service (static) to ensure the service lives as long as the server
+    GIZMOSQL_LOG(INFO) << "Health check query: " << health_check_query;
     if (backend == BackendType::sqlite) {
       auto sqlite_server =
           std::dynamic_pointer_cast<gizmosql::sqlite::SQLiteFlightSqlServer>(server);
       g_health_service = std::make_shared<GizmoSQLHealthServiceImpl>(
           [weak_server = std::weak_ptr<gizmosql::sqlite::SQLiteFlightSqlServer>(
-               sqlite_server)]() -> bool {
+               sqlite_server), health_check_query]() -> bool {
             if (auto s = weak_server.lock()) {
-              return s->ExecuteSql("SELECT 1").ok();
+              return s->ExecuteSql(health_check_query).ok();
             }
             return false;
           });
@@ -177,9 +325,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
           std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server);
       g_health_service = std::make_shared<GizmoSQLHealthServiceImpl>(
           [weak_server = std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer>(
-               duckdb_server)]() -> bool {
+               duckdb_server), health_check_query]() -> bool {
             if (auto s = weak_server.lock()) {
-              return s->ExecuteSql("SELECT 1").ok();
+              return s->ExecuteSql(health_check_query).ok();
             }
             return false;
           });
@@ -248,7 +396,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port) {
+    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    std::string health_check_query,
+    const bool& enable_instrumentation,
+    std::string instrumentation_db_path) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     GIZMOSQL_LOG(INFO)
@@ -415,17 +566,44 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   GIZMOSQL_LOG(INFO) << "Authentication Log Level is set to: "
                      << log_level_arrow_log_level_to_string(auth_log_level);
 
+  // Resolve health check query: CLI arg > env var > default
+  if (health_check_query.empty()) {
+    health_check_query = SafeGetEnvVarValue("GIZMOSQL_HEALTH_CHECK_QUERY");
+  }
+  if (health_check_query.empty()) {
+    health_check_query = "SELECT 1";
+  }
+
   return FlightSQLServerBuilder(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, access_logging_enabled, query_timeout,
-      query_log_level, auth_log_level, health_port);
+      query_log_level, auth_log_level, health_port, health_check_query,
+      enable_instrumentation, instrumentation_db_path);
 }
 
 arrow::Status StartFlightSQLServer(
     std::shared_ptr<flight::sql::FlightSqlServerBase> server) {
   return arrow::Status::OK();
+}
+
+void CleanupServerResources() {
+  // Shutdown and reset health services
+  if (g_plaintext_health_server) {
+    g_plaintext_health_server->Shutdown();
+    g_plaintext_health_server.reset();
+  }
+  if (g_health_service) {
+    g_health_service->Shutdown();
+    g_health_service.reset();
+  }
+
+  // Shutdown and reset instrumentation manager
+  if (g_instrumentation_manager) {
+    g_instrumentation_manager->Shutdown();
+    g_instrumentation_manager.reset();
+  }
 }
 }  // namespace gizmosql
 
@@ -442,7 +620,10 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
-                       int health_port) {
+                       int health_port, std::string health_check_query,
+                       const bool& enable_instrumentation,
+                       std::string instrumentation_db_path,
+                       std::string license_key_file) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -501,10 +682,45 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
   std::tm* localTime = std::localtime(&currentTime);
 
-  GIZMOSQL_LOG(INFO) << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
+#ifdef GIZMOSQL_ENTERPRISE
+  // Resolve license key file: CLI arg > env var
+  if (license_key_file.empty()) {
+    license_key_file = gizmosql::SafeGetEnvVarValue("GIZMOSQL_LICENSE_KEY_FILE");
+  }
+
+  // Initialize enterprise features with license
+  auto& enterprise = gizmosql::enterprise::EnterpriseFeatures::Instance();
+  auto license_status = enterprise.Initialize(license_key_file);
+  if (!license_status.ok()) {
+    std::cerr << "License Error: " << license_status.ToString() << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // Print appropriate copyright banner
+  GIZMOSQL_LOG(INFO) << enterprise.GetCopyrightBanner();
+
+  // Check if instrumentation is requested but not licensed
+  if (enable_instrumentation && !enterprise.IsInstrumentationAvailable()) {
+    std::cerr << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError("Instrumentation") << std::endl;
+    return EXIT_FAILURE;
+  }
+#else
+  // Core edition banner (no enterprise features compiled)
+  (void)license_key_file;  // Suppress unused variable warning
+
+  GIZMOSQL_LOG(INFO) << "GizmoSQL Core - Copyright (c) " << (1900 + localTime->tm_year)
                      << " GizmoData LLC"
                      << "\n Licensed under the Apache License, Version 2.0"
                      << "\n https://www.apache.org/licenses/LICENSE-2.0";
+
+  // In core edition, instrumentation is not available
+  if (enable_instrumentation) {
+    std::cerr << "Error: Instrumentation is a commercially licensed enterprise feature.\n"
+              << "       Please provide a valid license key file via --license-key-file\n"
+              << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
+    return EXIT_FAILURE;
+  }
+#endif
 
   GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: "
                      << lvl_s;
@@ -514,7 +730,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
-      query_timeout, query_level, auth_level, health_port);
+      query_timeout, query_level, auth_level, health_port, health_check_query,
+      enable_instrumentation, instrumentation_db_path);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
@@ -530,6 +747,28 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       gizmosql::g_health_service->Shutdown();
       GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
     }
+
+    // Release sessions, statements, and instance instrumentation BEFORE shutting down the manager.
+    // This ensures all instrumentation records are queued while the manager can still accept writes.
+    // The manager's Shutdown() will then drain the queue.
+    // Order: statements -> sessions -> instance (child records before parent records)
+    if (auto duckdb_server = std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server_ptr)) {
+      auto instance_id = duckdb_server->GetInstanceId();
+      // Release statements and sessions first (closes their instrumentation records)
+      duckdb_server->ReleaseAllSessions();
+      // Then release instance instrumentation
+      duckdb_server->ReleaseInstanceInstrumentation();
+      GIZMOSQL_LOG(INFO) << "Instance " << instance_id << " instrumentation released";
+    }
+
+    if (gizmosql::g_instrumentation_manager) {
+      gizmosql::g_instrumentation_manager->Shutdown();
+      gizmosql::g_instrumentation_manager.reset();
+      GIZMOSQL_LOG(INFO) << "Instrumentation manager shutdown complete";
+    }
+
+    // Now safe to destroy the server
+    server_ptr.reset();
 
     return EXIT_SUCCESS;
   } else {

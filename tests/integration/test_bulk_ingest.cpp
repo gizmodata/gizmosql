@@ -1,28 +1,31 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 #include <gtest/gtest.h>
 #include <thread>
 #include <chrono>
-#include <atomic>
-#include <future>
 #include <iostream>
-#include <sstream>
-#include <filesystem>
-#include <cstdio>
 
-#ifndef _WIN32
-#include <unistd.h>  // pipe, dup2
-#endif
-
-#include "common/include/gizmosql_library.h"
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/api.h"
 #include "arrow/testing/gtest_util.h"
 #include "test_util.h"
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
+#include "test_server_fixture.h"
 
 using arrow::flight::sql::FlightSqlClient;
 using arrow::flight::sql::TableDefinitionOptions;
@@ -53,99 +56,54 @@ std::shared_ptr<arrow::RecordBatchReader> MakeTestBatches() {
   return *maybe_reader;
 }
 
-bool WaitForPortOpen(int port, int timeout_seconds = 10) {
-  using namespace std::chrono_literals;
-  auto start = std::chrono::steady_clock::now();
-
-  while (std::chrono::steady_clock::now() - start <
-         std::chrono::seconds(timeout_seconds)) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock >= 0) {
-      sockaddr_in addr{};
-      addr.sin_family = AF_INET;
-      addr.sin_port = htons(port);
-      addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // 127.0.0.1
-
-      int result = connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-      close(sock);
-      if (result == 0) {
-        return true;  // port is accepting connections
-      }
-    }
-    std::this_thread::sleep_for(100ms);
-  }
-  return false;
-}
-
 //--------------------------------------------------
-// Server fixture — spawns GizmoSQL server and waits
+// Server fixture
 //--------------------------------------------------
-class GizmoSQLServerFixture : public ::testing::Test {
- protected:
-  std::thread server_thread_;
-  std::atomic<bool> server_ready_{false};
 
-  void SetUp() override {
-    // Redirect stdout to a pipe so we can capture logs.
-    FILE* pipe_read = nullptr;
-    FILE* pipe_write = nullptr;
-#if defined(_WIN32)
-    _pipe((int*)&pipe_read, 4096, O_BINARY);
-#else
-    int fds[2];
-    ASSERT_EQ(pipe(fds), 0) << "pipe() failed";
-
-    pipe_read = fdopen(fds[0], "r");
-    pipe_write = fdopen(fds[1], "w");
-    ASSERT_NE(pipe_read, nullptr);
-    ASSERT_NE(pipe_write, nullptr);
-
-    // Duplicate stdout so server logs go to pipe
-    fflush(stdout);
-    dup2(fds[1], fileno(stdout));
-#endif
-
-    // Start server thread
-    server_thread_ = std::thread([]() {
-      RunFlightSQLServer(
-          BackendType::duckdb, std::filesystem::path("tester.db"), "0.0.0.0",
-          DEFAULT_FLIGHT_PORT, "tester", "tester", "", std::filesystem::path(),
-          std::filesystem::path(), std::filesystem::path(), "", std::filesystem::path(),
-          true, false, "", "", std::filesystem::path(), "debug", "text", "off", "", 0);
-    });
-
-    ASSERT_TRUE(WaitForPortOpen(DEFAULT_FLIGHT_PORT, 10))
-        << "Timed out waiting for GizmoSQL server startup";
-    server_ready_ = true;
-
-    ASSERT_TRUE(server_ready_) << "Timed out waiting for GizmoSQL server startup";
-  }
-
-  void TearDown() override {
-    // No shutdown API yet — just detach
-    if (server_thread_.joinable()) {
-      server_thread_.detach();
-    }
+class BulkIngestServerFixture
+    : public gizmosql::testing::ServerTestFixture<BulkIngestServerFixture> {
+ public:
+  static gizmosql::testing::TestServerConfig GetConfig() {
+    return {
+        .database_filename = "bulk_ingest_tester.db",
+        .port = DEFAULT_FLIGHT_PORT,
+        .health_port = DEFAULT_HEALTH_PORT,
+        .username = "tester",
+        .password = "tester",
+    };
   }
 };
+
+// Static member definitions required by the template
+template <>
+std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
+    gizmosql::testing::ServerTestFixture<BulkIngestServerFixture>::server_{};
+template <>
+std::thread gizmosql::testing::ServerTestFixture<BulkIngestServerFixture>::server_thread_{};
+template <>
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<BulkIngestServerFixture>::server_ready_{false};
+template <>
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<BulkIngestServerFixture>::config_{};
 
 //--------------------------------------------------
 // Integration test
 //--------------------------------------------------
-TEST_F(GizmoSQLServerFixture, ExecuteIngestEndToEnd) {
-  ASSERT_TRUE(server_ready_) << "Server not ready";
+TEST_F(BulkIngestServerFixture, ExecuteIngestEndToEnd) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
-  ASSERT_ARROW_OK_AND_ASSIGN(auto location, arrow::flight::Location::ForGrpcTcp(
-                                                "localhost", DEFAULT_FLIGHT_PORT));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
   ASSERT_ARROW_OK_AND_ASSIGN(auto client,
                              arrow::flight::FlightClient::Connect(location, options));
 
   arrow::flight::FlightCallOptions call_options;
 
   // Authenticate and attach bearer header
-  ASSERT_ARROW_OK_AND_ASSIGN(auto bearer,
-                             client->AuthenticateBasicToken({}, "tester", "tester"));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
   call_options.headers.push_back(bearer);
 
   arrow::flight::sql::FlightSqlClient sql_client(std::move(client));
@@ -165,13 +123,13 @@ TEST_F(GizmoSQLServerFixture, ExecuteIngestEndToEnd) {
       arrow::flight::sql::no_transaction(), ingest_options);
 
   if (!maybe_rows.ok()) {
-    std::cerr << "\n❌ ExecuteIngest failed:\n"
+    std::cerr << "\nExecuteIngest failed:\n"
               << maybe_rows.status().ToString() << std::endl;
     FAIL() << "ExecuteIngest failed";
   }
 
   auto updated_rows = *maybe_rows;
-  std::cerr << "✅ ExecuteIngest succeeded: " << updated_rows << " rows" << std::endl;
+  std::cerr << "ExecuteIngest succeeded: " << updated_rows << " rows" << std::endl;
 
   ASSERT_EQ(updated_rows, 3) << "Expected 3 ingested rows";
 }
