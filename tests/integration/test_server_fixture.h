@@ -63,6 +63,8 @@ struct TestServerConfig {
   int health_port;
   std::string username;
   std::string password;
+  BackendType backend = BackendType::duckdb;  // Default to DuckDB for existing tests
+  bool enable_instrumentation = true;         // SQLite doesn't support instrumentation
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -114,7 +116,7 @@ class ServerTestFixture : public ::testing::Test {
 
     fs::path db_path(config_.database_filename);
     auto result = gizmosql::CreateFlightSQLServer(
-        BackendType::duckdb, db_path, "localhost", config_.port, config_.username,
+        config_.backend, db_path, "localhost", config_.port, config_.username,
         config_.password,
         /*secret_key=*/"test_secret_key_for_testing",
         /*tls_cert_path=*/fs::path(),
@@ -132,7 +134,7 @@ class ServerTestFixture : public ::testing::Test {
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*auth_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*health_port=*/config_.health_port,
-        /*enable_instrumentation=*/true,
+        /*enable_instrumentation=*/config_.enable_instrumentation,
         /*instrumentation_db_path=*/"");
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();

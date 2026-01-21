@@ -23,6 +23,7 @@ add_executable(gizmosql_integration_tests
         integration/test_catalog_access.cpp
         integration/test_instrumentation.cpp
         integration/test_kill_session.cpp
+        integration/test_sqlite_backend.cpp
         integration/test_tpch_benchmark.cpp
         integration/test_ducklake.cpp
 )
