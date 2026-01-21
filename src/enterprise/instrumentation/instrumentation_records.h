@@ -17,6 +17,7 @@ class InstrumentationManager;
 struct InstanceConfig {
   std::string instance_id;
   std::string gizmosql_version;
+  std::string gizmosql_edition;
   std::string duckdb_version;
   std::string arrow_version;
   std::string hostname;       // Actual machine hostname (from OS)

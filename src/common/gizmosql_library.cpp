@@ -272,6 +272,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         gizmosql::ddb::InstanceConfig instance_config{
             .instance_id = duckdb_server->GetInstanceId(),
             .gizmosql_version = PROJECT_VERSION,
+            .gizmosql_edition = gizmosql::enterprise::EnterpriseFeatures::Instance().GetEditionName(),
             .duckdb_version = duckdb_library_version(),
             .arrow_version = ARROW_VERSION_STRING,
             .hostname = GetActualHostname(),

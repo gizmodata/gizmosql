@@ -55,6 +55,7 @@ CREATE TYPE IF NOT EXISTS execution_status AS ENUM ('executing', 'success', 'err
 CREATE TABLE IF NOT EXISTS instances (
     instance_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     gizmosql_version VARCHAR NOT NULL,
+    gizmosql_edition VARCHAR NOT NULL,
     duckdb_version VARCHAR NOT NULL,
     arrow_version VARCHAR NOT NULL,
     hostname VARCHAR,
@@ -138,6 +139,7 @@ CREATE OR REPLACE VIEW session_activity AS
 SELECT
     i.instance_id,
     i.gizmosql_version,
+    i.gizmosql_edition,
     i.duckdb_version,
     i.arrow_version,
     i.hostname,

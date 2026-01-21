@@ -492,10 +492,10 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
 
     auto insert_result = conn.Query(R"SQL(
       INSERT INTO _gizmosql_instr.instances
-        (instance_id, gizmosql_version, duckdb_version, arrow_version, hostname, port, database_path,
+        (instance_id, gizmosql_version, gizmosql_edition, duckdb_version, arrow_version, hostname, port, database_path,
          tls_enabled, mtls_required, readonly, status)
       VALUES
-        ('11111111-1111-1111-1111-111111111111', 'v1.0.0', 'v1.0.0', 'v20.0.0', 'test', 9999, '/test/db',
+        ('11111111-1111-1111-1111-111111111111', 'v1.0.0', 'Enterprise', 'v1.0.0', 'v20.0.0', 'test', 9999, '/test/db',
          false, false, false, 'running')
     )SQL");
     ASSERT_FALSE(insert_result->HasError()) << insert_result->GetError();
