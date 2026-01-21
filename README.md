@@ -23,6 +23,28 @@ Originally forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) —
 
 ---
 
+## 📦 Editions
+
+GizmoSQL is available in two editions:
+
+| Feature | Core | Enterprise |
+|---------|:----:|:----------:|
+| DuckDB & SQLite backends | ✅ | ✅ |
+| Arrow Flight SQL protocol | ✅ | ✅ |
+| TLS & mTLS authentication | ✅ | ✅ |
+| JWT token authentication | ✅ | ✅ |
+| Query timeout | ✅ | ✅ |
+| Session Instrumentation | ❌ | ✅ |
+| Kill Session | ❌ | ✅ |
+
+**GizmoSQL Core** is free and open source under the Apache 2.0 license.
+
+**GizmoSQL Enterprise** requires a commercial license. Contact [sales@gizmodata.com](mailto:sales@gizmodata.com) for licensing information.
+
+For more details, see the [Editions documentation](https://docs.gizmosql.com/#/editions).
+
+---
+
 ## 🧠 Why GizmoSQL?
 
 - 🛰️ **Deploy Anywhere** — Run as a container, native binary, or in Kubernetes
@@ -237,10 +259,9 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 
 ## 🔒 License
 
-```
-Apache License, Version 2.0
-https://www.apache.org/licenses/LICENSE-2.0
-```
+**GizmoSQL Core** is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+**Enterprise features** (in `src/enterprise/`) are proprietary and require a commercial license from GizmoData LLC. See [src/enterprise/LICENSE](src/enterprise/LICENSE) for details.
 
 ---
 
