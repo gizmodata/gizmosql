@@ -84,6 +84,11 @@ void SetLogLevel(arrow::util::ArrowLogLevel level);
 void LogWithFields(arrow::util::ArrowLogLevel level, const char* file, int line,
                    std::string_view msg, const FieldList& fields = {});
 
+/// Set the instance ID for log correlation. Once set, this ID will be included
+/// in every log entry (both JSON and text formats). Call this as early as possible
+/// after the server instance is created.
+void SetInstanceId(const std::string& instance_id);
+
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------

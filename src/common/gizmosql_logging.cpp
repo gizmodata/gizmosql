@@ -39,6 +39,10 @@ struct GlobalState {
 
   std::atomic<ArrowLogLevel> level{ArrowLogLevel::ARROW_INFO};
   LogConfig cfg;
+
+  // Instance ID for log correlation (set once after server creation)
+  std::mutex instance_id_mu;
+  std::string instance_id;
 };
 
 GlobalState G;
@@ -81,6 +85,11 @@ inline const char* LevelName(ArrowLogLevel lvl) {
     default:
       return "INFO";
   }
+}
+
+inline std::string GetInstanceId() {
+  std::lock_guard<std::mutex> lk(G.instance_id_mu);
+  return G.instance_id;
 }
 
 // Encode fields into a compact JSON string (only for transport inside message)
@@ -192,6 +201,12 @@ private:
     tid << std::this_thread::get_id();
     j["tid"] = tid.str();
 
+    // Include instance_id in every log entry (if set)
+    auto inst_id = GetInstanceId();
+    if (!inst_id.empty()) {
+      j["instance_id"] = inst_id;
+    }
+
     if (G.cfg.show_source) {
       j["file"] = file;
       j["line"] = line;
@@ -264,6 +279,12 @@ private:
     std::ostringstream oss;
     oss << NowIso8601Utc() << " " << LevelName(level) << " pid=" << gizmosql_getpid()
         << " tid=" << tid.str();
+
+    // Include instance_id in every log entry (if set)
+    auto inst_id = GetInstanceId();
+    if (!inst_id.empty()) {
+      oss << " instance_id=" << inst_id;
+    }
 
     if (G.cfg.component) oss << " component=" << *G.cfg.component;
     if (G.cfg.show_source) oss << " " << file << ":" << line;
@@ -342,5 +363,10 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
   d.source_location.file = file;
   d.source_location.line = static_cast<uint32_t>(line);
   logger->Log(d);
+}
+
+void SetInstanceId(const std::string& instance_id) {
+  std::lock_guard<std::mutex> lk(G.instance_id_mu);
+  G.instance_id = instance_id;
 }
 } // namespace gizmosql

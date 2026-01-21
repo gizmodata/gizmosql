@@ -216,9 +216,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                                              query_timeout, query_log_level,
                                              nullptr))  // No instrumentation manager yet
 
-    // Log instance_id as structured KV entry for log correlation (as early as possible)
-    GIZMOSQL_LOGKV(INFO, "Server instance created",
-                   {"instance_id", duckdb_server->GetInstanceId()});
+    // Set instance_id for all future log entries (enables log correlation)
+    gizmosql::SetInstanceId(duckdb_server->GetInstanceId());
+    GIZMOSQL_LOG(INFO) << "Server instance created";
 
     // Run DuckDB init commands first
     std::string duckdb_init_sql_commands =
