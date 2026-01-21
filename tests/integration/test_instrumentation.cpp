@@ -735,19 +735,45 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
     ASSERT_GE(count, 1)
         << "Expected at least one instance with graceful stop_reason, got " << count;
 
-    // Note: Sessions may still be 'active' if the client didn't call CloseSession
-    // before disconnect. On next server startup, these would be cleaned up by
-    // CleanupStaleRecords. The key test is that the INSTANCE was properly closed.
+    // Verify sessions are closed - ReleaseAllSessions() should mark them as 'closed'
+    auto session_result = conn.Query(
+        "SELECT session_id, status FROM sessions WHERE status = 'active'");
+    ASSERT_FALSE(session_result->HasError()) << session_result->GetError();
+    ASSERT_EQ(session_result->RowCount(), 0)
+        << "All sessions should be marked as 'closed' after SIGTERM, but found "
+        << session_result->RowCount() << " still 'active'";
+
+    // Verify at least one session was created and closed
+    auto closed_session_result = conn.Query(
+        "SELECT COUNT(*) FROM sessions WHERE status = 'closed'");
+    ASSERT_FALSE(closed_session_result->HasError()) << closed_session_result->GetError();
+    auto closed_count = closed_session_result->GetValue(0, 0).GetValue<int64_t>();
+    ASSERT_GE(closed_count, 1)
+        << "Expected at least one closed session, got " << closed_count;
 
     // Check that all executions are completed (not 'executing')
-    // Note: Our test query completed successfully, so no 'executing' executions
-    // should remain for this instance
     auto exec_result = conn.Query(
         "SELECT status FROM sql_executions WHERE status = 'executing'");
     ASSERT_FALSE(exec_result->HasError()) << exec_result->GetError();
     ASSERT_EQ(exec_result->RowCount(), 0)
         << "All executions should be completed after SIGTERM, but found "
         << exec_result->RowCount() << " still 'executing'";
+
+    // Verify at least one execution completed successfully
+    auto completed_exec_result = conn.Query(
+        "SELECT COUNT(*) FROM sql_executions WHERE status = 'completed'");
+    ASSERT_FALSE(completed_exec_result->HasError()) << completed_exec_result->GetError();
+    auto completed_count = completed_exec_result->GetValue(0, 0).GetValue<int64_t>();
+    ASSERT_GE(completed_count, 1)
+        << "Expected at least one completed execution, got " << completed_count;
+
+    // Verify at least one statement was recorded
+    auto stmt_result = conn.Query(
+        "SELECT COUNT(*) FROM sql_statements");
+    ASSERT_FALSE(stmt_result->HasError()) << stmt_result->GetError();
+    auto stmt_count = stmt_result->GetValue(0, 0).GetValue<int64_t>();
+    ASSERT_GE(stmt_count, 1)
+        << "Expected at least one statement, got " << stmt_count;
   }
 
   // Clean up test files

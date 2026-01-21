@@ -234,6 +234,8 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   void SetInstrumentationManager(std::shared_ptr<InstrumentationManager> manager);
   /// Explicitly release instance instrumentation (must be called BEFORE manager shutdown)
   void ReleaseInstanceInstrumentation();
+  /// Release all active sessions (must be called BEFORE manager shutdown to close session records)
+  void ReleaseAllSessions();
 
   // Get the underlying DuckDB instance (for instrumentation setup)
   std::shared_ptr<duckdb::DuckDB> GetDuckDBInstance() const;

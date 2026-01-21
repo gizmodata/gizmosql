@@ -693,11 +693,15 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
     }
 
-    // Release instance instrumentation BEFORE shutting down the manager.
-    // This ensures the instance's stop record is queued while the manager
-    // can still accept writes. The manager's Shutdown() will then drain the queue.
+    // Release sessions, statements, and instance instrumentation BEFORE shutting down the manager.
+    // This ensures all instrumentation records are queued while the manager can still accept writes.
+    // The manager's Shutdown() will then drain the queue.
+    // Order: statements -> sessions -> instance (child records before parent records)
     if (auto duckdb_server = std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server_ptr)) {
       auto instance_id = duckdb_server->GetInstanceId();
+      // Release statements and sessions first (closes their instrumentation records)
+      duckdb_server->ReleaseAllSessions();
+      // Then release instance instrumentation
       duckdb_server->ReleaseInstanceInstrumentation();
       GIZMOSQL_LOG(INFO) << "Instance " << instance_id << " instrumentation released";
     }

@@ -844,6 +844,29 @@ class DuckDBFlightSqlServer::Impl {
     instance_instrumentation_.reset();
   }
 
+  void ReleaseAllSessions() {
+    // First, clear prepared statements (which hold ExecutionInstrumentation)
+    // This must happen before sessions are cleared since statements hold session refs
+    {
+      std::unique_lock stmt_lock(statements_mutex_);
+      auto stmt_count = prepared_statements_.size();
+      prepared_statements_.clear();
+      if (stmt_count > 0) {
+        GIZMOSQL_LOG(INFO) << "Released " << stmt_count << " prepared statement(s) during shutdown";
+      }
+    }
+
+    // Then clear sessions (which triggers SessionInstrumentation destructors)
+    {
+      std::unique_lock session_lock(sessions_mutex_);
+      auto session_count = client_sessions_.size();
+      client_sessions_.clear();
+      if (session_count > 0) {
+        GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
+      }
+    }
+  }
+
   std::string GetInstanceId() const {
     return instance_id_;
   }
@@ -2063,6 +2086,10 @@ void DuckDBFlightSqlServer::SetInstrumentationManager(
 
 void DuckDBFlightSqlServer::ReleaseInstanceInstrumentation() {
   impl_->ReleaseInstanceInstrumentation();
+}
+
+void DuckDBFlightSqlServer::ReleaseAllSessions() {
+  impl_->ReleaseAllSessions();
 }
 
 std::shared_ptr<duckdb::DuckDB> DuckDBFlightSqlServer::GetDuckDBInstance() const {
