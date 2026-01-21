@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -30,6 +31,10 @@
 #include "arrow/result.h"
 #include "arrow/util/logging.h"
 #include "gizmosql_library.h"
+
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/enterprise_features.h"
+#endif
 
 namespace fs = std::filesystem;
 
@@ -112,6 +117,17 @@ class ServerTestFixture : public ::testing::Test {
 
   static void SetUpTestSuite() {
     config_ = Derived::GetConfig();
+
+    // Initialize enterprise features from env var if available
+#ifdef GIZMOSQL_ENTERPRISE
+    const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+    std::string license_path = license_file ? license_file : "";
+    auto license_status = gizmosql::enterprise::EnterpriseFeatures::Instance().Initialize(license_path);
+    if (!license_status.ok() && !license_path.empty()) {
+      std::cerr << "Warning: Failed to initialize enterprise license: "
+                << license_status.ToString() << std::endl;
+    }
+#endif
 
     // Remove any existing database files
     CleanupDatabaseFiles();

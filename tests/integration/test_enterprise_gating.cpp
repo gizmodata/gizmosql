@@ -19,6 +19,7 @@
 // These tests should pass in both Core and Enterprise builds when no license is provided.
 
 #include <gtest/gtest.h>
+#include <cstdlib>
 
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
@@ -27,6 +28,19 @@
 
 #include "test_util.h"
 #include "test_server_fixture.h"
+
+// Helper to check if enterprise license is available - these tests
+// should only run when NO license is present
+static bool IsEnterpriseLicenseAvailable() {
+  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  return license_file != nullptr && license_file[0] != '\0';
+}
+
+#define SKIP_IF_LICENSE_PRESENT() \
+  if (IsEnterpriseLicenseAvailable()) { \
+    GTEST_SKIP() << "License present - these tests verify behavior WITHOUT a license. " \
+                 << "Unset GIZMOSQL_LICENSE_KEY_FILE to run these tests."; \
+  }
 
 namespace flight = arrow::flight;
 namespace flightsql = arrow::flight::sql;
@@ -69,6 +83,7 @@ gizmosql::testing::TestServerConfig
 
 // Test that KILL SESSION is rejected without enterprise license
 TEST_F(EnterpriseGatingTestFixture, KillSessionRejectedWithoutLicense) {
+  SKIP_IF_LICENSE_PRESENT();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   flight::FlightClientOptions options;
@@ -133,6 +148,7 @@ TEST_F(EnterpriseGatingTestFixture, BasicQueriesWorkWithoutLicense) {
 
 // Test that GIZMOSQL_EDITION() returns 'Core' without license
 TEST_F(EnterpriseGatingTestFixture, EditionReturnsCoreWithoutLicense) {
+  SKIP_IF_LICENSE_PRESENT();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   flight::FlightClientOptions options;
