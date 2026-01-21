@@ -89,30 +89,33 @@ TEST_F(KillSessionServerFixture, NonAdminCannotKillSession) {
 
   FlightSqlClient sql_client(std::move(client));
 
-  // Allow async write queue to flush instrumentation records
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-  // Get our session ID
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto info,
-      sql_client.Execute(
-          call_options,
-          "SELECT session_id FROM _gizmosql_instr.active_sessions LIMIT 1"));
-
+  // Get our session ID with retry - async write queue needs time to flush
   std::string session_id;
-  for (const auto& endpoint : info->endpoints()) {
-    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
-                               sql_client.DoGet(call_options, endpoint.ticket));
-    std::shared_ptr<arrow::Table> table;
-    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
-    if (table->num_rows() > 0) {
-      auto column = table->column(0);
-      auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
-      session_id = array->GetString(0);
+  for (int attempt = 0; attempt < 10 && session_id.empty(); ++attempt) {
+    // Allow async write queue to flush instrumentation records
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    auto info_result = sql_client.Execute(
+        call_options,
+        "SELECT session_id FROM _gizmosql_instr.active_sessions LIMIT 1");
+    if (!info_result.ok()) continue;
+
+    for (const auto& endpoint : (*info_result)->endpoints()) {
+      auto reader_result = sql_client.DoGet(call_options, endpoint.ticket);
+      if (!reader_result.ok()) continue;
+      auto table_result = (*reader_result)->ToTable();
+      if (!table_result.ok()) continue;
+      auto table = *table_result;
+      if (table->num_rows() > 0) {
+        auto column = table->column(0);
+        auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
+        session_id = array->GetString(0);
+        break;
+      }
     }
   }
 
-  ASSERT_FALSE(session_id.empty()) << "Failed to get session ID";
+  ASSERT_FALSE(session_id.empty()) << "Failed to get session ID after retries";
 
   // Attempt to kill our own session - should fail
   auto result = sql_client.Execute(call_options, "KILL SESSION '" + session_id + "'");
