@@ -755,11 +755,6 @@ class TPCHBenchmarkFixture
         .password = "tpch_tester",
     };
   }
-
-  // Custom init SQL to generate TPC-H data
-  static std::string GetInitSql() {
-    return "INSTALL tpch; LOAD tpch; CALL dbgen(sf=1);";
-  }
 };
 
 // Static member definitions required by the template
