@@ -17,16 +17,29 @@ enable_testing()
 # ---------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------
-add_executable(gizmosql_integration_tests
+# Core integration tests (always built)
+set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
         integration/test_catalog_access.cpp
         integration/test_health_check.cpp
-        integration/test_instrumentation.cpp
-        integration/test_kill_session.cpp
         integration/test_sqlite_backend.cpp
         integration/test_tpch_benchmark.cpp
         integration/test_ducklake.cpp
+        integration/test_enterprise_gating.cpp
+)
+
+# Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)
+if(GIZMOSQL_ENTERPRISE)
+    set(GIZMOSQL_ENTERPRISE_TEST_SRCS
+            integration/test_instrumentation.cpp
+            integration/test_kill_session.cpp
+    )
+endif()
+
+add_executable(gizmosql_integration_tests
+        ${GIZMOSQL_CORE_TEST_SRCS}
+        ${GIZMOSQL_ENTERPRISE_TEST_SRCS}
 )
 
 # ---------------------------------------------------------
@@ -43,6 +56,16 @@ target_include_directories(gizmosql_integration_tests PRIVATE
         ${GRPC_INCLUDE_DIR}
         ${ABSL_INCLUDE_DIR}
 )
+
+# Add enterprise-specific include directories when building enterprise edition
+if(GIZMOSQL_ENTERPRISE)
+    target_include_directories(gizmosql_integration_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/enterprise
+            ${CMAKE_SOURCE_DIR}/src/enterprise/license_mgr
+            ${CMAKE_SOURCE_DIR}/src/enterprise/instrumentation
+            ${CMAKE_SOURCE_DIR}/src/enterprise/kill_session
+    )
+endif()
 
 # ---------------------------------------------------------
 # Link dependencies

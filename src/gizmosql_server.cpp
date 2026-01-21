@@ -93,12 +93,16 @@ int main(int argc, char** argv) {
             ("health-check-query", po::value<std::string>()->default_value(""),
               "SQL query used for health checks. If not set, uses env var GIZMOSQL_HEALTH_CHECK_QUERY. "
               "If that isn't set, defaults to 'SELECT 1'.")
-            ("enable-instrumentation", po::value<bool>()->default_value(true),
-              "Enable session instrumentation (tracking instances, sessions, SQL statements). "
-              "Use --enable-instrumentation=false to disable.")
+            ("enable-instrumentation", po::value<bool>()->default_value(false),
+              "[Enterprise] Enable session instrumentation (tracking instances, sessions, SQL statements). "
+              "Requires a valid enterprise license. Use --enable-instrumentation=true to enable.")
             ("instrumentation-db-path", po::value<std::string>()->default_value(""),
-              "Path for the instrumentation database. If not set, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH. "
-              "If that isn't set, defaults to gizmosql_instrumentation.db in the same directory as the main database.");
+              "[Enterprise] Path for the instrumentation database. If not set, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH. "
+              "If that isn't set, defaults to gizmosql_instrumentation.db in the same directory as the main database.")
+            ("license-key-file,L", po::value<std::string>()->default_value(""),
+              "Path to the GizmoSQL Enterprise license key file (JWT format). "
+              "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
+              "Required for enterprise features like instrumentation and kill session.");
 
   // clang-format on
 
@@ -223,11 +227,14 @@ int main(int argc, char** argv) {
   std::string instrumentation_db_path =
       vm.count("instrumentation-db-path") ? vm["instrumentation-db-path"].as<std::string>() : "";
 
+  std::string license_key_file =
+      vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
+
   return RunFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
-      health_check_query, enable_instrumentation, instrumentation_db_path);
+      health_check_query, enable_instrumentation, instrumentation_db_path, license_key_file);
 }

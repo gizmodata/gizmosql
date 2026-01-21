@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <chrono>
+#include <cstdlib>
 
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
@@ -27,6 +28,18 @@
 #include "test_server_fixture.h"
 
 using arrow::flight::sql::FlightSqlClient;
+
+// Helper to check if enterprise license is available for kill_session tests
+static bool IsEnterpriseLicenseAvailable() {
+  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  return license_file != nullptr && license_file[0] != '\0';
+}
+
+#define SKIP_IF_NO_LICENSE() \
+  if (!IsEnterpriseLicenseAvailable()) { \
+    GTEST_SKIP() << "Enterprise license required for KILL SESSION tests. " \
+                 << "Set GIZMOSQL_LICENSE_KEY_FILE environment variable."; \
+  }
 
 // Define the test fixture using the shared server infrastructure
 class KillSessionServerFixture
@@ -58,6 +71,7 @@ gizmosql::testing::TestServerConfig
 
 // Test that non-admin users cannot execute KILL SESSION
 TEST_F(KillSessionServerFixture, NonAdminCannotKillSession) {
+  SKIP_IF_NO_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -110,6 +124,7 @@ TEST_F(KillSessionServerFixture, NonAdminCannotKillSession) {
 
 // Test KILL SESSION with invalid session ID
 TEST_F(KillSessionServerFixture, KillNonexistentSession) {
+  SKIP_IF_NO_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -137,6 +152,7 @@ TEST_F(KillSessionServerFixture, KillNonexistentSession) {
 
 // Test that KILL SESSION syntax is properly parsed
 TEST_F(KillSessionServerFixture, KillSessionSyntax) {
+  SKIP_IF_NO_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -177,6 +193,7 @@ TEST_F(KillSessionServerFixture, KillSessionSyntax) {
 
 // Test that a killed session receives an error and must re-authenticate
 TEST_F(KillSessionServerFixture, KilledSessionMustReauthenticate) {
+  SKIP_IF_NO_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create the admin client

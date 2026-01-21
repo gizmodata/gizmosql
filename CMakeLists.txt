@@ -3,6 +3,15 @@ project(gizmosql)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# --------------------- Enterprise Edition Option ---------------------
+option(GIZMOSQL_ENTERPRISE "Build with enterprise features (instrumentation, kill session)" ON)
+
+if(GIZMOSQL_ENTERPRISE)
+    message(STATUS "Building GizmoSQL Enterprise Edition")
+else()
+    message(STATUS "Building GizmoSQL Core Edition")
+endif()
+
 # Function to retrieve the latest Git tag
 function(get_latest_git_tag OUTPUT_VARIABLE)
     execute_process(
@@ -230,9 +239,23 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_statement.cpp
         src/duckdb/duckdb_statement_batch_reader.cpp
         src/duckdb/duckdb_server.cpp
-        src/duckdb/duckdb_tables_schema_batch_reader.cpp
-        src/duckdb/instrumentation/instrumentation_manager.cpp
-        src/duckdb/instrumentation/instrumentation_records.cpp)
+        src/duckdb/duckdb_tables_schema_batch_reader.cpp)
+
+# Enterprise vs Core: instrumentation source files
+if(GIZMOSQL_ENTERPRISE)
+    # Enterprise edition: instrumentation from enterprise directory
+    set(GIZMOSQL_ENTERPRISE_SRCS
+            src/enterprise/enterprise_features.cpp
+            src/enterprise/license_mgr/license_manager.cpp
+            src/enterprise/instrumentation/instrumentation_manager.cpp
+            src/enterprise/instrumentation/instrumentation_records.cpp
+            src/enterprise/kill_session/kill_session_handler.cpp)
+else()
+    # Core edition: instrumentation from duckdb directory (stubs or full for compatibility)
+    set(GIZMOSQL_DUCKDB_SERVER_SRCS ${GIZMOSQL_DUCKDB_SERVER_SRCS}
+            src/duckdb/instrumentation/instrumentation_manager.cpp
+            src/duckdb/instrumentation/instrumentation_records.cpp)
+endif()
 
 # Add a library target
 add_library(gizmosqlserver STATIC
@@ -245,6 +268,7 @@ add_library(gizmosqlserver STATIC
         ${HEALTH_GRPC_SRCS}
         ${GIZMOSQL_SQLITE_SERVER_SRCS}
         ${GIZMOSQL_DUCKDB_SERVER_SRCS}
+        ${GIZMOSQL_ENTERPRISE_SRCS}
 )
 
 # Ensure proto generation happens before compiling gizmosqlserver
@@ -260,7 +284,6 @@ target_include_directories(gizmosqlserver
         PRIVATE
         src/sqlite
         src/duckdb
-        src/duckdb/instrumentation
         src/common/include/detail
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}
@@ -270,6 +293,22 @@ target_include_directories(gizmosqlserver
         ${GRPC_INCLUDE_DIR}
         ${ABSL_INCLUDE_DIR}
 )
+
+# Add enterprise-specific include directories and compile definition
+if(GIZMOSQL_ENTERPRISE)
+    target_include_directories(gizmosqlserver PRIVATE
+            src
+            src/enterprise
+            src/enterprise/license_mgr
+            src/enterprise/instrumentation
+            src/enterprise/kill_session
+    )
+    target_compile_definitions(gizmosqlserver PUBLIC GIZMOSQL_ENTERPRISE)
+else()
+    target_include_directories(gizmosqlserver PRIVATE
+            src/duckdb/instrumentation
+    )
+endif()
 
 target_link_libraries(gizmosqlserver
         PRIVATE

@@ -7,6 +7,7 @@
 #include <optional>
 #include <vector>
 #include <duckdb.hpp>
+#include <arrow/util/logging.h>
 
 #include "request_ctx.h"  // For CatalogAccessRule, CatalogAccessLevel
 
@@ -14,6 +15,8 @@ namespace gizmosql::ddb {
 class DuckDBFlightSqlServer;  // forward declare
 class SessionInstrumentation;  // forward declare
 }
+
+namespace gizmosql {
 
 struct ClientSession {
   std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer> server;
@@ -83,3 +86,5 @@ inline std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> GetServer(
     const ClientSession& session) {
   return session.server.lock();
 }
+
+}  // namespace gizmosql

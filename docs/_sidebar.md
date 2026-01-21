@@ -2,8 +2,11 @@
 
 * [Home](/)
 
+* Getting Started
+  * [Editions](editions.md)
+
 * Features
-  * [Session Instrumentation](session_instrumentation.md)
+  * [Session Instrumentation](session_instrumentation.md) *(Enterprise)*
 
 * Integrations
   * [Extensions & Tools](integrations.md)

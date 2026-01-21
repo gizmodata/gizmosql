@@ -40,6 +40,14 @@ jobs:
         with:
           generator: Ninja
           run-build: true
+          options: |
+            GIZMOSQL_ENTERPRISE=ON
+
+      - name: Setup Enterprise License
+        if: ${{ secrets.GIZMOSQL_LICENSE_KEY != '' }}
+        run: |
+          echo "${{ secrets.GIZMOSQL_LICENSE_KEY }}" > /tmp/gizmosql_license.jwt
+          echo "GIZMOSQL_LICENSE_KEY_FILE=/tmp/gizmosql_license.jwt" >> $GITHUB_ENV
 
       - name: Run Tests
         run: |
@@ -134,6 +142,13 @@ jobs:
           run-build: true
           options: |
             CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
+            GIZMOSQL_ENTERPRISE=ON
+
+      - name: Setup Enterprise License
+        if: ${{ secrets.GIZMOSQL_LICENSE_KEY != '' }}
+        run: |
+          echo "${{ secrets.GIZMOSQL_LICENSE_KEY }}" > /tmp/gizmosql_license.jwt
+          echo "GIZMOSQL_LICENSE_KEY_FILE=/tmp/gizmosql_license.jwt" >> $GITHUB_ENV
 
       - name: Run Tests
         run: |

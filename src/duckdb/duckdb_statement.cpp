@@ -39,8 +39,15 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/instrumentation/instrumentation_manager.h"
+#include "enterprise/instrumentation/instrumentation_records.h"
+#include "enterprise/kill_session/kill_session_handler.h"
+#include "enterprise/enterprise_features.h"
+#else
 #include "instrumentation/instrumentation_manager.h"
 #include "instrumentation/instrumentation_records.h"
+#endif
 #include "version.h"
 
 using arrow::Status;
@@ -76,6 +83,8 @@ bool IsDetachInstrumentationDb(const std::string& sql) {
          upper.find("GIZMOSQL_INSTRUMENTATION") != std::string::npos;
 }
 
+#ifndef GIZMOSQL_ENTERPRISE
+// Core edition: local implementation for detection only
 bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id) {
   std::string trimmed = sql;
   boost::algorithm::trim(trimmed);
@@ -91,6 +100,7 @@ bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id
   }
   return false;
 }
+#endif
 
 // Replace GizmoSQL pseudo-functions with actual values:
 //   GIZMOSQL_CURRENT_SESSION() -> current session UUID
@@ -98,6 +108,7 @@ bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id
 //   GIZMOSQL_VERSION() -> GizmoSQL version string
 //   GIZMOSQL_USER() -> current username
 //   GIZMOSQL_ROLE() -> current user's role
+//   GIZMOSQL_EDITION() -> edition name ("Core" or "Enterprise")
 // Only replaces occurrences that are NOT within quoted strings.
 // When in a SELECT expression context, adds an alias matching the function name.
 
@@ -207,7 +218,8 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
                                      const std::string& session_id,
                                      const std::string& instance_id,
                                      const std::string& username,
-                                     const std::string& role) {
+                                     const std::string& role,
+                                     const std::string& edition) {
   std::string result;
   result.reserve(sql.size() * 2);  // Extra space for potential aliases
 
@@ -336,6 +348,23 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
       }
     }
 
+    // Check for GIZMOSQL_EDITION() at this position
+    constexpr size_t kEditionFuncLen = 18;  // length of "GIZMOSQL_EDITION()"
+    if (i + kEditionFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kEditionFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_EDITION()") {
+        result += '\'';
+        result += edition;
+        result += '\'';
+        if (ShouldAddAlias(sql, i, i + kEditionFuncLen)) {
+          result += " AS \"GIZMOSQL_EDITION()\"";
+        }
+        i += kEditionFuncLen;
+        continue;
+      }
+    }
+
     result += sql[i++];
   }
 
@@ -457,10 +486,17 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     instance_id = server->GetInstanceId();
   }
 
+  // Get edition name for GIZMOSQL_EDITION()
+#ifdef GIZMOSQL_ENTERPRISE
+  std::string edition = enterprise::EnterpriseFeatures::Instance().GetEditionName();
+#else
+  std::string edition = "Core";
+#endif
+
   // Replace GIZMOSQL_* pseudo-functions with actual values
   std::string effective_sql = ReplaceGizmoSQLFunctions(
       sql, client_session->session_id, instance_id, client_session->username,
-      client_session->role);
+      client_session->role, edition);
 
   if (log_queries) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC(
@@ -487,74 +523,31 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   // Handle KILL SESSION command
   std::string target_session_id;
-  if (IsKillSessionCommand(sql, target_session_id)) {
-    // Helper to record KILL SESSION attempts (both successful and failed)
-    auto record_kill_session = [&](const std::string& error_msg = "") {
-      if (auto server = GetServer(*client_session)) {
-        if (auto mgr = server->GetInstrumentationManager()) {
-          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                   flight_method, is_internal, error_msg);
-        }
-      }
-    };
-
-    // Only admin users can kill sessions
-    if (client_session->role != "admin") {
-      GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Non-admin user attempted KILL SESSION",
-                     {"kind", "sql"}, {"status", "rejected"},
-                     {"target_session_id", target_session_id});
-      std::string error_msg = "Only admin users can execute KILL SESSION";
-      record_kill_session(error_msg);
-      return Status::Invalid(error_msg);
-    }
-
-    // Cannot kill own session
-    if (target_session_id == client_session->session_id) {
-      std::string error_msg = "Cannot kill your own session";
-      record_kill_session(error_msg);
-      return Status::Invalid(error_msg);
-    }
-
-    // Find and kill the target session
+#ifdef GIZMOSQL_ENTERPRISE
+  if (gizmosql::enterprise::IsKillSessionCommand(sql, target_session_id)) {
     auto server = GetServer(*client_session);
-    if (!server) {
-      std::string error_msg = "Unable to get server instance for KILL SESSION";
-      record_kill_session(error_msg);
-      return Status::Invalid(error_msg);
+    std::shared_ptr<InstrumentationManager> instr_mgr;
+    if (server) {
+      instr_mgr = server->GetInstrumentationManager();
     }
 
-    auto target = server->FindSession(target_session_id);
-    if (!target) {
-      std::string error_msg = "Session not found: " + target_session_id;
-      record_kill_session(error_msg);
-      return Status::KeyError(error_msg);
+    auto kill_status = gizmosql::enterprise::HandleKillSession(
+        client_session, target_session_id, server.get(), instr_mgr,
+        handle, logged_sql, flight_method, is_internal);
+
+    if (!kill_status.ok()) {
+      return kill_status;
     }
 
-    // Mark session for termination and interrupt its connection
-    target->kill_requested = true;
-    target->connection->Interrupt();
-
-    // Update instrumentation stop reason
-    if (target->instrumentation) {
-      target->instrumentation->SetStopReason("killed");
-    }
-
-    // Remove from session map and mark as killed to prevent reconnection
-    ARROW_RETURN_NOT_OK(server->RemoveSession(target_session_id, /*was_killed=*/true));
-
-    GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Session killed successfully",
-                   {"kind", "sql"}, {"status", "success"},
-                   {"target_session_id", target_session_id});
-
-    // Return a synthetic result for the KILL SESSION command
+    // Return a synthetic result for the successful KILL SESSION command
     std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
         client_session, handle, sql, effective_log_level, log_queries, override_schema));
     result->is_gizmosql_admin_ = true;
 
     // Create statement instrumentation for successful KILL SESSION
-    if (auto mgr = server->GetInstrumentationManager()) {
+    if (instr_mgr) {
       result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-          mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
+          instr_mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
     }
 
     // Create a synthetic result batch with success message
@@ -568,6 +561,18 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
     return result;
   }
+#else
+  // Core edition: KILL SESSION requires enterprise license
+  if (IsKillSessionCommand(sql, target_session_id)) {
+    std::string error_msg = "KILL SESSION is a commercially licensed enterprise feature. "
+                            "Please provide a valid license key file via --license-key-file "
+                            "or contact GizmoData sales at sales@gizmodata.com to obtain a license.";
+    GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "KILL SESSION attempted without enterprise license",
+                   {"kind", "sql"}, {"status", "rejected"},
+                   {"target_session_id", target_session_id});
+    return Status::Invalid(error_msg);
+  }
+#endif
 
   if (IsLikelyGizmoSQLSet(sql)) {
     std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(

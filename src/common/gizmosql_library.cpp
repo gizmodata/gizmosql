@@ -41,8 +41,14 @@
 #include "gizmosql_security.h"
 #include "access_log_middleware.h"
 #include "health_service.h"
-#include "instrumentation_manager.h"
-#include "instrumentation_records.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/enterprise_features.h"
+#include "enterprise/instrumentation/instrumentation_manager.h"
+#include "enterprise/instrumentation/instrumentation_records.h"
+#else
+#include "instrumentation/instrumentation_manager.h"
+#include "instrumentation/instrumentation_records.h"
+#endif
 #include "version.h"
 
 #include <grpcpp/grpcpp.h>
@@ -615,7 +621,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string query_log_level, std::string auth_log_level,
                        int health_port, std::string health_check_query,
                        const bool& enable_instrumentation,
-                       std::string instrumentation_db_path) {
+                       std::string instrumentation_db_path,
+                       std::string license_key_file) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -674,10 +681,45 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
   std::tm* localTime = std::localtime(&currentTime);
 
-  GIZMOSQL_LOG(INFO) << "GizmoSQL - Copyright © " << (1900 + localTime->tm_year)
+#ifdef GIZMOSQL_ENTERPRISE
+  // Resolve license key file: CLI arg > env var
+  if (license_key_file.empty()) {
+    license_key_file = gizmosql::SafeGetEnvVarValue("GIZMOSQL_LICENSE_KEY_FILE");
+  }
+
+  // Initialize enterprise features with license
+  auto& enterprise = gizmosql::enterprise::EnterpriseFeatures::Instance();
+  auto license_status = enterprise.Initialize(license_key_file);
+  if (!license_status.ok()) {
+    std::cerr << "License Error: " << license_status.ToString() << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // Print appropriate copyright banner
+  GIZMOSQL_LOG(INFO) << enterprise.GetCopyrightBanner();
+
+  // Check if instrumentation is requested but not licensed
+  if (enable_instrumentation && !enterprise.IsInstrumentationAvailable()) {
+    std::cerr << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError("Instrumentation") << std::endl;
+    return EXIT_FAILURE;
+  }
+#else
+  // Core edition banner (no enterprise features compiled)
+  (void)license_key_file;  // Suppress unused variable warning
+
+  GIZMOSQL_LOG(INFO) << "GizmoSQL Core - Copyright (c) " << (1900 + localTime->tm_year)
                      << " GizmoData LLC"
                      << "\n Licensed under the Apache License, Version 2.0"
                      << "\n https://www.apache.org/licenses/LICENSE-2.0";
+
+  // In core edition, instrumentation is not available
+  if (enable_instrumentation) {
+    std::cerr << "Error: Instrumentation is a commercially licensed enterprise feature.\n"
+              << "       Please provide a valid license key file via --license-key-file\n"
+              << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
+    return EXIT_FAILURE;
+  }
+#endif
 
   GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: "
                      << lvl_s;
