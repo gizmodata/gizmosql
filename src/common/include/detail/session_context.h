@@ -18,6 +18,7 @@ class SessionInstrumentation;  // forward declare
 struct ClientSession {
   std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer> server;
   std::shared_ptr<duckdb::Connection> connection;
+  std::string instance_id; // server instance UUID (for multi-instance log correlation)
   std::string session_id;  // from session middleware
   std::string username;    // from bearer auth middleware (JWT sub/email/etc.)
   std::string role;        // from JWT claims (e.g. "role") or header

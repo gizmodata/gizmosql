@@ -92,7 +92,10 @@ int main(int argc, char** argv) {
               "Port for plaintext gRPC health check server (for Kubernetes probes). Set to 0 to disable.")
             ("enable-instrumentation", po::value<bool>()->default_value(true),
               "Enable session instrumentation (tracking instances, sessions, SQL statements). "
-              "Use --enable-instrumentation=false to disable.");
+              "Use --enable-instrumentation=false to disable.")
+            ("instrumentation-db-path", po::value<std::string>()->default_value(""),
+              "Path for the instrumentation database. If not set, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH. "
+              "If that isn't set, defaults to gizmosql_instrumentation.db in the same directory as the main database.");
 
   // clang-format on
 
@@ -211,11 +214,14 @@ int main(int argc, char** argv) {
 
   bool enable_instrumentation = vm["enable-instrumentation"].as<bool>();
 
+  std::string instrumentation_db_path =
+      vm.count("instrumentation-db-path") ? vm["instrumentation-db-path"].as<std::string>() : "";
+
   return RunFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
-      enable_instrumentation);
+      enable_instrumentation, instrumentation_db_path);
 }

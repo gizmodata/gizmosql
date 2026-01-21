@@ -148,7 +148,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const fs::path& token_signature_verify_cert_path, const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
-    const bool& enable_instrumentation) {
+    const bool& enable_instrumentation,
+    const std::string& instrumentation_db_path) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -222,10 +223,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Instrumentation setup (conditional)
     std::string instr_db_path;
     if (enable_instrumentation) {
-      // Get instrumentation DB path and ATTACH it (not READ_ONLY - we need to write to it)
-      // The instrumentation DB is placed in the same directory as the user database
-      instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
-          database_filename.string());
+      // Get instrumentation DB path: CLI arg > env var > default
+      if (!instrumentation_db_path.empty()) {
+        instr_db_path = instrumentation_db_path;
+      } else {
+        // GetDefaultDbPath checks GIZMOSQL_INSTRUMENTATION_DB_PATH env var internally
+        instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
+            database_filename.string());
+      }
       GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
       duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
     } else {
@@ -267,6 +272,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
             g_instrumentation_manager, instance_config);
         duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
+        GIZMOSQL_LOG(INFO) << "Instance ID: " << duckdb_server->GetInstanceId();
       } else {
         GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "
                               << instr_result.status().ToString();
@@ -373,7 +379,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
-    const bool& enable_instrumentation) {
+    const bool& enable_instrumentation,
+    std::string instrumentation_db_path) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     GIZMOSQL_LOG(INFO)
@@ -545,7 +552,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, access_logging_enabled, query_timeout,
-      query_log_level, auth_log_level, health_port, enable_instrumentation);
+      query_log_level, auth_log_level, health_port, enable_instrumentation,
+      instrumentation_db_path);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -585,7 +593,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
-                       int health_port, const bool& enable_instrumentation) {
+                       int health_port, const bool& enable_instrumentation,
+                       std::string instrumentation_db_path) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -657,7 +666,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
-      query_timeout, query_level, auth_level, health_port, enable_instrumentation);
+      query_timeout, query_level, auth_level, health_port, enable_instrumentation,
+      instrumentation_db_path);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
@@ -674,16 +684,23 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
     }
 
-    // Destroy server first to trigger instance instrumentation cleanup
-    // (the server's Impl owns the InstanceInstrumentation, whose destructor writes stop_time)
-    server_ptr.reset();
-    GIZMOSQL_LOG(INFO) << "Instance instrumentation shutdown complete";
+    // Release instance instrumentation BEFORE shutting down the manager.
+    // This ensures the instance's stop record is queued while the manager
+    // can still accept writes. The manager's Shutdown() will then drain the queue.
+    if (auto duckdb_server = std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server_ptr)) {
+      auto instance_id = duckdb_server->GetInstanceId();
+      duckdb_server->ReleaseInstanceInstrumentation();
+      GIZMOSQL_LOG(INFO) << "Instance " << instance_id << " instrumentation released";
+    }
 
     if (gizmosql::g_instrumentation_manager) {
       gizmosql::g_instrumentation_manager->Shutdown();
       gizmosql::g_instrumentation_manager.reset();
       GIZMOSQL_LOG(INFO) << "Instrumentation manager shutdown complete";
     }
+
+    // Now safe to destroy the server
+    server_ptr.reset();
 
     return EXIT_SUCCESS;
   } else {

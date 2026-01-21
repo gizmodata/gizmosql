@@ -724,6 +724,7 @@ class DuckDBFlightSqlServer::Impl {
     auto new_session = std::make_shared<ClientSession>();
 
     new_session->server = outer_->shared_from_this();
+    new_session->instance_id = instance_id_;
     new_session->session_id = session_id;
     new_session->username = tl_request_ctx.username.value_or("");
     new_session->role = tl_request_ctx.role.value_or("");
@@ -778,10 +779,8 @@ class DuckDBFlightSqlServer::Impl {
       }
 
       client_sessions_[session_id] = new_session;
-      GIZMOSQL_LOGKV(INFO, "Client session was successfully created.",
-                     {"peer", new_session->peer}, {"kind", "session_create"},
-                     {"status", "success"}, {"session_id", new_session->session_id},
-                     {"user", new_session->username}, {"role", new_session->role},
+      GIZMOSQL_LOGKV_SESSION(INFO, new_session, "Client session was successfully created.",
+                     {"kind", "session_create"}, {"status", "success"},
                      {"auth_method", new_session->auth_method});
       return new_session;
     }
@@ -839,6 +838,10 @@ class DuckDBFlightSqlServer::Impl {
 
   void SetInstanceInstrumentation(std::unique_ptr<InstanceInstrumentation> instr) {
     instance_instrumentation_ = std::move(instr);
+  }
+
+  void ReleaseInstanceInstrumentation() {
+    instance_instrumentation_.reset();
   }
 
   std::string GetInstanceId() const {
@@ -1563,10 +1566,8 @@ class DuckDBFlightSqlServer::Impl {
       return Status::Invalid("No active SQL statement to cancel.");
     }
     client_session->connection->Interrupt();
-    GIZMOSQL_LOGKV(INFO, "SQL Statement was successfully canceled.",
-                   {"peer", client_session->peer}, {"kind", "sql"},
-                   {"status", "canceled"}, {"session_id", client_session->session_id},
-                   {"user", client_session->username}, {"role", client_session->role},
+    GIZMOSQL_LOGKV_SESSION(INFO, client_session, "SQL Statement was successfully canceled.",
+                   {"kind", "sql"}, {"status", "canceled"},
                    {"statement_handle", client_session->active_sql_handle.value()});
     return Status::OK();
   }
@@ -1644,17 +1645,13 @@ class DuckDBFlightSqlServer::Impl {
     auto it = client_sessions_.find(client_session->session_id);
     if (it != client_sessions_.end()) {
       client_sessions_.erase(it);
-      GIZMOSQL_LOGKV(INFO, "Client session was successfully closed.",
-                     {"peer", client_session->peer}, {"kind", "session_close"},
-                     {"status", "success"}, {"session_id", client_session->session_id},
-                     {"user", client_session->username}, {"role", client_session->role});
+      GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Client session was successfully closed.",
+                     {"kind", "session_close"}, {"status", "success"});
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
     } else {
-      GIZMOSQL_LOGKV(WARNING,
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                      "Client session was NOT successfully closed - session not found.",
-                     {"peer", client_session->peer}, {"kind", "session_close"},
-                     {"status", "failure"}, {"session_id", client_session->session_id},
-                     {"user", client_session->username}, {"role", client_session->role});
+                     {"kind", "session_close"}, {"status", "failure"});
       return Status::KeyError("Session: '" + client_session->session_id + "' not found");
     }
   }
@@ -2062,6 +2059,10 @@ void DuckDBFlightSqlServer::SetInstanceInstrumentation(
 void DuckDBFlightSqlServer::SetInstrumentationManager(
     std::shared_ptr<InstrumentationManager> manager) {
   impl_->SetInstrumentationManager(std::move(manager));
+}
+
+void DuckDBFlightSqlServer::ReleaseInstanceInstrumentation() {
+  impl_->ReleaseInstanceInstrumentation();
 }
 
 std::shared_ptr<duckdb::DuckDB> DuckDBFlightSqlServer::GetDuckDBInstance() const {

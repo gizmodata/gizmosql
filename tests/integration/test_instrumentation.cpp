@@ -19,6 +19,8 @@
 #include <thread>
 #include <chrono>
 #include <filesystem>
+#include <algorithm>
+#include <cstdio>
 
 #include <duckdb.hpp>
 
@@ -602,4 +604,155 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   manager2->Shutdown();
   manager2.reset();
   fs::remove(test_db_path);
+}
+
+// Test that SIGTERM gracefully closes instrumentation records
+// This test spawns the server as a subprocess, creates session records,
+// sends SIGTERM, and verifies records are properly closed
+TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
+  namespace fs = std::filesystem;
+
+  // Use unique database files for this test
+  std::string test_db = "sigterm_test.db";
+  std::string instr_db = "sigterm_instr_test.db";
+  int test_port = 31350;
+  int health_port = 31351;
+
+  // Clean up any existing test files
+  fs::remove(test_db);
+  fs::remove(test_db + ".wal");
+  fs::remove(instr_db);
+  fs::remove(instr_db + ".wal");
+
+  // Get path to the server executable (in cmake-build-debug or similar)
+  fs::path server_exe = fs::current_path().parent_path() / "gizmosql_server";
+  if (!fs::exists(server_exe)) {
+    // Try current directory
+    server_exe = fs::current_path() / "gizmosql_server";
+  }
+  if (!fs::exists(server_exe)) {
+    GTEST_SKIP() << "Server executable not found, skipping SIGTERM test";
+  }
+
+  // Build command to start server with instrumentation
+  std::string cmd = server_exe.string() +
+                    " --database-filename " + test_db +
+                    " --port " + std::to_string(test_port) +
+                    " --health-port " + std::to_string(health_port) +
+                    " --username tester --password tester" +
+                    " --enable-instrumentation 1" +
+                    " --instrumentation-db-path " + instr_db +
+                    " 2>&1 &";
+
+  // Start the server as a background process
+  int ret = std::system(cmd.c_str());
+  ASSERT_EQ(ret, 0) << "Failed to start server subprocess";
+
+  // Wait for server to start and be ready
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+
+  // Connect to the server and create a session
+  {
+    arrow::flight::FlightClientOptions options;
+    auto location_result = arrow::flight::Location::ForGrpcTcp("localhost", test_port);
+    ASSERT_TRUE(location_result.ok()) << location_result.status().ToString();
+    auto location = *location_result;
+
+    auto client_result = arrow::flight::FlightClient::Connect(location, options);
+    ASSERT_TRUE(client_result.ok()) << client_result.status().ToString();
+    auto client = std::move(*client_result);
+
+    arrow::flight::FlightCallOptions call_options;
+    auto auth_result = client->AuthenticateBasicToken({}, "tester", "tester");
+    ASSERT_TRUE(auth_result.ok()) << auth_result.status().ToString();
+    call_options.headers.push_back(*auth_result);
+
+    arrow::flight::sql::FlightSqlClient sql_client(std::move(client));
+
+    // Execute a query to create instrumentation records
+    auto exec_result = sql_client.Execute(call_options, "SELECT 1 AS test");
+    ASSERT_TRUE(exec_result.ok()) << exec_result.status().ToString();
+
+    // Fetch results to complete the execution
+    for (const auto& endpoint : (*exec_result)->endpoints()) {
+      auto reader_result = sql_client.DoGet(call_options, endpoint.ticket);
+      ASSERT_TRUE(reader_result.ok()) << reader_result.status().ToString();
+      auto table_result = (*reader_result)->ToTable();
+      ASSERT_TRUE(table_result.ok()) << table_result.status().ToString();
+    }
+
+    // Allow async write queue to flush
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+
+  // Find the server process and send SIGTERM
+  std::string find_cmd = "pgrep -f 'gizmosql_server.*" + test_db + "'";
+  FILE* pipe = popen(find_cmd.c_str(), "r");
+  ASSERT_NE(pipe, nullptr) << "Failed to run pgrep";
+
+  char pid_buf[64];
+  std::string pid_str;
+  if (fgets(pid_buf, sizeof(pid_buf), pipe) != nullptr) {
+    pid_str = pid_buf;
+    // Remove newline
+    pid_str.erase(std::remove(pid_str.begin(), pid_str.end(), '\n'), pid_str.end());
+  }
+  pclose(pipe);
+
+  ASSERT_FALSE(pid_str.empty()) << "Could not find server process";
+
+  // Send SIGTERM to the server
+  std::string kill_cmd = "kill -TERM " + pid_str;
+  ret = std::system(kill_cmd.c_str());
+  ASSERT_EQ(ret, 0) << "Failed to send SIGTERM to server";
+
+  // Wait for server to shut down gracefully
+  std::this_thread::sleep_for(std::chrono::seconds(3));
+
+  // Verify the server is no longer running
+  std::string check_cmd = "kill -0 " + pid_str + " 2>/dev/null";
+  ret = std::system(check_cmd.c_str());
+  ASSERT_NE(ret, 0) << "Server should have terminated after SIGTERM";
+
+  // Now open the instrumentation database directly and verify records are closed
+  {
+    duckdb::DuckDB db(instr_db);
+    duckdb::Connection conn(db);
+
+    // Check that all instances are marked as 'stopped'
+    auto instance_result = conn.Query(
+        "SELECT status, stop_reason FROM instances WHERE status = 'running'");
+    ASSERT_FALSE(instance_result->HasError()) << instance_result->GetError();
+    ASSERT_EQ(instance_result->RowCount(), 0)
+        << "All instances should be marked as 'stopped' after SIGTERM, but found "
+        << instance_result->RowCount() << " still 'running'";
+
+    // Check that there's at least one stopped instance with graceful shutdown
+    auto stopped_result = conn.Query(
+        "SELECT COUNT(*) FROM instances WHERE status = 'stopped' AND stop_reason = 'graceful'");
+    ASSERT_FALSE(stopped_result->HasError()) << stopped_result->GetError();
+    auto count = stopped_result->GetValue(0, 0).GetValue<int64_t>();
+    ASSERT_GE(count, 1)
+        << "Expected at least one instance with graceful stop_reason, got " << count;
+
+    // Note: Sessions may still be 'active' if the client didn't call CloseSession
+    // before disconnect. On next server startup, these would be cleaned up by
+    // CleanupStaleRecords. The key test is that the INSTANCE was properly closed.
+
+    // Check that all executions are completed (not 'executing')
+    // Note: Our test query completed successfully, so no 'executing' executions
+    // should remain for this instance
+    auto exec_result = conn.Query(
+        "SELECT status FROM sql_executions WHERE status = 'executing'");
+    ASSERT_FALSE(exec_result->HasError()) << exec_result->GetError();
+    ASSERT_EQ(exec_result->RowCount(), 0)
+        << "All executions should be completed after SIGTERM, but found "
+        << exec_result->RowCount() << " still 'executing'";
+  }
+
+  // Clean up test files
+  fs::remove(test_db);
+  fs::remove(test_db + ".wal");
+  fs::remove(instr_db);
+  fs::remove(instr_db + ".wal");
 }

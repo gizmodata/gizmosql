@@ -463,20 +463,16 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session->role);
 
   if (log_queries) {
-    GIZMOSQL_LOGKV_DYNAMIC(
-        effective_log_level, "Client is attempting to run a SQL command",
-        {"peer", client_session->peer}, {"kind", "sql"}, {"status", "attempt"},
-        {"session_id", client_session->session_id}, {"user", client_session->username},
-        {"role", client_session->role}, {"statement_id", handle},
+    GIZMOSQL_LOGKV_SESSION_DYNAMIC(
+        effective_log_level, client_session, "Client is attempting to run a SQL command",
+        {"kind", "sql"}, {"status", "attempt"}, {"statement_id", handle},
         {"sql", logged_sql});
   }
 
   // Prevent DETACH of instrumentation database
   if (IsDetachInstrumentationDb(sql)) {
-    GIZMOSQL_LOGKV(WARNING, "Client attempted to DETACH instrumentation database",
-                   {"peer", client_session->peer}, {"kind", "sql"},
-                   {"status", "rejected"}, {"session_id", client_session->session_id},
-                   {"user", client_session->username}, {"role", client_session->role},
+    GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Client attempted to DETACH instrumentation database",
+                   {"kind", "sql"}, {"status", "rejected"},
                    {"statement_id", handle}, {"sql", logged_sql});
     std::string error_msg = "Cannot DETACH the instrumentation database";
     // Record the rejected DETACH attempt
@@ -504,10 +500,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
     // Only admin users can kill sessions
     if (client_session->role != "admin") {
-      GIZMOSQL_LOGKV(WARNING, "Non-admin user attempted KILL SESSION",
-                     {"peer", client_session->peer}, {"kind", "sql"},
-                     {"status", "rejected"}, {"session_id", client_session->session_id},
-                     {"user", client_session->username}, {"role", client_session->role},
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Non-admin user attempted KILL SESSION",
+                     {"kind", "sql"}, {"status", "rejected"},
                      {"target_session_id", target_session_id});
       std::string error_msg = "Only admin users can execute KILL SESSION";
       record_kill_session(error_msg);
@@ -548,10 +542,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     // Remove from session map and mark as killed to prevent reconnection
     ARROW_RETURN_NOT_OK(server->RemoveSession(target_session_id, /*was_killed=*/true));
 
-    GIZMOSQL_LOGKV(INFO, "Session killed successfully",
-                   {"peer", client_session->peer}, {"kind", "sql"},
-                   {"status", "success"}, {"session_id", client_session->session_id},
-                   {"user", client_session->username}, {"role", client_session->role},
+    GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Session killed successfully",
+                   {"kind", "sql"}, {"status", "success"},
                    {"target_session_id", target_session_id});
 
     // Return a synthetic result for the KILL SESSION command
@@ -591,11 +583,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     }
 
     if (log_queries) {
-      GIZMOSQL_LOGKV_DYNAMIC(
-          effective_log_level, "Detected GizmoSQL admin SET command",
-          {"peer", client_session->peer}, {"kind", "sql"}, {"status", "admin"},
-          {"session_id", client_session->session_id}, {"user", client_session->username},
-          {"role", client_session->role}, {"statement_id", handle},
+      GIZMOSQL_LOGKV_SESSION_DYNAMIC(
+          effective_log_level, client_session, "Detected GizmoSQL admin SET command",
+          {"kind", "sql"}, {"status", "admin"}, {"statement_id", handle},
           {"sql", logged_sql});
     }
     return result;
@@ -610,10 +600,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const auto& modified_dbs = stmt->data->properties.modified_databases;
     for (const auto& [catalog_name, catalog_identity] : modified_dbs) {
       if (!client_session->HasWriteAccess(catalog_name)) {
-        GIZMOSQL_LOGKV(WARNING, "Access denied: user lacks write access to catalog",
-                       {"peer", client_session->peer}, {"kind", "sql"},
-                       {"status", "rejected"}, {"session_id", client_session->session_id},
-                       {"user", client_session->username}, {"role", client_session->role},
+        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access denied: user lacks write access to catalog",
+                       {"kind", "sql"}, {"status", "rejected"},
                        {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
         std::string error_msg =
             "Access denied: You do not have write access to catalog '" + catalog_name + "'.";
@@ -633,10 +621,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const auto& read_dbs = stmt->data->properties.read_databases;
     for (const auto& [catalog_name, catalog_identity] : read_dbs) {
       if (!client_session->HasReadAccess(catalog_name)) {
-        GIZMOSQL_LOGKV(WARNING, "Access denied: user lacks read access to catalog",
-                       {"peer", client_session->peer}, {"kind", "sql"},
-                       {"status", "rejected"}, {"session_id", client_session->session_id},
-                       {"user", client_session->username}, {"role", client_session->role},
+        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access denied: user lacks read access to catalog",
+                       {"kind", "sql"}, {"status", "rejected"},
                        {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
         std::string error_msg =
             "Access denied: You do not have read access to catalog '" + catalog_name + "'.";
@@ -675,13 +661,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         std::string::npos) {
       // Fallback to direct query execution for statements like PIVOT that get rewritten to multiple statements
       if (log_queries) {
-        GIZMOSQL_LOGKV_DYNAMIC(
-            effective_log_level,
+        GIZMOSQL_LOGKV_SESSION_DYNAMIC(
+            effective_log_level, client_session,
             "SQL command cannot run as a prepared statement, falling back to direct "
             "query execution",
-            {"peer", client_session->peer}, {"kind", "sql"}, {"status", "fallback"},
-            {"session_id", client_session->session_id},
-            {"user", client_session->username}, {"role", client_session->role},
+            {"kind", "sql"}, {"status", "fallback"},
             {"statement_id", handle}, {"sql", logged_sql});
       }
 
@@ -705,10 +689,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         "Can't prepare statement: '" + logged_sql + "' - Error: " + error_message;
 
     if (log_queries) {
-      GIZMOSQL_LOGKV(WARNING, "Client SQL command failed preparation",
-                     {"peer", client_session->peer}, {"kind", "sql"},
-                     {"status", "failure"}, {"session_id", client_session->session_id},
-                     {"user", client_session->username}, {"role", client_session->role},
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Client SQL command failed preparation",
+                     {"kind", "sql"}, {"status", "failure"},
                      {"statement_id", handle}, {"error", err_msg},
                      {"sql", logged_sql});
     }
@@ -938,14 +920,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
           // The statement may have already been executed from the ComputeSchema() method - if so, just skip execution
           if (query_result_ != nullptr) {
             if (log_queries_) {
-              GIZMOSQL_LOGKV_DYNAMIC(
-                  log_level,
+              GIZMOSQL_LOGKV_SESSION_DYNAMIC(
+                  log_level, client_session_,
                   "Direct execution of the SQL command has already occurred, skipping "
                   "re-execution",
-                  {"peer", client_session_->peer}, {"kind", "sql"},
-                  {"status", "already-executed"},
-                  {"session_id", client_session_->session_id},
-                  {"user", client_session_->username}, {"role", client_session_->role},
+                  {"kind", "sql"}, {"status", "already-executed"},
                   {"statement_id", statement_id_}, {"query_timeout", query_timeout});
             }
             return 0;  // Success
@@ -962,11 +941,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
           if (result->HasError()) {
             if (log_queries_) {
-              GIZMOSQL_LOGKV(
-                  WARNING, "Client SQL command failed direct execution",
-                  {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
-                  {"session_id", client_session_->session_id},
-                  {"user", client_session_->username}, {"role", client_session_->role},
+              GIZMOSQL_LOGKV_SESSION(
+                  WARNING, client_session_, "Client SQL command failed direct execution",
+                  {"kind", "sql"}, {"status", "failure"},
                   {"statement_id", statement_id_}, {"error", result->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
             }
@@ -985,11 +962,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
             }
             params_str << "]";
 
-            GIZMOSQL_LOGKV_DYNAMIC(
-                log_level, "Executing prepared statement with bind parameters",
-                {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "executing"},
-                {"session_id", client_session_->session_id},
-                {"user", client_session_->username}, {"role", client_session_->role},
+            GIZMOSQL_LOGKV_SESSION_DYNAMIC(
+                log_level, client_session_, "Executing prepared statement with bind parameters",
+                {"kind", "sql"}, {"status", "executing"},
                 {"statement_id", statement_id_}, {"bind_parameters", params_str.str()},
                 {"param_count", std::to_string(bind_parameters.size())},
                 {"query_timeout", std::to_string(query_timeout)});
@@ -1001,11 +976,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
           if (query_result_->HasError()) {
             if (log_queries_) {
-              GIZMOSQL_LOGKV(
-                  WARNING, "Client SQL command failed execution",
-                  {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "failure"},
-                  {"session_id", client_session_->session_id},
-                  {"user", client_session_->username}, {"role", client_session_->role},
+              GIZMOSQL_LOGKV_SESSION(
+                  WARNING, client_session_, "Client SQL command failed execution",
+                  {"kind", "sql"}, {"status", "failure"},
                   {"statement_id", statement_id_}, {"error", query_result_->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
             }
@@ -1030,11 +1003,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   if (status == std::future_status::timeout) {
     if (log_queries_) {
-      GIZMOSQL_LOGKV(WARNING, "Client SQL command timed out - begin statement interruption",
-                     {"peer", client_session_->peer}, {"kind", "sql"},
-                     {"status", "timeout"}, {"session_id", client_session_->session_id},
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session_, "Client SQL command timed out - begin statement interruption",
+                     {"kind", "sql"}, {"status", "timeout"},
                      {"interruption_status", "begin"},
-                     {"user", client_session_->username}, {"role", client_session_->role},
                      {"statement_id", statement_id_},
                      {"timeout_seconds", std::to_string(query_timeout)},
                      {"sql", logged_sql_});
@@ -1049,11 +1020,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
     client_session_->active_sql_handle = "";
 
     if (log_queries_) {
-      GIZMOSQL_LOGKV(WARNING, "Client SQL command timed out - completed statement interruption",
-                     {"peer", client_session_->peer}, {"kind", "sql"},
-                     {"status", "timeout"}, {"session_id", client_session_->session_id},
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session_, "Client SQL command timed out - completed statement interruption",
+                     {"kind", "sql"}, {"status", "timeout"},
                      {"interruption_status", "end"},
-                     {"user", client_session_->username}, {"role", client_session_->role},
                      {"statement_id", statement_id_},
                      {"timeout_seconds", std::to_string(query_timeout)},
                      {"sql", logged_sql_});
@@ -1086,11 +1055,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
   }
 
   if (log_queries_ && result.ok()) {
-    GIZMOSQL_LOGKV_DYNAMIC(
-        log_level, "Client SQL command execution succeeded",
-        {"peer", client_session_->peer}, {"kind", "sql"}, {"status", "success"},
-        {"session_id", client_session_->session_id}, {"user", client_session_->username},
-        {"role", client_session_->role}, {"statement_id", statement_id_},
+    GIZMOSQL_LOGKV_SESSION_DYNAMIC(
+        log_level, client_session_, "Client SQL command execution succeeded",
+        {"kind", "sql"}, {"status", "success"}, {"statement_id", statement_id_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
         {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_});
   }
@@ -1146,10 +1113,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                                          extension_type_cast);
     ARROW_ASSIGN_OR_RAISE(record_batch, arrow::ImportRecordBatch(&res_arr, &res_schema));
 
-    GIZMOSQL_LOGKV(DEBUG, "Client RecordBatch Fetch", {"peer", client_session_->peer},
+    GIZMOSQL_LOGKV_SESSION(DEBUG, client_session_, "Client RecordBatch Fetch",
                    {"kind", "fetch"}, {"status", "success"},
-                   {"session_id", client_session_->session_id},
-                   {"user", client_session_->username}, {"role", client_session_->role},
                    {"statement_id", statement_id_},
                    {"num_rows", std::to_string(record_batch->num_rows())},
                    {"num_columns", std::to_string(record_batch->num_columns())},
