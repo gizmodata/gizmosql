@@ -74,9 +74,12 @@ Tracks server instance lifecycle.
 |--------|------|-------------|
 | `instance_id` | UUID | Primary key |
 | `gizmosql_version` | VARCHAR | GizmoSQL version |
+| `gizmosql_edition` | VARCHAR | GizmoSQL edition ('Core' or 'Enterprise') |
 | `duckdb_version` | VARCHAR | DuckDB version |
 | `arrow_version` | VARCHAR | Apache Arrow version |
-| `hostname` | VARCHAR | Server hostname |
+| `hostname` | VARCHAR | Resolved server hostname |
+| `hostname_arg` | VARCHAR | Hostname argument passed to server (NULL if not specified) |
+| `server_ip` | VARCHAR | Server IP address |
 | `port` | INTEGER | Server port |
 | `database_path` | VARCHAR | Path to main database |
 | `tls_enabled` | BOOLEAN | Whether TLS is enabled |
@@ -171,7 +174,7 @@ Shows currently active sessions.
 SELECT * FROM _gizmosql_instr.active_sessions;
 ```
 
-Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `peer_identity`, `user_agent`, `connection_protocol`, `start_time`, `status`, `hostname`, `port`, `database_path`, `session_duration_seconds`
+Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `peer_identity`, `user_agent`, `connection_protocol`, `start_time`, `status`, `status_text`, `hostname`, `hostname_arg`, `server_ip`, `port`, `database_path`, `session_duration_seconds`
 
 #### `_gizmosql_instr.session_activity`
 
@@ -371,7 +374,7 @@ DETACH _gizmosql_instr;  -- Error: Cannot DETACH the instrumentation database
 
 ### Role-Based Access
 
-- All authenticated users can query instrumentation views
+- Only users with the `admin` role can query instrumentation tables and views in the `_gizmosql_instr` schema
 - Only users with the `admin` role can execute `KILL SESSION`
 
 ---

@@ -7,23 +7,25 @@ Welcome to the official documentation for **GizmoSQL**, a high-performance, embe
 ## 📖 Table of Contents
 
 1. [Overview](#overview)
-2. [Component Versions](#component-versions)
-3. [Installation & Deployment](#📦-installation-amp-deployment)
+2. [Editions](editions.md)
+3. [Integrations](integrations.md)
+4. [Component Versions](#component-versions)
+5. [Installation & Deployment](#📦-installation-amp-deployment)
    - [Docker](#running-from-docker-image)
    - [CLI Binary](#option-2-download-and-run-the-gizmosql-cli-executable)
    - [Manual Build](#option-3-steps-to-build-the-solution-manually)
-4. [Client Connections](#client-connections)
+6. [Client Connections](#client-connections)
    - [JDBC](#connecting-to-the-server-via-jdbc)
    - [ADBC Python](#connecting-to-the-server-via-the-new-adbc-python-flight-sql-driver)
    - [CLI](#connecting-via-the-new-gizmosql_client-cli-tool)
    - [Ibis](#connecting-via-ibis)
    - [SQLAlchemy](#connecting-via-sqlalchemy)
-5. [Configuration & Environment Variables](#⚙️-configuration-amp-environment-variables)
-6. [Backend Selection](#🛠-backend-selection)
-7. [Security](#🔐-Security)
-8. [Slim Docker Image](#🧪-slim-docker-image)
-9. [Help & Support](#🆘-help-amp-support)
-10. [License](#🪪-license)
+7. [Configuration & Environment Variables](#⚙️-configuration-amp-environment-variables)
+8. [Backend Selection](#🛠-backend-selection)
+9. [Security](#🔐-Security)
+10. [Slim Docker Image](#🧪-slim-docker-image)
+11. [Help & Support](#🆘-help-amp-support)
+12. [License](#🪪-license)
 
 ---
 
@@ -388,6 +390,10 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | query-log-level / GIZMOSQL_QUERY_LOG_LEVEL | Query log level | info (if unset) | --query-log-level |
 | auth-log-level / GIZMOSQL_AUTH_LOG_LEVEL | Authentication log level | info (if unset) | --auth-log-level |
 | health-port | Plaintext gRPC health check port (0 = disable) | DEFAULT_HEALTH_PORT | --health-port |
+| health-check-query / GIZMOSQL_HEALTH_CHECK_QUERY | SQL query used for health checks | SELECT 1 | --health-check-query |
+| enable-instrumentation / GIZMOSQL_ENABLE_INSTRUMENTATION | *[Enterprise]* Enable session instrumentation | false | --enable-instrumentation |
+| instrumentation-db-path / GIZMOSQL_INSTRUMENTATION_DB_PATH | *[Enterprise]* Path for instrumentation database | (same dir as main DB) | --instrumentation-db-path |
+| license-key-file / GIZMOSQL_LICENSE_KEY_FILE | *[Enterprise]* Path to license key file (JWT format) | none | --license-key-file, -L |
 
 Notes and best practices:
 - Always set GIZMOSQL_PASSWORD in production.
