@@ -34,6 +34,7 @@ with gizmosql.connect(
                 geom GEOMETRY
             )
         """)
+        cur.fetchall()  # Execute DDL
 
         # Insert some points
         cur.execute("""
@@ -42,6 +43,7 @@ with gizmosql.connect(
                 (2, 'Los Angeles', ST_Point(-118.2437, 34.0522)),
                 (3, 'Chicago', ST_Point(-87.6298, 41.8781))
         """)
+        cur.fetchall()  # Execute DML
 
         # Query with spatial functions
         cur.execute("""

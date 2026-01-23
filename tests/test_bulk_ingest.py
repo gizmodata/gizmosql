@@ -119,6 +119,7 @@ def test_bulk_ingest():
             # Step 6: Clean up
             print("\nStep 6: Cleaning up...")
             cursor.execute("DROP TABLE IF EXISTS bulk_ingest_lineitem")
+            cursor.fetchall()  # Execute DDL
             print("  Table dropped")
 
     duckdb_conn.close()
