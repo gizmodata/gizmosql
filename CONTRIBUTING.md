@@ -87,13 +87,14 @@ Python tests verify end-to-end functionality using ADBC (Arrow Database Connecti
 
 ```bash
 # Install Python test dependencies
-pip install adbc-driver-flightsql pyarrow geopandas shapely
+pip install adbc-driver-flightsql pyarrow geopandas shapely duckdb
 
 # Start the server (in a separate terminal)
 ./build/gizmosql_server --password gizmosql_password
 
-# Run the GeoArrow test
+# Run all Python tests
 python tests/test_geoarrow.py
+python tests/test_bulk_ingest.py
 
 # Run with custom connection settings
 GIZMOSQL_HOST=localhost \
@@ -104,6 +105,11 @@ python tests/test_geoarrow.py
 # Run with TLS enabled
 TLS_ENABLED=1 python tests/test_geoarrow.py
 ```
+
+| Test | Description |
+|------|-------------|
+| `test_geoarrow.py` | Tests GeoArrow/GEOMETRY export and GeoPandas integration |
+| `test_bulk_ingest.py` | Tests ADBC bulk ingestion with TPC-H data |
 
 ## Code Style
 

@@ -66,7 +66,7 @@ jobs:
         run: |
           python3 -m venv /tmp/test_venv
           source /tmp/test_venv/bin/activate
-          pip install adbc-driver-flightsql geopandas shapely pyarrow
+          pip install adbc-driver-flightsql geopandas shapely pyarrow duckdb
 
           # Start server in background
           ./build/gizmosql_server --password gizmosql_password &
@@ -75,6 +75,7 @@ jobs:
 
           # Run Python tests
           python tests/test_geoarrow.py
+          python tests/test_bulk_ingest.py
           TEST_EXIT_CODE=$?
 
           # Stop server
@@ -196,7 +197,7 @@ jobs:
         run: |
           python3 -m venv /tmp/test_venv
           source /tmp/test_venv/bin/activate
-          pip install adbc-driver-flightsql geopandas shapely pyarrow
+          pip install adbc-driver-flightsql geopandas shapely pyarrow duckdb
 
           # Start server in background
           ./build/gizmosql_server --password gizmosql_password &
@@ -205,6 +206,7 @@ jobs:
 
           # Run Python tests
           python tests/test_geoarrow.py
+          python tests/test_bulk_ingest.py
           TEST_EXIT_CODE=$?
 
           # Stop server
