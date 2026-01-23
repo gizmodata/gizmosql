@@ -21,6 +21,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
+#include <duckdb/function/table/arrow/arrow_duck_schema.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/common/enums/set_scope.hpp>
@@ -1112,8 +1113,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   }
 
   if (data_chunk != nullptr) {
-    duckdb::unordered_map<idx_t, const duckdb::shared_ptr<duckdb::ArrowTypeExtensionData>>
-        extension_type_cast;
+    auto extension_type_cast = duckdb::ArrowTypeExtensionData::GetExtensionTypes(
+        *client_context_, query_result_->types);
     duckdb::ArrowConverter::ToArrowArray(*data_chunk, &res_arr, res_options,
                                          extension_type_cast);
     ARROW_ASSIGN_OR_RAISE(record_batch, arrow::ImportRecordBatch(&res_arr, &res_schema));

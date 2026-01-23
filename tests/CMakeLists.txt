@@ -27,6 +27,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_tpch_benchmark.cpp
         integration/test_ducklake.cpp
         integration/test_enterprise_gating.cpp
+        integration/test_geoarrow.cpp
 )
 
 # Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)

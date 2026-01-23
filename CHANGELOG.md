@@ -5,6 +5,32 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### GeoArrow Support for GEOMETRY Types
+- DuckDB's SPATIAL extension is now loaded by default at server startup
+- GEOMETRY columns export with proper GeoArrow Arrow extension metadata
+- Enables seamless integration with GeoArrow-aware clients like GeoPandas
+- No manual setup required - spatial functions and GeoArrow export work out of the box
+- Example Python workflow with ADBC and GeoPandas:
+  ```python
+  from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+  import geopandas as gpd
+
+  with gizmosql.connect(uri="grpc+tls://localhost:31337",
+                        db_kwargs={"username": "gizmosql_username",
+                                   "password": "gizmosql_password",
+                                   DatabaseOptions.TLS_SKIP_VERIFY.value: "true"},
+                        autocommit=True) as conn:
+      with conn.cursor() as cur:
+          cur.execute("SELECT ST_Point(1.0, 2.0) AS geom")
+          arrow_table = cur.fetch_arrow_table()
+          # GeoPandas reads GeoArrow format directly - no WKB conversion needed!
+          gdf = gpd.GeoDataFrame.from_arrow(arrow_table)
+  ```
+
 ## [1.15.0] - 2025-01-22
 
 ### Highlights
