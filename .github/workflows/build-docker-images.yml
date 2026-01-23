@@ -62,6 +62,26 @@ jobs:
         run: |
           ./build/tests/gizmosql_integration_tests
 
+      - name: Run Python Tests (macOS)
+        run: |
+          python3 -m venv /tmp/test_venv
+          source /tmp/test_venv/bin/activate
+          pip install adbc-driver-flightsql geopandas shapely pyarrow
+
+          # Start server in background
+          ./build/gizmosql_server --password gizmosql_password &
+          SERVER_PID=$!
+          sleep 5
+
+          # Run Python tests
+          python tests/test_geoarrow.py
+          TEST_EXIT_CODE=$?
+
+          # Stop server
+          kill $SERVER_PID 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
+
       - name: Sign and notarize the server release build
         uses: toitlang/action-macos-sign-notarize@v1.2.1
         with:
@@ -171,6 +191,26 @@ jobs:
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests
+
+      - name: Run Python Tests (Linux)
+        run: |
+          python3 -m venv /tmp/test_venv
+          source /tmp/test_venv/bin/activate
+          pip install adbc-driver-flightsql geopandas shapely pyarrow
+
+          # Start server in background
+          ./build/gizmosql_server --password gizmosql_password &
+          SERVER_PID=$!
+          sleep 5
+
+          # Run Python tests
+          python tests/test_geoarrow.py
+          TEST_EXIT_CODE=$?
+
+          # Stop server
+          kill $SERVER_PID 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
 
       - name: Zip artifacts
         run: |
