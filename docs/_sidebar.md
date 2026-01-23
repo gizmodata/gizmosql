@@ -4,6 +4,8 @@
 
 * Getting Started
   * [Editions](editions.md)
+  * [Bulk Ingestion](bulk_ingestion.md)
+  * [Geometry & Spatial](geometry.md)
 
 * Features
   * [Session Instrumentation](session_instrumentation.md) *(Enterprise)*

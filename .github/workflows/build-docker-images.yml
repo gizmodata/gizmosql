@@ -62,6 +62,32 @@ jobs:
         run: |
           ./build/tests/gizmosql_integration_tests
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Python Tests (macOS)
+        run: |
+          python3 -m venv /tmp/test_venv
+          source /tmp/test_venv/bin/activate
+          pip install adbc-driver-flightsql geopandas shapely pyarrow duckdb
+
+          # Start server in background
+          ./build/gizmosql_server --password gizmosql_password &
+          SERVER_PID=$!
+          sleep 5
+
+          # Run Python tests
+          python tests/test_geoarrow.py
+          python tests/test_bulk_ingest.py
+          TEST_EXIT_CODE=$?
+
+          # Stop server
+          kill $SERVER_PID 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
+
       - name: Sign and notarize the server release build
         uses: toitlang/action-macos-sign-notarize@v1.2.1
         with:
@@ -172,6 +198,32 @@ jobs:
         run: |
           ./build/tests/gizmosql_integration_tests
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Python Tests (Linux)
+        run: |
+          python3 -m venv /tmp/test_venv
+          source /tmp/test_venv/bin/activate
+          pip install adbc-driver-flightsql geopandas shapely pyarrow duckdb
+
+          # Start server in background
+          ./build/gizmosql_server --password gizmosql_password &
+          SERVER_PID=$!
+          sleep 5
+
+          # Run Python tests
+          python tests/test_geoarrow.py
+          python tests/test_bulk_ingest.py
+          TEST_EXIT_CODE=$?
+
+          # Stop server
+          kill $SERVER_PID 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
+
       - name: Zip artifacts
         run: |
           mv build/gizmosql_server build/gizmosql_client .
@@ -183,6 +235,13 @@ jobs:
           name: ${{ env.zip_file_name }}
           path: |
             ${{ env.zip_file_name }}
+
+      - name: Sanitize ref name for Docker tags
+        id: sanitize
+        run: |
+          # Replace / with - to make valid Docker tag
+          SANITIZED_REF=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
+          echo "ref_name=${SANITIZED_REF}" >> $GITHUB_OUTPUT
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -207,9 +266,9 @@ jobs:
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: |
             ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}
+            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
             ${{ env.GITHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}
+            ${{ env.GITHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
           no-cache: true
           provenance: false
 
@@ -222,9 +281,9 @@ jobs:
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: |
             ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}-slim
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}-slim
+            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
             ${{ env.GITHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}-slim
-            ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-${{ matrix.platform }}-slim
+            ${{ env.GITHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
           no-cache: true
           provenance: false
 
