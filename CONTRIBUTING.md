@@ -76,9 +76,34 @@ The integration tests start actual GizmoSQL server instances, so ensure ports 31
 | Suite | Description |
 |-------|-------------|
 | `BulkIngestServerFixture` | Tests for bulk data ingestion |
+| `GeoArrowServerFixture` | Tests for GeoArrow/GEOMETRY type support |
 | `InstrumentationServerFixture` | Tests for session instrumentation |
 | `InstrumentationManagerTest` | Tests for instrumentation manager internals |
 | `KillSessionServerFixture` | Tests for KILL SESSION functionality |
+
+### Python Tests
+
+Python tests verify end-to-end functionality using ADBC (Arrow Database Connectivity).
+
+```bash
+# Install Python test dependencies
+pip install adbc-driver-flightsql pyarrow geopandas shapely
+
+# Start the server (in a separate terminal)
+./build/gizmosql_server --password gizmosql_password
+
+# Run the GeoArrow test
+python tests/test_geoarrow.py
+
+# Run with custom connection settings
+GIZMOSQL_HOST=localhost \
+GIZMOSQL_PORT=31337 \
+GIZMOSQL_PASSWORD=gizmosql_password \
+python tests/test_geoarrow.py
+
+# Run with TLS enabled
+TLS_ENABLED=1 python tests/test_geoarrow.py
+```
 
 ## Code Style
 
