@@ -236,8 +236,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Run DuckDB init commands first
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;"
-        // Load spatial extension and register GeoArrow for seamless geometry export
-        "LOAD spatial; CALL register_geoarrow_extensions();";
+        // Install and load spatial extension, then register GeoArrow for seamless geometry export
+        "INSTALL spatial; LOAD spatial; CALL register_geoarrow_extensions();";
 
     // Instrumentation setup (conditional)
     std::string instr_db_path;
