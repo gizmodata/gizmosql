@@ -44,6 +44,8 @@ using arrow::flight::sql::FlightSqlClient;
 // Helper Functions
 // ============================================================================
 
+namespace {
+
 struct QueryResult {
   bool success;
   int64_t row_count;
@@ -66,7 +68,6 @@ QueryResult RunQuery(FlightSqlClient& client,
   }
 
   auto flight_info = std::move(*flight_info_result);
-  result.schema = flight_info->schema();
 
   if (flight_info->endpoints().empty()) {
     // Some queries (like CREATE, INSERT) may not return data
@@ -97,6 +98,8 @@ QueryResult RunQuery(FlightSqlClient& client,
   result.success = true;
   return result;
 }
+
+}  // anonymous namespace
 
 // ============================================================================
 // Test Fixture
