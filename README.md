@@ -113,12 +113,17 @@ docker run --name gizmosql \
            gizmodata/gizmosql:latest
 ```
 
-### Option 3: Install via Homebrew (macOS)
+### Option 3: Install via Homebrew (macOS & Linux)
 
 ```bash
 brew tap gizmodata/tap
 brew install gizmosql
 ```
+
+Supported platforms:
+- macOS (Apple Silicon / ARM64)
+- Linux (x86-64 / AMD64)
+- Linux (ARM64)
 
 Then run the server:
 

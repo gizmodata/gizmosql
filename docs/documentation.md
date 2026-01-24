@@ -14,8 +14,9 @@ Welcome to the official documentation for **GizmoSQL**, a high-performance, embe
 6. [Component Versions](#component-versions)
 7. [Installation & Deployment](#📦-installation-amp-deployment)
    - [Docker](#running-from-docker-image)
-   - [CLI Binary](#option-2-download-and-run-the-gizmosql-cli-executable)
-   - [Manual Build](#option-3-steps-to-build-the-solution-manually)
+   - [Homebrew](#option-2-install-via-homebrew-macos-amp-linux)
+   - [CLI Binary](#option-3-download-and-run-the-gizmosql-cli-executable)
+   - [Manual Build](#option-4-steps-to-build-the-solution-manually)
 8. [Client Connections](#client-connections)
    - [JDBC](#connecting-to-the-server-via-jdbc)
    - [ADBC Python](#connecting-to-the-server-via-the-new-adbc-python-flight-sql-driver)
@@ -285,14 +286,35 @@ docker stop gizmosql
 
 ---
 
-### Option 2 - Download and run the gizmosql CLI executable
+### Option 2 - Install via Homebrew (macOS & Linux)
+
+GizmoSQL can be installed via Homebrew on macOS and Linux.
+
+```bash
+brew tap gizmodata/tap
+brew install gizmosql
+```
+
+Supported platforms:
+- macOS (Apple Silicon / ARM64)
+- Linux (x86-64 / AMD64)
+- Linux (ARM64)
+
+Then run the server:
+
+```bash
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename your.duckdb --print-queries
+```
+
+---
+
+### Option 3 - Download and run the gizmosql CLI executable
 
 
 
-Download (and unzip) the latest release of the **gizmosql_server** CLI executable from these currently supported platforms:   
-[Linux x86-64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_amd64.zip)   
-[Linux arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_arm64.zip)   
-[MacOS x86-64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_macos_amd64.zip)   
+Download (and unzip) the latest release of the **gizmosql_server** CLI executable from these currently supported platforms:
+[Linux x86-64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_amd64.zip)
+[Linux arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_arm64.zip)
 [MacOS arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_macos_arm64.zip)   
 
 Then from a terminal - you can run:
@@ -309,7 +331,7 @@ gizmosql_server --help
 
 ---
 
-### Option 3 - Steps to build the solution manually
+### Option 4 - Steps to build the solution manually
 
 
 

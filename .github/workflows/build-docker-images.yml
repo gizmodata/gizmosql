@@ -387,18 +387,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download macOS artifacts
+      - name: Download all CLI artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: gizmosql_cli_macos_*.zip
+          pattern: gizmosql_cli_*.zip
           merge-multiple: true
 
       - name: Calculate SHA256 checksums
         id: checksums
         run: |
-          ARM64_SHA=$(sha256sum artifacts/gizmosql_cli_macos_arm64.zip | cut -d ' ' -f 1)
-          echo "arm64_sha=${ARM64_SHA}" >> $GITHUB_OUTPUT
+          MACOS_ARM64_SHA=$(sha256sum artifacts/gizmosql_cli_macos_arm64.zip | cut -d ' ' -f 1)
+          LINUX_ARM64_SHA=$(sha256sum artifacts/gizmosql_cli_linux_arm64.zip | cut -d ' ' -f 1)
+          LINUX_AMD64_SHA=$(sha256sum artifacts/gizmosql_cli_linux_amd64.zip | cut -d ' ' -f 1)
+          echo "macos_arm64_sha=${MACOS_ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "linux_arm64_sha=${LINUX_ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "linux_amd64_sha=${LINUX_AMD64_SHA}" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
@@ -410,7 +414,9 @@ jobs:
       - name: Update formula
         env:
           VERSION: ${{ github.ref_name }}
-          ARM64_SHA: ${{ steps.checksums.outputs.arm64_sha }}
+          MACOS_ARM64_SHA: ${{ steps.checksums.outputs.macos_arm64_sha }}
+          LINUX_ARM64_SHA: ${{ steps.checksums.outputs.linux_arm64_sha }}
+          LINUX_AMD64_SHA: ${{ steps.checksums.outputs.linux_amd64_sha }}
         run: |
           VERSION_NUMBER=${VERSION#v}
           cat > homebrew-tap/Formula/gizmosql.rb << 'FORMULA_EOF'
@@ -423,11 +429,22 @@ jobs:
             version "VERSION_PLACEHOLDER"
             license "Apache-2.0"
 
-            depends_on arch: :arm64
-            depends_on :macos
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_arm64.zip"
+                sha256 "MACOS_ARM64_SHA_PLACEHOLDER"
+              end
+            end
 
-            url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_arm64.zip"
-            sha256 "ARM64_SHA_PLACEHOLDER"
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_linux_arm64.zip"
+                sha256 "LINUX_ARM64_SHA_PLACEHOLDER"
+              elsif Hardware::CPU.intel?
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_linux_amd64.zip"
+                sha256 "LINUX_AMD64_SHA_PLACEHOLDER"
+              end
+            end
 
             def install
               bin.install "gizmosql_server"
@@ -454,7 +471,9 @@ jobs:
           end
           FORMULA_EOF
           sed -i "s/VERSION_PLACEHOLDER/${VERSION_NUMBER}/g" homebrew-tap/Formula/gizmosql.rb
-          sed -i "s/ARM64_SHA_PLACEHOLDER/${ARM64_SHA}/g" homebrew-tap/Formula/gizmosql.rb
+          sed -i "s/MACOS_ARM64_SHA_PLACEHOLDER/${MACOS_ARM64_SHA}/g" homebrew-tap/Formula/gizmosql.rb
+          sed -i "s/LINUX_ARM64_SHA_PLACEHOLDER/${LINUX_ARM64_SHA}/g" homebrew-tap/Formula/gizmosql.rb
+          sed -i "s/LINUX_AMD64_SHA_PLACEHOLDER/${LINUX_AMD64_SHA}/g" homebrew-tap/Formula/gizmosql.rb
 
       - name: Commit and push
         working-directory: homebrew-tap
