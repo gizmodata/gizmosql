@@ -174,6 +174,19 @@ class BootstrapTokenEnterpriseFixture : public ::testing::Test {
     fs::remove("bootstrap_enterprise_test.db", ec);
     fs::remove("gizmosql_instrumentation.db", ec);
 
+#ifdef GIZMOSQL_ENTERPRISE
+    // Initialize enterprise features with license from environment variable
+    const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+    if (license_file && license_file[0] != '\0') {
+      auto& enterprise = gizmosql::enterprise::EnterpriseFeatures::Instance();
+      auto status = enterprise.Initialize(license_file);
+      if (!status.ok()) {
+        std::cerr << "Warning: Failed to initialize enterprise features: "
+                  << status.ToString() << std::endl;
+      }
+    }
+#endif
+
     fs::path db_path("bootstrap_enterprise_test.db");
     auto result = gizmosql::CreateFlightSQLServer(
         BackendType::duckdb, db_path, "localhost", port_,
@@ -406,6 +419,152 @@ TEST_F(BootstrapTokenEnterpriseFixture, BootstrapTokenWithMultipleCatalogRulesRe
 #else
   ASSERT_FALSE(result.ok())
       << "Bootstrap token with catalog_access should fail in Core edition";
+#endif
+}
+
+// ============================================================================
+// Happy Path Tests (Enterprise with catalog_permissions licensed)
+// ============================================================================
+
+TEST_F(BootstrapTokenEnterpriseFixture, CatalogAccessReadOnlyCanExecuteSelect) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+#ifdef GIZMOSQL_ENTERPRISE
+  // Only run if enterprise features are available
+  if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+    GTEST_SKIP() << "Skipping happy path test - catalog_permissions not licensed";
+  }
+
+  // Create a FlightSQL client
+  ASSERT_ARROW_OK_AND_ASSIGN(auto sql_client, CreateClient());
+
+  // Create a bootstrap token with read-only catalog access
+  std::string catalog_access = R"([{"catalog": "*", "access": "read"}])";
+  std::string token = CreateBootstrapToken(keys_, "readonly_user", "user", catalog_access);
+
+  // Authenticate
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  auto auth_result = AuthenticateWithBootstrapToken(*client, token);
+  ASSERT_TRUE(auth_result.ok())
+      << "Authentication should succeed with catalog_permissions licensed: "
+      << auth_result.status().ToString();
+
+  // Set the auth token for subsequent requests
+  arrow::flight::FlightCallOptions call_options;
+  call_options.headers.push_back(*auth_result);
+
+  // Execute a SELECT query - should succeed with read access
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info,
+                             sql_client->Execute(call_options, "SELECT 1 AS test_value"));
+  ASSERT_FALSE(info->endpoints().empty());
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto stream,
+                             sql_client->DoGet(call_options, info->endpoints()[0].ticket));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, stream->ToTable());
+  ASSERT_EQ(table->num_rows(), 1);
+  ASSERT_EQ(table->num_columns(), 1);
+#else
+  GTEST_SKIP() << "Skipping happy path test - not an enterprise build";
+#endif
+}
+
+TEST_F(BootstrapTokenEnterpriseFixture, CatalogAccessWriteCanExecuteDDL) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+#ifdef GIZMOSQL_ENTERPRISE
+  if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+    GTEST_SKIP() << "Skipping happy path test - catalog_permissions not licensed";
+  }
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto sql_client, CreateClient());
+
+  // Create a bootstrap token with write catalog access
+  std::string catalog_access = R"([{"catalog": "*", "access": "write"}])";
+  std::string token = CreateBootstrapToken(keys_, "write_user", "user", catalog_access);
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  auto auth_result = AuthenticateWithBootstrapToken(*client, token);
+  ASSERT_TRUE(auth_result.ok())
+      << "Authentication should succeed: " << auth_result.status().ToString();
+
+  arrow::flight::FlightCallOptions call_options;
+  call_options.headers.push_back(*auth_result);
+
+  // Create a table - should succeed with write access
+  auto create_result = sql_client->ExecuteUpdate(
+      call_options, "CREATE TABLE IF NOT EXISTS test_catalog_write (id INTEGER, name VARCHAR)");
+  ASSERT_TRUE(create_result.ok())
+      << "CREATE TABLE should succeed with write access: " << create_result.status().ToString();
+
+  // Insert data - should succeed with write access
+  auto insert_result = sql_client->ExecuteUpdate(
+      call_options, "INSERT INTO test_catalog_write VALUES (1, 'test')");
+  ASSERT_TRUE(insert_result.ok())
+      << "INSERT should succeed with write access: " << insert_result.status().ToString();
+
+  // Clean up
+  auto drop_result = sql_client->ExecuteUpdate(call_options, "DROP TABLE test_catalog_write");
+  ASSERT_TRUE(drop_result.ok()) << "DROP TABLE should succeed: " << drop_result.status().ToString();
+#else
+  GTEST_SKIP() << "Skipping happy path test - not an enterprise build";
+#endif
+}
+
+TEST_F(BootstrapTokenEnterpriseFixture, CatalogAccessReadOnlyBlocksWrite) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+#ifdef GIZMOSQL_ENTERPRISE
+  if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+    GTEST_SKIP() << "Skipping happy path test - catalog_permissions not licensed";
+  }
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto sql_client, CreateClient());
+
+  // Create a bootstrap token with read-only catalog access
+  std::string catalog_access = R"([{"catalog": "*", "access": "read"}])";
+  std::string token = CreateBootstrapToken(keys_, "readonly_user", "user", catalog_access);
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  auto auth_result = AuthenticateWithBootstrapToken(*client, token);
+  ASSERT_TRUE(auth_result.ok())
+      << "Authentication should succeed: " << auth_result.status().ToString();
+
+  arrow::flight::FlightCallOptions call_options;
+  call_options.headers.push_back(*auth_result);
+
+  // Attempt CREATE TABLE - should fail with read-only access
+  auto create_result = sql_client->ExecuteUpdate(
+      call_options, "CREATE TABLE test_readonly_block (id INTEGER)");
+  ASSERT_FALSE(create_result.ok())
+      << "CREATE TABLE should fail with read-only access";
+
+  // Verify error mentions read-only or permission
+  std::string error_msg = create_result.status().ToString();
+  EXPECT_TRUE(error_msg.find("read") != std::string::npos ||
+              error_msg.find("Read") != std::string::npos ||
+              error_msg.find("permission") != std::string::npos ||
+              error_msg.find("Permission") != std::string::npos ||
+              error_msg.find("denied") != std::string::npos ||
+              error_msg.find("not allowed") != std::string::npos)
+      << "Error should indicate read-only restriction: " << error_msg;
+#else
+  GTEST_SKIP() << "Skipping happy path test - not an enterprise build";
 #endif
 }
 

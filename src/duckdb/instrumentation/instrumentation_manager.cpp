@@ -310,14 +310,15 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
 
     // Check for schema compatibility - if the instances table exists but lacks new columns,
     // the user has an old schema and needs to rename their instrumentation database file.
+    // Note: _gizmosql_instr is the catalog (attached database), and 'main' is the schema within it.
     auto schema_check = writer_connection->Query(
         "SELECT column_name FROM information_schema.columns "
-        "WHERE table_schema = '_gizmosql_instr' AND table_name = 'instances' AND column_name = 'os_platform'");
+        "WHERE table_catalog = '_gizmosql_instr' AND table_name = 'instances' AND column_name = 'os_platform'");
     if (!schema_check->HasError()) {
       // Check if instances table exists (by checking for any column)
       auto table_exists = writer_connection->Query(
           "SELECT column_name FROM information_schema.columns "
-          "WHERE table_schema = '_gizmosql_instr' AND table_name = 'instances' LIMIT 1");
+          "WHERE table_catalog = '_gizmosql_instr' AND table_name = 'instances' LIMIT 1");
       if (!table_exists->HasError() && table_exists->RowCount() > 0) {
         // Table exists - check if os_platform column exists
         if (schema_check->RowCount() == 0) {

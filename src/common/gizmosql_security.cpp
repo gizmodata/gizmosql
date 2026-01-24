@@ -217,12 +217,14 @@ BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username
                                                      const std::string& role,
                                                      const std::string& auth_method,
                                                      const std::string& secret_key,
-                                                     const std::string& instance_id)
+                                                     const std::string& instance_id,
+                                                     std::optional<std::string> catalog_access_json)
     : username_(username),
       role_(role),
       auth_method_(auth_method),
       secret_key_(secret_key),
-      instance_id_(instance_id) {}
+      instance_id_(instance_id),
+      catalog_access_json_(std::move(catalog_access_json)) {}
 
 void BasicAuthServerMiddleware::SendingHeaders(flight::AddCallHeaders* outgoing_headers) {
   auto token = CreateJWTToken();
@@ -236,7 +238,7 @@ std::string BasicAuthServerMiddleware::name() const {
 }
 
 std::string BasicAuthServerMiddleware::CreateJWTToken() const {
-  auto token =
+  auto builder =
       jwt::create()
           .set_issuer(std::string(kServerJWTIssuer))
           .set_type("JWT")
@@ -251,10 +253,18 @@ std::string BasicAuthServerMiddleware::CreateJWTToken() const {
           .set_payload_claim("instance_id", jwt::claim(instance_id_))
           .set_payload_claim(
               "session_id",
-              jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
-          .sign(jwt::algorithm::hs256{secret_key_});
+              jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())));
 
-  return token;
+  // Include catalog_access claim if present (propagated from bootstrap token)
+  if (catalog_access_json_.has_value()) {
+    picojson::value json_val;
+    std::string err = picojson::parse(json_val, catalog_access_json_.value());
+    if (err.empty()) {
+      builder.set_payload_claim("catalog_access", jwt::claim(json_val));
+    }
+  }
+
+  return builder.sign(jwt::algorithm::hs256{secret_key_});
 }
 
 // ----------------------------------------
@@ -395,10 +405,16 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       }
       ARROW_ASSIGN_OR_RAISE(auto bootstrap_decoded_token,
                             VerifyAndDecodeBootstrapToken(password, context));
+      // Extract catalog_access claim as JSON string if present
+      std::optional<std::string> catalog_access_json;
+      if (bootstrap_decoded_token.has_payload_claim("catalog_access")) {
+        auto claim = bootstrap_decoded_token.get_payload_claim("catalog_access");
+        catalog_access_json = claim.to_json().serialize();
+      }
       *middleware = std::make_shared<BasicAuthServerMiddleware>(
           bootstrap_decoded_token.get_subject(),
           bootstrap_decoded_token.get_payload_claim("role").as_string(), "BootstrapToken",
-          secret_key_, instance_id_);
+          secret_key_, instance_id_, catalog_access_json);
     }
   }
   return Status::OK();

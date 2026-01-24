@@ -450,8 +450,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             g_instrumentation_manager, instance_config);
         duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
       } else {
-        GIZMOSQL_LOG(WARNING) << "Failed to initialize instrumentation: "
-                              << instr_result.status().ToString();
+        return instr_result.status();
       }
     }
 

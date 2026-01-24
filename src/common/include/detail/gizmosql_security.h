@@ -16,6 +16,7 @@
 // under the License.
 
 #include <filesystem>
+#include <optional>
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/server_auth.h>
 #include <arrow/flight/middleware.h>
@@ -66,7 +67,8 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
   BasicAuthServerMiddleware(const std::string& username, const std::string& role,
                             const std::string& auth_method,
                             const std::string& secret_key,
-                            const std::string& instance_id);
+                            const std::string& instance_id,
+                            std::optional<std::string> catalog_access_json = std::nullopt);
 
   const jwt::decoded_jwt<jwt::traits::kazuho_picojson> GetJWT();
   const std::string GetUsername() const;
@@ -84,6 +86,7 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
   std::string auth_method_;
   std::string secret_key_;
   std::string instance_id_;
+  std::optional<std::string> catalog_access_json_;
 
   std::string CreateJWTToken() const;
 };
