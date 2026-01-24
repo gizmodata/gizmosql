@@ -5,6 +5,7 @@
 * Getting Started
   * [Editions](editions.md)
   * [Bulk Ingestion](bulk_ingestion.md)
+  * [DuckLake Integration](ducklake.md)
   * [Geometry & Spatial](geometry.md)
 
 * Features
