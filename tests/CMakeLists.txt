@@ -22,6 +22,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
         integration/test_catalog_access.cpp
+        integration/test_catalog_permissions_enterprise.cpp
         integration/test_health_check.cpp
         integration/test_sqlite_backend.cpp
         integration/test_tpch_benchmark.cpp

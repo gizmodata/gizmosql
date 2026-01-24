@@ -43,6 +43,14 @@ struct InstanceConfig {
   bool mtls_required;
   std::string mtls_ca_cert_path;
   bool readonly;
+  // System information
+  std::string os_platform;      // "linux" or "darwin"
+  std::string os_name;          // "Ubuntu 22.04 LTS", "macOS Sonoma", etc.
+  std::string os_version;       // "22.04", "14.0", etc.
+  std::string cpu_arch;         // "x86_64", "arm64", etc.
+  std::string cpu_model;        // "Apple M1 Pro", "Intel(R) Xeon(R)...", etc.
+  int cpu_count;                // Number of logical CPUs
+  int64_t memory_total_bytes;   // Total physical memory in bytes
 };
 
 class InstanceInstrumentation {

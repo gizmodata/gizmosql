@@ -36,6 +36,7 @@ GizmoSQL is available in two editions:
 | Query timeout | ✅ | ✅ |
 | Session Instrumentation | ❌ | ✅ |
 | Kill Session | ❌ | ✅ |
+| Per-Catalog Permissions | ❌ | ✅ |
 
 **GizmoSQL Core** is free and open source under the Apache 2.0 license.
 

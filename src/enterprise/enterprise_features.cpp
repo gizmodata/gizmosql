@@ -54,6 +54,10 @@ bool EnterpriseFeatures::IsKillSessionAvailable() const {
   return IsFeatureAvailable(kFeatureKillSession);
 }
 
+bool EnterpriseFeatures::IsCatalogPermissionsAvailable() const {
+  return IsFeatureAvailable(kFeatureCatalogPermissions);
+}
+
 std::string EnterpriseFeatures::GetCopyrightBanner() const {
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);

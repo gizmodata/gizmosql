@@ -17,6 +17,7 @@ namespace gizmosql::enterprise {
 // Feature name constants
 constexpr const char* kFeatureInstrumentation = "instrumentation";
 constexpr const char* kFeatureKillSession = "kill_session";
+constexpr const char* kFeatureCatalogPermissions = "catalog_permissions";
 
 /// Singleton class for managing enterprise feature availability
 class EnterpriseFeatures {
@@ -41,6 +42,9 @@ class EnterpriseFeatures {
 
   /// Check if kill session feature is available
   bool IsKillSessionAvailable() const;
+
+  /// Check if catalog permissions feature is available (per-catalog access control via bootstrap tokens)
+  bool IsCatalogPermissionsAvailable() const;
 
   /// Get the license manager (for advanced usage)
   LicenseManager* GetLicenseManager() const { return license_manager_.get(); }

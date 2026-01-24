@@ -20,6 +20,7 @@
 
 #include "gizmosql_security.h"
 #include "request_ctx.h"
+#include "enterprise/enterprise_features.h"
 
 namespace fs = std::filesystem;
 
@@ -441,6 +442,24 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
     if (!decoded.has_payload_claim("role")) {
       return Status::Invalid("Bootstrap Bearer Token MUST have a 'role' claim");
     }
+
+    // Check if token has catalog_access claim - this requires enterprise license
+    if (decoded.has_payload_claim("catalog_access")) {
+      if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+        GIZMOSQL_LOGKV(WARNING,
+                       "peer=" + context.peer() +
+                           " - Bootstrap Token contains 'catalog_access' claim but "
+                           "per-catalog permissions is an Enterprise feature",
+                       {"peer", context.peer()}, {"kind", "authentication"},
+                       {"authentication_type", "bearer"}, {"result", "failure"},
+                       {"reason", "enterprise_feature_required"});
+        return MakeFlightError(
+            flight::FlightStatusCode::Unauthenticated,
+            "Per-catalog permissions (catalog_access claim) is an Enterprise feature. "
+            "Please obtain an Enterprise license or remove the catalog_access claim from your token.");
+      }
+    }
+
     GIZMOSQL_LOGKV_DYNAMIC(
         auth_log_level_,
         "peer=" + context.peer() +

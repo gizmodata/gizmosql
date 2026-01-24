@@ -17,16 +17,25 @@
 
 #include "gizmosql_library.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <csignal>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <filesystem>
 #include <regex>
+#include <sstream>
 #include <vector>
 #include <unistd.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/utsname.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#include <mach/mach.h>
+#endif
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/util/config.h>
@@ -143,6 +152,138 @@ static std::string GetPrimaryIPAddress() {
   return primary_ip.empty() ? fallback_ip : primary_ip;
 }
 
+// Get system information for instrumentation and logging
+struct SystemInfo {
+  std::string os_platform;      // "linux" or "darwin"
+  std::string os_name;          // "Ubuntu 22.04 LTS", "macOS Sonoma", etc.
+  std::string os_version;       // "22.04", "14.0", etc.
+  std::string cpu_arch;         // "x86_64", "arm64", etc.
+  std::string cpu_model;        // "Apple M1 Pro", "Intel(R) Xeon(R)...", etc.
+  int cpu_count;                // Number of logical CPUs
+  int64_t memory_total_bytes;   // Total physical memory in bytes
+};
+
+static SystemInfo GetSystemInfo() {
+  SystemInfo info;
+
+  // Get basic info from uname
+  struct utsname uts;
+  if (uname(&uts) == 0) {
+    info.os_platform = uts.sysname;
+    // Convert to lowercase for consistency
+    std::transform(info.os_platform.begin(), info.os_platform.end(),
+                   info.os_platform.begin(), ::tolower);
+    info.cpu_arch = uts.machine;
+  }
+
+  // Get CPU count
+#ifdef _SC_NPROCESSORS_ONLN
+  info.cpu_count = static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
+#else
+  info.cpu_count = 1;
+#endif
+
+#ifdef __APPLE__
+  // macOS: Get OS name and version using sysctlbyname
+  char os_version[256] = {0};
+  size_t size = sizeof(os_version);
+  if (sysctlbyname("kern.osproductversion", os_version, &size, nullptr, 0) == 0) {
+    info.os_version = os_version;
+  }
+
+  // Get macOS marketing name (e.g., "macOS 14.0")
+  info.os_name = "macOS " + info.os_version;
+
+  // Get CPU model
+  char cpu_model[256] = {0};
+  size = sizeof(cpu_model);
+  if (sysctlbyname("machdep.cpu.brand_string", cpu_model, &size, nullptr, 0) == 0) {
+    info.cpu_model = cpu_model;
+  }
+
+  // Get total memory
+  int64_t mem_size = 0;
+  size = sizeof(mem_size);
+  if (sysctlbyname("hw.memsize", &mem_size, &size, nullptr, 0) == 0) {
+    info.memory_total_bytes = mem_size;
+  }
+
+#else
+  // Linux: Parse /etc/os-release for OS name and version
+  std::ifstream os_release("/etc/os-release");
+  if (os_release.is_open()) {
+    std::string line;
+    std::string pretty_name, version_id;
+    while (std::getline(os_release, line)) {
+      if (line.rfind("PRETTY_NAME=", 0) == 0) {
+        pretty_name = line.substr(12);
+        // Remove quotes
+        if (!pretty_name.empty() && pretty_name.front() == '"') {
+          pretty_name = pretty_name.substr(1);
+        }
+        if (!pretty_name.empty() && pretty_name.back() == '"') {
+          pretty_name.pop_back();
+        }
+      } else if (line.rfind("VERSION_ID=", 0) == 0) {
+        version_id = line.substr(11);
+        // Remove quotes
+        if (!version_id.empty() && version_id.front() == '"') {
+          version_id = version_id.substr(1);
+        }
+        if (!version_id.empty() && version_id.back() == '"') {
+          version_id.pop_back();
+        }
+      }
+    }
+    info.os_name = pretty_name;
+    info.os_version = version_id;
+  }
+
+  // Linux: Get CPU model from /proc/cpuinfo
+  std::ifstream cpuinfo("/proc/cpuinfo");
+  if (cpuinfo.is_open()) {
+    std::string line;
+    while (std::getline(cpuinfo, line)) {
+      if (line.rfind("model name", 0) == 0) {
+        auto pos = line.find(':');
+        if (pos != std::string::npos) {
+          info.cpu_model = line.substr(pos + 1);
+          // Trim leading whitespace
+          auto start = info.cpu_model.find_first_not_of(" \t");
+          if (start != std::string::npos) {
+            info.cpu_model = info.cpu_model.substr(start);
+          }
+        }
+        break;  // Only need the first one
+      }
+    }
+  }
+
+  // Linux: Get total memory from sysconf
+  long pages = sysconf(_SC_PHYS_PAGES);
+  long page_size = sysconf(_SC_PAGE_SIZE);
+  if (pages > 0 && page_size > 0) {
+    info.memory_total_bytes = static_cast<int64_t>(pages) * page_size;
+  }
+#endif
+
+  return info;
+}
+
+// Format bytes as human-readable string (e.g., "16.0 GB")
+static std::string FormatBytes(int64_t bytes) {
+  const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+  int unit_index = 0;
+  double size = static_cast<double>(bytes);
+  while (size >= 1024.0 && unit_index < 4) {
+    size /= 1024.0;
+    unit_index++;
+  }
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(1) << size << " " << units[unit_index];
+  return oss.str();
+}
+
 arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServerBuilder(
     const BackendType backend, const fs::path& database_filename,
     const std::string& hostname, const int& port, const std::string& username,
@@ -163,6 +304,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                             : flight::Location::ForGrpcTcp(hostname, port));
 
   GIZMOSQL_LOG(INFO) << "----------------------------------------------";
+
+  // Log system information
+  auto sys_info = GetSystemInfo();
+  GIZMOSQL_LOG(INFO) << "System: " << sys_info.os_name
+                     << " (" << sys_info.os_platform << "/" << sys_info.cpu_arch << ")";
+  GIZMOSQL_LOG(INFO) << "CPU: " << sys_info.cpu_model << " (" << sys_info.cpu_count << " cores)";
+  GIZMOSQL_LOG(INFO) << "Memory: " << FormatBytes(sys_info.memory_total_bytes);
+
   GIZMOSQL_LOG(INFO) << "Apache Arrow version: " << ARROW_VERSION_STRING;
 
   flight::FlightServerOptions options(location);
@@ -271,6 +420,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
         // Create instance instrumentation record and pass to server
         // The server owns the instance_id - instrumentation receives it, not generates it
+        auto sys_info = GetSystemInfo();
         gizmosql::ddb::InstanceConfig instance_config{
             .instance_id = duckdb_server->GetInstanceId(),
             .gizmosql_version = PROJECT_VERSION,
@@ -288,6 +438,13 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             .mtls_required = !mtls_ca_cert_path.empty(),
             .mtls_ca_cert_path = mtls_ca_cert_path.string(),
             .readonly = read_only,
+            .os_platform = sys_info.os_platform,
+            .os_name = sys_info.os_name,
+            .os_version = sys_info.os_version,
+            .cpu_arch = sys_info.cpu_arch,
+            .cpu_model = sys_info.cpu_model,
+            .cpu_count = sys_info.cpu_count,
+            .memory_total_bytes = sys_info.memory_total_bytes,
         };
         auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
             g_instrumentation_manager, instance_config);
@@ -740,6 +897,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - started";
     ARROW_CHECK_OK(server_ptr->Serve());
 
+    // Server has received shutdown signal (SIGTERM/SIGINT)
+    GIZMOSQL_LOG(INFO) << "GizmoSQL server - shutdown signal received, stopping...";
+
     // Gracefully shutdown health services
     if (gizmosql::g_plaintext_health_server) {
       gizmosql::g_plaintext_health_server->Shutdown();
@@ -772,6 +932,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     // Now safe to destroy the server
     server_ptr.reset();
 
+    GIZMOSQL_LOG(INFO) << "GizmoSQL server - shutdown complete";
     return EXIT_SUCCESS;
   } else {
     // Handle the error

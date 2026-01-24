@@ -35,8 +35,10 @@ InstanceInstrumentation::InstanceInstrumentation(
     auto stmt = conn.Prepare(
         "INSERT INTO _gizmosql_instr.instances (instance_id, gizmosql_version, gizmosql_edition, "
         "duckdb_version, arrow_version, hostname, hostname_arg, server_ip, port, database_path, "
-        "tls_enabled, tls_cert_path, tls_key_path, mtls_required, mtls_ca_cert_path, readonly) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)");
+        "tls_enabled, tls_cert_path, tls_key_path, mtls_required, mtls_ca_cert_path, readonly, "
+        "os_platform, os_name, os_version, cpu_arch, cpu_model, cpu_count, memory_total_bytes) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, "
+        "$17, $18, $19, $20, $21, $22, $23)");
     stmt->Execute(
         duckdb::Value::UUID(config.instance_id),
         duckdb::Value(config.gizmosql_version),
@@ -53,7 +55,14 @@ InstanceInstrumentation::InstanceInstrumentation(
         config.tls_key_path.empty() ? duckdb::Value() : duckdb::Value(config.tls_key_path),
         duckdb::Value::BOOLEAN(config.mtls_required),
         config.mtls_ca_cert_path.empty() ? duckdb::Value() : duckdb::Value(config.mtls_ca_cert_path),
-        duckdb::Value::BOOLEAN(config.readonly));
+        duckdb::Value::BOOLEAN(config.readonly),
+        config.os_platform.empty() ? duckdb::Value() : duckdb::Value(config.os_platform),
+        config.os_name.empty() ? duckdb::Value() : duckdb::Value(config.os_name),
+        config.os_version.empty() ? duckdb::Value() : duckdb::Value(config.os_version),
+        config.cpu_arch.empty() ? duckdb::Value() : duckdb::Value(config.cpu_arch),
+        config.cpu_model.empty() ? duckdb::Value() : duckdb::Value(config.cpu_model),
+        duckdb::Value(config.cpu_count),
+        duckdb::Value::BIGINT(config.memory_total_bytes));
   });
 }
 

@@ -81,6 +81,15 @@ CREATE TABLE IF NOT EXISTS instances (
     mtls_required BOOLEAN NOT NULL DEFAULT false,
     mtls_ca_cert_path VARCHAR,
     readonly BOOLEAN NOT NULL DEFAULT false,
+    -- System information
+    os_platform VARCHAR,
+    os_name VARCHAR,
+    os_version VARCHAR,
+    cpu_arch VARCHAR,
+    cpu_model VARCHAR,
+    cpu_count INTEGER,
+    memory_total_bytes BIGINT,
+    -- Timestamps and status
     start_time TIMESTAMP NOT NULL DEFAULT now(),
     stop_time TIMESTAMP,
     status instance_status NOT NULL DEFAULT 'running',
@@ -297,6 +306,30 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
     if (attach_result->HasError()) {
       return arrow::Status::Invalid("Failed to attach instrumentation database: ",
                                     attach_result->GetError());
+    }
+
+    // Check for schema compatibility - if the instances table exists but lacks new columns,
+    // the user has an old schema and needs to rename their instrumentation database file.
+    auto schema_check = writer_connection->Query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = '_gizmosql_instr' AND table_name = 'instances' AND column_name = 'os_platform'");
+    if (!schema_check->HasError()) {
+      // Check if instances table exists (by checking for any column)
+      auto table_exists = writer_connection->Query(
+          "SELECT column_name FROM information_schema.columns "
+          "WHERE table_schema = '_gizmosql_instr' AND table_name = 'instances' LIMIT 1");
+      if (!table_exists->HasError() && table_exists->RowCount() > 0) {
+        // Table exists - check if os_platform column exists
+        if (schema_check->RowCount() == 0) {
+          // Old schema detected - missing new columns
+          return arrow::Status::Invalid(
+              "Instrumentation database schema is outdated. The database at '", db_path,
+              "' was created with an older version of GizmoSQL.\n"
+              "Please rename or move the existing instrumentation database file to preserve your data, "
+              "and GizmoSQL will create a new database with the updated schema.\n"
+              "Example: mv '", db_path, "' '", db_path, ".backup'");
+        }
+      }
     }
 
     auto manager = std::shared_ptr<InstrumentationManager>(new InstrumentationManager(
