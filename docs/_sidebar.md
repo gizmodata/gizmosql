@@ -4,6 +4,7 @@
 
 * Getting Started
   * [Editions](editions.md)
+  * [Token Authentication](token_authentication.md)
   * [Bulk Ingestion](bulk_ingestion.md)
   * [DuckLake Integration](ducklake.md)
   * [Geometry & Spatial](geometry.md)
