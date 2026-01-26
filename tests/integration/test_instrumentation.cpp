@@ -624,15 +624,24 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 
-  // Get path to the server executable (in cmake-build-debug or similar)
-  fs::path server_exe = fs::current_path().parent_path() / "gizmosql_server";
-  if (!fs::exists(server_exe)) {
-    // Try current directory
-    server_exe = fs::current_path() / "gizmosql_server";
+  // Get path to the server executable - try multiple possible locations
+  fs::path server_exe;
+  std::vector<fs::path> search_paths = {
+      fs::current_path() / "build" / "gizmosql_server",      // CI: ./build/gizmosql_server
+      fs::current_path() / "gizmosql_server",                 // ./gizmosql_server
+      fs::current_path().parent_path() / "gizmosql_server",   // ../gizmosql_server (local dev)
+  };
+
+  for (const auto& path : search_paths) {
+    if (fs::exists(path)) {
+      server_exe = path;
+      break;
+    }
   }
-  if (!fs::exists(server_exe)) {
-    GTEST_SKIP() << "Server executable not found, skipping SIGTERM test";
-  }
+
+  ASSERT_FALSE(server_exe.empty() || !fs::exists(server_exe))
+      << "Server executable not found. Searched paths: "
+      << search_paths[0] << ", " << search_paths[1] << ", " << search_paths[2];
 
   // Check for license key - instrumentation requires enterprise license
   const char* license_key_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
@@ -813,14 +822,24 @@ TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 
-  // Get path to the server executable
-  fs::path server_exe = fs::current_path().parent_path() / "gizmosql_server";
-  if (!fs::exists(server_exe)) {
-    server_exe = fs::current_path() / "gizmosql_server";
+  // Get path to the server executable - try multiple possible locations
+  fs::path server_exe;
+  std::vector<fs::path> search_paths = {
+      fs::current_path() / "build" / "gizmosql_server",      // CI: ./build/gizmosql_server
+      fs::current_path() / "gizmosql_server",                 // ./gizmosql_server
+      fs::current_path().parent_path() / "gizmosql_server",   // ../gizmosql_server (local dev)
+  };
+
+  for (const auto& path : search_paths) {
+    if (fs::exists(path)) {
+      server_exe = path;
+      break;
+    }
   }
-  if (!fs::exists(server_exe)) {
-    GTEST_SKIP() << "Server executable not found, skipping env var test";
-  }
+
+  ASSERT_FALSE(server_exe.empty() || !fs::exists(server_exe))
+      << "Server executable not found. Searched paths: "
+      << search_paths[0] << ", " << search_paths[1] << ", " << search_paths[2];
 
   // Build command to start server WITH env var but WITHOUT --enable-instrumentation arg
   // The env var should enable instrumentation
