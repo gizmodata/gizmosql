@@ -5,6 +5,12 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.3] - 2026-01-26
+
+### Changed
+
+- Upgraded DuckDB from v1.4.3 to v1.4.4
+
 ## [1.15.1] - 2025-01-23
 
 ### Added
@@ -98,7 +104,7 @@ GizmoSQL is now available in two editions:
 | Component | Version |
 |-----------|---------|
 | Apache Arrow | **23.0.0** |
-| DuckDB | v1.4.3 |
+| DuckDB | v1.4.4 |
 | SQLite | 3.51.1 |
 | jwt-cpp | v0.7.1 |
 
