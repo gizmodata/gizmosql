@@ -49,8 +49,10 @@
 #include "flight_sql_fwd.h"
 #include "session_context.h"
 #include "request_ctx.h"
-#include "instrumentation/instrumentation_manager.h"
-#include "instrumentation/instrumentation_records.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/instrumentation/instrumentation_manager.h"
+#include "enterprise/instrumentation/instrumentation_records.h"
+#endif
 
 using arrow::Result;
 using arrow::Status;
@@ -655,9 +657,11 @@ class DuckDBFlightSqlServer::Impl {
   // Server instance ID - generated on server creation, independent of instrumentation
   std::string instance_id_;
 
-  // Instrumentation
+#ifdef GIZMOSQL_ENTERPRISE
+  // Instrumentation (Enterprise feature)
   std::shared_ptr<InstrumentationManager> instrumentation_manager_;
   std::unique_ptr<InstanceInstrumentation> instance_instrumentation_;
+#endif
 
   // Set of killed session IDs - prevents reconnection with a killed session
   std::unordered_set<std::string> killed_session_ids_;
@@ -738,7 +742,8 @@ class DuckDBFlightSqlServer::Impl {
     new_session->query_timeout = query_timeout_;
     new_session->query_log_level = query_log_level_;
 
-    // Create session instrumentation if manager is available
+#ifdef GIZMOSQL_ENTERPRISE
+    // Create session instrumentation if manager is available (Enterprise feature)
     if (instrumentation_manager_ && instrumentation_manager_->IsEnabled()) {
       auto instance_id = GetInstanceId();
       if (!instance_id.empty()) {
@@ -755,6 +760,7 @@ class DuckDBFlightSqlServer::Impl {
                           << (instrumentation_manager_ ? "set" : "null")
                           << ", enabled=" << (instrumentation_manager_ ? (instrumentation_manager_->IsEnabled() ? "true" : "false") : "n/a");
     }
+#endif
 
     // Slow path: take exclusive lock and check again
     {
@@ -816,6 +822,7 @@ class DuckDBFlightSqlServer::Impl {
   }
 
  public:
+#ifdef GIZMOSQL_ENTERPRISE
   explicit Impl(DuckDBFlightSqlServer* outer, std::shared_ptr<duckdb::DuckDB> db_instance,
                 const bool& print_queries, const int32_t& query_timeout,
                 const arrow::util::ArrowLogLevel& query_log_level,
@@ -843,6 +850,17 @@ class DuckDBFlightSqlServer::Impl {
   void ReleaseInstanceInstrumentation() {
     instance_instrumentation_.reset();
   }
+#else
+  explicit Impl(DuckDBFlightSqlServer* outer, std::shared_ptr<duckdb::DuckDB> db_instance,
+                const bool& print_queries, const int32_t& query_timeout,
+                const arrow::util::ArrowLogLevel& query_log_level)
+      : outer_(outer),
+        db_instance_(std::move(db_instance)),
+        print_queries_(print_queries),
+        query_timeout_(query_timeout),
+        query_log_level_(query_log_level),
+        instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())) {}
+#endif
 
   void ReleaseAllSessions() {
     // First, clear prepared statements (which hold ExecutionInstrumentation)
@@ -1780,7 +1798,11 @@ class DuckDBFlightSqlServer::Impl {
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string& path, const bool& read_only, const bool& print_queries,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
+#ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
+#else
+    std::shared_ptr<void> /* unused_instrumentation_manager */) {
+#endif
   GIZMOSQL_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
 
   bool in_memory = path == ":memory:";
@@ -1800,9 +1822,14 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 
   auto result = std::make_shared<DuckDBFlightSqlServer>();
+#ifdef GIZMOSQL_ENTERPRISE
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
       instrumentation_manager);
+#else
+  result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
+      result.get(), db, print_queries, query_timeout, query_log_level);
+#endif
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
   for (const auto& id_to_result : GetSqlInfoResultMap(result.get(), query_timeout)) {
@@ -2065,13 +2092,18 @@ arrow::Result<arrow::util::ArrowLogLevel> DuckDBFlightSqlServer::GetQueryLogLeve
   return impl_->GetQueryLogLevel(client_session);
 }
 
+std::string DuckDBFlightSqlServer::GetInstanceId() const {
+  return impl_->GetInstanceId();
+}
+
+void DuckDBFlightSqlServer::ReleaseAllSessions() {
+  impl_->ReleaseAllSessions();
+}
+
+#ifdef GIZMOSQL_ENTERPRISE
 std::shared_ptr<InstrumentationManager> DuckDBFlightSqlServer::GetInstrumentationManager()
     const {
   return impl_->GetInstrumentationManager();
-}
-
-std::string DuckDBFlightSqlServer::GetInstanceId() const {
-  return impl_->GetInstanceId();
 }
 
 void DuckDBFlightSqlServer::SetInstanceInstrumentation(
@@ -2087,10 +2119,7 @@ void DuckDBFlightSqlServer::SetInstrumentationManager(
 void DuckDBFlightSqlServer::ReleaseInstanceInstrumentation() {
   impl_->ReleaseInstanceInstrumentation();
 }
-
-void DuckDBFlightSqlServer::ReleaseAllSessions() {
-  impl_->ReleaseAllSessions();
-}
+#endif
 
 std::shared_ptr<duckdb::DuckDB> DuckDBFlightSqlServer::GetDuckDBInstance() const {
   return impl_->GetDuckDBInstance();

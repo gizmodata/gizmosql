@@ -53,7 +53,7 @@ CREATE TYPE IF NOT EXISTS execution_status AS ENUM ('executing', 'success', 'err
 
 -- Server instance lifecycle
 CREATE TABLE IF NOT EXISTS instances (
-    instance_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_id UUID PRIMARY KEY,
     gizmosql_version VARCHAR NOT NULL,
     gizmosql_edition VARCHAR NOT NULL,
     duckdb_version VARCHAR NOT NULL,

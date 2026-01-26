@@ -66,6 +66,7 @@ if(GIZMOSQL_ENTERPRISE)
             ${CMAKE_SOURCE_DIR}/src/enterprise/license_mgr
             ${CMAKE_SOURCE_DIR}/src/enterprise/instrumentation
             ${CMAKE_SOURCE_DIR}/src/enterprise/kill_session
+            ${CMAKE_SOURCE_DIR}/src/enterprise/catalog_permissions
     )
 endif()
 

@@ -44,10 +44,8 @@
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/kill_session/kill_session_handler.h"
+#include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #include "enterprise/enterprise_features.h"
-#else
-#include "instrumentation/instrumentation_manager.h"
-#include "instrumentation/instrumentation_records.h"
 #endif
 #include "version.h"
 
@@ -506,7 +504,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         {"sql", logged_sql});
   }
 
-  // Prevent DETACH of instrumentation database
+  // Prevent DETACH of instrumentation database (only relevant when enterprise is enabled)
+#ifdef GIZMOSQL_ENTERPRISE
   if (IsDetachInstrumentationDb(sql)) {
     GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Client attempted to DETACH instrumentation database",
                    {"kind", "sql"}, {"status", "rejected"},
@@ -521,6 +520,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     }
     return Status::Invalid(error_msg);
   }
+#endif
 
   // Handle KILL SESSION command
   std::string target_session_id;
@@ -580,6 +580,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         client_session, handle, sql, effective_log_level, log_queries, override_schema));
     result->is_gizmosql_admin_ = true;
 
+#ifdef GIZMOSQL_ENTERPRISE
     // Create statement instrumentation (admin commands are still tracked)
     if (auto server = GetServer(*client_session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
@@ -587,6 +588,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
             mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
       }
     }
+#endif
 
     if (log_queries) {
       GIZMOSQL_LOGKV_SESSION_DYNAMIC(
@@ -601,53 +603,37 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session->connection->Prepare(effective_sql);
 
   if (stmt->success) {
-    // Check catalog-level write access for all databases the statement will modify
-    // modified_databases is a map of catalog_name -> CatalogIdentity
-    const auto& modified_dbs = stmt->data->properties.modified_databases;
-    for (const auto& [catalog_name, catalog_identity] : modified_dbs) {
-      if (!client_session->HasWriteAccess(catalog_name)) {
-        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access denied: user lacks write access to catalog",
-                       {"kind", "sql"}, {"status", "rejected"},
-                       {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
-        std::string error_msg =
-            "Access denied: You do not have write access to catalog '" + catalog_name + "'.";
-        // Record the rejected modification attempt
-        if (auto server = GetServer(*client_session)) {
-          if (auto mgr = server->GetInstrumentationManager()) {
-            StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                     flight_method, is_internal, error_msg);
-          }
-        }
-        return Status::Invalid(error_msg);
-      }
+#ifdef GIZMOSQL_ENTERPRISE
+    // Check catalog-level access permissions (Enterprise feature)
+    // These checks enforce per-catalog read/write permissions from JWT token claims
+    std::shared_ptr<InstrumentationManager> instr_mgr;
+    if (auto server = GetServer(*client_session)) {
+      instr_mgr = server->GetInstrumentationManager();
     }
 
-    // Check catalog-level read access for all databases the statement will read
-    // read_databases is a map of catalog_name -> CatalogIdentity
-    const auto& read_dbs = stmt->data->properties.read_databases;
-    for (const auto& [catalog_name, catalog_identity] : read_dbs) {
-      if (!client_session->HasReadAccess(catalog_name)) {
-        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access denied: user lacks read access to catalog",
-                       {"kind", "sql"}, {"status", "rejected"},
-                       {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
-        std::string error_msg =
-            "Access denied: You do not have read access to catalog '" + catalog_name + "'.";
-        // Record the rejected read attempt
-        if (auto server = GetServer(*client_session)) {
-          if (auto mgr = server->GetInstrumentationManager()) {
-            StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                     flight_method, is_internal, error_msg);
-          }
-        }
-        return Status::Invalid(error_msg);
-      }
+    // Check write access for all catalogs the statement will modify
+    auto write_status = gizmosql::enterprise::CheckCatalogWriteAccess(
+        client_session, stmt->data->properties.modified_databases,
+        instr_mgr, handle, logged_sql, flight_method, is_internal);
+    if (!write_status.ok()) {
+      return write_status;
     }
+
+    // Check read access for all catalogs the statement will read
+    auto read_status = gizmosql::enterprise::CheckCatalogReadAccess(
+        client_session, stmt->data->properties.read_databases,
+        instr_mgr, handle, logged_sql, flight_method, is_internal);
+    if (!read_status.ok()) {
+      return read_status;
+    }
+#endif
 
     // Check for readonly role trying to modify data (legacy support)
     if (!stmt->data->properties.IsReadOnly() && client_session->role == "readonly") {
       std::string error_msg =
           "User '" + client_session->username +
           "' has a readonly session and cannot run statements that modify state.";
+#ifdef GIZMOSQL_ENTERPRISE
       // Record the rejected modification attempt by readonly user
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {
@@ -655,6 +641,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                                    flight_method, is_internal, error_msg);
         }
       }
+#endif
       return Status::ExecutionError(error_msg);
     }
   }
@@ -678,6 +665,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
           client_session, handle, sql, log_level, log_queries, override_schema));
 
+#ifdef GIZMOSQL_ENTERPRISE
       // Create statement instrumentation for direct execution
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {
@@ -685,6 +673,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
               mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
         }
       }
+#endif
 
       status = "success";
       return result;
@@ -701,6 +690,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                      {"sql", logged_sql});
     }
 
+#ifdef GIZMOSQL_ENTERPRISE
     // Record the failed statement in instrumentation with the error message
     if (auto server = GetServer(*client_session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
@@ -709,6 +699,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                                  flight_method, is_internal, error_message);
       }
     }
+#endif
 
     return Status::Invalid(err_msg);
   }
@@ -716,6 +707,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
       client_session, handle, stmt, log_level, log_queries, override_schema));
 
+#ifdef GIZMOSQL_ENTERPRISE
   // Create statement instrumentation for prepared statement
   if (auto server = GetServer(*client_session)) {
     if (auto mgr = server->GetInstrumentationManager()) {
@@ -723,6 +715,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
           mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
     }
   }
+#endif
 
   status = "success";
   return result;
@@ -864,6 +857,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
   // Generate execution ID for tracing (matches instrumentation table)
   std::string execution_id = boost::uuids::to_string(boost::uuids::random_generator()());
 
+#ifdef GIZMOSQL_ENTERPRISE
   // Serialize bind parameters for instrumentation
   std::string bind_params_str;
   if (!bind_parameters.empty()) {
@@ -886,6 +880,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
       }
     }
   }
+#endif
 
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::Execute", execute_status, {"peer", client_session_->peer},
@@ -898,24 +893,30 @@ arrow::Result<int> DuckDBStatement::Execute() {
   if (is_gizmosql_admin_) {
     // If we have a synthetic result (e.g., from KILL SESSION), execution is already done
     if (synthetic_result_batch_) {
+#ifdef GIZMOSQL_ENTERPRISE
       // Mark execution as complete for admin commands
       if (execution_instrumentation_) {
         execution_instrumentation_->SetCompleted(0);
       }
+#endif
       return 0;
     }
     auto set_status = HandleGizmoSQLSet();
     if (!set_status.ok()) {
+#ifdef GIZMOSQL_ENTERPRISE
       // Mark execution as failed for SET command errors
       if (execution_instrumentation_) {
         execution_instrumentation_->SetError(set_status.ToString());
       }
+#endif
       return set_status;
     }
+#ifdef GIZMOSQL_ENTERPRISE
     // Mark execution as complete for successful SET commands
     if (execution_instrumentation_) {
       execution_instrumentation_->SetCompleted(0);
     }
+#endif
     return 0;
   }
 
@@ -1034,10 +1035,12 @@ arrow::Result<int> DuckDBStatement::Execute() {
                      {"sql", logged_sql_});
     }
 
+#ifdef GIZMOSQL_ENTERPRISE
     // Record timeout in instrumentation
     if (execution_instrumentation_) {
       execution_instrumentation_->SetTimeout();
     }
+#endif
 
     return arrow::Status::ExecutionError("Query execution timed out after ",
                                          std::to_string(timeout_duration.count()),
@@ -1049,6 +1052,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   end_time_ = std::chrono::steady_clock::now();
 
+#ifdef GIZMOSQL_ENTERPRISE
   // Record success or error in instrumentation
   // Note: rows_fetched will be updated incrementally during FetchResult calls in the batch reader,
   // and the final record will be written when the ExecutionInstrumentation is destroyed
@@ -1059,6 +1063,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
       execution_instrumentation_->SetError(result.status().ToString());
     }
   }
+#endif
 
   if (log_queries_ && result.ok()) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC(

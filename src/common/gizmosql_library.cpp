@@ -54,9 +54,6 @@
 #include "enterprise/enterprise_features.h"
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
-#else
-#include "instrumentation/instrumentation_manager.h"
-#include "instrumentation/instrumentation_records.h"
 #endif
 #include "version.h"
 
@@ -73,8 +70,10 @@ int port = 31337;
 static std::shared_ptr<GizmoSQLHealthServiceImpl> g_health_service;
 static std::unique_ptr<PlaintextHealthServer> g_plaintext_health_server;
 
-// Static storage for instrumentation
+#ifdef GIZMOSQL_ENTERPRISE
+// Static storage for instrumentation (Enterprise feature)
 static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_manager;
+#endif
 
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
   do {                                                                             \
@@ -354,6 +353,15 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
   std::shared_ptr<flight::sql::FlightSqlServerBase> server = nullptr;
 
+#ifdef GIZMOSQL_ENTERPRISE
+  // Instrumentation is only supported with the DuckDB backend
+  if (enable_instrumentation && backend != BackendType::duckdb) {
+    return arrow::Status::Invalid(
+        "Instrumentation is only supported with the DuckDB backend. "
+        "Please use the default DuckDB backend or disable instrumentation.");
+  }
+#endif
+
   std::string db_type = "";
   if (backend == BackendType::sqlite) {
     db_type = "SQLite";
@@ -388,7 +396,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         // Install and load spatial extension, then register GeoArrow for seamless geometry export
         "INSTALL spatial; LOAD spatial; CALL register_geoarrow_extensions();";
 
-    // Instrumentation setup (conditional)
+#ifdef GIZMOSQL_ENTERPRISE
+    // Instrumentation setup (Enterprise feature, conditional)
     std::string instr_db_path;
     if (enable_instrumentation) {
       // Get instrumentation DB path: CLI arg > env var > default
@@ -404,10 +413,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     } else {
       GIZMOSQL_LOG(INFO) << "Instrumentation is disabled";
     }
+#endif
 
     duckdb_init_sql_commands += init_sql_commands;
     RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands);
 
+#ifdef GIZMOSQL_ENTERPRISE
     // Now initialize instrumentation manager using the server's DuckDB instance (if enabled)
     if (enable_instrumentation) {
       auto db_instance = duckdb_server->GetDuckDBInstance();
@@ -453,6 +464,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         return instr_result.status();
       }
     }
+#endif
 
     server = duckdb_server;
   }
@@ -757,11 +769,13 @@ void CleanupServerResources() {
     g_health_service.reset();
   }
 
-  // Shutdown and reset instrumentation manager
+#ifdef GIZMOSQL_ENTERPRISE
+  // Shutdown and reset instrumentation manager (Enterprise feature)
   if (g_instrumentation_manager) {
     g_instrumentation_manager->Shutdown();
     g_instrumentation_manager.reset();
   }
+#endif
 }
 }  // namespace gizmosql
 
@@ -909,24 +923,29 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       GIZMOSQL_LOG(INFO) << "Health service shutdown complete";
     }
 
-    // Release sessions, statements, and instance instrumentation BEFORE shutting down the manager.
-    // This ensures all instrumentation records are queued while the manager can still accept writes.
-    // The manager's Shutdown() will then drain the queue.
-    // Order: statements -> sessions -> instance (child records before parent records)
+    // Release sessions and statements BEFORE shutting down (needed for cleanup regardless of enterprise)
     if (auto duckdb_server = std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server_ptr)) {
       auto instance_id = duckdb_server->GetInstanceId();
-      // Release statements and sessions first (closes their instrumentation records)
+      // Release statements and sessions first (closes their instrumentation records if enterprise)
       duckdb_server->ReleaseAllSessions();
-      // Then release instance instrumentation
+#ifdef GIZMOSQL_ENTERPRISE
+      // Release instance instrumentation (Enterprise feature)
+      // This ensures all instrumentation records are queued while the manager can still accept writes.
+      // The manager's Shutdown() will then drain the queue.
       duckdb_server->ReleaseInstanceInstrumentation();
       GIZMOSQL_LOG(INFO) << "Instance " << instance_id << " instrumentation released";
+#else
+      (void)instance_id;  // Suppress unused variable warning in Core edition
+#endif
     }
 
+#ifdef GIZMOSQL_ENTERPRISE
     if (gizmosql::g_instrumentation_manager) {
       gizmosql::g_instrumentation_manager->Shutdown();
       gizmosql::g_instrumentation_manager.reset();
       GIZMOSQL_LOG(INFO) << "Instrumentation manager shutdown complete";
     }
+#endif
 
     // Now safe to destroy the server
     server_ptr.reset();
