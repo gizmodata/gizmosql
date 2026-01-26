@@ -30,7 +30,7 @@
 #include "arrow/testing/gtest_util.h"
 #include "test_util.h"
 #include "test_server_fixture.h"
-#include "duckdb/instrumentation/instrumentation_manager.h"
+#include "instrumentation/instrumentation_manager.h"
 
 using arrow::flight::sql::FlightSqlClient;
 
@@ -634,6 +634,12 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
     GTEST_SKIP() << "Server executable not found, skipping SIGTERM test";
   }
 
+  // Check for license key - instrumentation requires enterprise license
+  const char* license_key_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  if (!license_key_file || !fs::exists(license_key_file)) {
+    GTEST_SKIP() << "License key file not found, skipping SIGTERM instrumentation test";
+  }
+
   // Build command to start server with instrumentation
   std::string cmd = server_exe.string() +
                     " --database-filename " + test_db +
@@ -761,7 +767,7 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
 
     // Verify at least one execution completed successfully
     auto completed_exec_result = conn.Query(
-        "SELECT COUNT(*) FROM sql_executions WHERE status = 'completed'");
+        "SELECT COUNT(*) FROM sql_executions WHERE status = 'success'");
     ASSERT_FALSE(completed_exec_result->HasError()) << completed_exec_result->GetError();
     auto completed_count = completed_exec_result->GetValue(0, 0).GetValue<int64_t>();
     ASSERT_GE(completed_count, 1)

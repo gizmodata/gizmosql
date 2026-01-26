@@ -13,7 +13,9 @@
 
 namespace gizmosql::ddb {
 class DuckDBFlightSqlServer;  // forward declare
+#ifdef GIZMOSQL_ENTERPRISE
 class SessionInstrumentation;  // forward declare
+#endif
 }
 
 namespace gizmosql {
@@ -40,8 +42,10 @@ struct ClientSession {
   // Access checking is done via enterprise::HasReadAccess/HasWriteAccess
   std::vector<CatalogAccessRule> catalog_access;
 
-  // Instrumentation for session lifecycle tracking
+#ifdef GIZMOSQL_ENTERPRISE
+  // Instrumentation for session lifecycle tracking (Enterprise feature)
   std::unique_ptr<gizmosql::ddb::SessionInstrumentation> instrumentation;
+#endif
 
   // Flag for KILL SESSION support - when set, the session should be terminated
   std::atomic<bool> kill_requested{false};

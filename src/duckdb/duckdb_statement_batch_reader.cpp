@@ -25,7 +25,9 @@
 #include <arrow/c/bridge.h>
 
 #include "duckdb_statement.h"
-#include "instrumentation/instrumentation_records.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/instrumentation/instrumentation_records.h"
+#endif
 
 namespace gizmosql::ddb {
 // Batch size for SQLite statement results
@@ -72,10 +74,12 @@ arrow::Status DuckDBStatementBatchReader::ReadNext(
 
   ARROW_ASSIGN_OR_RAISE(*out, statement_->FetchResult());
 
+#ifdef GIZMOSQL_ENTERPRISE
   // Track rows fetched for instrumentation
   if (*out && statement_->GetExecutionInstrumentation()) {
     statement_->GetExecutionInstrumentation()->IncrementRowsFetched((*out)->num_rows());
   }
+#endif
 
   return arrow::Status::OK();
 }

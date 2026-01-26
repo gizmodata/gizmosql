@@ -30,8 +30,10 @@
 
 namespace gizmosql::ddb {
 
+#ifdef GIZMOSQL_ENTERPRISE
 class InstrumentationManager;
 class InstanceInstrumentation;
+#endif
 /// \brief Convert a column type to a ArrowType.
 /// \param duckdb_type the duckdb type.
 /// \return            The equivalent ArrowType.
@@ -51,7 +53,11 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   static arrow::Result<std::shared_ptr<DuckDBFlightSqlServer>> Create(
       const std::string& path, const bool& read_only, const bool& print_queries,
       const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
+#ifdef GIZMOSQL_ENTERPRISE
       std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr);
+#else
+      std::shared_ptr<void> unused_instrumentation_manager = nullptr);
+#endif
 
   /// \brief Auxiliary method used to execute an arbitrary SQL statement on the underlying
   ///        DuckDB database.
@@ -227,15 +233,20 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   arrow::Result<arrow::util::ArrowLogLevel> GetQueryLogLevel(
       const std::shared_ptr<ClientSession>& client_session);
 
-  // Instrumentation accessors
-  std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const;
+  // Server instance ID (available in all editions)
   std::string GetInstanceId() const;
+
+  /// Release all active sessions (must be called BEFORE manager shutdown to close session records)
+  void ReleaseAllSessions();
+
+#ifdef GIZMOSQL_ENTERPRISE
+  // Instrumentation accessors (Enterprise feature)
+  std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const;
   void SetInstanceInstrumentation(std::unique_ptr<InstanceInstrumentation> instr);
   void SetInstrumentationManager(std::shared_ptr<InstrumentationManager> manager);
   /// Explicitly release instance instrumentation (must be called BEFORE manager shutdown)
   void ReleaseInstanceInstrumentation();
-  /// Release all active sessions (must be called BEFORE manager shutdown to close session records)
-  void ReleaseAllSessions();
+#endif
 
   // Get the underlying DuckDB instance (for instrumentation setup)
   std::shared_ptr<duckdb::DuckDB> GetDuckDBInstance() const;

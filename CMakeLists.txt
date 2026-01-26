@@ -251,11 +251,6 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/instrumentation/instrumentation_records.cpp
             src/enterprise/kill_session/kill_session_handler.cpp
             src/enterprise/catalog_permissions/catalog_permissions_handler.cpp)
-else()
-    # Core edition: instrumentation from duckdb directory (stubs or full for compatibility)
-    set(GIZMOSQL_DUCKDB_SERVER_SRCS ${GIZMOSQL_DUCKDB_SERVER_SRCS}
-            src/duckdb/instrumentation/instrumentation_manager.cpp
-            src/duckdb/instrumentation/instrumentation_records.cpp)
 endif()
 
 # Add a library target
@@ -306,10 +301,6 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/catalog_permissions
     )
     target_compile_definitions(gizmosqlserver PUBLIC GIZMOSQL_ENTERPRISE)
-else()
-    target_include_directories(gizmosqlserver PRIVATE
-            src/duckdb/instrumentation
-    )
 endif()
 
 target_link_libraries(gizmosqlserver
