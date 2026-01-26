@@ -34,9 +34,10 @@ struct ClientSession {
   std::optional<int32_t> query_timeout = std::nullopt;
   std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;
 
-  // Catalog-level access controls from JWT token claims
+  // Catalog-level access controls from JWT token claims (Enterprise feature)
   // If empty, full access is granted (backward compatible)
   // Rules are evaluated in order; first match wins
+  // Access checking is done via enterprise::HasReadAccess/HasWriteAccess
   std::vector<CatalogAccessRule> catalog_access;
 
   // Instrumentation for session lifecycle tracking
@@ -44,41 +45,6 @@ struct ClientSession {
 
   // Flag for KILL SESSION support - when set, the session should be terminated
   std::atomic<bool> kill_requested{false};
-
-  // Check if this session has the required access level for a catalog
-  // Returns the access level granted, considering rules in order (first match wins)
-  // Special handling for _gizmosql_instr: only admins can read, no one can write via client
-  CatalogAccessLevel GetCatalogAccess(const std::string& catalog_name) const {
-    // The instrumentation database is special: system-managed, read-only for admins
-    // Token-based catalog_access rules do NOT override this protection
-    if (catalog_name == "_gizmosql_instr") {
-      return (role == "admin") ? CatalogAccessLevel::kRead : CatalogAccessLevel::kNone;
-    }
-
-    // If no catalog_access rules defined, grant full access (backward compatible)
-    if (catalog_access.empty()) {
-      return CatalogAccessLevel::kWrite;
-    }
-
-    // Check rules in order - first match wins
-    for (const auto& rule : catalog_access) {
-      if (rule.catalog == catalog_name || rule.catalog == "*") {
-        return rule.access;
-      }
-    }
-
-    // No matching rule - deny access
-    return CatalogAccessLevel::kNone;
-  }
-
-  // Convenience methods
-  bool HasReadAccess(const std::string& catalog_name) const {
-    return GetCatalogAccess(catalog_name) >= CatalogAccessLevel::kRead;
-  }
-
-  bool HasWriteAccess(const std::string& catalog_name) const {
-    return GetCatalogAccess(catalog_name) >= CatalogAccessLevel::kWrite;
-  }
 };
 
 // Inline utility for safe access

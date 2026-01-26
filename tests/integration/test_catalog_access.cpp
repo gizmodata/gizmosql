@@ -32,6 +32,19 @@
 
 using arrow::flight::sql::FlightSqlClient;
 
+// Helper to check if enterprise license is available for catalog_permissions tests
+bool HasEnterpriseLicense() {
+  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  return license_file != nullptr && license_file[0] != '\0';
+}
+
+// Macro to skip tests that require enterprise catalog_permissions feature
+#define SKIP_WITHOUT_LICENSE() \
+  if (!HasEnterpriseLicense()) { \
+    GTEST_SKIP() << "Catalog permissions is an enterprise feature. " \
+                 << "Set GIZMOSQL_LICENSE_KEY_FILE environment variable."; \
+  }
+
 // Test secret key - must match the one used by the test server fixture
 const std::string kTestSecretKey = "test_secret_key_for_testing";
 const std::string kServerJWTIssuer = "gizmosql";
@@ -244,6 +257,7 @@ TEST_F(CatalogAccessServerFixture, TokenWithoutCatalogAccessHasFullAccess) {
 // ============================================================================
 
 TEST_F(CatalogAccessServerFixture, TokenWithReadOnlyAccessCannotWrite) {
+  SKIP_WITHOUT_LICENSE();  // Token-based catalog permissions require enterprise license
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // First, create a table using system credentials
@@ -279,6 +293,7 @@ TEST_F(CatalogAccessServerFixture, TokenWithReadOnlyAccessCannotWrite) {
 }
 
 TEST_F(CatalogAccessServerFixture, TokenWithNoAccessCannotRead) {
+  SKIP_WITHOUT_LICENSE();  // Token-based catalog permissions require enterprise license
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // First, create a table using system credentials
@@ -333,6 +348,7 @@ TEST_F(CatalogAccessServerFixture, TokenWithWriteAccessCanReadAndWrite) {
 // ============================================================================
 
 TEST_F(CatalogAccessServerFixture, WildcardReadOnlyAccessDeniesWrite) {
+  SKIP_WITHOUT_LICENSE();  // Token-based catalog permissions require enterprise license
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create a token with wildcard read-only access
@@ -390,6 +406,7 @@ TEST_F(CatalogAccessServerFixture, FirstMatchWinsSpecificBeforeWildcard) {
 }
 
 TEST_F(CatalogAccessServerFixture, FirstMatchWinsWildcardDeniesSpecificAfter) {
+  SKIP_WITHOUT_LICENSE();  // Token-based catalog permissions require enterprise license
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create a token with wildcard before specific (wildcard wins)

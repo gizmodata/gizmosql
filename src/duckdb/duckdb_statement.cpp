@@ -44,6 +44,7 @@
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/kill_session/kill_session_handler.h"
+#include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #include "enterprise/enterprise_features.h"
 #else
 #include "instrumentation/instrumentation_manager.h"
@@ -601,47 +602,30 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session->connection->Prepare(effective_sql);
 
   if (stmt->success) {
-    // Check catalog-level write access for all databases the statement will modify
-    // modified_databases is a map of catalog_name -> CatalogIdentity
-    const auto& modified_dbs = stmt->data->properties.modified_databases;
-    for (const auto& [catalog_name, catalog_identity] : modified_dbs) {
-      if (!client_session->HasWriteAccess(catalog_name)) {
-        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access denied: user lacks write access to catalog",
-                       {"kind", "sql"}, {"status", "rejected"},
-                       {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
-        std::string error_msg =
-            "Access denied: You do not have write access to catalog '" + catalog_name + "'.";
-        // Record the rejected modification attempt
-        if (auto server = GetServer(*client_session)) {
-          if (auto mgr = server->GetInstrumentationManager()) {
-            StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                     flight_method, is_internal, error_msg);
-          }
-        }
-        return Status::Invalid(error_msg);
-      }
+#ifdef GIZMOSQL_ENTERPRISE
+    // Check catalog-level access permissions (Enterprise feature)
+    // These checks enforce per-catalog read/write permissions from JWT token claims
+    std::shared_ptr<InstrumentationManager> instr_mgr;
+    if (auto server = GetServer(*client_session)) {
+      instr_mgr = server->GetInstrumentationManager();
     }
 
-    // Check catalog-level read access for all databases the statement will read
-    // read_databases is a map of catalog_name -> CatalogIdentity
-    const auto& read_dbs = stmt->data->properties.read_databases;
-    for (const auto& [catalog_name, catalog_identity] : read_dbs) {
-      if (!client_session->HasReadAccess(catalog_name)) {
-        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access denied: user lacks read access to catalog",
-                       {"kind", "sql"}, {"status", "rejected"},
-                       {"catalog", catalog_name}, {"statement_id", handle}, {"sql", logged_sql});
-        std::string error_msg =
-            "Access denied: You do not have read access to catalog '" + catalog_name + "'.";
-        // Record the rejected read attempt
-        if (auto server = GetServer(*client_session)) {
-          if (auto mgr = server->GetInstrumentationManager()) {
-            StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                     flight_method, is_internal, error_msg);
-          }
-        }
-        return Status::Invalid(error_msg);
-      }
+    // Check write access for all catalogs the statement will modify
+    auto write_status = gizmosql::enterprise::CheckCatalogWriteAccess(
+        client_session, stmt->data->properties.modified_databases,
+        instr_mgr, handle, logged_sql, flight_method, is_internal);
+    if (!write_status.ok()) {
+      return write_status;
     }
+
+    // Check read access for all catalogs the statement will read
+    auto read_status = gizmosql::enterprise::CheckCatalogReadAccess(
+        client_session, stmt->data->properties.read_databases,
+        instr_mgr, handle, logged_sql, flight_method, is_internal);
+    if (!read_status.ok()) {
+      return read_status;
+    }
+#endif
 
     // Check for readonly role trying to modify data (legacy support)
     if (!stmt->data->properties.IsReadOnly() && client_session->role == "readonly") {
