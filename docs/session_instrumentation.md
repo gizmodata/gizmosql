@@ -18,7 +18,7 @@ All instrumentation data is stored in a separate DuckDB database and exposed as 
 
 ## Configuration
 
-### Database Location
+### Database Location (File-Based)
 
 By default, the instrumentation database is created in the same directory as the main database file:
 - If `--database-filename` is `/path/to/mydb.db`, instrumentation is stored at `/path/to/gizmosql_instrumentation.db`
@@ -29,6 +29,84 @@ You can override the location using the environment variable:
 ```bash
 export GIZMOSQL_INSTRUMENTATION_DB_PATH=/custom/path/instrumentation.db
 ```
+
+### Using DuckLake as Instrumentation Backend
+
+For enterprise deployments, you can store instrumentation data in a DuckLake catalog instead of a local file. This enables:
+- Centralized instrumentation across multiple GizmoSQL instances
+- Cloud-based storage (S3, Azure Blob, etc.) for instrumentation data
+- Transactional consistency with ACID guarantees from DuckLake
+
+#### Configuration Parameters
+
+| Parameter | CLI Flag | Env Var | Default | Description |
+|-----------|----------|---------|---------|-------------|
+| `instrumentation_catalog` | `--instrumentation-catalog` | `GIZMOSQL_INSTRUMENTATION_CATALOG` | (empty) | Catalog name for instrumentation. If set, uses pre-attached catalog instead of file. |
+| `instrumentation_schema` | `--instrumentation-schema` | `GIZMOSQL_INSTRUMENTATION_SCHEMA` | `main` | Schema within the catalog |
+
+When `instrumentation_catalog` is set:
+- The catalog must be pre-attached via `--init-sql-commands`
+- `instrumentation_db_path` is ignored
+- GizmoSQL will create the instrumentation tables in the specified catalog/schema
+
+#### Example: Using Persistent Secrets (Recommended)
+
+With persistent secrets, you only need to create the secrets once. DuckDB stores them in `~/.duckdb/stored_secrets` and automatically loads them on subsequent startups.
+
+**Initial setup (first time only):**
+
+```bash
+GIZMOSQL_PASSWORD="password" gizmosql_server \
+  --database-filename mydb.db \
+  --enable-instrumentation=true \
+  --instrumentation-catalog=instr_ducklake \
+  --init-sql-commands="
+    INSTALL ducklake; INSTALL postgres; LOAD ducklake; LOAD postgres;
+    CREATE PERSISTENT SECRET pg_secret (TYPE postgres, HOST 'localhost', PORT 5432, DATABASE 'ducklake_catalog', USER 'postgres', PASSWORD 'password');
+    CREATE PERSISTENT SECRET ducklake_secret (TYPE DUCKLAKE, METADATA_PATH '', DATA_PATH 's3://mybucket/instrumentation/', METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_secret'});
+    ATTACH 'ducklake:ducklake_secret' AS instr_ducklake;
+  "
+```
+
+**Subsequent startups (secrets already persisted):**
+
+```bash
+GIZMOSQL_PASSWORD="password" gizmosql_server \
+  --database-filename mydb.db \
+  --enable-instrumentation=true \
+  --instrumentation-catalog=instr_ducklake \
+  --init-sql-commands="
+    LOAD ducklake; LOAD postgres;
+    ATTACH 'ducklake:ducklake_secret' AS instr_ducklake;
+  "
+```
+
+#### Example: Using Session Secrets
+
+If you prefer not to persist secrets, create them each startup:
+
+```bash
+GIZMOSQL_PASSWORD="password" gizmosql_server \
+  --database-filename mydb.db \
+  --enable-instrumentation=true \
+  --instrumentation-catalog=instr_ducklake \
+  --init-sql-commands="
+    INSTALL ducklake; INSTALL postgres; LOAD ducklake; LOAD postgres;
+    CREATE OR REPLACE SECRET pg_secret (TYPE postgres, HOST 'localhost', PORT 5432, DATABASE 'ducklake_catalog', USER 'postgres', PASSWORD 'password');
+    CREATE OR REPLACE SECRET ducklake_secret (TYPE DUCKLAKE, METADATA_PATH '', DATA_PATH 's3://mybucket/instrumentation/', METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_secret'});
+    ATTACH 'ducklake:ducklake_secret' AS instr_ducklake;
+  "
+```
+
+#### Multiple GizmoSQL Instances
+
+When running multiple GizmoSQL instances with shared DuckLake instrumentation:
+- All instances can share the same DuckLake catalog for centralized monitoring
+- DuckLake provides transactional isolation between concurrent writers
+- Each instance gets a unique `instance_id` for correlation
+- Use the `instances` table to track all connected servers
+
+**Note:** Persistent secrets are stored in unencrypted binary format in `~/.duckdb/stored_secrets`. You can customize this location with `SET secret_directory = '/path/to/secrets';` if needed.
 
 ### Enabling/Disabling Instrumentation
 

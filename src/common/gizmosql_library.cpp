@@ -296,7 +296,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
     const std::string& health_check_query,
     const bool& enable_instrumentation,
-    const std::string& instrumentation_db_path) {
+    const std::string& instrumentation_db_path,
+    const std::string& instrumentation_catalog,
+    const std::string& instrumentation_schema) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -399,17 +401,36 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 #ifdef GIZMOSQL_ENTERPRISE
     // Instrumentation setup (Enterprise feature, conditional)
     std::string instr_db_path;
+    std::string instr_catalog = instrumentation_catalog;
+    std::string instr_schema = instrumentation_schema;
+    bool use_external_catalog = false;
+
     if (enable_instrumentation) {
-      // Get instrumentation DB path: CLI arg > env var > default
-      if (!instrumentation_db_path.empty()) {
-        instr_db_path = instrumentation_db_path;
+      // Determine if using external catalog (e.g., DuckLake) or file-based instrumentation
+      if (!instr_catalog.empty()) {
+        // External catalog mode: user has pre-attached the catalog via init_sql_commands
+        use_external_catalog = true;
+        if (instr_schema.empty()) {
+          instr_schema = "main";
+        }
+        GIZMOSQL_LOG(INFO) << "Instrumentation using external catalog: " << instr_catalog
+                           << "." << instr_schema;
       } else {
-        // GetDefaultDbPath checks GIZMOSQL_INSTRUMENTATION_DB_PATH env var internally
-        instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
-            database_filename.string());
+        // File-based mode (default): Get instrumentation DB path: CLI arg > env var > default
+        if (!instrumentation_db_path.empty()) {
+          instr_db_path = instrumentation_db_path;
+        } else {
+          // GetDefaultDbPath checks GIZMOSQL_INSTRUMENTATION_DB_PATH env var internally
+          instr_db_path = gizmosql::ddb::InstrumentationManager::GetDefaultDbPath(
+              database_filename.string());
+        }
+        instr_catalog = "_gizmosql_instr";
+        if (instr_schema.empty()) {
+          instr_schema = "main";
+        }
+        GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
+        duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
       }
-      GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
-      duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
     } else {
       GIZMOSQL_LOG(INFO) << "Instrumentation is disabled";
     }
@@ -422,12 +443,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Now initialize instrumentation manager using the server's DuckDB instance (if enabled)
     if (enable_instrumentation) {
       auto db_instance = duckdb_server->GetDuckDBInstance();
-      auto instr_result = gizmosql::ddb::InstrumentationManager::Create(db_instance, instr_db_path);
+      auto instr_result = gizmosql::ddb::InstrumentationManager::Create(
+          db_instance, instr_db_path, instr_catalog, instr_schema, use_external_catalog);
       if (instr_result.ok()) {
         g_instrumentation_manager = *instr_result;
         duckdb_server->SetInstrumentationManager(g_instrumentation_manager);
-        GIZMOSQL_LOG(INFO) << "Instrumentation enabled at: "
-                           << g_instrumentation_manager->GetDbPath();
+        if (use_external_catalog) {
+          GIZMOSQL_LOG(INFO) << "Instrumentation enabled using catalog: "
+                             << instr_catalog << "." << instr_schema;
+        } else {
+          GIZMOSQL_LOG(INFO) << "Instrumentation enabled at: "
+                             << g_instrumentation_manager->GetDbPath();
+        }
 
         // Create instance instrumentation record and pass to server
         // The server owns the instance_id - instrumentation receives it, not generates it
@@ -569,7 +596,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
     std::string health_check_query,
     const bool& enable_instrumentation,
-    std::string instrumentation_db_path) {
+    std::string instrumentation_db_path,
+    std::string instrumentation_catalog,
+    std::string instrumentation_schema) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     GIZMOSQL_LOG(INFO)
@@ -744,13 +773,25 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     health_check_query = "SELECT 1";
   }
 
+  // Resolve instrumentation catalog/schema: CLI arg > env var > default
+  if (instrumentation_catalog.empty()) {
+    instrumentation_catalog = SafeGetEnvVarValue("GIZMOSQL_INSTRUMENTATION_CATALOG");
+  }
+  if (instrumentation_schema.empty()) {
+    instrumentation_schema = SafeGetEnvVarValue("GIZMOSQL_INSTRUMENTATION_SCHEMA");
+    if (instrumentation_schema.empty()) {
+      instrumentation_schema = "main";
+    }
+  }
+
   return FlightSQLServerBuilder(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, access_logging_enabled, query_timeout,
       query_log_level, auth_log_level, health_port, health_check_query,
-      enable_instrumentation, instrumentation_db_path);
+      enable_instrumentation, instrumentation_db_path,
+      instrumentation_catalog, instrumentation_schema);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -795,6 +836,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        int health_port, std::string health_check_query,
                        const bool& enable_instrumentation,
                        std::string instrumentation_db_path,
+                       std::string instrumentation_catalog,
+                       std::string instrumentation_schema,
                        std::string license_key_file) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
@@ -903,7 +946,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
       query_timeout, query_level, auth_level, health_port, health_check_query,
-      enable_instrumentation, instrumentation_db_path);
+      enable_instrumentation, instrumentation_db_path,
+      instrumentation_catalog, instrumentation_schema);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

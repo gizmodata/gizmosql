@@ -99,7 +99,14 @@ int main(int argc, char** argv) {
               "Requires a valid enterprise license. If not set, uses env var GIZMOSQL_ENABLE_INSTRUMENTATION (1/true to enable).")
             ("instrumentation-db-path", po::value<std::string>()->default_value(""),
               "[Enterprise] Path for the instrumentation database. If not set, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH. "
-              "If that isn't set, defaults to gizmosql_instrumentation.db in the same directory as the main database.")
+              "If that isn't set, defaults to gizmosql_instrumentation.db in the same directory as the main database. "
+              "Ignored if --instrumentation-catalog is set.")
+            ("instrumentation-catalog", po::value<std::string>()->default_value(""),
+              "[Enterprise] Catalog name for instrumentation (e.g., a DuckLake catalog). If set, uses a pre-attached catalog "
+              "instead of a file. The catalog must be attached via --init-sql-commands. If not set, uses env var GIZMOSQL_INSTRUMENTATION_CATALOG.")
+            ("instrumentation-schema", po::value<std::string>()->default_value(""),
+              "[Enterprise] Schema within the instrumentation catalog. If not set, uses env var GIZMOSQL_INSTRUMENTATION_SCHEMA, "
+              "or defaults to 'main'.")
             ("license-key-file,L", po::value<std::string>()->default_value(""),
               "Path to the GizmoSQL Enterprise license key file (JWT format). "
               "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
@@ -235,6 +242,12 @@ int main(int argc, char** argv) {
   std::string instrumentation_db_path =
       vm.count("instrumentation-db-path") ? vm["instrumentation-db-path"].as<std::string>() : "";
 
+  std::string instrumentation_catalog =
+      vm.count("instrumentation-catalog") ? vm["instrumentation-catalog"].as<std::string>() : "";
+
+  std::string instrumentation_schema =
+      vm.count("instrumentation-schema") ? vm["instrumentation-schema"].as<std::string>() : "";
+
   std::string license_key_file =
       vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
 
@@ -244,5 +257,6 @@ int main(int argc, char** argv) {
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
-      health_check_query, enable_instrumentation, instrumentation_db_path, license_key_file);
+      health_check_query, enable_instrumentation, instrumentation_db_path,
+      instrumentation_catalog, instrumentation_schema, license_key_file);
 }
