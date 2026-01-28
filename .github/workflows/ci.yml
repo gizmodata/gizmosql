@@ -164,20 +164,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      # MinIO for S3-compatible object storage (instrumentation data)
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-          - 9001:9001
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -208,8 +194,15 @@ jobs:
             CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
             GIZMOSQL_ENTERPRISE=ON
 
-      - name: Setup MinIO bucket
+      - name: Start MinIO and setup bucket
         run: |
+          # Start MinIO server using docker (matching docker-compose.test.yml)
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data --console-address ":9001"
+
           # Install MinIO client (architecture-aware)
           ARCH=$(uname -m)
           if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
@@ -219,8 +212,9 @@ jobs:
           fi
           curl -sL "https://dl.min.io/client/mc/release/linux-${MC_ARCH}/mc" -o /tmp/mc
           chmod +x /tmp/mc
-          # Configure and create bucket (with retry for service startup)
-          for i in {1..10}; do
+
+          # Wait for MinIO to be ready and create bucket
+          for i in {1..30}; do
             /tmp/mc alias set myminio http://localhost:9000 minioadmin minioadmin && break
             echo "Waiting for MinIO to be ready... (attempt $i)"
             sleep 2
