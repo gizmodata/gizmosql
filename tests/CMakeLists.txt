@@ -35,6 +35,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
 if(GIZMOSQL_ENTERPRISE)
     set(GIZMOSQL_ENTERPRISE_TEST_SRCS
             integration/test_instrumentation.cpp
+            integration/test_instrumentation_ducklake.cpp
             integration/test_kill_session.cpp
     )
 endif()

@@ -493,38 +493,38 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
     auto insert_result = conn.Query(R"SQL(
       INSERT INTO _gizmosql_instr.instances
         (instance_id, gizmosql_version, gizmosql_edition, duckdb_version, arrow_version, hostname, port, database_path,
-         tls_enabled, mtls_required, readonly, status)
+         tls_enabled, mtls_required, readonly, start_time, status)
       VALUES
         ('11111111-1111-1111-1111-111111111111', 'v1.0.0', 'Enterprise', 'v1.0.0', 'v20.0.0', 'test', 9999, '/test/db',
-         false, false, false, 'running')
+         false, false, false, now(), 'running')
     )SQL");
     ASSERT_FALSE(insert_result->HasError()) << insert_result->GetError();
 
     // Also insert a fake "active" session for the stale instance
     auto session_result = conn.Query(R"SQL(
       INSERT INTO _gizmosql_instr.sessions
-        (session_id, instance_id, username, role, auth_method, peer, status)
+        (session_id, instance_id, username, role, auth_method, peer, connection_protocol, start_time, status)
       VALUES
         ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111',
-         'stale_user', 'user', 'Basic', '127.0.0.1', 'active')
+         'stale_user', 'user', 'Basic', '127.0.0.1', 'grpc', now(), 'active')
     )SQL");
     ASSERT_FALSE(session_result->HasError()) << session_result->GetError();
 
     // Insert a fake "executing" execution for the stale session
     auto stmt_result = conn.Query(R"SQL(
       INSERT INTO _gizmosql_instr.sql_statements
-        (statement_id, session_id, sql_text)
+        (statement_id, session_id, sql_text, is_internal, prepare_success, created_time)
       VALUES
         ('33333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222',
-         'SELECT * FROM stale_query')
+         'SELECT * FROM stale_query', false, true, now())
     )SQL");
     ASSERT_FALSE(stmt_result->HasError()) << stmt_result->GetError();
 
     auto exec_result = conn.Query(R"SQL(
       INSERT INTO _gizmosql_instr.sql_executions
-        (execution_id, statement_id, status)
+        (execution_id, statement_id, execution_start_time, status, rows_fetched)
       VALUES
-        ('44444444-4444-4444-4444-444444444444', '33333333-3333-3333-3333-333333333333', 'executing')
+        ('44444444-4444-4444-4444-444444444444', '33333333-3333-3333-3333-333333333333', now(), 'executing', 0)
     )SQL");
     ASSERT_FALSE(exec_result->HasError()) << exec_result->GetError();
   }
@@ -533,21 +533,21 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   {
     duckdb::Connection conn(*shared_db);
     auto check_result = conn.Query(
-        "SELECT status_text FROM _gizmosql_instr.instances "
+        "SELECT status FROM _gizmosql_instr.instances "
         "WHERE instance_id = '11111111-1111-1111-1111-111111111111'");
     ASSERT_FALSE(check_result->HasError()) << check_result->GetError();
     ASSERT_EQ(check_result->RowCount(), 1);
     ASSERT_EQ(check_result->GetValue(0, 0).ToString(), "running");
 
     auto session_check = conn.Query(
-        "SELECT status_text FROM _gizmosql_instr.sessions "
+        "SELECT status FROM _gizmosql_instr.sessions "
         "WHERE session_id = '22222222-2222-2222-2222-222222222222'");
     ASSERT_FALSE(session_check->HasError()) << session_check->GetError();
     ASSERT_EQ(session_check->RowCount(), 1);
     ASSERT_EQ(session_check->GetValue(0, 0).ToString(), "active");
 
     auto exec_check = conn.Query(
-        "SELECT status_text FROM _gizmosql_instr.sql_executions "
+        "SELECT status FROM _gizmosql_instr.sql_executions "
         "WHERE execution_id = '44444444-4444-4444-4444-444444444444'");
     ASSERT_FALSE(exec_check->HasError()) << exec_check->GetError();
     ASSERT_EQ(exec_check->RowCount(), 1);
@@ -568,7 +568,7 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   {
     duckdb::Connection conn(*shared_db);
     auto check_result = conn.Query(
-        "SELECT status_text, stop_reason FROM _gizmosql_instr.instances "
+        "SELECT status, stop_reason FROM _gizmosql_instr.instances "
         "WHERE instance_id = '11111111-1111-1111-1111-111111111111'");
     ASSERT_FALSE(check_result->HasError()) << check_result->GetError();
     ASSERT_EQ(check_result->RowCount(), 1);
@@ -579,7 +579,7 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
 
     // Verify the stale session is now marked as 'closed'
     auto session_check = conn.Query(
-        "SELECT status_text, stop_reason FROM _gizmosql_instr.sessions "
+        "SELECT status, stop_reason FROM _gizmosql_instr.sessions "
         "WHERE session_id = '22222222-2222-2222-2222-222222222222'");
     ASSERT_FALSE(session_check->HasError()) << session_check->GetError();
     ASSERT_EQ(session_check->RowCount(), 1);
@@ -590,7 +590,7 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
 
     // Verify the stale execution is now marked as 'error'
     auto exec_check = conn.Query(
-        "SELECT status_text, error_message FROM _gizmosql_instr.sql_executions "
+        "SELECT status, error_message FROM _gizmosql_instr.sql_executions "
         "WHERE execution_id = '44444444-4444-4444-4444-444444444444'");
     ASSERT_FALSE(exec_check->HasError()) << exec_check->GetError();
     ASSERT_EQ(exec_check->RowCount(), 1);

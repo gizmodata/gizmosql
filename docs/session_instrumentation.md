@@ -18,7 +18,7 @@ All instrumentation data is stored in a separate DuckDB database and exposed as 
 
 ## Configuration
 
-### Database Location
+### Database Location (File-Based)
 
 By default, the instrumentation database is created in the same directory as the main database file:
 - If `--database-filename` is `/path/to/mydb.db`, instrumentation is stored at `/path/to/gizmosql_instrumentation.db`
@@ -30,18 +30,107 @@ You can override the location using the environment variable:
 export GIZMOSQL_INSTRUMENTATION_DB_PATH=/custom/path/instrumentation.db
 ```
 
-### Enabling/Disabling Instrumentation
+### Using DuckLake as Instrumentation Backend
 
-Session instrumentation is enabled by default. To disable it, use the `--enable-instrumentation` flag:
+For enterprise deployments, you can store instrumentation data in a DuckLake catalog instead of a local file. This enables:
+- Centralized instrumentation across multiple GizmoSQL instances
+- Cloud-based storage (S3, Azure Blob, etc.) for instrumentation data
+- Transactional consistency with ACID guarantees from DuckLake
+
+#### Configuration Parameters
+
+| Parameter | CLI Flag | Env Var | Default | Description |
+|-----------|----------|---------|---------|-------------|
+| `instrumentation_catalog` | `--instrumentation-catalog` | `GIZMOSQL_INSTRUMENTATION_CATALOG` | (empty) | Catalog name for instrumentation. If set, uses pre-attached catalog instead of file. |
+| `instrumentation_schema` | `--instrumentation-schema` | `GIZMOSQL_INSTRUMENTATION_SCHEMA` | `main` | Schema within the catalog |
+
+When `instrumentation_catalog` is set:
+- The catalog must be pre-attached via `--init-sql-commands`
+- `instrumentation_db_path` is ignored
+- GizmoSQL will create the instrumentation tables in the specified catalog/schema
+
+**Important: Dedicated Catalog Required**
+
+The instrumentation catalog is protected as **read-only** for clients (only administrators can read the data, no one can modify it). This protection applies to the **entire catalog**, not just the instrumentation schema.
+
+**Do NOT** use a shared catalog that contains other application tables. If you do, you will not be able to modify any tables in that catalog. Always use a dedicated catalog for instrumentation.
+
+```
+✓ Good: instr_ducklake (dedicated catalog for instrumentation)
+✗ Bad:  my_app_ducklake with instrumentation in 'main' schema (entire catalog becomes read-only)
+```
+
+#### Example: Using Persistent Secrets (Recommended)
+
+With persistent secrets, you only need to create the secrets once. DuckDB stores them in `~/.duckdb/stored_secrets` and automatically loads them on subsequent startups.
+
+**Initial setup (first time only):**
 
 ```bash
-# Instrumentation enabled (default)
+GIZMOSQL_PASSWORD="password" gizmosql_server \
+  --database-filename mydb.db \
+  --enable-instrumentation=true \
+  --instrumentation-catalog=instr_ducklake \
+  --init-sql-commands="
+    INSTALL ducklake; INSTALL postgres; LOAD ducklake; LOAD postgres;
+    CREATE PERSISTENT SECRET pg_secret (TYPE postgres, HOST 'localhost', PORT 5432, DATABASE 'ducklake_catalog', USER 'postgres', PASSWORD 'password');
+    CREATE PERSISTENT SECRET ducklake_secret (TYPE DUCKLAKE, METADATA_PATH '', DATA_PATH 's3://mybucket/instrumentation/', METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_secret'});
+    ATTACH 'ducklake:ducklake_secret' AS instr_ducklake;
+  "
+```
+
+**Subsequent startups (secrets already persisted):**
+
+```bash
+GIZMOSQL_PASSWORD="password" gizmosql_server \
+  --database-filename mydb.db \
+  --enable-instrumentation=true \
+  --instrumentation-catalog=instr_ducklake \
+  --init-sql-commands="
+    LOAD ducklake; LOAD postgres;
+    ATTACH 'ducklake:ducklake_secret' AS instr_ducklake;
+  "
+```
+
+#### Example: Using Session Secrets
+
+If you prefer not to persist secrets, create them each startup:
+
+```bash
+GIZMOSQL_PASSWORD="password" gizmosql_server \
+  --database-filename mydb.db \
+  --enable-instrumentation=true \
+  --instrumentation-catalog=instr_ducklake \
+  --init-sql-commands="
+    INSTALL ducklake; INSTALL postgres; LOAD ducklake; LOAD postgres;
+    CREATE OR REPLACE SECRET pg_secret (TYPE postgres, HOST 'localhost', PORT 5432, DATABASE 'ducklake_catalog', USER 'postgres', PASSWORD 'password');
+    CREATE OR REPLACE SECRET ducklake_secret (TYPE DUCKLAKE, METADATA_PATH '', DATA_PATH 's3://mybucket/instrumentation/', METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_secret'});
+    ATTACH 'ducklake:ducklake_secret' AS instr_ducklake;
+  "
+```
+
+#### Multiple GizmoSQL Instances
+
+When running multiple GizmoSQL instances with shared DuckLake instrumentation:
+- All instances can share the same DuckLake catalog for centralized monitoring
+- DuckLake provides transactional isolation between concurrent writers
+- Each instance gets a unique `instance_id` for correlation
+- Use the `instances` table to track all connected servers
+
+**Note:** Persistent secrets are stored in unencrypted binary format in `~/.duckdb/stored_secrets`. You can customize this location with `SET secret_directory = '/path/to/secrets';` if needed.
+
+### Enabling/Disabling Instrumentation
+
+Session instrumentation is **disabled by default**. To enable it, use the `--enable-instrumentation` flag:
+
+```bash
+# Instrumentation disabled (default)
 gizmosql_server --database-filename /path/to/mydb.db --password mypassword
 
 # Explicitly enabled
 gizmosql_server --database-filename /path/to/mydb.db --password mypassword --enable-instrumentation=true
 
-# Disabled
+# Explicitly disabled
 gizmosql_server --database-filename /path/to/mydb.db --password mypassword --enable-instrumentation=false
 ```
 
@@ -62,11 +151,33 @@ Disabling instrumentation may be useful for:
 
 ## Schema
 
+### Table Location
+
+The location of instrumentation tables depends on your configuration:
+
+| Mode | Table Location | Example Query |
+|------|----------------|---------------|
+| File-based (default) | `_gizmosql_instr.main.*` | `SELECT * FROM _gizmosql_instr.sessions` |
+| DuckLake/External catalog | `{catalog}.{schema}.*` | `SELECT * FROM instr_ducklake.main.sessions` |
+
+When using file-based instrumentation, GizmoSQL automatically attaches the instrumentation database as `_gizmosql_instr` and all examples in this documentation use that name.
+
+When using DuckLake or another external catalog (via `--instrumentation-catalog`), set the schema context with `USE` before running queries. For example, if you configured `--instrumentation-catalog=instr_ducklake --instrumentation-schema=main`:
+
+```sql
+-- Set the schema context once
+USE instr_ducklake.main;
+
+-- Then query tables/views without prefixes
+SELECT * FROM active_sessions;
+SELECT * FROM sessions WHERE status = 'active';
+```
+
 ### Tables
 
 The instrumentation database contains four core tables:
 
-#### `_gizmosql_instr.instances`
+#### `instances`
 
 Tracks server instance lifecycle.
 
@@ -88,13 +199,19 @@ Tracks server instance lifecycle.
 | `mtls_required` | BOOLEAN | Whether mutual TLS (mTLS) is required |
 | `mtls_ca_cert_path` | VARCHAR | Path to mTLS CA certificate file (NULL if mTLS disabled) |
 | `readonly` | BOOLEAN | Whether the instance is started in read-only mode |
+| `os_platform` | VARCHAR | Operating system platform (e.g., 'darwin', 'linux') |
+| `os_name` | VARCHAR | Operating system name (e.g., 'macOS', 'Ubuntu') |
+| `os_version` | VARCHAR | Operating system version |
+| `cpu_arch` | VARCHAR | CPU architecture (e.g., 'arm64', 'x86_64') |
+| `cpu_model` | VARCHAR | CPU model name |
+| `cpu_count` | INTEGER | Number of CPU cores |
+| `memory_total_bytes` | BIGINT | Total system memory in bytes |
 | `start_time` | TIMESTAMP | When server started |
 | `stop_time` | TIMESTAMP | When server stopped (NULL if running) |
-| `status` | ENUM | 'running' or 'stopped' |
-| `status_text` | VARCHAR | Virtual column with text representation of status |
+| `status` | VARCHAR | 'running' or 'stopped' |
 | `stop_reason` | VARCHAR | Reason for shutdown |
 
-#### `_gizmosql_instr.sessions`
+#### `sessions`
 
 Tracks client session lifecycle.
 
@@ -108,15 +225,13 @@ Tracks client session lifecycle.
 | `peer` | VARCHAR | Client IP:port (network address) |
 | `peer_identity` | VARCHAR | mTLS client certificate identity (NULL if not using mTLS) |
 | `user_agent` | VARCHAR | Client user-agent header (e.g., 'ADBC Flight SQL Driver v1.10.0', 'grpc-java-netty/1.65.0') |
-| `connection_protocol` | ENUM | 'plaintext', 'tls', or 'mtls' |
-| `connection_protocol_text` | VARCHAR | Virtual column with text representation of connection_protocol |
+| `connection_protocol` | VARCHAR | 'plaintext', 'tls', or 'mtls' |
 | `start_time` | TIMESTAMP | When session started |
 | `stop_time` | TIMESTAMP | When session ended (NULL if active) |
-| `status` | ENUM | 'active', 'closed', 'killed', 'timeout', 'error' |
-| `status_text` | VARCHAR | Virtual column with text representation of status |
+| `status` | VARCHAR | 'active', 'closed', 'killed', 'timeout', 'error' |
 | `stop_reason` | VARCHAR | Reason session ended |
 
-#### `_gizmosql_instr.sql_statements`
+#### `sql_statements`
 
 Tracks prepared statement definitions (one per prepared statement).
 
@@ -145,7 +260,7 @@ All SQL statements are recorded, including those that fail. The `prepare_success
 - Administrative command failures (KILL SESSION permission denied, session not found)
 - Attempts to DETACH the instrumentation database
 
-#### `_gizmosql_instr.sql_executions`
+#### `sql_executions`
 
 Tracks individual executions of statements (one per execution).
 
@@ -157,8 +272,7 @@ Tracks individual executions of statements (one per execution).
 | `execution_start_time` | TIMESTAMP | When execution started |
 | `execution_end_time` | TIMESTAMP | When execution completed |
 | `rows_fetched` | BIGINT | Number of rows returned |
-| `status` | ENUM | 'executing', 'success', 'error', 'timeout', 'cancelled' |
-| `status_text` | VARCHAR | Virtual column with text representation of status |
+| `status` | VARCHAR | 'executing', 'success', 'error', 'timeout', 'cancelled' |
 | `error_message` | VARCHAR | Error message if failed |
 | `duration_ms` | BIGINT | Execution duration in milliseconds |
 
@@ -166,28 +280,28 @@ Tracks individual executions of statements (one per execution).
 
 Several convenience views are provided:
 
-#### `_gizmosql_instr.active_sessions`
+#### `active_sessions`
 
 Shows currently active sessions.
 
 ```sql
-SELECT * FROM _gizmosql_instr.active_sessions;
+SELECT * FROM active_sessions;
 ```
 
-Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `peer_identity`, `user_agent`, `connection_protocol`, `start_time`, `status`, `status_text`, `hostname`, `hostname_arg`, `server_ip`, `port`, `database_path`, `session_duration_seconds`
+Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `peer_identity`, `user_agent`, `connection_protocol`, `start_time`, `status`, `hostname`, `hostname_arg`, `server_ip`, `port`, `database_path`, `session_duration_seconds`
 
-#### `_gizmosql_instr.session_activity`
+#### `session_activity`
 
 Complete view joining instances, sessions, statements, and executions.
 
 ```sql
-SELECT * FROM _gizmosql_instr.session_activity
+SELECT * FROM session_activity
 WHERE username = 'alice'
 ORDER BY execution_start_time DESC
 LIMIT 100;
 ```
 
-#### `_gizmosql_instr.session_stats`
+#### `session_stats`
 
 Aggregated statistics per session.
 
@@ -200,10 +314,10 @@ SELECT
     failed_executions,
     total_rows_fetched,
     avg_duration_ms
-FROM _gizmosql_instr.session_stats;
+FROM session_stats;
 ```
 
-#### `_gizmosql_instr.execution_details`
+#### `execution_details`
 
 Detailed view of executions with statement and session info.
 
@@ -216,10 +330,9 @@ SELECT
     execution_start_time,
     duration_ms,
     status,
-    status_text,
     username
-FROM _gizmosql_instr.execution_details
-WHERE status_text = 'error'
+FROM execution_details
+WHERE status = 'error'
 LIMIT 20;
 ```
 
@@ -258,7 +371,7 @@ SELECT GIZMOSQL_CURRENT_SESSION();
 Useful for filtering instrumentation data to the current session:
 
 ```sql
-SELECT * FROM _gizmosql_instr.sql_statements
+SELECT * FROM sql_statements
 WHERE session_id = GIZMOSQL_CURRENT_SESSION()
 ORDER BY created_time DESC;
 ```
@@ -275,7 +388,7 @@ SELECT GIZMOSQL_CURRENT_INSTANCE();
 Useful for filtering instrumentation data to the current server instance:
 
 ```sql
-SELECT * FROM _gizmosql_instr.sessions
+SELECT * FROM sessions
 WHERE instance_id = GIZMOSQL_CURRENT_INSTANCE()
 ORDER BY start_time DESC;
 ```
@@ -339,7 +452,7 @@ KILL SESSION '550e8400-e29b-41d4-a716-446655440000';
 ```sql
 -- List active sessions
 SELECT session_id, username, peer, session_duration_seconds
-FROM _gizmosql_instr.active_sessions;
+FROM active_sessions;
 
 -- Kill a specific session
 KILL SESSION '550e8400-e29b-41d4-a716-446655440000';
@@ -381,6 +494,8 @@ DETACH _gizmosql_instr;  -- Error: Cannot DETACH the instrumentation database
 
 ## Example Queries
 
+These examples assume you have set the schema context with `USE`. For file-based instrumentation: `USE _gizmosql_instr.main;`. For DuckLake: `USE {your_catalog}.{your_schema};`.
+
 ### Find slow executions
 
 ```sql
@@ -390,7 +505,7 @@ SELECT
     duration_ms,
     rows_fetched,
     execution_start_time
-FROM _gizmosql_instr.execution_details
+FROM execution_details
 WHERE status = 'success'
 ORDER BY duration_ms DESC
 LIMIT 10;
@@ -406,9 +521,9 @@ SELECT
     COUNT(e.execution_id) as execution_count,
     SUM(e.rows_fetched) as total_rows,
     AVG(e.duration_ms) as avg_duration_ms
-FROM _gizmosql_instr.sessions s
-LEFT JOIN _gizmosql_instr.sql_statements st ON s.session_id = st.session_id
-LEFT JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
+FROM sessions s
+LEFT JOIN sql_statements st ON s.session_id = st.session_id
+LEFT JOIN sql_executions e ON st.statement_id = e.statement_id
 WHERE s.start_time > now() - INTERVAL '1 day'
 GROUP BY s.username, s.peer
 ORDER BY execution_count DESC;
@@ -423,7 +538,7 @@ SELECT
     error_message,
     execution_start_time,
     username
-FROM _gizmosql_instr.execution_details
+FROM execution_details
 WHERE status = 'error'
 ORDER BY execution_start_time DESC
 LIMIT 20;
@@ -438,8 +553,8 @@ SELECT
     st.created_time,
     s.username,
     s.peer
-FROM _gizmosql_instr.sql_statements st
-JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id
+FROM sql_statements st
+JOIN sessions s ON st.session_id = s.session_id
 WHERE st.prepare_success = false
 ORDER BY st.created_time DESC
 LIMIT 20;
@@ -455,9 +570,9 @@ SELECT
     s.peer,
     e.execution_start_time,
     EPOCH(now()) - EPOCH(e.execution_start_time) as running_seconds
-FROM _gizmosql_instr.sql_executions e
-JOIN _gizmosql_instr.sql_statements st ON e.statement_id = st.statement_id
-JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id
+FROM sql_executions e
+JOIN sql_statements st ON e.statement_id = st.statement_id
+JOIN sessions s ON st.session_id = s.session_id
 WHERE e.status = 'executing'
 ORDER BY running_seconds DESC;
 ```
@@ -471,8 +586,8 @@ SELECT
     COUNT(e.execution_id) as execution_count,
     AVG(e.duration_ms) as avg_duration_ms,
     SUM(e.rows_fetched) as total_rows
-FROM _gizmosql_instr.sql_statements st
-JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
+FROM sql_statements st
+JOIN sql_executions e ON st.statement_id = e.statement_id
 GROUP BY st.statement_id, st.sql_text
 HAVING COUNT(e.execution_id) > 1
 ORDER BY execution_count DESC
@@ -491,9 +606,9 @@ SELECT
     e.duration_ms,
     e.rows_fetched,
     s.username
-FROM _gizmosql_instr.sql_statements st
-JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
-JOIN _gizmosql_instr.sessions s ON st.session_id = s.session_id
+FROM sql_statements st
+JOIN sql_executions e ON st.statement_id = e.statement_id
+JOIN sessions s ON st.session_id = s.session_id
 WHERE st.is_internal = false
 ORDER BY e.execution_start_time DESC
 LIMIT 20;
@@ -503,8 +618,8 @@ SELECT
     st.flight_method,
     COUNT(*) as query_count,
     AVG(e.duration_ms) as avg_duration_ms
-FROM _gizmosql_instr.sql_statements st
-JOIN _gizmosql_instr.sql_executions e ON st.statement_id = e.statement_id
+FROM sql_statements st
+JOIN sql_executions e ON st.statement_id = e.statement_id
 WHERE st.is_internal = true
 GROUP BY st.flight_method
 ORDER BY query_count DESC;
@@ -518,7 +633,7 @@ The `statement_id` and `execution_id` fields in the instrumentation tables match
 
 ```sql
 -- Find all executions for a statement_id from the logs
-SELECT * FROM _gizmosql_instr.execution_details
+SELECT * FROM execution_details
 WHERE statement_id = '12345678-1234-1234-1234-123456789012';
 ```
 
@@ -551,3 +666,5 @@ On the next server startup, GizmoSQL automatically cleans up these stale records
 - Stale executions are marked as `error` with `error_message = 'Server shutdown unexpectedly'`
 
 This cleanup happens before the server accepts new connections, ensuring instrumentation data remains consistent.
+
+**Note:** When using an external DuckLake catalog for instrumentation (multi-instance deployments), stale record cleanup is disabled. This is because other instances may be legitimately running and should not be marked as stopped. In this scenario, administrators should implement their own cleanup strategy for detecting truly stale instances (e.g., based on heartbeat timeouts or health checks).

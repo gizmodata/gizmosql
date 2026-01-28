@@ -320,7 +320,7 @@ TEST_F(DuckLakeServerFixture, DuckLakeSetupAndQuery) {
 
   // Verify executions were recorded
   result = RunQuery(sql_client, call_options, R"(
-    SELECT e.execution_id, s.sql_text, e.status_text, e.rows_fetched, e.duration_ms
+    SELECT e.execution_id, s.sql_text, e.status, e.rows_fetched, e.duration_ms
     FROM _gizmosql_instr.sql_executions e
     JOIN _gizmosql_instr.sql_statements s ON e.statement_id = s.statement_id
     WHERE s.session_id = GIZMOSQL_CURRENT_SESSION()

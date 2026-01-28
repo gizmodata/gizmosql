@@ -66,7 +66,9 @@ enum class BackendType { duckdb, sqlite };
  * @param health_port The port for the plaintext gRPC health check server (for Kubernetes probes). Default is DEFAULT_HEALTH_PORT (31338). Set to 0 to disable.
  * @param health_check_query The SQL query to use for health checks. If empty, uses env var GIZMOSQL_HEALTH_CHECK_QUERY, or defaults to "SELECT 1".
  * @param enable_instrumentation [Enterprise] Whether to enable session instrumentation (tracking instances, sessions, SQL statements). Default is false. Requires valid enterprise license.
- * @param instrumentation_db_path [Enterprise] Path for the instrumentation database. If empty, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH, or defaults to gizmosql_instrumentation.db in the same directory as the main database.
+ * @param instrumentation_db_path [Enterprise] Path for the instrumentation database. If empty, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH, or defaults to gizmosql_instrumentation.db in the same directory as the main database. Ignored if instrumentation_catalog is set.
+ * @param instrumentation_catalog [Enterprise] Catalog name for instrumentation. If set, uses a pre-attached catalog (e.g., DuckLake) instead of a file. The catalog must be attached via init_sql_commands. If empty, uses env var GIZMOSQL_INSTRUMENTATION_CATALOG.
+ * @param instrumentation_schema [Enterprise] Schema within the instrumentation catalog. Default is "main". If empty, uses env var GIZMOSQL_INSTRUMENTATION_SCHEMA, or defaults to "main".
  * @param license_key_file Path to the GizmoSQL Enterprise license key file (JWT format). If empty, uses env var GIZMOSQL_LICENSE_KEY_FILE. Required for enterprise features.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
@@ -99,5 +101,7 @@ int RunFlightSQLServer(
     std::string health_check_query = "",
     const bool& enable_instrumentation = false,
     std::string instrumentation_db_path = "",
+    std::string instrumentation_catalog = "",
+    std::string instrumentation_schema = "",
     std::string license_key_file = "");
 }

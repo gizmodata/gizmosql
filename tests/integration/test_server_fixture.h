@@ -54,7 +54,9 @@ CreateFlightSQLServer(
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
     std::string health_check_query,
     const bool& enable_instrumentation,
-    std::string instrumentation_db_path = "");
+    std::string instrumentation_db_path = "",
+    std::string instrumentation_catalog = "",
+    std::string instrumentation_schema = "");
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -69,9 +71,12 @@ struct TestServerConfig {
   int health_port;
   std::string username;
   std::string password;
-  BackendType backend = BackendType::duckdb;  // Default to DuckDB for existing tests
-  bool enable_instrumentation = true;         // SQLite doesn't support instrumentation
-  std::string health_check_query = "";        // Empty uses default "SELECT 1"
+  BackendType backend = BackendType::duckdb;    // Default to DuckDB for existing tests
+  bool enable_instrumentation = true;           // SQLite doesn't support instrumentation
+  std::string health_check_query = "";          // Empty uses default "SELECT 1"
+  std::string init_sql_commands = "";           // SQL commands to run on startup
+  std::string instrumentation_catalog = "";     // Catalog for instrumentation (if using DuckLake)
+  std::string instrumentation_schema = "";      // Schema within instrumentation catalog
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -140,7 +145,7 @@ class ServerTestFixture : public ::testing::Test {
         /*tls_cert_path=*/fs::path(),
         /*tls_key_path=*/fs::path(),
         /*mtls_ca_cert_path=*/fs::path(),
-        /*init_sql_commands=*/"",
+        /*init_sql_commands=*/config_.init_sql_commands,
         /*init_sql_commands_file=*/fs::path(),
         /*print_queries=*/false,
         /*read_only=*/false,
@@ -154,7 +159,9 @@ class ServerTestFixture : public ::testing::Test {
         /*health_port=*/config_.health_port,
         /*health_check_query=*/config_.health_check_query,
         /*enable_instrumentation=*/config_.enable_instrumentation,
-        /*instrumentation_db_path=*/"");
+        /*instrumentation_db_path=*/"",
+        /*instrumentation_catalog=*/config_.instrumentation_catalog,
+        /*instrumentation_schema=*/config_.instrumentation_schema);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

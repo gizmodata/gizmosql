@@ -33,12 +33,13 @@ InstanceInstrumentation::InstanceInstrumentation(
 
   manager_->QueueWrite([config](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.instances (instance_id, gizmosql_version, gizmosql_edition, "
+        "INSERT INTO instances (instance_id, gizmosql_version, gizmosql_edition, "
         "duckdb_version, arrow_version, hostname, hostname_arg, server_ip, port, database_path, "
         "tls_enabled, tls_cert_path, tls_key_path, mtls_required, mtls_ca_cert_path, readonly, "
-        "os_platform, os_name, os_version, cpu_arch, cpu_model, cpu_count, memory_total_bytes) "
+        "os_platform, os_name, os_version, cpu_arch, cpu_model, cpu_count, memory_total_bytes, "
+        "start_time, status) "
         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, "
-        "$17, $18, $19, $20, $21, $22, $23)");
+        "$17, $18, $19, $20, $21, $22, $23, now(), 'running')");
     stmt->Execute(
         duckdb::Value::UUID(config.instance_id),
         duckdb::Value(config.gizmosql_version),
@@ -73,7 +74,7 @@ InstanceInstrumentation::~InstanceInstrumentation() {
 
   manager_->QueueWrite([id = instance_id_, reason = stop_reason_](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "UPDATE _gizmosql_instr.instances SET stop_time = now(), status = 'stopped', stop_reason = $2 "
+        "UPDATE instances SET stop_time = now(), status = 'stopped', stop_reason = $2 "
         "WHERE instance_id = $1");
     stmt->Execute(duckdb::Value::UUID(id), duckdb::Value(reason));
   });
@@ -101,9 +102,9 @@ SessionInstrumentation::SessionInstrumentation(
                         peer, peer_identity, user_agent,
                         connection_protocol](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.sessions (session_id, instance_id, username, role, "
-        "auth_method, peer, peer_identity, user_agent, connection_protocol) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::_gizmosql_instr.connection_protocol)");
+        "INSERT INTO sessions (session_id, instance_id, username, role, "
+        "auth_method, peer, peer_identity, user_agent, connection_protocol, start_time, status) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), 'active')");
     stmt->Execute(duckdb::Value::UUID(session_id), duckdb::Value::UUID(instance_id),
                   duckdb::Value(username), duckdb::Value(role), duckdb::Value(auth_method),
                   duckdb::Value(peer),
@@ -127,7 +128,7 @@ SessionInstrumentation::~SessionInstrumentation() {
 
   manager_->QueueWrite([id = session_id_, status, reason = stop_reason_](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "UPDATE _gizmosql_instr.sessions SET stop_time = now(), status = $2::_gizmosql_instr.session_status, stop_reason = $3 "
+        "UPDATE sessions SET stop_time = now(), status = $2, stop_reason = $3 "
         "WHERE session_id = $1");
     stmt->Execute(duckdb::Value::UUID(id), duckdb::Value(status), duckdb::Value(reason));
   });
@@ -154,8 +155,9 @@ StatementInstrumentation::StatementInstrumentation(
   manager_->QueueWrite([statement_id, session_id, sql_text, flight_method,
                         is_internal, prepare_success, prepare_error](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.sql_statements (statement_id, session_id, sql_text, "
-        "flight_method, is_internal, prepare_success, prepare_error) VALUES ($1, $2, $3, $4, $5, $6, $7)");
+        "INSERT INTO sql_statements (statement_id, session_id, sql_text, "
+        "flight_method, is_internal, prepare_success, prepare_error, created_time) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, now())");
     stmt->Execute(duckdb::Value::UUID(statement_id), duckdb::Value::UUID(session_id),
                   duckdb::Value(sql_text),
                   flight_method.empty() ? duckdb::Value() : duckdb::Value(flight_method),
@@ -180,19 +182,13 @@ ExecutionInstrumentation::ExecutionInstrumentation(
     return;
   }
 
-  // Convert wall-clock time to DuckDB timestamp (microseconds since epoch)
-  auto start_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                      start_timestamp_.time_since_epoch())
-                      .count();
-
-  manager_->QueueWrite([execution_id, statement_id, bind_parameters,
-                        start_us](duckdb::Connection& conn) {
+  manager_->QueueWrite([execution_id, statement_id, bind_parameters](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "INSERT INTO _gizmosql_instr.sql_executions (execution_id, statement_id, "
-        "bind_parameters, execution_start_time) VALUES ($1, $2, $3, make_timestamp($4))");
+        "INSERT INTO sql_executions (execution_id, statement_id, "
+        "bind_parameters, execution_start_time, status, rows_fetched) "
+        "VALUES ($1, $2, $3, now(), 'executing', 0)");
     stmt->Execute(duckdb::Value::UUID(execution_id), duckdb::Value::UUID(statement_id),
-                  bind_parameters.empty() ? duckdb::Value() : duckdb::Value(bind_parameters),
-                  duckdb::Value::BIGINT(start_us));
+                  bind_parameters.empty() ? duckdb::Value() : duckdb::Value(bind_parameters));
   });
 }
 
@@ -248,11 +244,6 @@ void ExecutionInstrumentation::Finalize() {
     end_timestamp_ = std::chrono::system_clock::now();
   }
 
-  // Convert wall-clock end time to DuckDB timestamp (microseconds since epoch)
-  auto end_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                    end_timestamp_.time_since_epoch())
-                    .count();
-
   // Calculate duration from wall-clock times if not explicitly provided
   int64_t final_duration_ms = duration_ms_;
   if (final_duration_ms == 0) {
@@ -263,12 +254,12 @@ void ExecutionInstrumentation::Finalize() {
 
   manager_->QueueWrite([exec_id = execution_id_, rows = rows_fetched_.load(),
                         status = status_, error_msg = error_message_,
-                        end_us, final_duration_ms](duckdb::Connection& conn) {
+                        final_duration_ms](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
-        "UPDATE _gizmosql_instr.sql_executions SET execution_end_time = make_timestamp($2), "
-        "rows_fetched = $3, status = $4::_gizmosql_instr.execution_status, error_message = $5, "
-        "duration_ms = $6 WHERE execution_id = $1");
-    stmt->Execute(duckdb::Value::UUID(exec_id), duckdb::Value::BIGINT(end_us),
+        "UPDATE sql_executions SET execution_end_time = now(), "
+        "rows_fetched = $2, status = $3, error_message = $4, "
+        "duration_ms = $5 WHERE execution_id = $1");
+    stmt->Execute(duckdb::Value::UUID(exec_id),
                   duckdb::Value::BIGINT(rows), duckdb::Value(status),
                   error_msg.empty() ? duckdb::Value() : duckdb::Value(error_msg),
                   duckdb::Value::BIGINT(final_duration_ms));
