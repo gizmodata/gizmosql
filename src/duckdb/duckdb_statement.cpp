@@ -67,7 +67,7 @@ bool IsLikelyGizmoSQLSet(const std::string& sql) {
   return upper.find("GIZMOSQL.") != std::string::npos;
 }
 
-bool IsDetachInstrumentationDb(const std::string& sql) {
+bool IsDetachInstrumentationDb(const std::string& sql, const std::string& instrumentation_catalog = "") {
   std::string trimmed = sql;
   boost::algorithm::trim(trimmed);
   if (trimmed.empty()) return false;
@@ -77,9 +77,19 @@ bool IsDetachInstrumentationDb(const std::string& sql) {
   if (upper.find("DETACH") == std::string::npos) {
     return false;
   }
-  // Check for instrumentation DB aliases/names
-  return upper.find("_GIZMOSQL_INSTR") != std::string::npos ||
-         upper.find("GIZMOSQL_INSTRUMENTATION") != std::string::npos;
+  // Check for default instrumentation DB aliases/names
+  if (upper.find("_GIZMOSQL_INSTR") != std::string::npos ||
+      upper.find("GIZMOSQL_INSTRUMENTATION") != std::string::npos) {
+    return true;
+  }
+  // Check for external instrumentation catalog name (e.g., DuckLake catalog)
+  if (!instrumentation_catalog.empty()) {
+    std::string upper_catalog = boost::to_upper_copy(instrumentation_catalog);
+    if (upper.find(upper_catalog) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
 }
 
 #ifndef GIZMOSQL_ENTERPRISE
@@ -506,19 +516,28 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   // Prevent DETACH of instrumentation database (only relevant when enterprise is enabled)
 #ifdef GIZMOSQL_ENTERPRISE
-  if (IsDetachInstrumentationDb(sql)) {
-    GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Client attempted to DETACH instrumentation database",
-                   {"kind", "sql"}, {"status", "rejected"},
-                   {"statement_id", handle}, {"sql", logged_sql});
-    std::string error_msg = "Cannot DETACH the instrumentation database";
-    // Record the rejected DETACH attempt
+  {
+    // Get the instrumentation catalog name to also protect external catalogs (e.g., DuckLake)
+    std::string instr_catalog;
     if (auto server = GetServer(*client_session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
-        StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                 flight_method, is_internal, error_msg);
+        instr_catalog = mgr->GetCatalog();
       }
     }
-    return Status::Invalid(error_msg);
+    if (IsDetachInstrumentationDb(sql, instr_catalog)) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Client attempted to DETACH instrumentation database",
+                     {"kind", "sql"}, {"status", "rejected"},
+                     {"statement_id", handle}, {"sql", logged_sql});
+      std::string error_msg = "Cannot DETACH the instrumentation database";
+      // Record the rejected DETACH attempt
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, error_msg);
+        }
+      }
+      return Status::Invalid(error_msg);
+    }
   }
 #endif
 

@@ -948,6 +948,14 @@ TEST(DuckLakeInstrumentation, CatalogIsReadOnly) {
       << "Admin should NOT be able to drop tables in instrumentation catalog";
   std::cerr << "    Drop blocked (as expected): " << drop_result.error_message << std::endl;
 
+  // TEST 6: Admin cannot DETACH the instrumentation catalog
+  std::cerr << "  Testing admin cannot DETACH instrumentation catalog..." << std::endl;
+  auto detach_result = RunQuery(sql_client, call_options,
+      "DETACH " + catalog_name);
+  ASSERT_FALSE(detach_result.success)
+      << "Admin should NOT be able to detach instrumentation catalog";
+  std::cerr << "    Detach blocked (as expected): " << detach_result.error_message << std::endl;
+
   // Cleanup
   (void)server->Shutdown();
   server_thread.join();
