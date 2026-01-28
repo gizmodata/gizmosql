@@ -43,18 +43,14 @@ std::string InstrumentationManager::GetDefaultDbPath(const std::string& database
 namespace {
 
 // Template for schema SQL - {CATALOG} and {SCHEMA} will be replaced with actual values
+// Uses VARCHAR with CHECK constraints instead of ENUMs for DuckLake compatibility
 constexpr const char* kSchemaSQLTemplate = R"SQL(
 -- Switch to the instrumentation database context for schema creation
 USE {CATALOG}.{SCHEMA};
 
--- ENUM types for status fields
-CREATE TYPE IF NOT EXISTS instance_status AS ENUM ('running', 'stopped');
-CREATE TYPE IF NOT EXISTS session_status AS ENUM ('active', 'closed', 'killed', 'timeout', 'error');
-CREATE TYPE IF NOT EXISTS execution_status AS ENUM ('executing', 'success', 'error', 'timeout', 'cancelled');
-
 -- Server instance lifecycle
 CREATE TABLE IF NOT EXISTS instances (
-    instance_id UUID PRIMARY KEY,
+    instance_id UUID NOT NULL,  -- PRIMARY KEY (not supported in DuckLake)
     gizmosql_version VARCHAR NOT NULL,
     gizmosql_edition VARCHAR NOT NULL,
     duckdb_version VARCHAR NOT NULL,
@@ -64,12 +60,12 @@ CREATE TABLE IF NOT EXISTS instances (
     server_ip VARCHAR,
     port INTEGER,
     database_path VARCHAR,
-    tls_enabled BOOLEAN NOT NULL DEFAULT false,
+    tls_enabled BOOLEAN NOT NULL,
     tls_cert_path VARCHAR,
     tls_key_path VARCHAR,
-    mtls_required BOOLEAN NOT NULL DEFAULT false,
+    mtls_required BOOLEAN NOT NULL,
     mtls_ca_cert_path VARCHAR,
-    readonly BOOLEAN NOT NULL DEFAULT false,
+    readonly BOOLEAN NOT NULL,
     -- System information
     os_platform VARCHAR,
     os_name VARCHAR,
@@ -79,19 +75,15 @@ CREATE TABLE IF NOT EXISTS instances (
     cpu_count INTEGER,
     memory_total_bytes BIGINT,
     -- Timestamps and status
-    start_time TIMESTAMP NOT NULL DEFAULT now(),
+    start_time TIMESTAMP NOT NULL,
     stop_time TIMESTAMP,
-    status instance_status NOT NULL DEFAULT 'running',
-    status_text VARCHAR GENERATED ALWAYS AS (CAST(status AS VARCHAR)) VIRTUAL,
+    status VARCHAR NOT NULL,  -- CHECK (status IN ('running', 'stopped')) not supported in DuckLake
     stop_reason VARCHAR
 );
 
--- Connection protocol enum
-CREATE TYPE IF NOT EXISTS connection_protocol AS ENUM ('plaintext', 'tls', 'mtls');
-
 -- Client session lifecycle
 CREATE TABLE IF NOT EXISTS sessions (
-    session_id UUID PRIMARY KEY,
+    session_id UUID NOT NULL,  -- PRIMARY KEY (not supported in DuckLake)
     instance_id UUID NOT NULL,
     username VARCHAR NOT NULL,
     role VARCHAR NOT NULL,
@@ -99,50 +91,47 @@ CREATE TABLE IF NOT EXISTS sessions (
     peer VARCHAR NOT NULL,
     peer_identity VARCHAR,
     user_agent VARCHAR,
-    connection_protocol connection_protocol NOT NULL DEFAULT 'plaintext',
-    connection_protocol_text VARCHAR GENERATED ALWAYS AS (CAST(connection_protocol AS VARCHAR)) VIRTUAL,
-    start_time TIMESTAMP NOT NULL DEFAULT now(),
+    connection_protocol VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
+    start_time TIMESTAMP NOT NULL,
     stop_time TIMESTAMP,
-    status session_status NOT NULL DEFAULT 'active',
-    status_text VARCHAR GENERATED ALWAYS AS (CAST(status AS VARCHAR)) VIRTUAL,
+    status VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
     stop_reason VARCHAR
 );
 
 -- SQL statement definitions (prepared statements)
 CREATE TABLE IF NOT EXISTS sql_statements (
-    statement_id UUID PRIMARY KEY,
+    statement_id UUID NOT NULL,  -- PRIMARY KEY (not supported in DuckLake)
     session_id UUID NOT NULL,
     sql_text VARCHAR NOT NULL,
     flight_method VARCHAR,
-    is_internal BOOLEAN NOT NULL DEFAULT false,
-    prepare_success BOOLEAN NOT NULL DEFAULT true,
+    is_internal BOOLEAN NOT NULL,
+    prepare_success BOOLEAN NOT NULL,
     prepare_error VARCHAR,
-    created_time TIMESTAMP NOT NULL DEFAULT now()
+    created_time TIMESTAMP NOT NULL
 );
 
 -- SQL statement executions (each execution of a statement)
 CREATE TABLE IF NOT EXISTS sql_executions (
-    execution_id UUID PRIMARY KEY,
+    execution_id UUID NOT NULL,  -- PRIMARY KEY (not supported in DuckLake)
     statement_id UUID NOT NULL,
     bind_parameters VARCHAR,
-    execution_start_time TIMESTAMP NOT NULL DEFAULT now(),
+    execution_start_time TIMESTAMP NOT NULL,
     execution_end_time TIMESTAMP,
-    rows_fetched BIGINT DEFAULT 0,
-    status execution_status NOT NULL DEFAULT 'executing',
-    status_text VARCHAR GENERATED ALWAYS AS (CAST(status AS VARCHAR)) VIRTUAL,
+    rows_fetched BIGINT,
+    status VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
     error_message VARCHAR,
     duration_ms BIGINT
 );
 
--- Create indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_sessions_instance_id ON sessions(instance_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
-CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
-CREATE INDEX IF NOT EXISTS idx_sql_statements_session_id ON sql_statements(session_id);
-CREATE INDEX IF NOT EXISTS idx_sql_statements_created_time ON sql_statements(created_time);
-CREATE INDEX IF NOT EXISTS idx_sql_executions_statement_id ON sql_executions(statement_id);
-CREATE INDEX IF NOT EXISTS idx_sql_executions_execution_start_time ON sql_executions(execution_start_time);
-CREATE INDEX IF NOT EXISTS idx_sql_executions_status ON sql_executions(status);
+-- Indexes not supported in DuckLake, but would be useful for file-based mode:
+-- CREATE INDEX IF NOT EXISTS idx_sessions_instance_id ON sessions(instance_id);
+-- CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
+-- CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+-- CREATE INDEX IF NOT EXISTS idx_sql_statements_session_id ON sql_statements(session_id);
+-- CREATE INDEX IF NOT EXISTS idx_sql_statements_created_time ON sql_statements(created_time);
+-- CREATE INDEX IF NOT EXISTS idx_sql_executions_statement_id ON sql_executions(statement_id);
+-- CREATE INDEX IF NOT EXISTS idx_sql_executions_execution_start_time ON sql_executions(execution_start_time);
+-- CREATE INDEX IF NOT EXISTS idx_sql_executions_status ON sql_executions(status);
 
 -- View: Complete session activity (with executions)
 CREATE OR REPLACE VIEW session_activity AS
@@ -160,7 +149,6 @@ SELECT
     i.start_time AS instance_start_time,
     i.stop_time AS instance_stop_time,
     i.status AS instance_status,
-    i.status_text AS instance_status_text,
     i.stop_reason AS instance_stop_reason,
     s.session_id,
     s.username,
@@ -170,7 +158,6 @@ SELECT
     s.start_time AS session_start_time,
     s.stop_time AS session_stop_time,
     s.status AS session_status,
-    s.status_text AS session_status_text,
     s.stop_reason AS session_stop_reason,
     st.statement_id,
     st.sql_text,
@@ -181,7 +168,6 @@ SELECT
     e.execution_end_time,
     e.rows_fetched,
     e.status AS execution_status,
-    e.status_text AS execution_status_text,
     e.error_message,
     e.duration_ms
 FROM instances i
@@ -203,7 +189,6 @@ SELECT
     s.connection_protocol,
     s.start_time,
     s.status,
-    s.status_text,
     i.hostname,
     i.hostname_arg,
     i.server_ip,
@@ -227,7 +212,6 @@ SELECT
     s.start_time,
     s.stop_time,
     s.status AS session_status,
-    s.status_text AS session_status_text,
     COUNT(DISTINCT st.statement_id) AS total_statements,
     COUNT(e.execution_id) AS total_executions,
     SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS successful_executions,
@@ -255,7 +239,6 @@ SELECT
     e.execution_end_time,
     e.rows_fetched,
     e.status,
-    e.status_text,
     e.error_message,
     e.duration_ms,
     s.username,
@@ -401,6 +384,15 @@ arrow::Status InstrumentationManager::InitializeSchema() {
 }
 
 arrow::Status InstrumentationManager::CleanupStaleRecords() {
+  // Skip stale record cleanup for external catalogs (e.g., DuckLake with shared storage).
+  // In multi-instance deployments, other instances may be legitimately running.
+  // Stale cleanup is only safe for file-based instrumentation where we know
+  // only one instance uses the database file.
+  if (use_external_catalog_) {
+    GIZMOSQL_LOG(INFO) << "Skipping stale record cleanup for external catalog (multi-instance safe)";
+    return arrow::Status::OK();
+  }
+
   try {
     std::string prefix = GetQualifiedPrefix();
 

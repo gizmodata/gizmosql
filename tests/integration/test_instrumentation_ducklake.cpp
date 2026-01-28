@@ -27,6 +27,8 @@
 
 #include <gtest/gtest.h>
 
+#include <duckdb.hpp>
+
 #include <arpa/inet.h>
 #include <chrono>
 #include <cstdlib>
@@ -61,9 +63,18 @@ namespace fs = std::filesystem;
 // ============================================================================
 
 // PostgreSQL connection settings (matching docker-compose.test.yml)
+// Port 5432: General DuckLake tests (postgres container)
+// Port 5433: Instrumentation tests only (postgres-instrumentation container)
 const int POSTGRES_PORT = 5432;
+const int POSTGRES_INSTR_PORT = 5433;
 
-// DuckLake data path (local directory for Parquet files)
+// MinIO (S3-compatible) connection settings (matching docker-compose.test.yml)
+const int MINIO_PORT = 9000;
+const char* MINIO_ACCESS_KEY = "minioadmin";
+const char* MINIO_SECRET_KEY = "minioadmin";
+const char* MINIO_BUCKET = "instrumentation";
+
+// DuckLake data path (local directory for single-instance tests)
 const char* DUCKLAKE_INSTR_DATA_PATH = "data/ducklake_instrumentation_test/";
 
 // ============================================================================
@@ -122,14 +133,14 @@ QueryResult RunQuery(FlightSqlClient& client,
   return result;
 }
 
-// Check if PostgreSQL is available by attempting a TCP connection
-bool IsPostgresAvailable() {
+// Check if a TCP port is available by attempting a connection
+bool IsPortAvailable(int port) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock < 0) return false;
 
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(POSTGRES_PORT);
+  addr.sin_port = htons(port);
   inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
   // Set a short timeout
@@ -144,24 +155,55 @@ bool IsPostgresAvailable() {
   return result == 0;
 }
 
-// SQL to setup DuckLake for instrumentation
-std::string GetDuckLakeInitSQL(const std::string& catalog_name) {
+bool IsPostgresAvailable() {
+  return IsPortAvailable(POSTGRES_PORT);
+}
+
+bool IsInstrumentationPostgresAvailable() {
+  return IsPortAvailable(POSTGRES_INSTR_PORT);
+}
+
+bool IsMinioAvailable() {
+  return IsPortAvailable(MINIO_PORT);
+}
+
+// SQL to setup DuckLake for instrumentation with S3/MinIO and PostgreSQL metadata
+// Uses a dedicated PostgreSQL instance for instrumentation tests (port 5433)
+// and MinIO for S3-compatible object storage
+std::string GetDuckLakeInitSQLWithS3(const std::string& catalog_name,
+                                      const std::string& s3_path_suffix = "") {
+  // S3 path for this catalog's data
+  std::string s3_data_path = "s3://" + std::string(MINIO_BUCKET) + "/" + s3_path_suffix;
+
   return R"SQL(
-    INSTALL ducklake; INSTALL postgres; LOAD ducklake; LOAD postgres;
+    INSTALL ducklake; INSTALL postgres; INSTALL httpfs;
+    LOAD ducklake; LOAD postgres; LOAD httpfs;
+
+    CREATE OR REPLACE SECRET s3_secret (
+      TYPE s3,
+      KEY_ID ')SQL" + std::string(MINIO_ACCESS_KEY) + R"SQL(',
+      SECRET ')SQL" + std::string(MINIO_SECRET_KEY) + R"SQL(',
+      ENDPOINT 'localhost:)SQL" + std::to_string(MINIO_PORT) + R"SQL(',
+      USE_SSL false,
+      URL_STYLE 'path'
+    );
+
     CREATE OR REPLACE SECRET pg_instr_secret (
       TYPE postgres,
       HOST 'localhost',
-      PORT 5432,
-      DATABASE 'ducklake_catalog',
+      PORT )SQL" + std::to_string(POSTGRES_INSTR_PORT) + R"SQL(,
+      DATABASE 'instrumentation_catalog',
       USER 'postgres',
       PASSWORD 'testpassword'
     );
+
     CREATE OR REPLACE SECRET ducklake_instr_secret (
       TYPE DUCKLAKE,
       METADATA_PATH '',
-      DATA_PATH 'data/ducklake_instrumentation_test/',
+      DATA_PATH ')SQL" + s3_data_path + R"SQL(',
       METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_instr_secret'}
     );
+
     ATTACH 'ducklake:ducklake_instr_secret' AS )SQL" + catalog_name + ";";
 }
 
@@ -172,10 +214,16 @@ std::string GetDuckLakeInitSQL(const std::string& catalog_name) {
 // ============================================================================
 
 TEST(DuckLakeInstrumentation, SetupAndQuery) {
-  // Skip if PostgreSQL is not available
-  if (!IsPostgresAvailable()) {
-    GTEST_SKIP() << "PostgreSQL not available. Start it with: "
-                 << "docker-compose -f docker-compose.test.yml up -d";
+  // Skip if instrumentation PostgreSQL is not available (port 5433)
+  if (!IsInstrumentationPostgresAvailable()) {
+    GTEST_SKIP() << "Instrumentation PostgreSQL not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+
+  // Skip if MinIO is not available
+  if (!IsMinioAvailable()) {
+    GTEST_SKIP() << "MinIO not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
   }
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -196,11 +244,6 @@ TEST(DuckLakeInstrumentation, SetupAndQuery) {
 
   std::cerr << "\n=== DuckLake Instrumentation Test ===" << std::endl;
 
-  // Clean up test data directory
-  std::error_code ec;
-  fs::remove_all(DUCKLAKE_INSTR_DATA_PATH, ec);
-  fs::create_directories(DUCKLAKE_INSTR_DATA_PATH, ec);
-
   // Configuration
   const int test_port = 31370;
   const int health_port = 31371;
@@ -208,7 +251,8 @@ TEST(DuckLakeInstrumentation, SetupAndQuery) {
   const std::string schema_name = "main";
 
   fs::path db_path = "ducklake_instr_test.db";
-  std::string init_sql = GetDuckLakeInitSQL(catalog_name);
+  // Use S3/MinIO for data storage (matching real-world deployment)
+  std::string init_sql = GetDuckLakeInitSQLWithS3(catalog_name, "instrumentation_data/");
 
   // Create server with DuckLake instrumentation
   auto result = gizmosql::CreateFlightSQLServer(
@@ -292,7 +336,7 @@ TEST(DuckLakeInstrumentation, SetupAndQuery) {
 
   // Query instances from DuckLake catalog
   query_result = RunQuery(sql_client, call_options,
-      "SELECT instance_id, gizmosql_version, status_text FROM " + catalog_name + ".main.instances");
+      "SELECT instance_id, gizmosql_version, status FROM " + catalog_name + ".main.instances");
   ASSERT_TRUE(query_result.success)
       << "Failed to query instances: " << query_result.error_message;
   ASSERT_GE(query_result.row_count, 1) << "Expected at least 1 instance record";
@@ -300,7 +344,7 @@ TEST(DuckLakeInstrumentation, SetupAndQuery) {
 
   // Query sessions from DuckLake catalog
   query_result = RunQuery(sql_client, call_options,
-      "SELECT session_id, username, status_text FROM " + catalog_name + ".main.sessions");
+      "SELECT session_id, username, status FROM " + catalog_name + ".main.sessions");
   ASSERT_TRUE(query_result.success)
       << "Failed to query sessions: " << query_result.error_message;
   ASSERT_GE(query_result.row_count, 1) << "Expected at least 1 session record";
@@ -322,6 +366,7 @@ TEST(DuckLakeInstrumentation, SetupAndQuery) {
   gizmosql::CleanupServerResources();
 
   // Cleanup
+  std::error_code ec;
   fs::remove(db_path, ec);
   fs::remove(db_path.string() + ".wal", ec);
 
@@ -329,14 +374,20 @@ TEST(DuckLakeInstrumentation, SetupAndQuery) {
 }
 
 // ============================================================================
-// Test: Multiple Instances with Shared DuckLake Instrumentation
+// Test: Multiple Instances with Shared DuckLake Instrumentation (using MinIO/S3)
 // ============================================================================
 
 TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
-  // Skip if PostgreSQL is not available
-  if (!IsPostgresAvailable()) {
-    GTEST_SKIP() << "PostgreSQL not available. Start it with: "
-                 << "docker-compose -f docker-compose.test.yml up -d";
+  // Skip if instrumentation PostgreSQL is not available (port 5433)
+  if (!IsInstrumentationPostgresAvailable()) {
+    GTEST_SKIP() << "Instrumentation PostgreSQL not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+
+  // Skip if MinIO is not available (required for shared object storage)
+  if (!IsMinioAvailable()) {
+    GTEST_SKIP() << "MinIO not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
   }
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -355,12 +406,7 @@ TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
   GTEST_SKIP() << "Enterprise features not available";
 #endif
 
-  std::cerr << "\n=== DuckLake Multi-Instance Instrumentation Test ===" << std::endl;
-
-  // Clean up test data directory
-  std::error_code ec;
-  fs::remove_all(DUCKLAKE_INSTR_DATA_PATH, ec);
-  fs::create_directories(DUCKLAKE_INSTR_DATA_PATH, ec);
+  std::cerr << "\n=== DuckLake Multi-Instance Instrumentation Test (S3/MinIO) ===" << std::endl;
 
   // Configuration for 3 GizmoSQL instances
   const int NUM_INSTANCES = 3;
@@ -377,7 +423,43 @@ TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
   };
 
   std::vector<ServerInstance> instances(NUM_INSTANCES);
-  std::string init_sql = GetDuckLakeInitSQL(catalog_name);
+
+  // Use S3/MinIO for shared object storage - all instances write to same bucket
+  // Use a fixed path that matches the existing DuckLake catalog metadata
+  std::string init_sql = GetDuckLakeInitSQLWithS3(catalog_name, "instrumentation_data/");
+
+  // Clean up stale records from previous test runs by updating all running instances to stopped
+  // This simulates what would happen if the previous test crashed without proper cleanup
+  std::cerr << "Cleaning up stale records from previous test runs..." << std::endl;
+  {
+    // Connect via DuckDB directly to clean up stale records
+    duckdb::DuckDB db(nullptr);
+    duckdb::Connection conn(db);
+    // Set up the DuckLake connection (using dedicated instrumentation postgres)
+    conn.Query("INSTALL ducklake; INSTALL postgres; INSTALL httpfs; LOAD ducklake; LOAD postgres; LOAD httpfs");
+    conn.Query("CREATE OR REPLACE SECRET s3_secret (TYPE s3, KEY_ID '" + std::string(MINIO_ACCESS_KEY) +
+               "', SECRET '" + std::string(MINIO_SECRET_KEY) +
+               "', ENDPOINT 'localhost:" + std::to_string(MINIO_PORT) + "', USE_SSL false, URL_STYLE 'path')");
+    conn.Query("CREATE OR REPLACE SECRET pg_instr_secret (TYPE postgres, HOST 'localhost', PORT " +
+               std::to_string(POSTGRES_INSTR_PORT) + ", DATABASE 'instrumentation_catalog', "
+               "USER 'postgres', PASSWORD 'testpassword')");
+    conn.Query("CREATE OR REPLACE SECRET ducklake_instr_secret (TYPE DUCKLAKE, METADATA_PATH '', "
+               "DATA_PATH 's3://" + std::string(MINIO_BUCKET) + "/instrumentation_data/', "
+               "METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_instr_secret'})");
+    conn.Query("ATTACH 'ducklake:ducklake_instr_secret' AS " + catalog_name);
+
+    // Mark all running instances as stopped (cleanup from previous test runs)
+    auto cleanup_result = conn.Query("UPDATE " + catalog_name + "." + schema_name +
+                                      ".instances SET status = 'stopped', stop_time = now(), "
+                                      "stop_reason = 'test cleanup' WHERE status = 'running'");
+    if (cleanup_result->HasError()) {
+      std::cerr << "  Note: Could not clean up stale instances (table may not exist yet): "
+                << cleanup_result->GetError() << std::endl;
+    } else {
+      auto changes = cleanup_result->GetValue(0, 0);
+      std::cerr << "  Marked stale instances as stopped" << std::endl;
+    }
+  }
 
   // Start all 3 instances
   std::cerr << "Starting " << NUM_INSTANCES << " GizmoSQL instances with shared DuckLake instrumentation..." << std::endl;
@@ -470,8 +552,8 @@ TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
     std::cerr << "  Ran 3 queries on instance " << i << std::endl;
   }
 
-  // Allow instrumentation to flush
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  // Allow instrumentation to flush (DuckLake writes to Parquet files, needs more time)
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
   // Verify instrumentation data from all instances in the shared DuckLake catalog
   std::cerr << "Verifying shared instrumentation data..." << std::endl;
@@ -555,6 +637,7 @@ TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
   gizmosql::CleanupServerResources();
 
   // Cleanup database files
+  std::error_code ec;
   for (int i = 0; i < NUM_INSTANCES; ++i) {
     fs::remove(instances[i].db_path, ec);
     fs::remove(instances[i].db_path.string() + ".wal", ec);
@@ -568,10 +651,16 @@ TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
 // ============================================================================
 
 TEST(DuckLakeInstrumentation, SchemaValidation) {
-  // Skip if PostgreSQL is not available
-  if (!IsPostgresAvailable()) {
-    GTEST_SKIP() << "PostgreSQL not available. Start it with: "
-                 << "docker-compose -f docker-compose.test.yml up -d";
+  // Skip if instrumentation PostgreSQL is not available (port 5433)
+  if (!IsInstrumentationPostgresAvailable()) {
+    GTEST_SKIP() << "Instrumentation PostgreSQL not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+
+  // Skip if MinIO is not available
+  if (!IsMinioAvailable()) {
+    GTEST_SKIP() << "MinIO not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
   }
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -595,14 +684,11 @@ TEST(DuckLakeInstrumentation, SchemaValidation) {
   // We start a server, let it create the schema, shut it down, then start again
   // to verify schema reuse works.
 
-  std::error_code ec;
-  fs::remove_all(DUCKLAKE_INSTR_DATA_PATH, ec);
-  fs::create_directories(DUCKLAKE_INSTR_DATA_PATH, ec);
-
   const int test_port = 31390;
   const std::string catalog_name = "schema_val_ducklake";
   fs::path db_path = "schema_val_test.db";
-  std::string init_sql = GetDuckLakeInitSQL(catalog_name);
+  // Use S3/MinIO for data storage (matching real-world deployment)
+  std::string init_sql = GetDuckLakeInitSQLWithS3(catalog_name, "instrumentation_data/");
 
   // First server start - creates schema
   std::cerr << "Starting first server instance (schema creation)..." << std::endl;
@@ -723,6 +809,7 @@ TEST(DuckLakeInstrumentation, SchemaValidation) {
   }
 
   // Cleanup
+  std::error_code ec;
   fs::remove(db_path, ec);
   fs::remove(db_path.string() + ".wal", ec);
 

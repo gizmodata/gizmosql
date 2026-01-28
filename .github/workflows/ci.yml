@@ -136,6 +136,7 @@ jobs:
     env:
       zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
     services:
+      # PostgreSQL for general DuckLake tests
       postgres:
         image: postgres:16-alpine
         env:
@@ -149,6 +150,34 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # PostgreSQL for instrumentation tests (isolated)
+      postgres-instrumentation:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: instrumentation_catalog
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # MinIO for S3-compatible object storage (instrumentation data)
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+          - 9001:9001
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -178,6 +207,25 @@ jobs:
           options: |
             CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
             GIZMOSQL_ENTERPRISE=ON
+
+      - name: Setup MinIO bucket
+        run: |
+          # Install MinIO client (architecture-aware)
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+            MC_ARCH="arm64"
+          else
+            MC_ARCH="amd64"
+          fi
+          curl -sL "https://dl.min.io/client/mc/release/linux-${MC_ARCH}/mc" -o /tmp/mc
+          chmod +x /tmp/mc
+          # Configure and create bucket (with retry for service startup)
+          for i in {1..10}; do
+            /tmp/mc alias set myminio http://localhost:9000 minioadmin minioadmin && break
+            echo "Waiting for MinIO to be ready... (attempt $i)"
+            sleep 2
+          done
+          /tmp/mc mb --ignore-existing myminio/instrumentation
 
       - name: Run Tests (Core Edition - No License)
         run: |
