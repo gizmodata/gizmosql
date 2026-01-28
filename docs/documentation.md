@@ -4,36 +4,6 @@ Welcome to the official documentation for **GizmoSQL**, a high-performance, embe
 
 ---
 
-## 📖 Table of Contents
-
-1. [Overview](#overview)
-2. [Editions](editions.md)
-3. [Token Authentication](token_authentication.md)
-4. [Bulk Ingestion](bulk_ingestion.md)
-5. [DuckLake Integration](ducklake.md)
-6. [Geometry & Spatial](geometry.md)
-7. [Integrations](integrations.md)
-8. [Component Versions](#component-versions)
-9. [Installation & Deployment](#📦-installation-amp-deployment)
-   - [Docker](#running-from-docker-image)
-   - [Homebrew](#option-2-install-via-homebrew-macos-amp-linux)
-   - [CLI Binary](#option-3-download-and-run-the-gizmosql-cli-executable)
-   - [Manual Build](#option-4-steps-to-build-the-solution-manually)
-10. [Client Connections](#client-connections)
-    - [JDBC](#connecting-to-the-server-via-jdbc)
-    - [ADBC Python](#connecting-to-the-server-via-the-new-adbc-python-flight-sql-driver)
-    - [CLI](#connecting-via-the-new-gizmosql_client-cli-tool)
-    - [Ibis](#connecting-via-ibis)
-    - [SQLAlchemy](#connecting-via-sqlalchemy)
-11. [Configuration & Environment Variables](#⚙️-configuration-amp-environment-variables)
-12. [Backend Selection](#🛠-backend-selection)
-13. [Security](#🔐-Security)
-14. [Slim Docker Image](#🧪-slim-docker-image)
-15. [Help & Support](#🆘-help-amp-support)
-16. [License](#🪪-license)
-
----
-
 ## 🧩 Overview
 
 **GizmoSQL** enables the execution of SQL queries using DuckDB or SQLite as backends, accessed remotely over Arrow Flight SQL. The server supports TLS, password authentication, and JWT issuance via middleware.

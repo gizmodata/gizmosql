@@ -5,6 +5,29 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-01-28
+
+### Added
+
+#### DuckLake-Backed Instrumentation (Enterprise)
+- Instrumentation can now use a DuckLake catalog instead of a local DuckDB file
+- Enables centralized, multi-instance instrumentation with transactional isolation
+- New configuration parameters:
+  - `--instrumentation-catalog` / `GIZMOSQL_INSTRUMENTATION_CATALOG`: Pre-attached catalog name
+  - `--instrumentation-schema` / `GIZMOSQL_INSTRUMENTATION_SCHEMA`: Schema within the catalog (default: `main`)
+- Works with persistent or session secrets for DuckLake setup
+- Instrumentation catalog is protected as read-only for all clients (admins can read, no one can write)
+- See [Session Instrumentation docs](https://gizmodata.github.io/gizmosql/#/session_instrumentation) for setup examples
+
+### Changed
+
+- Instrumentation catalog protection now applies to external catalogs (DuckLake), not just the default `_gizmosql_instr`
+- DETACH protection extended to cover external instrumentation catalogs
+
+### Fixed
+
+- Fixed `catalog_access` propagation from token claims to client session
+
 ## [1.15.3] - 2026-01-26
 
 ### Changed
