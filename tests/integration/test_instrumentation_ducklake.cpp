@@ -815,3 +815,148 @@ TEST(DuckLakeInstrumentation, SchemaValidation) {
 
   std::cerr << "\n=== DuckLake Schema Validation Test PASSED ===" << std::endl;
 }
+
+// ============================================================================
+// Test: Instrumentation Catalog is Read-Only for Clients
+// ============================================================================
+
+TEST(DuckLakeInstrumentation, CatalogIsReadOnly) {
+  // Skip if instrumentation PostgreSQL is not available (port 5433)
+  if (!IsInstrumentationPostgresAvailable()) {
+    GTEST_SKIP() << "Instrumentation PostgreSQL not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+
+  // Skip if MinIO is not available
+  if (!IsMinioAvailable()) {
+    GTEST_SKIP() << "MinIO not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+
+#ifdef GIZMOSQL_ENTERPRISE
+  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  if (!license_file || !fs::exists(license_file)) {
+    GTEST_SKIP() << "License key file not found";
+  }
+
+  auto& enterprise = gizmosql::enterprise::EnterpriseFeatures::Instance();
+  auto license_status = enterprise.Initialize(license_file);
+  if (!license_status.ok()) {
+    GTEST_SKIP() << "Failed to initialize enterprise license";
+  }
+#else
+  GTEST_SKIP() << "Enterprise features not available";
+#endif
+
+  std::cerr << "\n=== DuckLake Catalog Read-Only Protection Test ===" << std::endl;
+
+  // This test verifies that clients cannot modify the instrumentation catalog
+  // when using DuckLake as the backend. The catalog should be read-only for
+  // admins and inaccessible for non-admins.
+
+  const int test_port = 31395;
+  const std::string catalog_name = "readonly_instr_ducklake";
+  fs::path db_path = "readonly_test.db";
+  std::string init_sql = GetDuckLakeInitSQLWithS3(catalog_name, "instrumentation_data/");
+
+  auto result = gizmosql::CreateFlightSQLServer(
+      BackendType::duckdb, db_path, "localhost", test_port,
+      "admin_user", "admin_pass", "test_key",
+      fs::path(), fs::path(), fs::path(),
+      init_sql, fs::path(),
+      false, false, "", "", fs::path(),
+      false, 0,
+      arrow::util::ArrowLogLevel::ARROW_INFO,
+      arrow::util::ArrowLogLevel::ARROW_INFO,
+      test_port + 1, "",
+      true, "", catalog_name, "main");
+
+  ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
+  auto server = *result;
+
+  std::atomic<bool> ready{false};
+  std::thread server_thread([&]() {
+    ready = true;
+    (void)server->Serve();
+  });
+
+  while (!ready) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  // Connect as admin
+  arrow::flight::FlightClientOptions options;
+  auto location_result = arrow::flight::Location::ForGrpcTcp("localhost", test_port);
+  ASSERT_TRUE(location_result.ok()) << location_result.status().ToString();
+
+  auto client_result = arrow::flight::FlightClient::Connect(*location_result, options);
+  ASSERT_TRUE(client_result.ok()) << client_result.status().ToString();
+
+  arrow::flight::FlightCallOptions call_options;
+  auto bearer_result = (*client_result)->AuthenticateBasicToken({}, "admin_user", "admin_pass");
+  ASSERT_TRUE(bearer_result.ok()) << bearer_result.status().ToString();
+  call_options.headers.push_back(*bearer_result);
+
+  FlightSqlClient sql_client(std::move(*client_result));
+
+  // Allow instrumentation to write initial records
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+  // TEST 1: Admin can READ from instrumentation catalog
+  std::cerr << "  Testing admin can READ instrumentation catalog..." << std::endl;
+  auto read_result = RunQuery(sql_client, call_options,
+      "SELECT COUNT(*) FROM " + catalog_name + ".main.instances");
+  ASSERT_TRUE(read_result.success)
+      << "Admin should be able to read instrumentation catalog: " << read_result.error_message;
+  std::cerr << "    Read succeeded (as expected)" << std::endl;
+
+  // TEST 2: Admin cannot WRITE to instrumentation catalog
+  std::cerr << "  Testing admin cannot WRITE to instrumentation catalog..." << std::endl;
+  auto write_result = RunQuery(sql_client, call_options,
+      "INSERT INTO " + catalog_name + ".main.instances "
+      "(instance_id, gizmosql_version, gizmosql_edition, duckdb_version, arrow_version, "
+      "tls_enabled, mtls_required, readonly, start_time, status) VALUES "
+      "('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'test', 'test', 'test', 'test', "
+      "false, false, false, now(), 'running')");
+  ASSERT_FALSE(write_result.success)
+      << "Admin should NOT be able to write to instrumentation catalog";
+  ASSERT_TRUE(write_result.error_message.find("read-only") != std::string::npos ||
+              write_result.error_message.find("Access denied") != std::string::npos)
+      << "Error should mention read-only or access denied, got: " << write_result.error_message;
+  std::cerr << "    Write blocked (as expected): " << write_result.error_message << std::endl;
+
+  // TEST 3: Admin cannot UPDATE instrumentation catalog
+  std::cerr << "  Testing admin cannot UPDATE instrumentation catalog..." << std::endl;
+  auto update_result = RunQuery(sql_client, call_options,
+      "UPDATE " + catalog_name + ".main.instances SET status = 'hacked' WHERE 1=1");
+  ASSERT_FALSE(update_result.success)
+      << "Admin should NOT be able to update instrumentation catalog";
+  std::cerr << "    Update blocked (as expected): " << update_result.error_message << std::endl;
+
+  // TEST 4: Admin cannot DELETE from instrumentation catalog
+  std::cerr << "  Testing admin cannot DELETE from instrumentation catalog..." << std::endl;
+  auto delete_result = RunQuery(sql_client, call_options,
+      "DELETE FROM " + catalog_name + ".main.sessions WHERE 1=0");
+  ASSERT_FALSE(delete_result.success)
+      << "Admin should NOT be able to delete from instrumentation catalog";
+  std::cerr << "    Delete blocked (as expected): " << delete_result.error_message << std::endl;
+
+  // TEST 5: Admin cannot DROP tables in instrumentation catalog
+  std::cerr << "  Testing admin cannot DROP tables in instrumentation catalog..." << std::endl;
+  auto drop_result = RunQuery(sql_client, call_options,
+      "DROP TABLE IF EXISTS " + catalog_name + ".main.sessions");
+  ASSERT_FALSE(drop_result.success)
+      << "Admin should NOT be able to drop tables in instrumentation catalog";
+  std::cerr << "    Drop blocked (as expected): " << drop_result.error_message << std::endl;
+
+  // Cleanup
+  (void)server->Shutdown();
+  server_thread.join();
+  server.reset();
+  gizmosql::CleanupServerResources();
+
+  std::error_code ec;
+  fs::remove(db_path, ec);
+  fs::remove(db_path.string() + ".wal", ec);
+
+  std::cerr << "\n=== DuckLake Catalog Read-Only Protection Test PASSED ===" << std::endl;
+}

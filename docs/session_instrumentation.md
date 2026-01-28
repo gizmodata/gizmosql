@@ -49,6 +49,17 @@ When `instrumentation_catalog` is set:
 - `instrumentation_db_path` is ignored
 - GizmoSQL will create the instrumentation tables in the specified catalog/schema
 
+**Important: Dedicated Catalog Required**
+
+The instrumentation catalog is protected as **read-only** for clients (only administrators can read the data, no one can modify it). This protection applies to the **entire catalog**, not just the instrumentation schema.
+
+**Do NOT** use a shared catalog that contains other application tables. If you do, you will not be able to modify any tables in that catalog. Always use a dedicated catalog for instrumentation.
+
+```
+✓ Good: instr_ducklake (dedicated catalog for instrumentation)
+✗ Bad:  my_app_ducklake with instrumentation in 'main' schema (entire catalog becomes read-only)
+```
+
 #### Example: Using Persistent Secrets (Recommended)
 
 With persistent secrets, you only need to create the secrets once. DuckDB stores them in `~/.duckdb/stored_secrets` and automatically loads them on subsequent startups.
