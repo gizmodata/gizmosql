@@ -89,7 +89,7 @@ gizmosql_server \
 Use `token` as the username and the JWT as the password:
 
 ```
-jdbc:arrow-flight-sql://hostname:31337?useEncryption=true&user=token&password=YOUR_JWT_HERE&disableCertificateVerification=true
+jdbc:gizmosql://hostname:31337?useEncryption=true&user=token&password=YOUR_JWT_HERE&disableCertificateVerification=true
 ```
 
 ### ADBC (Python)

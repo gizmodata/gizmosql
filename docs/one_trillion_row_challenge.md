@@ -10,7 +10,7 @@ We launched the GizmoSQL Docker container using `scripts/run_gizmosql_aws.sh` - 
 
 We then copied the S3 data from `s3://coiled-datasets-rp/1trc/` to the local NVMe RAID 0 array volume - using attached script: `scripts/copy_coiled_data_from_s3.sh` - and it used: 2.3TB of the storage space.  This copy step took: 11m23.702s (costing $2.78 on-demand, and $0.54 spot).
 
-We then launched GizmoSQL via the steps after the docker stuff in: `scripts/run_gizmosql_aws.sh` - and connected remotely from our laptop via the Arrow Flight SQL JDBC Driver - (see repo: https://github.com/gizmodata/gizmosql for details) - and ran this SQL to create a view on top of the parquet datasets:
+We then launched GizmoSQL via the steps after the docker stuff in: `scripts/run_gizmosql_aws.sh` - and connected remotely from our laptop via the GizmoSQL JDBC Driver - (see repo: https://github.com/gizmodata/gizmosql for details) - and ran this SQL to create a view on top of the parquet datasets:
 
 ```
 CREATE VIEW measurements_1trc
