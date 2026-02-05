@@ -189,6 +189,65 @@ openssl rsa -in private_key.pem -pubout -out public_key.pem
 
 The `private_key.pem` is used to sign tokens (keep this secure!), and `public_key.pem` is configured on the GizmoSQL server for verification.
 
+## Cross-Instance Token Acceptance
+
+By default, GizmoSQL servers strictly validate that bearer tokens were issued by the same server instance. This is a security measure to ensure that clients reconnect and re-authenticate if they are load-balanced to a different server instance.
+
+However, in **load-balanced deployments** where multiple GizmoSQL server instances share the same secret key, you may want to allow tokens issued by one instance to be accepted by another. This is useful for:
+
+- **High-availability setups** - Clients can seamlessly failover between instances
+- **Rolling deployments** - Clients don't need to re-authenticate during server upgrades
+- **Horizontal scaling** - New instances can immediately accept existing client sessions
+
+### Enabling Cross-Instance Token Acceptance
+
+To allow tokens from other server instances (with the same secret key), use the `--allow-cross-instance-tokens` flag:
+
+**CLI:**
+```bash
+gizmosql_server \
+  --database-filename data/mydb.duckdb \
+  --secret-key "your-shared-secret-key" \
+  --allow-cross-instance-tokens true
+```
+
+**Environment Variable:**
+```bash
+export GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS=true
+gizmosql_server --database-filename data/mydb.duckdb
+```
+
+**Library API:**
+```cpp
+RunFlightSQLServer(
+    backend,
+    database_filename,
+    // ... other parameters ...
+    /*allow_cross_instance_tokens=*/true
+);
+```
+
+### Security Considerations
+
+When enabling cross-instance token acceptance:
+
+1. **Ensure all instances share the same secret key** - Tokens are cryptographically signed with the secret key. If instances use different keys, tokens will still be rejected due to invalid signatures.
+
+2. **Use the same password across instances** - Basic authentication uses the secret key to hash passwords. Different secret keys will cause authentication failures.
+
+3. **Be aware of session state** - While tokens are accepted, session-specific state (such as prepared statements or transaction context) may not be available on a different instance.
+
+4. **Monitor for abuse** - Relaxing instance validation increases the attack surface if a token is compromised. Consider using shorter token lifetimes.
+
+### Behavior Comparison
+
+| Scenario | Strict Mode (default) | Relaxed Mode |
+|----------|----------------------|--------------|
+| Token from same instance | Accepted | Accepted |
+| Token from different instance (same secret) | **Rejected** | Accepted |
+| Token with wrong signature | Rejected | Rejected |
+| Expired token | Rejected | Rejected |
+
 ## Security Best Practices
 
 1. **Protect private keys** - Store signing keys securely; never commit them to version control
@@ -196,6 +255,7 @@ The `private_key.pem` is used to sign tokens (keep this secure!), and `public_ke
 3. **Use TLS** - Always enable TLS encryption for production deployments
 4. **Rotate keys periodically** - Implement a key rotation strategy for long-running deployments
 5. **Validate all claims** - Ensure issuer and audience are correctly configured to prevent token reuse across services
+6. **Use strict instance validation in single-server deployments** - Only enable cross-instance token acceptance when running multiple load-balanced instances
 
 ## Related Resources
 

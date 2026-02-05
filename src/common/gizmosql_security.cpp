@@ -606,24 +606,39 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
 
     verifier.verify(decoded);
 
-    // Validate instance_id: token must be from this server instance
+    // Validate instance_id: token must be from this server instance (unless cross-instance tokens are allowed)
     if (!instance_id_.empty() && decoded.has_payload_claim("instance_id")) {
       auto token_instance_id = decoded.get_payload_claim("instance_id").as_string();
       if (token_instance_id != instance_id_) {
-        GIZMOSQL_LOGKV(
-            WARNING,
-            "peer=" + context.peer() +
-                " - Bearer Token instance_id mismatch: token was issued by instance " +
-                token_instance_id + " but this is instance " + instance_id_,
-            {"peer", context.peer()}, {"kind", "authentication"},
-            {"authentication_type", "bearer"}, {"result", "failure"},
-            {"reason", "instance_id_mismatch"}, {"token_id", decoded.get_id()},
-            {"token_sub", decoded.get_subject()}, {"token_instance_id", token_instance_id},
-            {"server_instance_id", instance_id_});
-        return MakeFlightError(
-            flight::FlightStatusCode::Unauthenticated,
-            "Session not associated with this server instance (" + instance_id_ +
-                "). Please reconnect to establish a new session.");
+        if (allow_cross_instance_tokens_) {
+          // Cross-instance tokens are allowed - log at DEBUG level and continue
+          GIZMOSQL_LOGKV(
+              DEBUG,
+              "peer=" + context.peer() +
+                  " - Bearer Token from different instance accepted (cross-instance tokens allowed): " +
+                  "token was issued by instance " + token_instance_id +
+                  " but this is instance " + instance_id_,
+              {"peer", context.peer()}, {"kind", "authentication"},
+              {"authentication_type", "bearer"}, {"result", "success"},
+              {"reason", "cross_instance_token_accepted"}, {"token_id", decoded.get_id()},
+              {"token_sub", decoded.get_subject()}, {"token_instance_id", token_instance_id},
+              {"server_instance_id", instance_id_});
+        } else {
+          GIZMOSQL_LOGKV(
+              WARNING,
+              "peer=" + context.peer() +
+                  " - Bearer Token instance_id mismatch: token was issued by instance " +
+                  token_instance_id + " but this is instance " + instance_id_,
+              {"peer", context.peer()}, {"kind", "authentication"},
+              {"authentication_type", "bearer"}, {"result", "failure"},
+              {"reason", "instance_id_mismatch"}, {"token_id", decoded.get_id()},
+              {"token_sub", decoded.get_subject()}, {"token_instance_id", token_instance_id},
+              {"server_instance_id", instance_id_});
+          return MakeFlightError(
+              flight::FlightStatusCode::Unauthenticated,
+              "Session not associated with this server instance (" + instance_id_ +
+                  "). Please reconnect to establish a new session.");
+        }
       }
     }
 

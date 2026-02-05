@@ -110,7 +110,12 @@ int main(int argc, char** argv) {
             ("license-key-file,L", po::value<std::string>()->default_value(""),
               "Path to the GizmoSQL Enterprise license key file (JWT format). "
               "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
-              "Required for enterprise features like instrumentation and kill session.");
+              "Required for enterprise features like instrumentation and kill session.")
+            ("allow-cross-instance-tokens", po::value<bool>()->default_value(false),
+              "Allow tokens issued by other server instances (with the same secret key) to be accepted. "
+              "Default is false (strict mode - tokens must be from this instance). "
+              "Useful for load-balanced deployments where clients may reconnect to different instances. "
+              "If not set, uses env var GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS (1/true to enable).");
 
   // clang-format on
 
@@ -251,6 +256,15 @@ int main(int argc, char** argv) {
   std::string license_key_file =
       vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
 
+  bool allow_cross_instance_tokens = vm["allow-cross-instance-tokens"].as<bool>();
+  if (!allow_cross_instance_tokens) {
+    // Check env var fallback
+    if (const char* env_val = std::getenv("GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS")) {
+      std::string val(env_val);
+      allow_cross_instance_tokens = (val == "1" || val == "true" || val == "TRUE" || val == "True");
+    }
+  }
+
   return RunFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
@@ -258,5 +272,6 @@ int main(int argc, char** argv) {
       token_allowed_audience, token_signature_verify_cert_path, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, license_key_file);
+      instrumentation_catalog, instrumentation_schema, license_key_file,
+      allow_cross_instance_tokens);
 }

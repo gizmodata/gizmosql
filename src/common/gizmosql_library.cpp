@@ -298,7 +298,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const bool& enable_instrumentation,
     const std::string& instrumentation_db_path,
     const std::string& instrumentation_catalog,
-    const std::string& instrumentation_schema) {
+    const std::string& instrumentation_schema,
+    const bool& allow_cross_instance_tokens) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -389,6 +390,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Set instance_id on auth middleware for JWT token creation and validation
     header_middleware->SetInstanceId(instance_id);
     bearer_middleware->SetInstanceId(instance_id);
+
+    // Configure cross-instance token acceptance if enabled
+    if (allow_cross_instance_tokens) {
+      bearer_middleware->SetAllowCrossInstanceTokens(true);
+      GIZMOSQL_LOG(INFO) << "Cross-instance token acceptance is enabled";
+    }
 
     GIZMOSQL_LOG(INFO) << "Server instance created";
 
@@ -598,7 +605,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const bool& enable_instrumentation,
     std::string instrumentation_db_path,
     std::string instrumentation_catalog,
-    std::string instrumentation_schema) {
+    std::string instrumentation_schema,
+    const bool& allow_cross_instance_tokens) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty()) {
     GIZMOSQL_LOG(INFO)
@@ -791,7 +799,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       token_signature_verify_cert_path, access_logging_enabled, query_timeout,
       query_log_level, auth_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema);
+      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -838,7 +846,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string instrumentation_db_path,
                        std::string instrumentation_catalog,
                        std::string instrumentation_schema,
-                       std::string license_key_file) {
+                       std::string license_key_file,
+                       const bool& allow_cross_instance_tokens) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -947,7 +956,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
       query_timeout, query_level, auth_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema);
+      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
