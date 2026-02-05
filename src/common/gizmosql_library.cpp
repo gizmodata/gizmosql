@@ -608,7 +608,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string instrumentation_schema,
     const bool& allow_cross_instance_tokens) {
   // Validate and default the arguments to env var values where applicable
-  if (database_filename.empty()) {
+  if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
         << "WARNING - The database filename was not provided, opening an in-memory "
            "database...";

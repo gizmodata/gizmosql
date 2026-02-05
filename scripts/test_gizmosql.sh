@@ -6,6 +6,9 @@ TLS_DIR=${SCRIPT_DIR}/../tls
 # Set a dummy password for the test...
 export GIZMOSQL_PASSWORD="testing123"
 
+# Use the TPC-H sample database (entrypoint defaults to in-memory)
+export DATABASE_FILENAME="data/TPC-H-small.duckdb"
+
 # Start the Flight SQL Server - in the background...
 ${SCRIPT_DIR}/start_gizmosql.sh &
 
