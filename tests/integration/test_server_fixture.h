@@ -56,7 +56,8 @@ CreateFlightSQLServer(
     const bool& enable_instrumentation,
     std::string instrumentation_db_path = "",
     std::string instrumentation_catalog = "",
-    std::string instrumentation_schema = "");
+    std::string instrumentation_schema = "",
+    const bool& allow_cross_instance_tokens = false);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -77,6 +78,7 @@ struct TestServerConfig {
   std::string init_sql_commands = "";           // SQL commands to run on startup
   std::string instrumentation_catalog = "";     // Catalog for instrumentation (if using DuckLake)
   std::string instrumentation_schema = "";      // Schema within instrumentation catalog
+  bool allow_cross_instance_tokens = false;     // Allow tokens from other server instances
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -161,7 +163,8 @@ class ServerTestFixture : public ::testing::Test {
         /*enable_instrumentation=*/config_.enable_instrumentation,
         /*instrumentation_db_path=*/"",
         /*instrumentation_catalog=*/config_.instrumentation_catalog,
-        /*instrumentation_schema=*/config_.instrumentation_schema);
+        /*instrumentation_schema=*/config_.instrumentation_schema,
+        /*allow_cross_instance_tokens=*/config_.allow_cross_instance_tokens);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;
@@ -239,6 +242,8 @@ class ServerTestFixture : public ::testing::Test {
   const std::string& GetUsername() const { return config_.username; }
 
   const std::string& GetPassword() const { return config_.password; }
+
+  bool GetAllowCrossInstanceTokens() const { return config_.allow_cross_instance_tokens; }
 };
 
 }  // namespace gizmosql::testing

@@ -154,6 +154,11 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
   /// Set the instance ID for JWT validation. Must be called before any requests are processed.
   void SetInstanceId(const std::string& instance_id) { instance_id_ = instance_id; }
 
+  /// Allow tokens issued by other server instances (with the same secret key) to be accepted.
+  /// When true, the instance_id check is skipped (useful for load-balanced deployments).
+  /// Default is false (strict mode - tokens must be from this instance).
+  void SetAllowCrossInstanceTokens(bool allow) { allow_cross_instance_tokens_ = allow; }
+
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
                           std::shared_ptr<flight::ServerMiddleware>* middleware) override;
@@ -162,6 +167,7 @@ class BearerAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory
   std::string secret_key_;
   arrow::util::ArrowLogLevel auth_log_level_;
   std::string instance_id_;
+  bool allow_cross_instance_tokens_ = false;
 
   // Track tokens we've already logged as successfully validated
   mutable std::shared_mutex token_log_mutex_;

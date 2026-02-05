@@ -70,6 +70,7 @@ enum class BackendType { duckdb, sqlite };
  * @param instrumentation_catalog [Enterprise] Catalog name for instrumentation. If set, uses a pre-attached catalog (e.g., DuckLake) instead of a file. The catalog must be attached via init_sql_commands. If empty, uses env var GIZMOSQL_INSTRUMENTATION_CATALOG.
  * @param instrumentation_schema [Enterprise] Schema within the instrumentation catalog. Default is "main". If empty, uses env var GIZMOSQL_INSTRUMENTATION_SCHEMA, or defaults to "main".
  * @param license_key_file Path to the GizmoSQL Enterprise license key file (JWT format). If empty, uses env var GIZMOSQL_LICENSE_KEY_FILE. Required for enterprise features.
+ * @param allow_cross_instance_tokens Allow tokens issued by other server instances (with the same secret key) to be accepted. Default is false (strict mode). Useful for load-balanced deployments where clients may reconnect to different instances.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -103,5 +104,6 @@ int RunFlightSQLServer(
     std::string instrumentation_db_path = "",
     std::string instrumentation_catalog = "",
     std::string instrumentation_schema = "",
-    std::string license_key_file = "");
+    std::string license_key_file = "",
+    const bool& allow_cross_instance_tokens = false);
 }
