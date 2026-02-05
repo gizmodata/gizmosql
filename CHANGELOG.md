@@ -5,6 +5,18 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Cross-Instance Token Acceptance
+- New `--allow-cross-instance-tokens` CLI flag to relax instance_id validation during bearer token authentication
+- New `GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS` environment variable (set to `1` or `true` to enable)
+- Useful for load-balanced deployments where multiple GizmoSQL server instances share the same secret key
+- When enabled, tokens issued by other server instances (with valid signatures) are accepted
+- Default behavior unchanged - strict mode rejects tokens from other instances
+- See [Token Authentication docs](https://gizmodata.github.io/gizmosql/#/token_authentication) for details
+
 ## [1.16.0] - 2026-01-28
 
 ### Added
