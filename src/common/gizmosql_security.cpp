@@ -21,6 +21,9 @@
 #include "gizmosql_security.h"
 #include "request_ctx.h"
 #include "enterprise/enterprise_features.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/jwks/jwks_manager.h"
+#endif
 
 namespace fs = std::filesystem;
 
@@ -100,6 +103,40 @@ std::optional<std::vector<CatalogAccessRule>> ParseCatalogAccessClaim(
     GIZMOSQL_LOG(WARNING) << "Failed to parse catalog_access claim: " << e.what();
     return std::nullopt;
   }
+}
+
+// Helper to safely get an optional string claim from a JWT.
+// Returns empty string if the claim is missing.
+std::string SafeGetClaim(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded,
+    const std::string& claim_name) {
+  if (decoded.has_payload_claim(claim_name)) {
+    try {
+      return decoded.get_payload_claim(claim_name).as_string();
+    } catch (...) {
+      return "";
+    }
+  }
+  return "";
+}
+
+// Helper to safely get the token ID (jti) from a JWT.
+// Returns "(no-jti)" if the claim is missing.
+std::string SafeGetTokenId(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) {
+  auto val = SafeGetClaim(decoded, "jti");
+  return val.empty() ? "(no-jti)" : val;
+}
+
+// Extract the best available username from a decoded JWT.
+// Prefers "email" claim (human-readable), falls back to "sub".
+std::string ExtractUsername(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) {
+  auto email = SafeGetClaim(decoded, "email");
+  if (!email.empty()) {
+    return email;
+  }
+  return decoded.get_subject();
 }
 
 // ----------------------------------------
@@ -290,13 +327,11 @@ BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
                              "token-based authentication");
   }
 
-  if (!token_allowed_issuer_.empty() && !token_allowed_audience_.empty() &&
-      !token_signature_verify_cert_path_.empty()) {
-    // Load the cert file into a private string member
+  if (!token_allowed_issuer_.empty() && !token_allowed_audience_.empty()) {
     if (!token_signature_verify_cert_path_.empty()) {
+      // Static cert path mode (Core or Enterprise)
       std::ifstream cert_file(token_signature_verify_cert_path_);
       if (!cert_file) {
-        // Raise error here, can't return from constructor
         throw std::runtime_error("Could not open certificate file: " +
                                  token_signature_verify_cert_path_.string());
       } else {
@@ -304,12 +339,19 @@ BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
         cert << cert_file.rdbuf();
         token_signature_verify_cert_file_contents_ = cert.str();
       }
+      token_auth_enabled_ = true;
+      GIZMOSQL_LOG(INFO) << "Token auth is enabled on the server - Allowed Issuer: '"
+                         << token_allowed_issuer_ << "' - Allowed Audience: '"
+                         << token_allowed_audience_ << "' - Signature Verify Cert Path: '"
+                         << token_signature_verify_cert_path_.string() << "'";
+    } else {
+      // No static cert - token auth will be enabled if JWKS manager is set later
+      // (via SetJwksManager, called from FlightSQLServerBuilder after Enterprise init)
+      token_auth_enabled_ = true;
+      GIZMOSQL_LOG(INFO) << "Token auth is enabled on the server (JWKS mode) - Allowed Issuer: '"
+                         << token_allowed_issuer_ << "' - Allowed Audience: '"
+                         << token_allowed_audience_ << "'";
     }
-    token_auth_enabled_ = true;
-    GIZMOSQL_LOG(INFO) << "Token auth is enabled on the server - Allowed Issuer: '"
-                       << token_allowed_issuer_ << "' - Allowed Audience: '"
-                       << token_allowed_audience_ << "' - Signature Verify Cert Path: '"
-                       << token_signature_verify_cert_path_.string() << "'";
   }
 }
 
@@ -411,9 +453,12 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
         auto claim = bootstrap_decoded_token.get_payload_claim("catalog_access");
         catalog_access_json = claim.to_json().serialize();
       }
+      // Determine role: from token claim or default
+      std::string bootstrap_role = bootstrap_decoded_token.has_payload_claim("role")
+                                       ? bootstrap_decoded_token.get_payload_claim("role").as_string()
+                                       : token_default_role_;
       *middleware = std::make_shared<BasicAuthServerMiddleware>(
-          bootstrap_decoded_token.get_subject(),
-          bootstrap_decoded_token.get_payload_claim("role").as_string(), "BootstrapToken",
+          ExtractUsername(bootstrap_decoded_token), bootstrap_role, "BootstrapToken",
           secret_key_, instance_id_, catalog_access_json);
     }
   }
@@ -432,31 +477,105 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
 
     const auto iss = decoded.get_issuer();
 
-    auto verifier = jwt::verify();
-    if (iss == token_allowed_issuer_) {
-      verifier = verifier
-                     .allow_algorithm(jwt::algorithm::rs256(
-                         token_signature_verify_cert_file_contents_, "", "", ""))
-                     .with_issuer(std::string(token_allowed_issuer_))
-                     .with_audience(token_allowed_audience_);
-    } else {
+    if (iss != token_allowed_issuer_) {
       GIZMOSQL_LOGKV(
           WARNING,
           "peer=" + context.peer() +
               " - Bootstrap Bearer Token has an invalid 'iss' claim value of: " + iss +
-              " - token_claims=(id=" + decoded.get_id() +
-              " sub=" + decoded.get_subject() + " iss=" + decoded.get_issuer() + ")",
+              " - token_claims=(id=" + SafeGetTokenId(decoded) +
+              " sub=" + ExtractUsername(decoded) + " iss=" + decoded.get_issuer() + ")",
           {"peer", context.peer()}, {"kind", "authentication"},
           {"authentication_type", "bearer"}, {"result", "failure"},
-          {"reason", "invalid_issuer"}, {"token_id", decoded.get_id()},
-          {"token_sub", decoded.get_subject()}, {"token_iss", decoded.get_issuer()});
+          {"reason", "invalid_issuer"}, {"token_id", SafeGetTokenId(decoded)},
+          {"token_sub", ExtractUsername(decoded)}, {"token_iss", decoded.get_issuer()});
       return Status::Invalid("Invalid token issuer");
+    }
+
+    // Build verifier based on available verification method
+    auto verifier = jwt::verify()
+                        .with_issuer(std::string(token_allowed_issuer_))
+                        .with_audience(token_allowed_audience_);
+
+    bool verified_via_jwks = false;
+
+#ifdef GIZMOSQL_ENTERPRISE
+    if (jwks_manager_) {
+      // JWKS-based verification (Enterprise feature)
+      if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsExternalAuthAvailable()) {
+        return MakeFlightError(
+            flight::FlightStatusCode::Unauthenticated,
+            "SSO/OAuth authentication via JWKS requires GizmoSQL Enterprise Edition with "
+            "the 'external_auth' feature. Use username/password authentication or a static "
+            "certificate, or visit https://gizmodata.com/enterprise");
+      }
+
+      // Extract kid from JWT header
+      auto header = decoded.get_header_json();
+      std::string kid;
+      if (decoded.has_header_claim("kid")) {
+        kid = decoded.get_header_claim("kid").as_string();
+      }
+      if (kid.empty()) {
+        return Status::Invalid("JWT token missing 'kid' header claim, required for JWKS verification");
+      }
+
+      // Get the public key for this kid
+      auto key_result = jwks_manager_->GetKeyForKid(kid);
+      if (!key_result.ok()) {
+        return Status::Invalid("Failed to find public key for kid '" + kid +
+                               "': " + key_result.status().ToString());
+      }
+
+      // Get the algorithm
+      auto alg_result = jwks_manager_->GetAlgorithmForKid(kid);
+      std::string alg = alg_result.ok() ? *alg_result : "";
+
+      // Also check the JWT header for algorithm
+      if (alg.empty() && decoded.has_header_claim("alg")) {
+        alg = decoded.get_header_claim("alg").as_string();
+      }
+
+      // Apply the appropriate algorithm based on the key type
+      if (alg == "RS256" || alg.empty()) {
+        verifier.allow_algorithm(jwt::algorithm::rs256(*key_result, "", "", ""));
+      } else if (alg == "RS384") {
+        verifier.allow_algorithm(jwt::algorithm::rs384(*key_result, "", "", ""));
+      } else if (alg == "RS512") {
+        verifier.allow_algorithm(jwt::algorithm::rs512(*key_result, "", "", ""));
+      } else if (alg == "ES256") {
+        verifier.allow_algorithm(jwt::algorithm::es256(*key_result, "", "", ""));
+      } else if (alg == "ES384") {
+        verifier.allow_algorithm(jwt::algorithm::es384(*key_result, "", "", ""));
+      } else if (alg == "ES512") {
+        verifier.allow_algorithm(jwt::algorithm::es512(*key_result, "", "", ""));
+      } else {
+        return Status::Invalid("Unsupported JWT algorithm: " + alg);
+      }
+
+      verified_via_jwks = true;
+    } else
+#endif
+    if (!token_signature_verify_cert_file_contents_.empty()) {
+      // Static certificate verification (Core or Enterprise)
+      verifier.allow_algorithm(jwt::algorithm::rs256(
+          token_signature_verify_cert_file_contents_, "", "", ""));
+    } else {
+      return Status::Invalid(
+          "Token verification not configured: no JWKS manager or static certificate available");
     }
 
     verifier.verify(decoded);
 
+    // Handle 'role' claim: use token's role, fall back to default, or reject
     if (!decoded.has_payload_claim("role")) {
-      return Status::Invalid("Bootstrap Bearer Token MUST have a 'role' claim");
+      if (!token_default_role_.empty()) {
+        GIZMOSQL_LOG(DEBUG) << "Token missing 'role' claim, using default role: "
+                            << token_default_role_;
+      } else {
+        return Status::Invalid(
+            "Bootstrap Bearer Token missing 'role' claim. Either configure the IdP to "
+            "include a 'role' claim, or set --token-default-role on the server.");
+      }
     }
 
     // Check if token has catalog_access claim - this requires enterprise license
@@ -476,17 +595,22 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
       }
     }
 
+    // Determine the role: from token claim or default
+    std::string role = decoded.has_payload_claim("role")
+                           ? decoded.get_payload_claim("role").as_string()
+                           : token_default_role_;
+
     GIZMOSQL_LOGKV_DYNAMIC(
         auth_log_level_,
         "peer=" + context.peer() +
             " - Bootstrap Bearer Token was validated successfully" +
-            " - token_claims=(id=" + decoded.get_id() + " sub=" + decoded.get_subject() +
-            " iss=" + decoded.get_issuer() +
-            " role=" + decoded.get_payload_claim("role").as_string() + ")",
+            " - token_claims=(id=" + SafeGetTokenId(decoded) +
+            " user=" + ExtractUsername(decoded) +
+            " iss=" + decoded.get_issuer() + " role=" + role + ")",
         {"peer", context.peer()}, {"kind", "authentication"},
         {"authentication_type", "bearer"}, {"result", "success"},
-        {"token_id", decoded.get_id()}, {"token_sub", decoded.get_subject()},
-        {"token_role", decoded.get_payload_claim("role").as_string()},
+        {"token_id", SafeGetTokenId(decoded)}, {"token_user", ExtractUsername(decoded)},
+        {"token_role", role},
         {"token_iss", decoded.get_issuer()});
 
     return decoded;
@@ -546,8 +670,8 @@ BearerAuthServerMiddlewareFactory::BearerAuthServerMiddlewareFactory(
 arrow::util::ArrowLogLevel BearerAuthServerMiddlewareFactory::GetTokenLogLevel(
     const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& decoded) const {
   arrow::util::ArrowLogLevel level = arrow::util::ArrowLogLevel::ARROW_DEBUG;
-  const std::string& token_id = decoded.get_id();
-  if (token_id.empty()) {
+  const std::string token_id = SafeGetTokenId(decoded);
+  if (token_id.empty() || token_id == "(no-jti)") {
     return level;
   }
 
@@ -595,11 +719,11 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
           WARNING,
           "peer=" + context.peer() +
               " - Bearer Token has an invalid 'iss' claim value of: " + iss +
-              " - token_claims=(id=" + decoded.get_id() +
+              " - token_claims=(id=" + SafeGetTokenId(decoded) +
               " sub=" + decoded.get_subject() + " iss=" + decoded.get_issuer() + ")",
           {"peer", context.peer()}, {"kind", "authentication"},
           {"authentication_type", "bearer"}, {"result", "failure"},
-          {"reason", "invalid_issuer"}, {"token_id", decoded.get_id()},
+          {"reason", "invalid_issuer"}, {"token_id", SafeGetTokenId(decoded)},
           {"token_sub", decoded.get_subject()}, {"token_iss", decoded.get_issuer()});
       return Status::Invalid("Invalid token issuer");
     }
@@ -620,7 +744,7 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
                   " but this is instance " + instance_id_,
               {"peer", context.peer()}, {"kind", "authentication"},
               {"authentication_type", "bearer"}, {"result", "success"},
-              {"reason", "cross_instance_token_accepted"}, {"token_id", decoded.get_id()},
+              {"reason", "cross_instance_token_accepted"}, {"token_id", SafeGetTokenId(decoded)},
               {"token_sub", decoded.get_subject()}, {"token_instance_id", token_instance_id},
               {"server_instance_id", instance_id_});
         } else {
@@ -631,7 +755,7 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
                   token_instance_id + " but this is instance " + instance_id_,
               {"peer", context.peer()}, {"kind", "authentication"},
               {"authentication_type", "bearer"}, {"result", "failure"},
-              {"reason", "instance_id_mismatch"}, {"token_id", decoded.get_id()},
+              {"reason", "instance_id_mismatch"}, {"token_id", SafeGetTokenId(decoded)},
               {"token_sub", decoded.get_subject()}, {"token_instance_id", token_instance_id},
               {"server_instance_id", instance_id_});
           return MakeFlightError(
@@ -647,11 +771,11 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
     GIZMOSQL_LOGKV_DYNAMIC(
         token_log_level,
         "peer=" + context.peer() + " - Bearer Token was validated successfully" +
-            " - token_claims=(id=" + decoded.get_id() + " sub=" + decoded.get_subject() +
+            " - token_claims=(id=" + SafeGetTokenId(decoded) + " sub=" + decoded.get_subject() +
             " iss=" + decoded.get_issuer() + ")",
         {"peer", context.peer()}, {"kind", "authentication"},
         {"authentication_type", "bearer"}, {"result", "success"},
-        {"token_id", decoded.get_id()}, {"token_sub", decoded.get_subject()},
+        {"token_id", SafeGetTokenId(decoded)}, {"token_sub", decoded.get_subject()},
         {"token_iss", decoded.get_issuer()});
 
     return decoded;

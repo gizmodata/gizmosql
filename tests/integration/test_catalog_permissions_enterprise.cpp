@@ -203,6 +203,8 @@ class BootstrapTokenEnterpriseFixture : public ::testing::Test {
         /*token_allowed_issuer=*/kBootstrapTokenIssuer,
         /*token_allowed_audience=*/kBootstrapTokenAudience,
         /*token_signature_verify_cert_path=*/public_key_path_,
+        /*token_jwks_uri=*/"",
+        /*token_default_role=*/"",
         /*access_logging_enabled=*/false,
         /*query_timeout=*/0,
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,

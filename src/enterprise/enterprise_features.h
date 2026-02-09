@@ -18,6 +18,7 @@ namespace gizmosql::enterprise {
 constexpr const char* kFeatureInstrumentation = "instrumentation";
 constexpr const char* kFeatureKillSession = "kill_session";
 constexpr const char* kFeatureCatalogPermissions = "catalog_permissions";
+constexpr const char* kFeatureExternalAuth = "external_auth";
 
 /// Singleton class for managing enterprise feature availability
 class EnterpriseFeatures {
@@ -45,6 +46,9 @@ class EnterpriseFeatures {
 
   /// Check if catalog permissions feature is available (per-catalog access control via bootstrap tokens)
   bool IsCatalogPermissionsAvailable() const;
+
+  /// Check if external auth feature is available (JWKS/OIDC SSO authentication)
+  bool IsExternalAuthAvailable() const;
 
   /// Get the license manager (for advanced usage)
   LicenseManager* GetLicenseManager() const { return license_manager_.get(); }

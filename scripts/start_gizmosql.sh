@@ -32,6 +32,8 @@
 #   GIZMOSQL_INSTRUMENTATION_SCHEMA  --instrumentation-schema
 #   GIZMOSQL_LICENSE_KEY_FILE        --license-key-file
 #   GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS --allow-cross-instance-tokens
+#   GIZMOSQL_TOKEN_JWKS_URI              --token-jwks-uri
+#   GIZMOSQL_TOKEN_DEFAULT_ROLE          --token-default-role
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────
 #   GIZMOSQL_EXTRA_ARGS       Appended verbatim to the command line.

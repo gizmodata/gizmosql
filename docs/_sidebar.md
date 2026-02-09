@@ -5,6 +5,7 @@
 * Getting Started
   * [Editions](editions.md)
   * [Token Authentication](token_authentication.md)
+  * [OAuth / SSO Setup](oauth_sso_setup.md) *(Enterprise)*
   * [Bulk Ingestion](bulk_ingestion.md)
   * [DuckLake Integration](ducklake.md)
   * [Geometry & Spatial](geometry.md)

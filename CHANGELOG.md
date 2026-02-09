@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `:memory:` as an explicit value for `DATABASE_FILENAME` to request in-memory mode
 - Comprehensive env var documentation in entrypoint script headers
 
+#### SSO/OAuth Authentication via JWKS Auto-Discovery (Enterprise)
+- New `--token-jwks-uri` CLI flag / `GIZMOSQL_TOKEN_JWKS_URI` env var to specify a direct JWKS endpoint URL for token signature verification
+- Automatic JWKS discovery from `--token-allowed-issuer` via OIDC `.well-known/openid-configuration` when no static cert path is provided
+- Thread-safe JWKS key cache with configurable TTL and automatic refresh on key rotation (kid miss)
+- Support for RSA (RS256/RS384/RS512) and EC (ES256/ES384/ES512) key types from JWKS
+- New `--token-default-role` CLI flag / `GIZMOSQL_TOKEN_DEFAULT_ROLE` env var to assign a default role when IdP tokens lack a `role` claim
+- Enterprise gating: JWKS-based external auth requires a valid Enterprise license; static cert path verification remains available in Core edition
+- See [Token Authentication docs](https://gizmodata.github.io/gizmosql/#/token_authentication) for details
+
 ## [1.16.1] - 2026-02-05
 
 ### Added

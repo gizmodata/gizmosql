@@ -54,6 +54,7 @@
 #include "enterprise/enterprise_features.h"
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
+#include "enterprise/jwks/jwks_manager.h"
 #endif
 #include "version.h"
 
@@ -291,7 +292,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const fs::path& mtls_ca_cert_path, const std::string& init_sql_commands,
     const bool& read_only, const bool& print_queries,
     const std::string& token_allowed_issuer, const std::string& token_allowed_audience,
-    const fs::path& token_signature_verify_cert_path, const bool& access_logging_enabled,
+    const fs::path& token_signature_verify_cert_path,
+    const std::string& token_jwks_uri, const std::string& token_default_role,
+    const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
     const std::string& health_check_query,
@@ -334,6 +337,41 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       token_signature_verify_cert_path, auth_log_level, tls_enabled, mtls_enabled);
   auto bearer_middleware = std::make_shared<gizmosql::BearerAuthServerMiddlewareFactory>(
       secret_key, auth_log_level);
+
+  // Configure token default role
+  if (!token_default_role.empty()) {
+    header_middleware->SetTokenDefaultRole(token_default_role);
+  }
+
+#ifdef GIZMOSQL_ENTERPRISE
+  // Initialize JWKS manager for external token verification (Enterprise feature)
+  if (!token_jwks_uri.empty() || (!token_allowed_issuer.empty() &&
+      !token_allowed_audience.empty() && token_signature_verify_cert_path.empty())) {
+    std::shared_ptr<gizmosql::enterprise::JwksManager> jwks_manager;
+
+    if (!token_jwks_uri.empty()) {
+      // Explicit JWKS URI
+      jwks_manager = std::make_shared<gizmosql::enterprise::JwksManager>(token_jwks_uri);
+      GIZMOSQL_LOG(INFO) << "JWKS manager initialized with URI: " << token_jwks_uri;
+    } else {
+      // Auto-discover from issuer
+      auto result = gizmosql::enterprise::JwksManager::CreateFromIssuer(token_allowed_issuer);
+      if (result.ok()) {
+        jwks_manager = std::shared_ptr<gizmosql::enterprise::JwksManager>(std::move(*result));
+        GIZMOSQL_LOG(INFO) << "JWKS manager initialized via OIDC discovery from issuer: "
+                           << token_allowed_issuer;
+      } else {
+        GIZMOSQL_LOG(WARNING) << "Failed to auto-discover JWKS from issuer '"
+                              << token_allowed_issuer << "': " << result.status().ToString()
+                              << " - JWKS-based token verification will not be available";
+      }
+    }
+
+    if (jwks_manager) {
+      header_middleware->SetJwksManager(jwks_manager);
+    }
+  }
+#endif
 
   options.auth_handler = std::make_unique<flight::NoOpAuthHandler>();
   options.middleware.push_back({"header-auth-server", header_middleware});
@@ -598,6 +636,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string init_sql_commands, fs::path init_sql_commands_file,
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
+    std::string token_jwks_uri, std::string token_default_role,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
@@ -744,6 +783,16 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     }
   }
 
+  // Resolve JWKS URI: CLI arg > env var
+  if (token_jwks_uri.empty()) {
+    token_jwks_uri = SafeGetEnvVarValue("GIZMOSQL_TOKEN_JWKS_URI");
+  }
+
+  // Resolve token default role: CLI arg > env var
+  if (token_default_role.empty()) {
+    token_default_role = SafeGetEnvVarValue("GIZMOSQL_TOKEN_DEFAULT_ROLE");
+  }
+
   if (!token_allowed_issuer.empty()) {
     GIZMOSQL_LOG(INFO)
         << "INFO - Using token authentication - the token allowed issuer is set to: '"
@@ -753,16 +802,25 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
           "The token allowed issuer is set, but audience is not set.  "
           "Pass a value to this argument to secure the server.");
     }
-    if (token_signature_verify_cert_path.empty()) {
-      return arrow::Status::Invalid(
-          "The token allowed issuer is set, but token signature verification certificate "
-          "path is not set.");
+    if (token_signature_verify_cert_path.empty() && token_jwks_uri.empty()) {
+      // No static cert and no explicit JWKS URI - attempt OIDC auto-discovery (Enterprise)
+      GIZMOSQL_LOG(INFO)
+          << "INFO - No cert path or JWKS URI specified; will attempt OIDC auto-discovery "
+          << "from issuer '" << token_allowed_issuer << "' at runtime";
+    } else if (!token_signature_verify_cert_path.empty()) {
+      GIZMOSQL_LOG(INFO)
+          << "INFO - The token signature verification certificate path is set to: "
+          << token_signature_verify_cert_path.string();
+    }
+    if (!token_jwks_uri.empty()) {
+      GIZMOSQL_LOG(INFO) << "INFO - Token JWKS URI is set to: " << token_jwks_uri;
     }
     GIZMOSQL_LOG(INFO) << "INFO - The token audience is set to: '"
                        << token_allowed_audience << "'";
-    GIZMOSQL_LOG(INFO)
-        << "INFO - The token signature verification certificate path is set to: "
-        << token_signature_verify_cert_path.string();
+  }
+
+  if (!token_default_role.empty()) {
+    GIZMOSQL_LOG(INFO) << "INFO - Token default role is set to: '" << token_default_role << "'";
   }
 
   GIZMOSQL_LOG(INFO) << "Query timeout (in seconds) is set to: " << query_timeout
@@ -796,7 +854,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
-      token_signature_verify_cert_path, access_logging_enabled, query_timeout,
+      token_signature_verify_cert_path, token_jwks_uri, token_default_role,
+      access_logging_enabled, query_timeout,
       query_log_level, auth_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);
@@ -837,7 +896,10 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        fs::path init_sql_commands_file, const bool& print_queries,
                        const bool& read_only, std::string token_allowed_issuer,
                        std::string token_allowed_audience,
-                       fs::path token_signature_verify_cert_path, std::string log_level,
+                       fs::path token_signature_verify_cert_path,
+                       std::string token_jwks_uri,
+                       std::string token_default_role,
+                       std::string log_level,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
@@ -953,7 +1015,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
-      token_allowed_audience, token_signature_verify_cert_path, access_logging_enabled,
+      token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
+      token_default_role, access_logging_enabled,
       query_timeout, query_level, auth_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);

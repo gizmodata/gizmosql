@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.25)
+project(cpp-httplib)
+
+set(CMAKE_CXX_STANDARD 17)
+
+include(ExternalProject)
+
+ExternalProject_Add(
+    httplib_project
+    PREFIX ${CMAKE_BINARY_DIR}/third_party
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.18.3
+    CMAKE_ARGS
+      -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/cpp-httplib
+      -DHTTPLIB_REQUIRE_OPENSSL=ON
+    BUILD_COMMAND ""  # This is a header only library
+)

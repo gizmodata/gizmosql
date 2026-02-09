@@ -38,6 +38,12 @@
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 
+#ifdef GIZMOSQL_ENTERPRISE
+namespace gizmosql::enterprise {
+class JwksManager;
+}  // namespace gizmosql::enterprise
+#endif
+
 namespace gizmosql {
 class SecurityUtilities {
  public:
@@ -104,6 +110,16 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   /// Set the instance ID for JWT tokens. Must be called before any requests are processed.
   void SetInstanceId(const std::string& instance_id) { instance_id_ = instance_id; }
 
+  /// Set the default role for tokens that lack a 'role' claim (e.g., IdP tokens).
+  void SetTokenDefaultRole(const std::string& role) { token_default_role_ = role; }
+
+#ifdef GIZMOSQL_ENTERPRISE
+  /// Set the JWKS manager for validating externally-issued tokens via JWKS.
+  void SetJwksManager(std::shared_ptr<gizmosql::enterprise::JwksManager> manager) {
+    jwks_manager_ = std::move(manager);
+  }
+#endif
+
   arrow::Status StartCall(const flight::CallInfo& info,
                           const flight::ServerCallContext& context,
                           std::shared_ptr<flight::ServerMiddleware>* middleware) override;
@@ -121,6 +137,10 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   bool mtls_enabled_ = false;
   arrow::util::ArrowLogLevel auth_log_level_;
   std::string instance_id_;
+  std::string token_default_role_;
+#ifdef GIZMOSQL_ENTERPRISE
+  std::shared_ptr<gizmosql::enterprise::JwksManager> jwks_manager_;
+#endif
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
   VerifyAndDecodeBootstrapToken(const std::string& token,

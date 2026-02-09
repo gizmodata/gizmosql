@@ -34,6 +34,7 @@ GizmoSQL Enterprise includes all Core features plus:
 | **Session Instrumentation** | Track instances, sessions, and SQL statements for auditing, monitoring, and debugging. Records are stored in a DuckDB database for analysis. |
 | **KILL SESSION** | Terminate active client sessions programmatically via `KILL SESSION 'session-id'` SQL command. Requires admin role. |
 | **Per-Catalog Permissions** | Fine-grained access control via bootstrap tokens. Use the `catalog_access` JWT claim to grant read, write, or no access to specific catalogs on a per-user basis. |
+| **SSO/OAuth (JWKS Auto-Discovery)** | Validate IdP-issued tokens (Keycloak, Okta, Auth0, Azure AD) via JWKS auto-discovery. Supports OIDC `.well-known` discovery, key rotation, and RS256/ES256 algorithms. |
 
 ### Obtaining a License
 
@@ -116,6 +117,7 @@ Returns:
 | **Session Instrumentation** | - | ✓ |
 | **KILL SESSION Command** | - | ✓ |
 | **Per-Catalog Permissions** | - | ✓ |
+| **SSO/OAuth (JWKS)** | - | ✓ |
 
 ---
 

@@ -4,10 +4,13 @@
 
 #include "license_manager.h"
 #include "license_public_key.h"
+#include "enterprise_features.h"
 
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 #include <jwt-cpp/jwt.h>
 
@@ -143,12 +146,45 @@ std::string LicenseManager::FormatLicenseForDisplay(const LicenseInfo& license) 
     return ss.str();
   };
 
+  // Map feature keys to human-friendly display names
+  static const std::vector<std::pair<std::string, std::string>> feature_display_names = {
+      {kFeatureInstrumentation, "Instrumentation"},
+      {kFeatureKillSession, "Kill Session"},
+      {kFeatureCatalogPermissions, "Catalog Permissions"},
+      {kFeatureExternalAuth, "SSO/OAuth (External Auth)"},
+  };
+
   oss << "GizmoSQL Enterprise Edition - Copyright (c) 2026 GizmoData LLC\n";
   oss << " License ID: " << license.license_id << "\n";
   oss << " Licensed to: " << license.audience << " (" << license.subject << ")\n";
   oss << " License issued: " << format_time(license.issued_at) << "\n";
   oss << " License expires: " << format_time(license.expires_at) << "\n";
-  oss << " Licensed by: " << license.issuer;
+  oss << " Licensed by: " << license.issuer << "\n";
+  oss << " Licensed features: ";
+  if (license.features.empty()) {
+    oss << "(none)";
+  } else {
+    bool first = true;
+    for (const auto& [key, name] : feature_display_names) {
+      if (license.HasFeature(key)) {
+        if (!first) oss << ", ";
+        oss << name;
+        first = false;
+      }
+    }
+    // Include any features not in the display map (future-proofing)
+    for (const auto& feature : license.features) {
+      bool found = false;
+      for (const auto& [key, name] : feature_display_names) {
+        if (key == feature) { found = true; break; }
+      }
+      if (!found) {
+        if (!first) oss << ", ";
+        oss << feature;
+        first = false;
+      }
+    }
+  }
 
   return oss.str();
 }

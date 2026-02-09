@@ -74,6 +74,14 @@ int main(int argc, char** argv) {
             ("token-signature-verify-cert-path", po::value<std::string>()->default_value(""),
              "Specify the RSA PEM certificate file used for verifying tokens used in JWT token-based authentication - see docs for details.  "
               "If not set, we will use env var: 'TOKEN_SIGNATURE_VERIFY_CERT_PATH'.")
+            ("token-jwks-uri", po::value<std::string>()->default_value(""),
+             "[Enterprise] Direct URL to a JWKS endpoint for token verification (e.g., https://idp.example.com/.well-known/jwks.json). "
+             "If not set, uses env var 'GIZMOSQL_TOKEN_JWKS_URI'. When --token-allowed-issuer is set without a cert path or JWKS URI, "
+             "auto-discovers JWKS from the issuer's .well-known/openid-configuration.")
+            ("token-default-role", po::value<std::string>()->default_value(""),
+             "Default role to assign when an external token lacks a 'role' claim (e.g., 'admin', 'user'). "
+             "If not set, uses env var 'GIZMOSQL_TOKEN_DEFAULT_ROLE'. If a token has no 'role' claim and no default is configured, "
+             "the token is rejected.")
             // -------- Logging controls (raw strings; library normalizes) --------
             ("log-level",  po::value<std::string>()->default_value(""),
              "Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_LOG_LEVEL or defaults to info.")
@@ -215,6 +223,12 @@ int main(int argc, char** argv) {
         fs::path(vm["token-signature-verify-cert-path"].as<std::string>());
   }
 
+  std::string token_jwks_uri =
+      vm.count("token-jwks-uri") ? vm["token-jwks-uri"].as<std::string>() : "";
+
+  std::string token_default_role =
+      vm.count("token-default-role") ? vm["token-default-role"].as<std::string>() : "";
+
   std::string log_level = vm.count("log-level") ? vm["log-level"].as<std::string>() : "";
   std::string log_format =
       vm.count("log-format") ? vm["log-format"].as<std::string>() : "";
@@ -269,7 +283,8 @@ int main(int argc, char** argv) {
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
-      token_allowed_audience, token_signature_verify_cert_path, log_level, log_format,
+      token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
+      token_default_role, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,

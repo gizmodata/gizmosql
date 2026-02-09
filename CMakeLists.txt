@@ -159,6 +159,20 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 
 set(JWT_CPP_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include")
 
+# --------------------- cpp-httplib (header-only HTTP client) ---------------------
+
+configure_file(third_party/httplib_CMakeLists.txt.in cpp-httplib/CMakeLists.txt)
+execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
+        COMMAND_ERROR_IS_FATAL ANY
+)
+execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
+        COMMAND_ERROR_IS_FATAL ANY
+)
+
+set(HTTPLIB_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/cpp-httplib/include")
+
 # --------------------- JSON ---------------------
 
 include(FetchContent)
@@ -250,7 +264,8 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/instrumentation/instrumentation_manager.cpp
             src/enterprise/instrumentation/instrumentation_records.cpp
             src/enterprise/kill_session/kill_session_handler.cpp
-            src/enterprise/catalog_permissions/catalog_permissions_handler.cpp)
+            src/enterprise/catalog_permissions/catalog_permissions_handler.cpp
+            src/enterprise/jwks/jwks_manager.cpp)
 endif()
 
 # Add a library target
@@ -299,6 +314,8 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/instrumentation
             src/enterprise/kill_session
             src/enterprise/catalog_permissions
+            src/enterprise/jwks
+            ${HTTPLIB_INCLUDE_DIR}
     )
     target_compile_definitions(gizmosqlserver PUBLIC GIZMOSQL_ENTERPRISE)
 endif()

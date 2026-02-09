@@ -49,6 +49,7 @@ CreateFlightSQLServer(
     std::string init_sql_commands, fs::path init_sql_commands_file,
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
+    std::string token_jwks_uri, std::string token_default_role,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
@@ -79,6 +80,8 @@ struct TestServerConfig {
   std::string instrumentation_catalog = "";     // Catalog for instrumentation (if using DuckLake)
   std::string instrumentation_schema = "";      // Schema within instrumentation catalog
   bool allow_cross_instance_tokens = false;     // Allow tokens from other server instances
+  std::string token_jwks_uri = "";              // JWKS endpoint URL for token verification
+  std::string token_default_role = "";          // Default role when token lacks 'role' claim
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -154,6 +157,8 @@ class ServerTestFixture : public ::testing::Test {
         /*token_allowed_issuer=*/"",
         /*token_allowed_audience=*/"",
         /*token_signature_verify_cert_path=*/fs::path(),
+        /*token_jwks_uri=*/config_.token_jwks_uri,
+        /*token_default_role=*/config_.token_default_role,
         /*access_logging_enabled=*/false,
         /*query_timeout=*/0,
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
