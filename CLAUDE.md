@@ -17,6 +17,10 @@ Before committing any change, ensure you have completed ALL of the following:
 - [ ] For new CLI flags/options, document in both:
   - The relevant feature doc (e.g., `docs/token_authentication.md`)
   - The CLI help text in `src/gizmosql_server.cpp`
+- [ ] For new or changed environment variables, keep these in sync:
+  - `src/gizmosql_server.cpp` — native env var handling (`std::getenv` calls)
+  - `scripts/start_gizmosql.sh` and `scripts/start_gizmosql_slim.sh` — header comment env var tables
+  - The relevant feature doc in `docs/` (e.g., `docs/token_authentication.md`)
 - [ ] For library API changes, update docstrings in `src/common/include/gizmosql_library.h`
 
 ### 3. Changelog

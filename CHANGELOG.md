@@ -5,6 +5,19 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Docker entrypoint scripts now default to in-memory database when `DATABASE_FILENAME` is not set
+
+### Added
+
+- `GIZMOSQL_EXTRA_ARGS` env var for passing additional CLI flags to `gizmosql_server` in entrypoint scripts
+- `MTLS_CA_CERT_FILENAME` and `HEALTH_PORT` env vars in entrypoint scripts
+- `:memory:` as an explicit value for `DATABASE_FILENAME` to request in-memory mode
+- Comprehensive env var documentation in entrypoint script headers
+
 ## [1.16.1] - 2026-02-05
 
 ### Added

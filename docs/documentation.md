@@ -69,7 +69,7 @@ docker run --name gizmosql \
            gizmodata/gizmosql:latest
 ```
 
-The above command will automatically mount a very small TPC-H DuckDB database file.
+The above command will start GizmoSQL with an in-memory DuckDB database. To use a persistent database file, set the `DATABASE_FILENAME` environment variable (see example below).
 
 **Note**: You can disable TLS in the container by setting environment variable: `TLS_ENABLED` to "0" (default is "1" - enabled).  This is not recommended unless you are using an mTLS sidecar in Kubernetes or something similar, as it will be insecure.    
 
@@ -389,7 +389,10 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | health-check-query / GIZMOSQL_HEALTH_CHECK_QUERY | SQL query used for health checks | SELECT 1 | --health-check-query |
 | enable-instrumentation / GIZMOSQL_ENABLE_INSTRUMENTATION | *[Enterprise]* Enable session instrumentation | false | --enable-instrumentation |
 | instrumentation-db-path / GIZMOSQL_INSTRUMENTATION_DB_PATH | *[Enterprise]* Path for instrumentation database | (same dir as main DB) | --instrumentation-db-path |
+| instrumentation-catalog / GIZMOSQL_INSTRUMENTATION_CATALOG | *[Enterprise]* Pre-attached DuckLake catalog name for instrumentation | none | --instrumentation-catalog |
+| instrumentation-schema / GIZMOSQL_INSTRUMENTATION_SCHEMA | *[Enterprise]* Schema within the instrumentation catalog | main | --instrumentation-schema |
 | license-key-file / GIZMOSQL_LICENSE_KEY_FILE | *[Enterprise]* Path to license key file (JWT format) | none | --license-key-file, -L |
+| allow-cross-instance-tokens / GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS | Accept tokens issued by other GizmoSQL instances sharing the same secret key | false | --allow-cross-instance-tokens |
 
 Notes and best practices:
 - Always set GIZMOSQL_PASSWORD in production.
@@ -484,11 +487,11 @@ To enhance security, never disable TLS in production unless behind a secured pro
 
 There is now a slim docker image available, without Python, tls certificate generation, sample database files, etc.   
 
-You must supply the following environment variables to the slim image:
-- `DATABASE_FILENAME` - the path to the database file to use
+You must supply the following environment variable to the slim image:
 - `GIZMOSQL_PASSWORD` - the password to use for the GizmoSQL server
 
 You can optionally supply the following environment variables:
+- `DATABASE_FILENAME` - the path to the database file to use (default: in-memory; set to `:memory:` explicitly for the same effect)
 - `TLS_ENABLED` - set to "1" to enable TLS (default is "0" - disabled)
 - `TLS_CERT` - If `TLS_ENABLED` is 1 - provide the path to the TLS certificate file (it must be mounted in the container)
 - `TLS_KEY` - If `TLS_ENABLED` is 1 - provide the path to the TLS key file (it must be mounted in the container)
