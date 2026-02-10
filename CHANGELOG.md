@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive env var documentation in entrypoint script headers
 
 #### SSO/OAuth Authentication via JWKS Auto-Discovery (Enterprise)
+- New `--token-authorized-emails` CLI flag / `GIZMOSQL_TOKEN_AUTHORIZED_EMAILS` env var to restrict which OIDC-authenticated users can connect
+- Supports comma-separated patterns with wildcards (e.g., `*@company.com,admin@partner.com`)
+- Default is `*` (all authenticated users allowed) for backward compatibility
 - New `--token-jwks-uri` CLI flag / `GIZMOSQL_TOKEN_JWKS_URI` env var to specify a direct JWKS endpoint URL for token signature verification
 - Automatic JWKS discovery from `--token-allowed-issuer` via OIDC `.well-known/openid-configuration` when no static cert path is provided
 - Thread-safe JWKS key cache with configurable TTL and automatic refresh on key rotation (kid miss)

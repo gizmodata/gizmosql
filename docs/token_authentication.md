@@ -143,6 +143,48 @@ Standard OIDC access tokens from identity providers typically do not include a `
 
 This allows you to integrate with any OIDC-compliant IdP without requiring custom claims configuration.
 
+### Authorized Email Filtering *(Enterprise)*
+
+> **Important:** Authorized email filtering requires **GizmoSQL Enterprise Edition**.
+
+When using OAuth/SSO with an IdP configured as an "External" or public application (e.g., Google OAuth), any user with a valid account can authenticate. The `--token-authorized-emails` option lets administrators restrict which authenticated users are actually allowed to connect.
+
+**Configuration:**
+
+| Option | Env Var | Default | Description |
+|--------|---------|---------|-------------|
+| `--token-authorized-emails` | `GIZMOSQL_TOKEN_AUTHORIZED_EMAILS` | `*` (all) | Comma-separated list of authorized email patterns |
+
+**Pattern syntax:**
+- `*` — allow all authenticated users (default, backward compatible)
+- `*@company.com` — allow any user with a `company.com` email
+- `user@example.com` — allow a specific email address
+- `admin@partner.com,*@company.com` — combine multiple patterns (comma-separated)
+
+Pattern matching is **case-insensitive**: `User@Company.COM` matches `*@company.com`.
+
+**Example:**
+
+```bash
+gizmosql_server \
+  --database-filename data/mydb.duckdb \
+  --tls tls/server.pem tls/server.key \
+  --token-allowed-issuer "https://accounts.google.com" \
+  --token-allowed-audience "your-client-id.apps.googleusercontent.com" \
+  --token-default-role admin \
+  --token-authorized-emails "*@yourcompany.com,partner@external.com"
+```
+
+With this configuration:
+- `alice@yourcompany.com` — **allowed** (matches `*@yourcompany.com`)
+- `partner@external.com` — **allowed** (exact match)
+- `random@gmail.com` — **rejected** with error: *"User 'random@gmail.com' is not authorized. Contact your administrator."*
+
+**Notes:**
+- This filter applies only to external/bootstrap token authentication (OIDC/SSO). Basic username/password authentication is not affected.
+- The email is extracted from the `email` claim in the JWT, falling back to the `sub` claim if `email` is not present.
+- If the option is not set or set to `*`, all authenticated users are allowed (backward compatible).
+
 ## Client Usage
 
 ### JDBC

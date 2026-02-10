@@ -82,6 +82,11 @@ int main(int argc, char** argv) {
              "Default role to assign when an external token lacks a 'role' claim (e.g., 'admin', 'user'). "
              "If not set, uses env var 'GIZMOSQL_TOKEN_DEFAULT_ROLE'. If a token has no 'role' claim and no default is configured, "
              "the token is rejected.")
+            ("token-authorized-emails", po::value<std::string>()->default_value(""),
+             "[Enterprise] Comma-separated list of authorized email patterns for OIDC user filtering. "
+             "Supports wildcards (e.g., '*@company.com,admin@partner.com'). "
+             "Default is '*' (all authenticated users allowed). "
+             "If not set, uses env var 'GIZMOSQL_TOKEN_AUTHORIZED_EMAILS'.")
             // -------- Logging controls (raw strings; library normalizes) --------
             ("log-level",  po::value<std::string>()->default_value(""),
              "Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_LOG_LEVEL or defaults to info.")
@@ -229,6 +234,9 @@ int main(int argc, char** argv) {
   std::string token_default_role =
       vm.count("token-default-role") ? vm["token-default-role"].as<std::string>() : "";
 
+  std::string token_authorized_emails =
+      vm.count("token-authorized-emails") ? vm["token-authorized-emails"].as<std::string>() : "";
+
   std::string log_level = vm.count("log-level") ? vm["log-level"].as<std::string>() : "";
   std::string log_format =
       vm.count("log-format") ? vm["log-format"].as<std::string>() : "";
@@ -284,7 +292,7 @@ int main(int argc, char** argv) {
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
-      token_default_role, log_level, log_format,
+      token_default_role, token_authorized_emails, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,

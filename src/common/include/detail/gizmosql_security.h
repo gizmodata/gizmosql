@@ -32,6 +32,7 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <shared_mutex>
 #include <unordered_set>
+#include <vector>
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 
@@ -113,6 +114,10 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   /// Set the default role for tokens that lack a 'role' claim (e.g., IdP tokens).
   void SetTokenDefaultRole(const std::string& role) { token_default_role_ = role; }
 
+  /// Set authorized email patterns for OIDC user filtering (Enterprise feature).
+  /// Accepts a comma-separated string of patterns with wildcard support.
+  void SetTokenAuthorizedEmails(const std::string& patterns);
+
 #ifdef GIZMOSQL_ENTERPRISE
   /// Set the JWKS manager for validating externally-issued tokens via JWKS.
   void SetJwksManager(std::shared_ptr<gizmosql::enterprise::JwksManager> manager) {
@@ -138,6 +143,11 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   arrow::util::ArrowLogLevel auth_log_level_;
   std::string instance_id_;
   std::string token_default_role_;
+  std::vector<std::string> token_authorized_email_patterns_;
+
+  /// Check if an email matches the authorized email patterns.
+  bool IsEmailAuthorized(const std::string& email) const;
+
 #ifdef GIZMOSQL_ENTERPRISE
   std::shared_ptr<gizmosql::enterprise::JwksManager> jwks_manager_;
 #endif

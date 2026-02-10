@@ -26,6 +26,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_cross_instance_tokens.cpp
         integration/test_health_check.cpp
         integration/test_sqlite_backend.cpp
+        integration/test_token_authorized_emails.cpp
         integration/test_tpch_benchmark.cpp
         integration/test_ducklake.cpp
         integration/test_enterprise_gating.cpp

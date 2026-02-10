@@ -58,6 +58,7 @@ enum class BackendType { duckdb, sqlite };
  * @param token_signature_verify_cert_path The path to the RSA PEM certificate file used for verifying tokens in JWT token-based authentication. Default is an empty path.
  * @param token_jwks_uri [Enterprise] Direct URL to a JWKS endpoint for token verification. If not set, uses env var GIZMOSQL_TOKEN_JWKS_URI. When token_allowed_issuer is set without a cert path or JWKS URI, auto-discovers JWKS from the issuer's .well-known/openid-configuration.
  * @param token_default_role Default role to assign when an external token lacks a 'role' claim. If not set, uses env var GIZMOSQL_TOKEN_DEFAULT_ROLE. If a token has no 'role' claim and no default role is configured, the token is rejected.
+ * @param token_authorized_emails [Enterprise] Comma-separated list of authorized email patterns for OIDC user filtering. Supports wildcards (e.g., "*@company.com,admin@partner.com"). Default is "*" (all authenticated users allowed). If not set, uses env var GIZMOSQL_TOKEN_AUTHORIZED_EMAILS.
  * @param log_level The logging level to use for the server.  Default is: info
  * @param log_format The logging format to use.  Default is: text
  * @param access_log Whether or not to log client access to the server.  It is VERY verbose.  Default is: off
@@ -99,6 +100,7 @@ int RunFlightSQLServer(
     std::filesystem::path token_signature_verify_cert_path = std::filesystem::path(),
     std::string token_jwks_uri = "",
     std::string token_default_role = "",
+    std::string token_authorized_emails = "",
     std::string log_level = "", std::string log_format = "", std::string access_log = "",
     std::string log_file = "", int32_t query_timeout = 0,
     std::string query_log_level = "", std::string auth_log_level = "",

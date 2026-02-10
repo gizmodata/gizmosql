@@ -294,6 +294,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& token_allowed_issuer, const std::string& token_allowed_audience,
     const fs::path& token_signature_verify_cert_path,
     const std::string& token_jwks_uri, const std::string& token_default_role,
+    const std::string& token_authorized_emails,
     const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
@@ -341,6 +342,11 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   // Configure token default role
   if (!token_default_role.empty()) {
     header_middleware->SetTokenDefaultRole(token_default_role);
+  }
+
+  // Configure token authorized emails (Enterprise feature)
+  if (!token_authorized_emails.empty()) {
+    header_middleware->SetTokenAuthorizedEmails(token_authorized_emails);
   }
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -637,6 +643,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     std::string token_jwks_uri, std::string token_default_role,
+    std::string token_authorized_emails,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
@@ -793,6 +800,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     token_default_role = SafeGetEnvVarValue("GIZMOSQL_TOKEN_DEFAULT_ROLE");
   }
 
+  // Resolve token authorized emails: CLI arg > env var > default "*"
+  if (token_authorized_emails.empty()) {
+    token_authorized_emails = SafeGetEnvVarValue("GIZMOSQL_TOKEN_AUTHORIZED_EMAILS");
+  }
+  if (token_authorized_emails.empty()) {
+    token_authorized_emails = "*";
+  }
+
   if (!token_allowed_issuer.empty()) {
     GIZMOSQL_LOG(INFO)
         << "INFO - Using token authentication - the token allowed issuer is set to: '"
@@ -821,6 +836,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
 
   if (!token_default_role.empty()) {
     GIZMOSQL_LOG(INFO) << "INFO - Token default role is set to: '" << token_default_role << "'";
+  }
+
+  if (!token_allowed_issuer.empty() && token_authorized_emails != "*") {
+    GIZMOSQL_LOG(INFO) << "INFO - Token authorized emails is set to: '" << token_authorized_emails << "'";
   }
 
   GIZMOSQL_LOG(INFO) << "Query timeout (in seconds) is set to: " << query_timeout
@@ -855,7 +874,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, token_jwks_uri, token_default_role,
-      access_logging_enabled, query_timeout,
+      token_authorized_emails, access_logging_enabled, query_timeout,
       query_log_level, auth_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);
@@ -899,6 +918,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        fs::path token_signature_verify_cert_path,
                        std::string token_jwks_uri,
                        std::string token_default_role,
+                       std::string token_authorized_emails,
                        std::string log_level,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
@@ -1016,7 +1036,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
-      token_default_role, access_logging_enabled,
+      token_default_role, token_authorized_emails, access_logging_enabled,
       query_timeout, query_level, auth_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);

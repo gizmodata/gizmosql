@@ -304,6 +304,47 @@ std::string BasicAuthServerMiddleware::CreateJWTToken() const {
   return builder.sign(jwt::algorithm::hs256{secret_key_});
 }
 
+void BasicAuthServerMiddlewareFactory::SetTokenAuthorizedEmails(
+    const std::string& patterns) {
+  token_authorized_email_patterns_.clear();
+  std::istringstream stream(patterns);
+  std::string pattern;
+  while (std::getline(stream, pattern, ',')) {
+    // Trim whitespace
+    auto start = pattern.find_first_not_of(" \t");
+    auto end = pattern.find_last_not_of(" \t");
+    if (start != std::string::npos) {
+      token_authorized_email_patterns_.push_back(pattern.substr(start, end - start + 1));
+    }
+  }
+}
+
+bool BasicAuthServerMiddlewareFactory::IsEmailAuthorized(const std::string& email) const {
+  if (token_authorized_email_patterns_.empty()) return true;
+
+  // Convert email to lowercase for case-insensitive comparison
+  std::string lower_email = email;
+  std::transform(lower_email.begin(), lower_email.end(), lower_email.begin(), ::tolower);
+
+  for (const auto& pattern : token_authorized_email_patterns_) {
+    std::string lower_pattern = pattern;
+    std::transform(lower_pattern.begin(), lower_pattern.end(), lower_pattern.begin(), ::tolower);
+
+    if (lower_pattern == "*") return true;
+    if (lower_pattern.front() == '*') {
+      // Suffix match: *@domain.com
+      std::string suffix = lower_pattern.substr(1);
+      if (lower_email.size() >= suffix.size() &&
+          lower_email.compare(lower_email.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return true;
+      }
+    } else if (lower_email == lower_pattern) {
+      return true;  // Exact match
+    }
+  }
+  return false;
+}
+
 // ----------------------------------------
 BasicAuthServerMiddlewareFactory::BasicAuthServerMiddlewareFactory(
     const std::string& username, const std::string& password,
@@ -506,7 +547,7 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
             flight::FlightStatusCode::Unauthenticated,
             "SSO/OAuth authentication via JWKS requires GizmoSQL Enterprise Edition with "
             "the 'external_auth' feature. Use username/password authentication or a static "
-            "certificate, or visit https://gizmodata.com/enterprise");
+            "certificate, or visit https://gizmodata.com/gizmosql for more details");
       }
 
       // Extract kid from JWT header
@@ -599,6 +640,25 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
     std::string role = decoded.has_payload_claim("role")
                            ? decoded.get_payload_claim("role").as_string()
                            : token_default_role_;
+
+#ifdef GIZMOSQL_ENTERPRISE
+    // Check if the user's email is authorized
+    auto username = ExtractUsername(decoded);
+    if (!IsEmailAuthorized(username)) {
+      GIZMOSQL_LOGKV(WARNING,
+                     "peer=" + context.peer() + " - User '" + username +
+                         "' is not in the authorized email list" +
+                         " - token_claims=(id=" + SafeGetTokenId(decoded) +
+                         " user=" + username + " iss=" + decoded.get_issuer() + ")",
+                     {"peer", context.peer()}, {"kind", "authentication"},
+                     {"authentication_type", "bearer"}, {"result", "failure"},
+                     {"reason", "unauthorized_email"}, {"token_id", SafeGetTokenId(decoded)},
+                     {"token_user", username}, {"token_iss", decoded.get_issuer()});
+      return MakeFlightError(
+          flight::FlightStatusCode::Unauthenticated,
+          "User '" + username + "' is not authorized. Contact your administrator.");
+    }
+#endif
 
     GIZMOSQL_LOGKV_DYNAMIC(
         auth_log_level_,

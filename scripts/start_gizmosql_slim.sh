@@ -37,6 +37,7 @@
 #   GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS --allow-cross-instance-tokens
 #   GIZMOSQL_TOKEN_JWKS_URI              --token-jwks-uri
 #   GIZMOSQL_TOKEN_DEFAULT_ROLE          --token-default-role
+#   GIZMOSQL_TOKEN_AUTHORIZED_EMAILS     --token-authorized-emails
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────
 #   GIZMOSQL_EXTRA_ARGS       Appended verbatim to the command line.
