@@ -35,6 +35,11 @@
 #   GIZMOSQL_TOKEN_JWKS_URI              --token-jwks-uri
 #   GIZMOSQL_TOKEN_DEFAULT_ROLE          --token-default-role
 #   GIZMOSQL_TOKEN_AUTHORIZED_EMAILS     --token-authorized-emails
+#   GIZMOSQL_OAUTH_CLIENT_ID             --oauth-client-id
+#   GIZMOSQL_OAUTH_CLIENT_SECRET         --oauth-client-secret
+#   GIZMOSQL_OAUTH_SCOPES                --oauth-scopes
+#   GIZMOSQL_OAUTH_PORT                  --oauth-port
+#   GIZMOSQL_OAUTH_REDIRECT_URI          --oauth-redirect-uri
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────
 #   GIZMOSQL_EXTRA_ARGS       Appended verbatim to the command line.

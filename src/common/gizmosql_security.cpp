@@ -250,6 +250,41 @@ std::string SecurityUtilities::HMAC_SHA256(const std::string& key,
 }
 
 // ----------------------------------------
+std::string CreateGizmoSQLJWT(
+    const std::string& username, const std::string& role,
+    const std::string& auth_method, const std::string& secret_key,
+    const std::string& instance_id,
+    const std::optional<std::string>& catalog_access_json) {
+  auto builder =
+      jwt::create()
+          .set_issuer(std::string(kServerJWTIssuer))
+          .set_type("JWT")
+          .set_id("gizmosql-server-" +
+                  boost::uuids::to_string(boost::uuids::random_generator()()))
+          .set_issued_at(std::chrono::system_clock::now())
+          .set_expires_at(std::chrono::system_clock::now() +
+                          std::chrono::seconds{kJWTExpiration})
+          .set_payload_claim("sub", jwt::claim(username))
+          .set_payload_claim("role", jwt::claim(role))
+          .set_payload_claim("auth_method", jwt::claim(auth_method))
+          .set_payload_claim("instance_id", jwt::claim(instance_id))
+          .set_payload_claim(
+              "session_id",
+              jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())));
+
+  // Include catalog_access claim if present (propagated from bootstrap token)
+  if (catalog_access_json.has_value()) {
+    picojson::value json_val;
+    std::string err = picojson::parse(json_val, catalog_access_json.value());
+    if (err.empty()) {
+      builder.set_payload_claim("catalog_access", jwt::claim(json_val));
+    }
+  }
+
+  return builder.sign(jwt::algorithm::hs256{secret_key});
+}
+
+// ----------------------------------------
 BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
                                                      const std::string& role,
                                                      const std::string& auth_method,
@@ -275,33 +310,8 @@ std::string BasicAuthServerMiddleware::name() const {
 }
 
 std::string BasicAuthServerMiddleware::CreateJWTToken() const {
-  auto builder =
-      jwt::create()
-          .set_issuer(std::string(kServerJWTIssuer))
-          .set_type("JWT")
-          .set_id("gizmosql-server-" +
-                  boost::uuids::to_string(boost::uuids::random_generator()()))
-          .set_issued_at(std::chrono::system_clock::now())
-          .set_expires_at(std::chrono::system_clock::now() +
-                          std::chrono::seconds{kJWTExpiration})
-          .set_payload_claim("sub", jwt::claim(username_))
-          .set_payload_claim("role", jwt::claim(role_))
-          .set_payload_claim("auth_method", jwt::claim(auth_method_))
-          .set_payload_claim("instance_id", jwt::claim(instance_id_))
-          .set_payload_claim(
-              "session_id",
-              jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())));
-
-  // Include catalog_access claim if present (propagated from bootstrap token)
-  if (catalog_access_json_.has_value()) {
-    picojson::value json_val;
-    std::string err = picojson::parse(json_val, catalog_access_json_.value());
-    if (err.empty()) {
-      builder.set_payload_claim("catalog_access", jwt::claim(json_val));
-    }
-  }
-
-  return builder.sign(jwt::algorithm::hs256{secret_key_});
+  return CreateGizmoSQLJWT(username_, role_, auth_method_, secret_key_, instance_id_,
+                           catalog_access_json_);
 }
 
 void BasicAuthServerMiddlewareFactory::SetTokenAuthorizedEmails(

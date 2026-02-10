@@ -128,7 +128,25 @@ int main(int argc, char** argv) {
               "Allow tokens issued by other server instances (with the same secret key) to be accepted. "
               "Default is false (strict mode - tokens must be from this instance). "
               "Useful for load-balanced deployments where clients may reconnect to different instances. "
-              "If not set, uses env var GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS (1/true to enable).");
+              "If not set, uses env var GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS (1/true to enable).")
+            ("oauth-client-id", po::value<std::string>()->default_value(""),
+              "[Enterprise] OAuth client ID. Setting this enables the server-side OAuth code exchange flow. "
+              "The server handles browser redirects and token exchange as a confidential OAuth client. "
+              "Requires --token-allowed-issuer and --token-allowed-audience. "
+              "If not set, uses env var GIZMOSQL_OAUTH_CLIENT_ID.")
+            ("oauth-client-secret", po::value<std::string>()->default_value(""),
+              "[Enterprise] OAuth client secret (confidential, stays on server). "
+              "If not set, uses env var GIZMOSQL_OAUTH_CLIENT_SECRET.")
+            ("oauth-scopes", po::value<std::string>()->default_value(""),
+              "[Enterprise] OAuth scopes to request. Default is 'openid profile email'. "
+              "If not set, uses env var GIZMOSQL_OAUTH_SCOPES.")
+            ("oauth-port", po::value<int>()->default_value(0),
+              "[Enterprise] Port for the OAuth HTTP(S) server. Default is 31339 when --oauth-client-id is set. "
+              "Set to 0 to disable. If not set, uses env var GIZMOSQL_OAUTH_PORT.")
+            ("oauth-redirect-uri", po::value<std::string>()->default_value(""),
+              "[Enterprise] Override the OAuth redirect URI when behind a reverse proxy. "
+              "Auto-constructed from hostname + oauth-port if empty. "
+              "If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.");
 
   // clang-format on
 
@@ -287,6 +305,20 @@ int main(int argc, char** argv) {
     }
   }
 
+  std::string oauth_client_id =
+      vm.count("oauth-client-id") ? vm["oauth-client-id"].as<std::string>() : "";
+
+  std::string oauth_client_secret =
+      vm.count("oauth-client-secret") ? vm["oauth-client-secret"].as<std::string>() : "";
+
+  std::string oauth_scopes =
+      vm.count("oauth-scopes") ? vm["oauth-scopes"].as<std::string>() : "";
+
+  int oauth_port = vm["oauth-port"].as<int>();
+
+  std::string oauth_redirect_uri =
+      vm.count("oauth-redirect-uri") ? vm["oauth-redirect-uri"].as<std::string>() : "";
+
   return RunFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
@@ -296,5 +328,6 @@ int main(int argc, char** argv) {
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,
-      allow_cross_instance_tokens);
+      allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
+      oauth_port, oauth_redirect_uri);
 }

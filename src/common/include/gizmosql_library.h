@@ -26,6 +26,7 @@ const std::string DEFAULT_GIZMOSQL_HOSTNAME = "0.0.0.0";
 const std::string DEFAULT_GIZMOSQL_USERNAME = "gizmosql_username";
 const int DEFAULT_FLIGHT_PORT = 31337;
 const int DEFAULT_HEALTH_PORT = 31338;  // Plaintext health check port for Kubernetes
+const int DEFAULT_OAUTH_PORT = 31339;  // OAuth HTTP server port
 const int32_t DEFAULT_QUERY_TIMEOUT_SECONDS = 0;  // Unlimited timeout
 
 enum class BackendType { duckdb, sqlite };
@@ -74,6 +75,11 @@ enum class BackendType { duckdb, sqlite };
  * @param instrumentation_schema [Enterprise] Schema within the instrumentation catalog. Default is "main". If empty, uses env var GIZMOSQL_INSTRUMENTATION_SCHEMA, or defaults to "main".
  * @param license_key_file Path to the GizmoSQL Enterprise license key file (JWT format). If empty, uses env var GIZMOSQL_LICENSE_KEY_FILE. Required for enterprise features.
  * @param allow_cross_instance_tokens Allow tokens issued by other server instances (with the same secret key) to be accepted. Default is false (strict mode). Useful for load-balanced deployments where clients may reconnect to different instances.
+ * @param oauth_client_id [Enterprise] OAuth client ID. Setting this enables the server-side OAuth code exchange flow via a dedicated HTTP server. The server becomes a confidential OAuth client, handling browser redirects and token exchange. Requires --token-allowed-issuer and --token-allowed-audience. If not set, uses env var GIZMOSQL_OAUTH_CLIENT_ID.
+ * @param oauth_client_secret [Enterprise] OAuth client secret (confidential, stays on server). If not set, uses env var GIZMOSQL_OAUTH_CLIENT_SECRET.
+ * @param oauth_scopes [Enterprise] OAuth scopes to request during authorization. Default is "openid profile email". If not set, uses env var GIZMOSQL_OAUTH_SCOPES.
+ * @param oauth_port [Enterprise] Port for the OAuth HTTP(S) server. Default is DEFAULT_OAUTH_PORT (31339). Set to 0 to disable. If not set, uses env var GIZMOSQL_OAUTH_PORT.
+ * @param oauth_redirect_uri [Enterprise] Override the OAuth redirect URI when behind a reverse proxy. Auto-constructed from hostname + oauth_port if empty. If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -111,5 +117,10 @@ int RunFlightSQLServer(
     std::string instrumentation_catalog = "",
     std::string instrumentation_schema = "",
     std::string license_key_file = "",
-    const bool& allow_cross_instance_tokens = false);
+    const bool& allow_cross_instance_tokens = false,
+    std::string oauth_client_id = "",
+    std::string oauth_client_secret = "",
+    std::string oauth_scopes = "",
+    int oauth_port = 0,
+    std::string oauth_redirect_uri = "");
 }

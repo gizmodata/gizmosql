@@ -442,6 +442,67 @@ jdbc:gizmosql://localhost:31337?useEncryption=true&disableCertificateVerificatio
 
 The browser will open to the Keycloak login page. After authentication, the connection is established automatically.
 
+## Server-Side OAuth Code Exchange *(Enterprise)*
+
+> **New in v1.17.0.** Requires GizmoSQL Enterprise Edition with the `external_auth` feature.
+
+Server-side OAuth code exchange simplifies client configuration by making the GizmoSQL server a **confidential OAuth client**. Instead of each client needing the OAuth client ID, secret, and scopes in its connection string, the server owns those credentials and handles the entire code exchange flow.
+
+### How It Works
+
+1. The client generates a random UUID and computes `HASH = HMAC-SHA256(secret_key, UUID)`.
+2. The client opens a browser to `https://<server>:<oauth_port>/oauth/start?session=HASH`.
+3. The server redirects to the Identity Provider's authorization endpoint.
+4. The user authenticates with the IdP.
+5. The IdP redirects back to the server's `/oauth/callback` with an authorization code.
+6. The server exchanges the code for tokens, validates the ID token via JWKS, and issues a GizmoSQL session JWT.
+7. The client polls `https://<server>:<oauth_port>/oauth/token/<UUID>` to retrieve the JWT.
+8. The client uses the JWT as a Bearer token on the Flight SQL gRPC port.
+
+### Server Configuration
+
+| CLI Flag | Env Var | Default | Description |
+|----------|---------|---------|-------------|
+| `--oauth-client-id` | `GIZMOSQL_OAUTH_CLIENT_ID` | *(disabled)* | OAuth client ID. Setting this enables the OAuth HTTP server. |
+| `--oauth-client-secret` | `GIZMOSQL_OAUTH_CLIENT_SECRET` | | OAuth client secret (confidential, stays on server). |
+| `--oauth-scopes` | `GIZMOSQL_OAUTH_SCOPES` | `openid profile email` | OAuth scopes to request. |
+| `--oauth-port` | `GIZMOSQL_OAUTH_PORT` | `31339` | Port for the OAuth HTTP(S) server. |
+| `--oauth-redirect-uri` | `GIZMOSQL_OAUTH_REDIRECT_URI` | auto-constructed | Override redirect URI when behind a proxy. |
+
+The OAuth server **requires** `--token-allowed-issuer` and `--token-allowed-audience` to be set. OIDC endpoints (authorization, token, JWKS) are auto-discovered from the issuer.
+
+### Example: Google as IdP
+
+**1. Create OAuth credentials in Google Cloud Console:**
+- Application type: **Web application**
+- Authorized redirect URI: `https://<your-server>:31339/oauth/callback`
+
+**2. Start GizmoSQL:**
+```bash
+gizmosql_server \
+  --database-filename data/mydb.duckdb \
+  --tls tls/server.pem tls/server.key \
+  --token-allowed-issuer "https://accounts.google.com" \
+  --token-allowed-audience "462...apps.googleusercontent.com" \
+  --token-default-role admin \
+  --token-authorized-emails "*@yourcompany.com" \
+  --oauth-client-id "462...apps.googleusercontent.com" \
+  --oauth-client-secret "GOCSPX-..." \
+  --oauth-port 31339
+```
+
+**3. Client connection string:**
+```
+jdbc:gizmosql://hostname:31337?useEncryption=true&authType=oauth
+```
+
+### Security Considerations
+
+- The browser only sees the session **hash** in URLs. The raw UUID (needed to retrieve the token) is only known to the polling client.
+- Pending sessions expire after 15 minutes.
+- Email filtering (`--token-authorized-emails`) applies to OAuth-authenticated users.
+- The OAuth HTTP server uses the same TLS certificate as the Flight SQL server when TLS is enabled.
+
 ## Security Best Practices
 
 1. **Protect private keys** - Store signing keys securely; never commit them to version control

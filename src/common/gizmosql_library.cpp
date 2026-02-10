@@ -55,6 +55,7 @@
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/jwks/jwks_manager.h"
+#include "enterprise/oauth/oauth_http_server.h"
 #endif
 #include "version.h"
 
@@ -74,6 +75,8 @@ static std::unique_ptr<PlaintextHealthServer> g_plaintext_health_server;
 #ifdef GIZMOSQL_ENTERPRISE
 // Static storage for instrumentation (Enterprise feature)
 static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_manager;
+// Static storage for OAuth HTTP server (Enterprise feature)
+static std::unique_ptr<gizmosql::enterprise::OAuthHttpServer> g_oauth_http_server;
 #endif
 
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
@@ -303,7 +306,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& instrumentation_db_path,
     const std::string& instrumentation_catalog,
     const std::string& instrumentation_schema,
-    const bool& allow_cross_instance_tokens) {
+    const bool& allow_cross_instance_tokens,
+    const std::string& oauth_client_id,
+    const std::string& oauth_client_secret,
+    const std::string& oauth_scopes,
+    const int& oauth_port,
+    const std::string& oauth_redirect_uri) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -351,24 +359,35 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
 #ifdef GIZMOSQL_ENTERPRISE
   // Initialize JWKS manager for external token verification (Enterprise feature)
+  std::shared_ptr<gizmosql::enterprise::JwksManager> jwks_manager;
+  std::string oidc_authorization_endpoint;
+  std::string oidc_token_endpoint;
+
   if (!token_jwks_uri.empty() || (!token_allowed_issuer.empty() &&
       !token_allowed_audience.empty() && token_signature_verify_cert_path.empty())) {
-    std::shared_ptr<gizmosql::enterprise::JwksManager> jwks_manager;
 
     if (!token_jwks_uri.empty()) {
       // Explicit JWKS URI
       jwks_manager = std::make_shared<gizmosql::enterprise::JwksManager>(token_jwks_uri);
       GIZMOSQL_LOG(INFO) << "JWKS manager initialized with URI: " << token_jwks_uri;
     } else {
-      // Auto-discover from issuer
-      auto result = gizmosql::enterprise::JwksManager::CreateFromIssuer(token_allowed_issuer);
-      if (result.ok()) {
-        jwks_manager = std::shared_ptr<gizmosql::enterprise::JwksManager>(std::move(*result));
+      // Auto-discover from issuer (use full OIDC discovery to get all endpoints)
+      auto discovery_result =
+          gizmosql::enterprise::JwksManager::DiscoverOidcEndpoints(token_allowed_issuer);
+      if (discovery_result.ok()) {
+        auto& endpoints = *discovery_result;
+        jwks_manager = std::make_shared<gizmosql::enterprise::JwksManager>(endpoints.jwks_uri);
+        oidc_authorization_endpoint = endpoints.authorization_endpoint;
+        oidc_token_endpoint = endpoints.token_endpoint;
         GIZMOSQL_LOG(INFO) << "JWKS manager initialized via OIDC discovery from issuer: "
                            << token_allowed_issuer;
+        if (!oauth_client_id.empty()) {
+          GIZMOSQL_LOG(INFO) << "OIDC authorization endpoint: " << oidc_authorization_endpoint;
+          GIZMOSQL_LOG(INFO) << "OIDC token endpoint: " << oidc_token_endpoint;
+        }
       } else {
         GIZMOSQL_LOG(WARNING) << "Failed to auto-discover JWKS from issuer '"
-                              << token_allowed_issuer << "': " << result.status().ToString()
+                              << token_allowed_issuer << "': " << discovery_result.status().ToString()
                               << " - JWKS-based token verification will not be available";
       }
     }
@@ -376,6 +395,61 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     if (jwks_manager) {
       header_middleware->SetJwksManager(jwks_manager);
     }
+  }
+
+  // Create OAuth HTTP server (Enterprise feature, requires oauth-client-id)
+  if (!oauth_client_id.empty()) {
+    if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsExternalAuthAvailable()) {
+      return arrow::Status::Invalid(
+          "Server-side OAuth code exchange requires GizmoSQL Enterprise Edition with "
+          "the 'external_auth' feature. Visit https://gizmodata.com/gizmosql for details.");
+    }
+    if (oidc_authorization_endpoint.empty() || oidc_token_endpoint.empty()) {
+      return arrow::Status::Invalid(
+          "OAuth code exchange requires OIDC authorization and token endpoints. "
+          "These are normally discovered from the issuer's .well-known/openid-configuration. "
+          "Ensure --token-allowed-issuer is set to a valid OIDC issuer URL.");
+    }
+    if (!jwks_manager) {
+      return arrow::Status::Invalid(
+          "OAuth code exchange requires JWKS for ID token verification. "
+          "Ensure OIDC discovery succeeded or set --token-jwks-uri explicitly.");
+    }
+
+    // Parse authorized email patterns for the OAuth server
+    std::vector<std::string> email_patterns;
+    if (!token_authorized_emails.empty() && token_authorized_emails != "*") {
+      std::istringstream stream(token_authorized_emails);
+      std::string pattern;
+      while (std::getline(stream, pattern, ',')) {
+        auto start = pattern.find_first_not_of(" \t");
+        auto end = pattern.find_last_not_of(" \t");
+        if (start != std::string::npos) {
+          email_patterns.push_back(pattern.substr(start, end - start + 1));
+        }
+      }
+    }
+
+    gizmosql::enterprise::OAuthHttpServer::Config oauth_config{
+        .port = oauth_port,
+        .client_id = oauth_client_id,
+        .client_secret = oauth_client_secret,
+        .scopes = oauth_scopes,
+        .redirect_uri = oauth_redirect_uri,
+        .token_allowed_issuer = token_allowed_issuer,
+        .token_allowed_audience = token_allowed_audience,
+        .secret_key = secret_key,
+        .instance_id = "",  // Set after server creates instance UUID
+        .token_default_role = token_default_role,
+        .authorized_email_patterns = email_patterns,
+        .tls_cert_path = tls_cert_path.string(),
+        .tls_key_path = tls_key_path.string(),
+        .authorization_endpoint = oidc_authorization_endpoint,
+        .token_endpoint = oidc_token_endpoint,
+        .jwks_manager = jwks_manager,
+    };
+    g_oauth_http_server = std::make_unique<gizmosql::enterprise::OAuthHttpServer>(oauth_config);
+    GIZMOSQL_LOG(INFO) << "OAuth HTTP server configured on port " << oauth_port;
   }
 #endif
 
@@ -440,6 +514,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       bearer_middleware->SetAllowCrossInstanceTokens(true);
       GIZMOSQL_LOG(INFO) << "Cross-instance token acceptance is enabled";
     }
+
+#ifdef GIZMOSQL_ENTERPRISE
+    // Start OAuth HTTP server now that instance_id is known
+    if (g_oauth_http_server) {
+      g_oauth_http_server->SetInstanceId(instance_id);
+      auto oauth_status = g_oauth_http_server->Start();
+      if (!oauth_status.ok()) {
+        return oauth_status;
+      }
+    }
+#endif
 
     GIZMOSQL_LOG(INFO) << "Server instance created";
 
@@ -652,7 +737,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string instrumentation_db_path,
     std::string instrumentation_catalog,
     std::string instrumentation_schema,
-    const bool& allow_cross_instance_tokens) {
+    const bool& allow_cross_instance_tokens,
+    std::string oauth_client_id,
+    std::string oauth_client_secret,
+    std::string oauth_scopes,
+    int oauth_port,
+    std::string oauth_redirect_uri) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -869,6 +959,45 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     }
   }
 
+  // Resolve OAuth params: CLI arg > env var > defaults
+  if (oauth_client_id.empty()) {
+    oauth_client_id = SafeGetEnvVarValue("GIZMOSQL_OAUTH_CLIENT_ID");
+  }
+  if (oauth_client_secret.empty()) {
+    oauth_client_secret = SafeGetEnvVarValue("GIZMOSQL_OAUTH_CLIENT_SECRET");
+  }
+  if (oauth_scopes.empty()) {
+    oauth_scopes = SafeGetEnvVarValue("GIZMOSQL_OAUTH_SCOPES");
+  }
+  if (oauth_scopes.empty()) {
+    oauth_scopes = "openid profile email";
+  }
+  if (oauth_port == 0) {
+    auto env_port = SafeGetEnvVarValue("GIZMOSQL_OAUTH_PORT");
+    if (!env_port.empty()) {
+      try {
+        oauth_port = std::stoi(env_port);
+      } catch (...) {}
+    }
+  }
+  if (oauth_port == 0 && !oauth_client_id.empty()) {
+    oauth_port = DEFAULT_OAUTH_PORT;  // Default to 31339 when OAuth is enabled
+  }
+  if (oauth_redirect_uri.empty()) {
+    oauth_redirect_uri = SafeGetEnvVarValue("GIZMOSQL_OAUTH_REDIRECT_URI");
+  }
+
+  // Validate OAuth configuration
+  if (!oauth_client_id.empty()) {
+    if (token_allowed_issuer.empty() || token_allowed_audience.empty()) {
+      return arrow::Status::Invalid(
+          "OAuth client ID is set but --token-allowed-issuer and --token-allowed-audience "
+          "are required for server-side OAuth code exchange.");
+    }
+    GIZMOSQL_LOG(INFO) << "INFO - OAuth server-side code exchange enabled on port "
+                       << oauth_port;
+  }
+
   return FlightSQLServerBuilder(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
@@ -877,7 +1006,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       token_authorized_emails, access_logging_enabled, query_timeout,
       query_log_level, auth_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);
+      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
+      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -901,6 +1031,12 @@ void CleanupServerResources() {
   if (g_instrumentation_manager) {
     g_instrumentation_manager->Shutdown();
     g_instrumentation_manager.reset();
+  }
+
+  // Shutdown and reset OAuth HTTP server (Enterprise feature)
+  if (g_oauth_http_server) {
+    g_oauth_http_server->Shutdown();
+    g_oauth_http_server.reset();
   }
 #endif
 }
@@ -929,7 +1065,12 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string instrumentation_catalog,
                        std::string instrumentation_schema,
                        std::string license_key_file,
-                       const bool& allow_cross_instance_tokens) {
+                       const bool& allow_cross_instance_tokens,
+                       std::string oauth_client_id,
+                       std::string oauth_client_secret,
+                       std::string oauth_scopes,
+                       int oauth_port,
+                       std::string oauth_redirect_uri) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1039,7 +1180,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       token_default_role, token_authorized_emails, access_logging_enabled,
       query_timeout, query_level, auth_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens);
+      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
+      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
@@ -1080,6 +1222,12 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       gizmosql::g_instrumentation_manager->Shutdown();
       gizmosql::g_instrumentation_manager.reset();
       GIZMOSQL_LOG(INFO) << "Instrumentation manager shutdown complete";
+    }
+
+    if (gizmosql::g_oauth_http_server) {
+      gizmosql::g_oauth_http_server->Shutdown();
+      gizmosql::g_oauth_http_server.reset();
+      GIZMOSQL_LOG(INFO) << "OAuth HTTP server shutdown complete";
     }
 #endif
 

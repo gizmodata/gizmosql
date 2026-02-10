@@ -46,6 +46,15 @@ class JwksManager;
 #endif
 
 namespace gizmosql {
+
+/// Create a GizmoSQL-issued JWT token with the given claims.
+/// Used by both Basic Auth (core) and OAuth code exchange (enterprise) to issue session tokens.
+std::string CreateGizmoSQLJWT(
+    const std::string& username, const std::string& role,
+    const std::string& auth_method, const std::string& secret_key,
+    const std::string& instance_id,
+    const std::optional<std::string>& catalog_access_json = std::nullopt);
+
 class SecurityUtilities {
  public:
   static arrow::Status FlightServerTlsCertificates(const std::filesystem::path& cert_path,

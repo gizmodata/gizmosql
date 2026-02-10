@@ -187,7 +187,8 @@ arrow::Status JwksManager::FetchAndParseJwks() {
   }
 }
 
-arrow::Result<std::string> JwksManager::DiscoverJwksUri(const std::string& issuer) {
+arrow::Result<JwksManager::OidcDiscoveryResult> JwksManager::DiscoverOidcEndpoints(
+    const std::string& issuer) {
   // Strip trailing slash from issuer
   std::string base = issuer;
   while (!base.empty() && base.back() == '/') {
@@ -205,11 +206,27 @@ arrow::Result<std::string> JwksManager::DiscoverJwksUri(const std::string& issue
       return arrow::Status::Invalid(
           "OIDC discovery document missing 'jwks_uri' field from: " + discovery_url);
     }
-    return json["jwks_uri"].get<std::string>();
+
+    OidcDiscoveryResult result;
+    result.jwks_uri = json["jwks_uri"].get<std::string>();
+
+    if (json.contains("authorization_endpoint") && json["authorization_endpoint"].is_string()) {
+      result.authorization_endpoint = json["authorization_endpoint"].get<std::string>();
+    }
+    if (json.contains("token_endpoint") && json["token_endpoint"].is_string()) {
+      result.token_endpoint = json["token_endpoint"].get<std::string>();
+    }
+
+    return result;
   } catch (const std::exception& e) {
     return arrow::Status::Invalid("Failed to parse OIDC discovery document from " +
                                   discovery_url + ": " + e.what());
   }
+}
+
+arrow::Result<std::string> JwksManager::DiscoverJwksUri(const std::string& issuer) {
+  ARROW_ASSIGN_OR_RAISE(auto result, DiscoverOidcEndpoints(issuer));
+  return result.jwks_uri;
 }
 
 arrow::Result<std::string> JwksManager::HttpGet(const std::string& url) {

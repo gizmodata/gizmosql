@@ -1,0 +1,118 @@
+// GizmoData Commercial License
+// Copyright (c) 2026 GizmoData LLC. All rights reserved.
+// See LICENSE file in the enterprise directory for details.
+
+#pragma once
+
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+#include <arrow/result.h>
+#include <arrow/status.h>
+
+namespace httplib {
+class Server;
+class SSLServer;
+class Request;
+class Response;
+}  // namespace httplib
+
+namespace gizmosql::enterprise {
+class JwksManager;
+
+/// HTTP server that handles the OAuth authorization code exchange flow.
+/// The server owns the client ID/secret, handles browser redirects, exchanges
+/// authorization codes for tokens, and issues GizmoSQL session JWTs.
+///
+/// Flow:
+///   1. Client generates UUID, opens browser to /oauth/start?session=HASH
+///   2. Server redirects to IdP authorization URL
+///   3. IdP redirects back to /oauth/callback with authorization code
+///   4. Server exchanges code for tokens, validates ID token, creates GizmoSQL JWT
+///   5. Client polls /oauth/token/:uuid to retrieve the JWT
+class OAuthHttpServer {
+ public:
+  struct Config {
+    int port = 0;
+    std::string client_id;
+    std::string client_secret;
+    std::string scopes;
+    std::string redirect_uri;  // Auto-constructed if empty
+    std::string token_allowed_issuer;
+    std::string token_allowed_audience;
+    std::string secret_key;
+    std::string instance_id;
+    std::string token_default_role;
+    std::vector<std::string> authorized_email_patterns;
+    std::string tls_cert_path;
+    std::string tls_key_path;
+    std::string authorization_endpoint;  // From OIDC discovery
+    std::string token_endpoint;          // From OIDC discovery
+    std::shared_ptr<JwksManager> jwks_manager;
+  };
+
+  explicit OAuthHttpServer(Config config);
+  ~OAuthHttpServer();
+
+  /// Start the HTTP server. Returns error if unable to bind.
+  arrow::Status Start();
+
+  /// Shut down the HTTP server and cleanup thread.
+  void Shutdown();
+
+  /// Set the instance ID (called after server creates instance UUID).
+  void SetInstanceId(const std::string& id) { config_.instance_id = id; }
+
+ private:
+  /// GET /oauth/start?session=HASH — Redirect to IdP authorization URL
+  void HandleStart(const httplib::Request& req, httplib::Response& res);
+
+  /// GET /oauth/callback?code=...&state=HASH — Exchange code for tokens
+  void HandleCallback(const httplib::Request& req, httplib::Response& res);
+
+  /// GET /oauth/token/:uuid — Poll for completed authentication
+  void HandleTokenPoll(const httplib::Request& req, httplib::Response& res);
+
+  /// Exchange an authorization code for tokens via the IdP's token endpoint.
+  /// Returns the raw ID token string on success.
+  arrow::Result<std::string> ExchangeCodeForTokens(const std::string& code);
+
+  /// Validate an ID token and create a GizmoSQL session JWT.
+  /// Returns the GizmoSQL JWT on success.
+  arrow::Result<std::string> ValidateAndCreateSession(const std::string& id_token);
+
+  /// Check if an email matches the authorized email patterns.
+  bool IsEmailAuthorized(const std::string& email) const;
+
+  /// Render an HTML template by replacing placeholders.
+  std::string RenderPage(const char* tmpl, const std::string& error = "") const;
+
+  /// Background thread that cleans up expired pending auth sessions.
+  void CleanupExpiredSessions();
+
+  struct PendingAuth {
+    std::chrono::steady_clock::time_point created_at;
+    std::optional<std::string> gizmosql_jwt;  // Set on success
+    std::optional<std::string> error;          // Set on failure
+  };
+
+  std::mutex pending_mutex_;
+  std::unordered_map<std::string, PendingAuth> pending_auths_;  // Keyed by HASH
+
+  Config config_;
+  std::unique_ptr<httplib::Server> server_;
+  std::thread server_thread_;
+  std::thread cleanup_thread_;
+  std::atomic<bool> shutdown_{false};
+
+  static constexpr int kChallengeTimeoutMinutes = 15;
+};
+
+}  // namespace gizmosql::enterprise

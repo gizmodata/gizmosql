@@ -265,7 +265,8 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/instrumentation/instrumentation_records.cpp
             src/enterprise/kill_session/kill_session_handler.cpp
             src/enterprise/catalog_permissions/catalog_permissions_handler.cpp
-            src/enterprise/jwks/jwks_manager.cpp)
+            src/enterprise/jwks/jwks_manager.cpp
+            src/enterprise/oauth/oauth_http_server.cpp)
 endif()
 
 # Add a library target
@@ -315,6 +316,7 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/kill_session
             src/enterprise/catalog_permissions
             src/enterprise/jwks
+            src/enterprise/oauth
             ${HTTPLIB_INCLUDE_DIR}
     )
     target_compile_definitions(gizmosqlserver PUBLIC GIZMOSQL_ENTERPRISE)

@@ -39,6 +39,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_instrumentation.cpp
             integration/test_instrumentation_ducklake.cpp
             integration/test_kill_session.cpp
+            integration/test_oauth_server.cpp
     )
 endif()
 
@@ -70,6 +71,11 @@ if(GIZMOSQL_ENTERPRISE)
             ${CMAKE_SOURCE_DIR}/src/enterprise/instrumentation
             ${CMAKE_SOURCE_DIR}/src/enterprise/kill_session
             ${CMAKE_SOURCE_DIR}/src/enterprise/catalog_permissions
+            ${CMAKE_SOURCE_DIR}/src/enterprise/oauth
+            ${HTTPLIB_INCLUDE_DIR}
+    )
+    target_link_libraries(gizmosql_integration_tests PRIVATE
+            nlohmann_json::nlohmann_json
     )
 endif()
 
