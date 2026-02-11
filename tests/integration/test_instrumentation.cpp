@@ -463,7 +463,7 @@ TEST_F(InstrumentationServerFixture, RoleFunction) {
 }
 
 // Test that GetSqlInfo returns custom instrumentation metadata
-TEST_F(InstrumentationServerFixture, SqlInfoInstrumentationMetadata) {
+TEST_F(InstrumentationServerFixture, InstrumentationSqlFunctions) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -480,55 +480,42 @@ TEST_F(InstrumentationServerFixture, SqlInfoInstrumentationMetadata) {
 
   FlightSqlClient sql_client(std::move(client));
 
-  // Request the custom GizmoSQL instrumentation SqlInfo IDs
-  std::vector<int> sql_info_ids = {10000, 10001, 10002};
-  ASSERT_ARROW_OK_AND_ASSIGN(auto info,
-                             sql_client.GetSqlInfo(call_options, sql_info_ids));
+  // Query the instrumentation SQL functions
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info,
+      sql_client.Execute(
+          call_options,
+          "SELECT GIZMOSQL_INSTRUMENTATION_ENABLED() AS enabled,"
+          " GIZMOSQL_INSTRUMENTATION_CATALOG() AS catalog,"
+          " GIZMOSQL_INSTRUMENTATION_SCHEMA() AS schema"));
 
-  // Fetch the results
   ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
                              sql_client.DoGet(call_options, info->endpoints()[0].ticket));
   std::shared_ptr<arrow::Table> table;
   ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
 
-  // Should have 3 rows (one for each custom SqlInfo ID)
-  ASSERT_EQ(table->num_rows(), 3) << "Expected 3 rows for 3 custom SqlInfo IDs";
+  ASSERT_EQ(table->num_rows(), 1) << "Expected 1 row from instrumentation SQL functions";
+  ASSERT_EQ(table->num_columns(), 3) << "Expected 3 columns";
 
-  // Verify the info_name column contains our custom IDs
-  auto info_name_col = std::static_pointer_cast<arrow::UInt32Array>(
+  // Verify enabled column is true
+  auto enabled_col = std::static_pointer_cast<arrow::BooleanArray>(
       table->column(0)->chunk(0));
-  ASSERT_EQ(info_name_col->Value(0), 10000);
-  ASSERT_EQ(info_name_col->Value(1), 10001);
-  ASSERT_EQ(info_name_col->Value(2), 10002);
+  ASSERT_TRUE(enabled_col->Value(0))
+      << "GIZMOSQL_INSTRUMENTATION_ENABLED() should be true";
 
-  // Verify instrumentation is enabled (ID 10000 should be true)
-  // The value column is a dense union — type index 1 = bool_value
-  auto value_col = table->column(1)->chunk(0);
-  auto union_array = std::static_pointer_cast<arrow::DenseUnionArray>(value_col);
-
-  // First row (10000): bool value — should be true
-  auto bool_type_code = union_array->type_code(0);
-  auto bool_child = union_array->field(union_array->child_id(0));
-  auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(bool_child);
-  auto bool_offset = union_array->value_offset(0);
-  ASSERT_TRUE(bool_array->Value(bool_offset))
-      << "Instrumentation enabled (10000) should be true";
-
-  // Second row (10001): string value — instrumentation catalog
-  auto catalog_child = union_array->field(union_array->child_id(1));
-  auto catalog_array = std::static_pointer_cast<arrow::StringArray>(catalog_child);
-  auto catalog_offset = union_array->value_offset(1);
-  std::string catalog_value = catalog_array->GetString(catalog_offset);
+  // Verify catalog is not empty
+  auto catalog_col = std::static_pointer_cast<arrow::StringArray>(
+      table->column(1)->chunk(0));
+  std::string catalog_value = catalog_col->GetString(0);
   ASSERT_FALSE(catalog_value.empty())
-      << "Instrumentation catalog (10001) should not be empty when enabled";
+      << "GIZMOSQL_INSTRUMENTATION_CATALOG() should not be empty when enabled";
 
-  // Third row (10002): string value — instrumentation schema
-  auto schema_child = union_array->field(union_array->child_id(2));
-  auto schema_array = std::static_pointer_cast<arrow::StringArray>(schema_child);
-  auto schema_offset = union_array->value_offset(2);
-  std::string schema_value = schema_array->GetString(schema_offset);
+  // Verify schema is not empty
+  auto schema_col = std::static_pointer_cast<arrow::StringArray>(
+      table->column(2)->chunk(0));
+  std::string schema_value = schema_col->GetString(0);
   ASSERT_FALSE(schema_value.empty())
-      << "Instrumentation schema (10002) should not be empty when enabled";
+      << "GIZMOSQL_INSTRUMENTATION_SCHEMA() should not be empty when enabled";
 }
 
 // Test that stale 'running' instances from previous unclean shutdowns are cleaned up

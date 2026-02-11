@@ -36,7 +36,7 @@ duckdb
 You should see:
 
 ```
-DuckDB v1.4.3 (Andium)
+DuckDB v1.4.4
 Connected to a transient in-memory database.
 ```
 

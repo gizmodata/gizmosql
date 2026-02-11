@@ -382,11 +382,6 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server,
     result_map[SqlInfoOptions::SqlInfo::SQL_DATETIME_FUNCTIONS] =
         SqlInfoResult(GetDynamicDateTimeFunctions(server));
 
-    // GizmoSQL custom instrumentation SqlInfo defaults (disabled).
-    // These are overridden by FlightSQLServerBuilder after instrumentation is set up.
-    result_map[GIZMOSQL_SQL_INFO_INSTRUMENTATION_ENABLED] = SqlInfoResult(false);
-    result_map[GIZMOSQL_SQL_INFO_INSTRUMENTATION_CATALOG] = SqlInfoResult(std::string(""));
-    result_map[GIZMOSQL_SQL_INFO_INSTRUMENTATION_SCHEMA] = SqlInfoResult(std::string(""));
   }
 
   return result_map;
