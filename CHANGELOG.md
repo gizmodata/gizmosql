@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Custom `GetSqlInfo` IDs for instrumentation metadata discovery: `GIZMOSQL_SQL_INFO_INSTRUMENTATION_ENABLED` (10000), `GIZMOSQL_SQL_INFO_INSTRUMENTATION_CATALOG` (10001), `GIZMOSQL_SQL_INFO_INSTRUMENTATION_SCHEMA` (10002) — allows clients to dynamically discover instrumentation availability and catalog/schema configuration
+
+### Fixed
+
+- Catalog permissions handler no longer hardcodes `_gizmosql_instr` — now uses the actual configured instrumentation catalog name, supporting custom catalogs (e.g., DuckLake)
+
 ### Changed
 
 - Docker entrypoint scripts now default to in-memory database when `DATABASE_FILENAME` is not set

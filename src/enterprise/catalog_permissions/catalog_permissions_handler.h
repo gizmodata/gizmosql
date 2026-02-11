@@ -25,28 +25,34 @@ namespace gizmosql::enterprise {
 
 /// Get the catalog access level for a given catalog name.
 /// This evaluates the catalog_access rules from the session's JWT token.
-/// Special handling for _gizmosql_instr: only admins can read, no one can write.
+/// Special handling for the instrumentation catalog: only admins can read, no one can write.
 ///
 /// @param catalog_name The catalog to check access for
 /// @param role The user's role (e.g., "admin", "readonly")
 /// @param catalog_access The catalog access rules from the JWT token
+/// @param instrumentation_manager Optional instrumentation manager to resolve the catalog name
 /// @return The access level granted for the catalog
 CatalogAccessLevel GetCatalogAccess(
     const std::string& catalog_name,
     const std::string& role,
-    const std::vector<CatalogAccessRule>& catalog_access);
+    const std::vector<CatalogAccessRule>& catalog_access,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
 
 /// Check if the session has read access to a catalog.
 /// @param client_session The session to check
 /// @param catalog_name The catalog to check access for
+/// @param instrumentation_manager Optional instrumentation manager to resolve the catalog name
 /// @return true if read access is granted
-bool HasReadAccess(const ClientSession& client_session, const std::string& catalog_name);
+bool HasReadAccess(const ClientSession& client_session, const std::string& catalog_name,
+                   const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
 
 /// Check if the session has write access to a catalog.
 /// @param client_session The session to check
 /// @param catalog_name The catalog to check access for
+/// @param instrumentation_manager Optional instrumentation manager to resolve the catalog name
 /// @return true if write access is granted
-bool HasWriteAccess(const ClientSession& client_session, const std::string& catalog_name);
+bool HasWriteAccess(const ClientSession& client_session, const std::string& catalog_name,
+                    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
 
 /// Check catalog-level write access for all databases a statement will modify.
 /// This is an enterprise feature that requires a valid license with catalog_permissions.

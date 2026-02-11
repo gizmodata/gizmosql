@@ -15,10 +15,12 @@ namespace gizmosql::enterprise {
 CatalogAccessLevel GetCatalogAccess(
     const std::string& catalog_name,
     const std::string& role,
-    const std::vector<CatalogAccessRule>& catalog_access) {
-  // The instrumentation database is special: system-managed, read-only for admins
-  // This protection ALWAYS applies, regardless of licensing or token rules
-  if (catalog_name == "_gizmosql_instr") {
+    const std::vector<CatalogAccessRule>& catalog_access,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+  // The instrumentation catalog is special: system-managed, read-only for admins.
+  // This protection ALWAYS applies, regardless of licensing or token rules.
+  // The catalog name is configurable (e.g., DuckLake catalogs), so we check dynamically.
+  if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
     return (role == "admin") ? CatalogAccessLevel::kRead : CatalogAccessLevel::kNone;
   }
 
@@ -44,13 +46,17 @@ CatalogAccessLevel GetCatalogAccess(
   return CatalogAccessLevel::kNone;
 }
 
-bool HasReadAccess(const ClientSession& client_session, const std::string& catalog_name) {
-  auto access = GetCatalogAccess(catalog_name, client_session.role, client_session.catalog_access);
+bool HasReadAccess(const ClientSession& client_session, const std::string& catalog_name,
+                   const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+  auto access = GetCatalogAccess(catalog_name, client_session.role, client_session.catalog_access,
+                                 instrumentation_manager);
   return access >= CatalogAccessLevel::kRead;
 }
 
-bool HasWriteAccess(const ClientSession& client_session, const std::string& catalog_name) {
-  auto access = GetCatalogAccess(catalog_name, client_session.role, client_session.catalog_access);
+bool HasWriteAccess(const ClientSession& client_session, const std::string& catalog_name,
+                    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+  auto access = GetCatalogAccess(catalog_name, client_session.role, client_session.catalog_access,
+                                 instrumentation_manager);
   return access >= CatalogAccessLevel::kWrite;
 }
 
@@ -63,16 +69,10 @@ arrow::Status CheckCatalogWriteAccess(
     const std::string& flight_method,
     bool is_internal) {
 
-  // Get the instrumentation catalog name (if instrumentation is enabled)
-  std::string instr_catalog;
-  if (instrumentation_manager) {
-    instr_catalog = instrumentation_manager->GetCatalog();
-  }
-
   for (const auto& [catalog_name, catalog_identity] : modified_databases) {
     // Block writes to the instrumentation catalog (regardless of other rules)
     // This protects both file-based (_gizmosql_instr) and external catalogs (e.g., DuckLake)
-    if (!instr_catalog.empty() && catalog_name == instr_catalog) {
+    if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Access denied: instrumentation catalog is read-only",
                              {"kind", "sql"}, {"status", "rejected"},
@@ -90,7 +90,7 @@ arrow::Status CheckCatalogWriteAccess(
       return arrow::Status::Invalid(error_msg);
     }
 
-    if (!HasWriteAccess(*client_session, catalog_name)) {
+    if (!HasWriteAccess(*client_session, catalog_name, instrumentation_manager)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Access denied: user lacks write access to catalog",
                              {"kind", "sql"}, {"status", "rejected"},
@@ -123,16 +123,10 @@ arrow::Status CheckCatalogReadAccess(
     const std::string& flight_method,
     bool is_internal) {
 
-  // Get the instrumentation catalog name (if instrumentation is enabled)
-  std::string instr_catalog;
-  if (instrumentation_manager) {
-    instr_catalog = instrumentation_manager->GetCatalog();
-  }
-
   for (const auto& [catalog_name, catalog_identity] : read_databases) {
     // For the instrumentation catalog, only admins can read
     // This protects both file-based (_gizmosql_instr) and external catalogs (e.g., DuckLake)
-    if (!instr_catalog.empty() && catalog_name == instr_catalog) {
+    if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
       if (client_session->role != "admin") {
         GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                                "Access denied: only admins can read instrumentation catalog",
@@ -154,7 +148,7 @@ arrow::Status CheckCatalogReadAccess(
       continue;
     }
 
-    if (!HasReadAccess(*client_session, catalog_name)) {
+    if (!HasReadAccess(*client_session, catalog_name, instrumentation_manager)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Access denied: user lacks read access to catalog",
                              {"kind", "sql"}, {"status", "rejected"},

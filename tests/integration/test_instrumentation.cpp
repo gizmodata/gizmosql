@@ -462,6 +462,75 @@ TEST_F(InstrumentationServerFixture, RoleFunction) {
   ASSERT_EQ(role, "admin") << "GIZMOSQL_ROLE() should return 'admin' for system user";
 }
 
+// Test that GetSqlInfo returns custom instrumentation metadata
+TEST_F(InstrumentationServerFixture, SqlInfoInstrumentationMetadata) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // Request the custom GizmoSQL instrumentation SqlInfo IDs
+  std::vector<int> sql_info_ids = {10000, 10001, 10002};
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info,
+                             sql_client.GetSqlInfo(call_options, sql_info_ids));
+
+  // Fetch the results
+  ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                             sql_client.DoGet(call_options, info->endpoints()[0].ticket));
+  std::shared_ptr<arrow::Table> table;
+  ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+
+  // Should have 3 rows (one for each custom SqlInfo ID)
+  ASSERT_EQ(table->num_rows(), 3) << "Expected 3 rows for 3 custom SqlInfo IDs";
+
+  // Verify the info_name column contains our custom IDs
+  auto info_name_col = std::static_pointer_cast<arrow::UInt32Array>(
+      table->column(0)->chunk(0));
+  ASSERT_EQ(info_name_col->Value(0), 10000);
+  ASSERT_EQ(info_name_col->Value(1), 10001);
+  ASSERT_EQ(info_name_col->Value(2), 10002);
+
+  // Verify instrumentation is enabled (ID 10000 should be true)
+  // The value column is a dense union — type index 1 = bool_value
+  auto value_col = table->column(1)->chunk(0);
+  auto union_array = std::static_pointer_cast<arrow::DenseUnionArray>(value_col);
+
+  // First row (10000): bool value — should be true
+  auto bool_type_code = union_array->type_code(0);
+  auto bool_child = union_array->field(union_array->child_id(0));
+  auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(bool_child);
+  auto bool_offset = union_array->value_offset(0);
+  ASSERT_TRUE(bool_array->Value(bool_offset))
+      << "Instrumentation enabled (10000) should be true";
+
+  // Second row (10001): string value — instrumentation catalog
+  auto catalog_child = union_array->field(union_array->child_id(1));
+  auto catalog_array = std::static_pointer_cast<arrow::StringArray>(catalog_child);
+  auto catalog_offset = union_array->value_offset(1);
+  std::string catalog_value = catalog_array->GetString(catalog_offset);
+  ASSERT_FALSE(catalog_value.empty())
+      << "Instrumentation catalog (10001) should not be empty when enabled";
+
+  // Third row (10002): string value — instrumentation schema
+  auto schema_child = union_array->field(union_array->child_id(2));
+  auto schema_array = std::static_pointer_cast<arrow::StringArray>(schema_child);
+  auto schema_offset = union_array->value_offset(2);
+  std::string schema_value = schema_array->GetString(schema_offset);
+  ASSERT_FALSE(schema_value.empty())
+      << "Instrumentation schema (10002) should not be empty when enabled";
+}
+
 // Test that stale 'running' instances from previous unclean shutdowns are cleaned up
 // This is a unit test that directly tests InstrumentationManager::CleanupStaleRecords
 TEST(InstrumentationManagerTest, StaleInstanceCleanup) {

@@ -24,6 +24,11 @@ namespace gizmosql::ddb {
 // Forward declaration
 class DuckDBFlightSqlServer;
 
+// Custom GizmoSQL SqlInfo IDs (per Flight SQL spec, custom IDs start at 10,000)
+constexpr uint32_t GIZMOSQL_SQL_INFO_INSTRUMENTATION_ENABLED = 10000;
+constexpr uint32_t GIZMOSQL_SQL_INFO_INSTRUMENTATION_CATALOG = 10001;
+constexpr uint32_t GIZMOSQL_SQL_INFO_INSTRUMENTATION_SCHEMA  = 10002;
+
 /// \brief Gets the mapping from SQL info ids to SqlInfoResult instances.
 /// Uses dynamic queries to DuckDB like the Java driver.
 /// \param server The DuckDB server instance to use for dynamic queries

@@ -45,6 +45,7 @@
 
 #include "sqlite_server.h"
 #include "duckdb_server.h"
+#include "duckdb_sql_info.h"
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 #include "gizmosql_security.h"
@@ -625,6 +626,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
             g_instrumentation_manager, instance_config);
         duckdb_server->SetInstanceInstrumentation(std::move(instance_instr));
+
+        // Register instrumentation metadata in GetSqlInfo for client discovery
+        duckdb_server->RegisterSqlInfo(
+            gizmosql::ddb::GIZMOSQL_SQL_INFO_INSTRUMENTATION_ENABLED,
+            flight::sql::SqlInfoResult(true));
+        duckdb_server->RegisterSqlInfo(
+            gizmosql::ddb::GIZMOSQL_SQL_INFO_INSTRUMENTATION_CATALOG,
+            flight::sql::SqlInfoResult(std::string(g_instrumentation_manager->GetCatalog())));
+        duckdb_server->RegisterSqlInfo(
+            gizmosql::ddb::GIZMOSQL_SQL_INFO_INSTRUMENTATION_SCHEMA,
+            flight::sql::SqlInfoResult(std::string(g_instrumentation_manager->GetSchema())));
       } else {
         return instr_result.status();
       }

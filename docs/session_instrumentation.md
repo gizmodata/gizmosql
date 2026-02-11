@@ -338,6 +338,35 @@ LIMIT 20;
 
 ---
 
+## Flight SQL Metadata Discovery
+
+GizmoSQL advertises instrumentation availability via custom [Flight SQL `GetSqlInfo`](https://arrow.apache.org/docs/format/FlightSql.html#getsqlinfo) IDs. Clients can call `GetSqlInfo` with these IDs to discover whether instrumentation is enabled and which catalog/schema to query.
+
+| SqlInfo ID | Name | Type | Description |
+|------------|------|------|-------------|
+| `10000` | `GIZMOSQL_SQL_INFO_INSTRUMENTATION_ENABLED` | `bool` | Whether instrumentation is enabled on this server |
+| `10001` | `GIZMOSQL_SQL_INFO_INSTRUMENTATION_CATALOG` | `string` | Catalog name for instrumentation tables (e.g., `_gizmosql_instr` or a custom DuckLake catalog) |
+| `10002` | `GIZMOSQL_SQL_INFO_INSTRUMENTATION_SCHEMA` | `string` | Schema name within the catalog (default: `main`) |
+
+When instrumentation is disabled, ID `10000` returns `false` and IDs `10001`/`10002` return empty strings.
+
+### Example (Node.js)
+
+```javascript
+const info = await client.getSqlInfo([10000, 10001, 10002]);
+const enabled = info.get(10000);      // true
+const catalog = info.get(10001);      // "_gizmosql_instr"
+const schema  = info.get(10002);      // "main"
+
+if (enabled) {
+  const result = await client.execute(
+    `SELECT * FROM ${catalog}.${schema}.session_activity`
+  );
+}
+```
+
+---
+
 ## SQL Functions
 
 GizmoSQL provides several pseudo-functions that are replaced with actual values at query execution time. These functions work in any SQL context (SELECT, WHERE, etc.) and are case-insensitive.
