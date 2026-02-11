@@ -19,13 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive env var documentation in entrypoint script headers
 
 #### Server-Side OAuth Code Exchange (Enterprise)
-- New server-side OAuth authorization code exchange flow — the GizmoSQL server becomes a confidential OAuth client, handling browser redirects, PKCE-less code exchange, ID token validation, and GizmoSQL JWT issuance
+- New server-side OAuth authorization code exchange flow — the GizmoSQL server becomes a confidential OAuth client, handling browser redirects, code exchange, ID token validation, and GizmoSQL JWT issuance
+- New `GET /oauth/initiate` API endpoint — generates a session UUID and returns the IdP authorization URL as JSON, eliminating the need for clients to know the server's secret key
 - New `--oauth-client-id` / `GIZMOSQL_OAUTH_CLIENT_ID` — enables the OAuth HTTP server when set
 - New `--oauth-client-secret` / `GIZMOSQL_OAUTH_CLIENT_SECRET` — OAuth client secret (stays on server)
 - New `--oauth-scopes` / `GIZMOSQL_OAUTH_SCOPES` — scopes to request (default: `openid profile email`)
 - New `--oauth-port` / `GIZMOSQL_OAUTH_PORT` — port for the OAuth HTTP(S) server (default: `31339`)
 - New `--oauth-redirect-uri` / `GIZMOSQL_OAUTH_REDIRECT_URI` — override redirect URI for reverse proxy setups
-- Clients only need `authType=oauth` in their connection string — no client-side secrets required
+- New `--oauth-disable-tls` / `GIZMOSQL_OAUTH_DISABLE_TLS` — disable TLS on the OAuth callback server for localhost development/testing (WARNING: should never be used on network-exposed servers)
+- Clients only need `authType=external` in their connection string — no client-side secrets required
 - Security: browser URLs contain a session hash (HMAC-SHA256); the raw UUID is only known to the polling client
 - Pending sessions auto-expire after 15 minutes
 - Requires `--token-allowed-issuer`, `--token-allowed-audience`, and a valid Enterprise license with `external_auth` feature

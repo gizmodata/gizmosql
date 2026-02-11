@@ -1,6 +1,6 @@
 # OAuth / SSO Setup Guide *(Enterprise)*
 
-This guide provides step-by-step instructions for configuring GizmoSQL with popular identity providers using the OIDC Authorization Code + PKCE flow. This allows users to authenticate via browser-based Single Sign-On from JDBC clients like DBeaver, IntelliJ, and other desktop tools.
+This guide provides step-by-step instructions for configuring GizmoSQL with popular identity providers using server-side OAuth. This allows users to authenticate via browser-based Single Sign-On from JDBC clients like DBeaver, IntelliJ, and other desktop tools.
 
 > **Prerequisites:**
 > - **GizmoSQL Enterprise Edition** on the server side.
@@ -10,22 +10,25 @@ This guide provides step-by-step instructions for configuring GizmoSQL with popu
 
 ## How It Works
 
-1. The JDBC driver opens a browser to your Identity Provider's login page
-2. The user authenticates (username/password, MFA, etc.)
-3. The IdP redirects back to a temporary localhost callback server started by the driver
-4. The driver exchanges the authorization code for an access token (using PKCE, no client secret needed)
-5. The access token is sent to the GizmoSQL server as a Bearer token
-6. The server validates the token via JWKS auto-discovery from the IdP
+GizmoSQL uses **server-side OAuth** — the GizmoSQL server acts as a confidential OAuth client and handles the entire authorization code exchange. JDBC clients only need `authType=external` in their connection string — no client IDs, secrets, or OAuth configuration is distributed to clients.
+
+1. The client connects with `authType=external` and is directed to a browser login page
+2. The user authenticates with their Identity Provider (username/password, MFA, etc.)
+3. The IdP redirects back to the GizmoSQL server's `/oauth/callback` endpoint with an authorization code
+4. The server exchanges the code for tokens, validates the ID token via JWKS, and issues a GizmoSQL session JWT
+5. The client receives the JWT and uses it for all subsequent requests
+
+See [Server-Side OAuth Code Exchange](token_authentication.md#server-side-oauth-code-exchange-enterprise) for full technical details.
 
 ## Quick Reference
 
-| Provider | Issuer URL | PKCE | Client Secret | Localhost Redirect |
-|----------|-----------|------|---------------|-------------------|
-| [Keycloak](#keycloak) | `http(s)://<host>/realms/<realm>` | Yes (S256) | Not required | Any port |
-| [Azure AD](#azure-ad-microsoft-entra-id) | `https://login.microsoftonline.com/<tenant>/v2.0` | Yes (S256) | Not required | Any port (native app) |
-| [Google](#google) | `https://accounts.google.com` | Yes (S256) | **Required** | Any port (Desktop app) |
-| [AWS Cognito](#aws-cognito) | `https://cognito-idp.<region>.amazonaws.com/<pool-id>` | Yes (S256 only) | Not required | Exact match |
-| [Clerk](#clerk) | `https://clerk.<domain>.com` | Yes (S256) | Not required | Exact match (verify) |
+| Provider | Issuer URL | Client Type | Redirect URI |
+|----------|-----------|-------------|--------------|
+| [Keycloak](#keycloak) | `http(s)://<host>/realms/<realm>` | Confidential | `https://<server>:31339/oauth/callback` |
+| [Azure AD](#azure-ad-microsoft-entra-id) | `https://login.microsoftonline.com/<tenant>/v2.0` | Web + client secret | `https://<server>:31339/oauth/callback` |
+| [Google](#google) | `https://accounts.google.com` | Web application | `https://<server>:31339/oauth/callback` |
+| [AWS Cognito](#aws-cognito) | `https://cognito-idp.<region>.amazonaws.com/<pool-id>` | Confidential + client secret | `https://<server>:31339/oauth/callback` |
+| [Clerk](#clerk) | `https://clerk.<domain>.com` | Confidential | `https://<server>:31339/oauth/callback` |
 
 ---
 
@@ -48,13 +51,14 @@ docker run -d --name keycloak \
 1. Open `http://localhost:8080` and log in as `admin`/`admin`
 2. Create a new realm (e.g., `gizmosql`)
 3. Create a client:
-   - **Client ID:** `gizmosql-desktop`
+   - **Client ID:** `gizmosql-server`
    - **Client type:** OpenID Connect
-   - **Client authentication:** OFF (public client)
+   - **Client authentication:** ON (confidential client)
    - **Authentication flow:** Check "Standard flow" (Authorization Code)
-4. Under **Settings** > **Valid redirect URIs:** add `http://127.0.0.1/*`
-5. Create a test user under **Users** > **Add user**
-6. Set a password under the user's **Credentials** tab
+4. Under **Settings** > **Valid redirect URIs:** add `https://<your-server>:31339/oauth/callback`
+5. Under **Credentials**, copy the **Client Secret**
+6. Create a test user under **Users** > **Add user**
+7. Set a password under the user's **Credentials** tab
 
 ### 3. Start GizmoSQL Server
 
@@ -63,14 +67,17 @@ gizmosql_server \
   --database-filename data/mydb.duckdb \
   --tls tls/server.pem tls/server.key \
   --token-allowed-issuer "http://localhost:8080/realms/gizmosql" \
-  --token-allowed-audience "gizmosql-desktop" \
-  --token-default-role admin
+  --token-allowed-audience "gizmosql-server" \
+  --token-default-role admin \
+  --oauth-client-id "gizmosql-server" \
+  --oauth-client-secret "YOUR_KEYCLOAK_CLIENT_SECRET" \
+  --oauth-port 31339
 ```
 
 ### 4. Connect via JDBC
 
 ```
-jdbc:gizmosql://localhost:31337?useEncryption=true&disableCertificateVerification=true&oidc.issuer=http://localhost:8080/realms/gizmosql&oidc.clientId=gizmosql-desktop
+jdbc:gizmosql://localhost:31337?useEncryption=true&disableCertificateVerification=true&authType=external
 ```
 
 **Issuer URL format:** `http(s)://<keycloak-host>/realms/<realm-name>`
@@ -83,19 +90,19 @@ jdbc:gizmosql://localhost:31337?useEncryption=true&disableCertificateVerificatio
 
 1. Go to [Microsoft Entra admin center](https://entra.microsoft.com)
 2. Navigate to **Identity** > **Applications** > **App registrations** > **New registration**
-3. Enter a name (e.g., `GizmoSQL Desktop`)
+3. Enter a name (e.g., `GizmoSQL Server`)
 4. Under **Supported account types**, choose the appropriate option:
    - *Single tenant* for your organization only
    - *Multi-tenant* for any Azure AD organization
-5. Under **Redirect URI**, select platform **Mobile and desktop applications**
-6. Add `http://localhost` as the redirect URI
+5. Under **Redirect URI**, select platform **Web**
+6. Add `https://<your-server>:31339/oauth/callback` as the redirect URI
 7. Click **Register**
 
-### 2. Enable Public Client
+### 2. Create a Client Secret
 
-1. In your app registration, go to **Authentication** > **Advanced settings**
-2. Set **Allow public client flows** to **Yes**
-3. Save
+1. In your app registration, go to **Certificates & secrets** > **Client secrets**
+2. Click **New client secret**, add a description, and choose an expiration
+3. Copy the **Value** (this is your client secret — it's only shown once)
 
 ### 3. Configure API Permissions
 
@@ -106,7 +113,7 @@ jdbc:gizmosql://localhost:31337?useEncryption=true&disableCertificateVerificatio
 ### 4. Note Your IDs
 
 - **Application (client) ID:** Found on the app's **Overview** page
-- **Directory (tenant) ID:** Found on the **Overview** page or in **Azure Active Directory** > **Properties**
+- **Directory (tenant) ID:** Found on the app's **Overview** page or under **Microsoft Entra ID** > **Overview**
 
 ### 5. Start GizmoSQL Server
 
@@ -116,16 +123,17 @@ gizmosql_server \
   --tls tls/server.pem tls/server.key \
   --token-allowed-issuer "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0" \
   --token-allowed-audience "YOUR_CLIENT_ID" \
-  --token-default-role admin
+  --token-default-role admin \
+  --oauth-client-id "YOUR_CLIENT_ID" \
+  --oauth-client-secret "YOUR_CLIENT_SECRET" \
+  --oauth-port 31339
 ```
 
 ### 6. Connect via JDBC
 
 ```
-jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&oidc.issuer=https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0&oidc.clientId=YOUR_CLIENT_ID&oidc.scopes=openid%20profile%20email%20offline_access
+jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&authType=external
 ```
-
-> **Note:** Include `offline_access` in scopes to receive refresh tokens for automatic token renewal.
 
 **Issuer URL format:** `https://login.microsoftonline.com/<tenant-id>/v2.0`
 
@@ -139,21 +147,20 @@ jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStor
 2. Select or create a project
 3. Navigate to **APIs & Services** > **Credentials**
 4. Click **Create Credentials** > **OAuth client ID**
-5. Select application type: **Desktop app**
-6. Enter a name (e.g., `GizmoSQL Desktop`)
-7. Click **Create** and copy the **Client ID** and **Client Secret**
+5. Select application type: **Web application**
+6. Enter a name (e.g., `GizmoSQL Server`)
+7. Under **Authorized redirect URIs**, add `https://<your-server>:31339/oauth/callback`
+8. Click **Create** and copy the **Client ID** and **Client Secret**
 
-> **Note:** Google generates a client secret even for Desktop app clients. While this secret is not truly confidential (it's embedded in the desktop application), Google's token endpoint requires it in the token exchange request. You must include it as `oidc.clientSecret` in the JDBC connection string.
+> **Important:** The client secret is a confidential credential — it stays on the GizmoSQL server and must never be shared with clients.
 
 ### 2. Configure Consent Screen
 
-1. Go to **APIs & Services** > **OAuth consent screen**
-2. Choose **External** (or **Internal** for Google Workspace organizations)
-3. Fill in app name, support email, and developer contact
-4. Add scopes: `openid`, `profile`, `email`
-5. For testing, add test users (max 100 while in "Testing" status)
-
-> **Note:** Google Desktop app clients automatically allow `http://127.0.0.1` redirects on any port. No explicit redirect URI configuration is needed.
+1. Go to **Google Auth Platform** > **Branding** (or **APIs & Services** > **OAuth consent screen**, which redirects to the same place)
+2. Fill in app name, support email, and developer contact
+3. Under **Audience**, choose **External** (or **Internal** for Google Workspace organizations)
+4. Under **Data Access**, add scopes: `openid`, `profile`, `email`
+5. For testing, add test users under **Audience** (max 100 while in "Testing" status)
 
 ### 3. Start GizmoSQL Server
 
@@ -163,13 +170,16 @@ gizmosql_server \
   --tls tls/server.pem tls/server.key \
   --token-allowed-issuer "https://accounts.google.com" \
   --token-allowed-audience "YOUR_CLIENT_ID.apps.googleusercontent.com" \
-  --token-default-role admin
+  --token-default-role admin \
+  --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com" \
+  --oauth-client-secret "GOCSPX-YOUR_CLIENT_SECRET" \
+  --oauth-port 31339
 ```
 
 ### 4. Connect via JDBC
 
 ```
-jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&oidc.issuer=https://accounts.google.com&oidc.clientId=YOUR_CLIENT_ID.apps.googleusercontent.com&oidc.clientSecret=YOUR_CLIENT_SECRET&oidc.scopes=openid%20profile%20email
+jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&authType=external
 ```
 
 **Issuer URL:** `https://accounts.google.com` (fixed, global)
@@ -185,10 +195,10 @@ jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStor
 3. Configure sign-in experience (email, username, etc.)
 4. Configure security, sign-up, and messaging as needed
 5. On the **Integrate your app** step:
-   - App type: **Public client**
-   - App client name: `GizmoSQL Desktop`
-   - **Do NOT generate a client secret** (leave unchecked)
-   - Callback URL: `http://localhost/callback`
+   - App type: **Confidential client**
+   - App client name: `GizmoSQL Server`
+   - **Generate a client secret** (check this option)
+   - Callback URL: `https://<your-server>:31339/oauth/callback`
    - OAuth 2.0 grant types: **Authorization code grant**
    - OpenID Connect scopes: `openid`, `profile`, `email`
 6. Click **Create user pool**
@@ -205,6 +215,7 @@ You must set up a Cognito domain for the OAuth endpoints:
 
 - **User pool ID:** Found on the user pool **Overview** page (format: `<region>_<id>`)
 - **Client ID:** Found under **App integration** > **App clients**
+- **Client Secret:** Found under **App integration** > **App clients** > your client > **Show client secret**
 - **Region:** The AWS region where the user pool was created
 
 ### 4. Start GizmoSQL Server
@@ -215,16 +226,17 @@ gizmosql_server \
   --tls tls/server.pem tls/server.key \
   --token-allowed-issuer "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_AbCdEfGhI" \
   --token-allowed-audience "YOUR_COGNITO_CLIENT_ID" \
-  --token-default-role admin
+  --token-default-role admin \
+  --oauth-client-id "YOUR_COGNITO_CLIENT_ID" \
+  --oauth-client-secret "YOUR_COGNITO_CLIENT_SECRET" \
+  --oauth-port 31339
 ```
 
 ### 5. Connect via JDBC
 
 ```
-jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&oidc.issuer=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_AbCdEfGhI&oidc.clientId=YOUR_COGNITO_CLIENT_ID&oidc.scopes=openid%20profile%20email
+jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&authType=external
 ```
-
-> **Note:** Cognito only supports S256 code challenge method (not plain). The GizmoSQL JDBC driver uses S256 by default.
 
 **Issuer URL format:** `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>`
 
@@ -237,15 +249,15 @@ jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStor
 1. Go to the [Clerk Dashboard](https://dashboard.clerk.com)
 2. Navigate to **OAuth Applications**
 3. Click **Add OAuth application**
-4. Enter a name (e.g., `GizmoSQL Desktop`)
-5. Enable the **Public** toggle (allows PKCE without client secret)
-6. Add `http://127.0.0.1/callback` as a **Redirect URI**
+4. Enter a name (e.g., `GizmoSQL Server`)
+5. Choose **Confidential client** as the client type (this cannot be changed later)
+6. Add `https://<your-server>:31339/oauth/callback` as a **Redirect URI**
 7. Select scopes: `openid`, `profile`, `email`
-8. Save and copy the **Client ID**
+8. Save and copy the **Client ID** and **Client Secret** (the secret is only shown once)
 
 ### 2. Find Your Issuer URL
 
-- **Development:** `https://<instance-slug>.clerk.accounts.dev`
+- **Development:** `https://<verb-noun-##>.clerk.accounts.dev` (e.g., `https://jumping-tiger-00.clerk.accounts.dev`)
 - **Production:** `https://clerk.<your-app-domain>.com`
 - Verify by checking: `<issuer>/.well-known/openid-configuration`
 
@@ -257,13 +269,16 @@ gizmosql_server \
   --tls tls/server.pem tls/server.key \
   --token-allowed-issuer "https://clerk.myapp.com" \
   --token-allowed-audience "YOUR_CLERK_CLIENT_ID" \
-  --token-default-role admin
+  --token-default-role admin \
+  --oauth-client-id "YOUR_CLERK_CLIENT_ID" \
+  --oauth-client-secret "YOUR_CLERK_CLIENT_SECRET" \
+  --oauth-port 31339
 ```
 
 ### 4. Connect via JDBC
 
 ```
-jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&oidc.issuer=https://clerk.myapp.com&oidc.clientId=YOUR_CLERK_CLIENT_ID&oidc.scopes=openid%20profile%20email
+jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStore=true&authType=external
 ```
 
 **Issuer URL format:** `https://clerk.<your-domain>.com` or `https://<slug>.clerk.accounts.dev`
@@ -276,31 +291,50 @@ For all providers, the server-side configuration follows the same pattern:
 
 | Server Option | Description |
 |---------------|-------------|
-| `--token-allowed-issuer` | Must match the `iss` claim in tokens from your IdP |
-| `--token-allowed-audience` | Must match the `aud` claim (usually the client ID) |
-| `--token-default-role` | Role to assign when IdP tokens lack a `role` claim |
-| `--token-jwks-uri` | *(Optional)* Explicit JWKS endpoint; auto-discovered from issuer if not set |
+| `--oauth-client-id` | OAuth client ID from your IdP. Setting this enables the OAuth HTTP server. |
+| `--oauth-client-secret` | OAuth client secret (confidential, stays on server). |
+| `--oauth-scopes` | OAuth scopes to request (default: `openid profile email`). |
+| `--oauth-port` | Port for the OAuth HTTP(S) server (default: `31339`). |
+| `--oauth-redirect-uri` | Override redirect URI when behind a proxy (default: auto-constructed). |
+| `--oauth-disable-tls` | Disable TLS on the OAuth callback server. **WARNING: localhost only.** |
+| `--token-allowed-issuer` | Must match the `iss` claim in tokens from your IdP. |
+| `--token-allowed-audience` | Must match the `aud` claim (usually the client ID). |
+| `--token-default-role` | Role to assign when IdP tokens lack a `role` claim. |
+| `--token-jwks-uri` | *(Optional)* Explicit JWKS endpoint; auto-discovered from issuer if not set. |
 
 **Environment variables:**
 
 ```bash
-export GIZMOSQL_TOKEN_JWKS_URI="https://your-idp.com/.well-known/jwks.json"   # Optional
+export GIZMOSQL_OAUTH_CLIENT_ID="your-client-id"
+export GIZMOSQL_OAUTH_CLIENT_SECRET="your-client-secret"
+export GIZMOSQL_OAUTH_PORT="31339"
+# export GIZMOSQL_OAUTH_DISABLE_TLS="true"  # WARNING: localhost development only
+export GIZMOSQL_TOKEN_ALLOWED_ISSUER="https://your-idp.com"
+export GIZMOSQL_TOKEN_ALLOWED_AUDIENCE="your-client-id"
 export GIZMOSQL_TOKEN_DEFAULT_ROLE="admin"
 ```
 
 See [Token Authentication](token_authentication.md) for complete server configuration details.
 
+## JDBC Client Configuration
+
+With server-side OAuth, client configuration is minimal:
+
+```
+jdbc:gizmosql://hostname:31337?useEncryption=true&authType=external
+```
+
+No client IDs, secrets, or OAuth endpoints need to be configured on the client side. The `authType=external` property tells the JDBC driver to use the server's OAuth flow.
+
 ## Troubleshooting
 
 ### "redirect_uri_mismatch" Error
 
-The IdP rejected the redirect URI. This happens when the callback URL registered in the IdP doesn't match what the JDBC driver sends.
+The IdP rejected the redirect URI. Ensure the redirect URI registered in your IdP exactly matches the GizmoSQL server's OAuth callback URL.
 
-- The driver uses `http://127.0.0.1:<random-port>/callback`
-- **Google:** Desktop app clients handle this automatically (no registration needed)
-- **Azure AD:** Register `http://localhost` as a "Mobile and desktop" platform redirect
-- **Keycloak:** Use a wildcard pattern: `http://127.0.0.1/*`
-- **Cognito/Clerk:** These use exact matching. Register `http://localhost/callback` and test
+- Default callback URL: `https://<your-server>:31339/oauth/callback`
+- If using `--oauth-redirect-uri`, ensure the override matches what's registered in the IdP
+- Check for `http` vs `https` mismatches
 
 ### "Token validation failed: issuer mismatch"
 

@@ -43,6 +43,7 @@
 #   GIZMOSQL_OAUTH_SCOPES                --oauth-scopes
 #   GIZMOSQL_OAUTH_PORT                  --oauth-port
 #   GIZMOSQL_OAUTH_REDIRECT_URI          --oauth-redirect-uri
+#   GIZMOSQL_OAUTH_DISABLE_TLS           --oauth-disable-tls (localhost only!)
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────
 #   GIZMOSQL_EXTRA_ARGS       Appended verbatim to the command line.

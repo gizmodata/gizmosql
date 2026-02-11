@@ -6,7 +6,11 @@
 #include "oauth_html_templates.h"
 
 #include <algorithm>
+#include <iomanip>
 #include <sstream>
+
+#include <boost/uuid/random_generator.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include "httplib.h"
@@ -15,9 +19,26 @@
 #include "jwt-cpp/jwt.h"
 #include "gizmosql_logging.h"
 #include "gizmosql_security.h"
-#include "enterprise/jwks/jwks_manager.h"
 
 namespace gizmosql::enterprise {
+
+namespace {
+/// URL-encode a string for use as a query parameter value.
+std::string UrlEncode(const std::string& value) {
+  std::ostringstream encoded;
+  encoded.fill('0');
+  encoded << std::hex;
+  for (unsigned char c : value) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded << c;
+    } else {
+      encoded << '%' << std::uppercase << std::setw(2)
+              << static_cast<int>(c) << std::nouppercase;
+    }
+  }
+  return encoded.str();
+}
+}  // namespace
 
 OAuthHttpServer::OAuthHttpServer(Config config)
     : config_(std::move(config)) {}
@@ -37,15 +58,22 @@ arrow::Status OAuthHttpServer::Start() {
   }
 
   // Auto-construct redirect URI if not set
+  bool use_tls = !config_.tls_cert_path.empty() && !config_.tls_key_path.empty() &&
+                 !config_.disable_tls;
   if (config_.redirect_uri.empty()) {
-    std::string scheme = config_.tls_cert_path.empty() ? "http" : "https";
+    std::string scheme = use_tls ? "https" : "http";
     config_.redirect_uri =
         scheme + "://localhost:" + std::to_string(config_.port) + "/oauth/callback";
     GIZMOSQL_LOG(INFO) << "OAuth redirect URI auto-constructed: " << config_.redirect_uri;
   }
 
-  // Create server (SSL if TLS configured)
-  if (!config_.tls_cert_path.empty() && !config_.tls_key_path.empty()) {
+  if (config_.disable_tls) {
+    GIZMOSQL_LOG(WARNING) << "OAuth HTTP server TLS is DISABLED. "
+                          << "This should ONLY be used for localhost development/testing.";
+  }
+
+  // Create server (SSL if TLS configured and not disabled)
+  if (use_tls) {
     auto ssl_server = std::make_unique<httplib::SSLServer>(
         config_.tls_cert_path.c_str(), config_.tls_key_path.c_str());
     server_ = std::move(ssl_server);
@@ -54,6 +82,10 @@ arrow::Status OAuthHttpServer::Start() {
   }
 
   // Register routes
+  server_->Get("/oauth/initiate", [this](const httplib::Request& req, httplib::Response& res) {
+    HandleInitiate(req, res);
+  });
+
   server_->Get("/oauth/start", [this](const httplib::Request& req, httplib::Response& res) {
     HandleStart(req, res);
   });
@@ -105,6 +137,41 @@ void OAuthHttpServer::Shutdown() {
   GIZMOSQL_LOG(INFO) << "OAuth HTTP server shutdown complete";
 }
 
+void OAuthHttpServer::HandleInitiate(const httplib::Request& req, httplib::Response& res) {
+  // Generate a random UUID
+  boost::uuids::random_generator gen;
+  std::string uuid = boost::uuids::to_string(gen());
+
+  // Compute session hash = HMAC-SHA256(secret_key, uuid)
+  std::string session_hash =
+      gizmosql::SecurityUtilities::HMAC_SHA256(config_.secret_key, uuid);
+
+  // Store pending auth
+  {
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    pending_auths_[session_hash] = PendingAuth{
+        .created_at = std::chrono::steady_clock::now(),
+    };
+  }
+
+  // Build IdP authorization URL
+  std::string auth_url = config_.authorization_endpoint;
+  auth_url += "?response_type=code";
+  auth_url += "&client_id=" + UrlEncode(config_.client_id);
+  auth_url += "&redirect_uri=" + UrlEncode(config_.redirect_uri);
+  auth_url += "&scope=" + UrlEncode(config_.scopes);
+  auth_url += "&state=" + session_hash;
+
+  GIZMOSQL_LOG(DEBUG) << "OAuth: Initiated session for UUID: "
+                      << uuid.substr(0, 8) << "...";
+
+  nlohmann::json response;
+  response["session_uuid"] = uuid;
+  response["auth_url"] = auth_url;
+
+  res.set_content(response.dump(), "application/json");
+}
+
 void OAuthHttpServer::HandleStart(const httplib::Request& req, httplib::Response& res) {
   auto session_it = req.params.find("session");
   if (session_it == req.params.end() || session_it->second.empty()) {
@@ -132,9 +199,9 @@ void OAuthHttpServer::HandleStart(const httplib::Request& req, httplib::Response
   // Build IdP authorization URL
   std::string auth_url = config_.authorization_endpoint;
   auth_url += "?response_type=code";
-  auth_url += "&client_id=" + config_.client_id;
-  auth_url += "&redirect_uri=" + config_.redirect_uri;
-  auth_url += "&scope=" + config_.scopes;
+  auth_url += "&client_id=" + UrlEncode(config_.client_id);
+  auth_url += "&redirect_uri=" + UrlEncode(config_.redirect_uri);
+  auth_url += "&scope=" + UrlEncode(config_.scopes);
   auth_url += "&state=" + session_hash;
 
   GIZMOSQL_LOG(DEBUG) << "OAuth: Redirecting to IdP for session hash: "
@@ -191,7 +258,7 @@ void OAuthHttpServer::HandleCallback(const httplib::Request& req, httplib::Respo
       res.set_content(RenderPage(kOAuthExpiredPage), "text/html");
       return;
     }
-    if (it->second.gizmosql_jwt.has_value() || it->second.error.has_value()) {
+    if (it->second.id_token.has_value() || it->second.error.has_value()) {
       res.status = 409;
       res.set_content(RenderPage(kOAuthErrorPage, "Session already completed"), "text/html");
       return;
@@ -213,11 +280,12 @@ void OAuthHttpServer::HandleCallback(const httplib::Request& req, httplib::Respo
     return;
   }
 
-  // Validate ID token and create GizmoSQL JWT
-  auto jwt_result = ValidateAndCreateSession(*id_token_result);
-  if (!jwt_result.ok()) {
-    std::string err = jwt_result.status().message();
-    GIZMOSQL_LOG(WARNING) << "OAuth: Token validation failed: " << err;
+  // Check email authorization (lightweight, no cryptographic verification —
+  // full JWKS/issuer/audience validation happens in VerifyAndDecodeBootstrapToken)
+  auto email_check = CheckEmailAuthorization(*id_token_result);
+  if (!email_check.ok()) {
+    std::string err = std::string(email_check.message());
+    GIZMOSQL_LOG(WARNING) << "OAuth: Email authorization failed: " << err;
 
     std::lock_guard<std::mutex> lock(pending_mutex_);
     auto it = pending_auths_.find(session_hash);
@@ -228,12 +296,13 @@ void OAuthHttpServer::HandleCallback(const httplib::Request& req, httplib::Respo
     return;
   }
 
-  // Store the JWT for polling
+  // Store the raw ID token for polling — the client will send this via Basic Auth
+  // and VerifyAndDecodeBootstrapToken will do full cryptographic verification.
   {
     std::lock_guard<std::mutex> lock(pending_mutex_);
     auto it = pending_auths_.find(session_hash);
     if (it != pending_auths_.end()) {
-      it->second.gizmosql_jwt = *jwt_result;
+      it->second.id_token = *id_token_result;
     }
   }
 
@@ -262,9 +331,9 @@ void OAuthHttpServer::HandleTokenPoll(const httplib::Request& req, httplib::Resp
     response["status"] = "error";
     response["error"] = *it->second.error;
     res.status = 200;
-  } else if (it->second.gizmosql_jwt.has_value()) {
+  } else if (it->second.id_token.has_value()) {
     response["status"] = "complete";
-    response["token"] = *it->second.gizmosql_jwt;
+    response["token"] = *it->second.id_token;
     res.status = 200;
     // Remove the entry after successful retrieval (one-time use)
     pending_auths_.erase(it);
@@ -339,70 +408,11 @@ arrow::Result<std::string> OAuthHttpServer::ExchangeCodeForTokens(
   }
 }
 
-arrow::Result<std::string> OAuthHttpServer::ValidateAndCreateSession(
-    const std::string& id_token) {
+arrow::Status OAuthHttpServer::CheckEmailAuthorization(const std::string& id_token) {
   try {
+    // Decode without cryptographic verification — just extract claims for email check.
+    // Full JWKS/issuer/audience verification happens in VerifyAndDecodeBootstrapToken.
     auto decoded = jwt::decode(id_token);
-
-    // Verify issuer
-    auto iss = decoded.get_issuer();
-    if (iss != config_.token_allowed_issuer) {
-      return arrow::Status::Invalid("ID token issuer mismatch: expected '" +
-                                    config_.token_allowed_issuer + "', got '" + iss + "'");
-    }
-
-    // Build verifier
-    auto verifier = jwt::verify()
-                        .with_issuer(config_.token_allowed_issuer)
-                        .with_audience(config_.token_allowed_audience);
-
-    // JWKS-based verification
-    if (!config_.jwks_manager) {
-      return arrow::Status::Invalid("JWKS manager not configured for OAuth verification");
-    }
-
-    // Extract kid from JWT header
-    std::string kid;
-    if (decoded.has_header_claim("kid")) {
-      kid = decoded.get_header_claim("kid").as_string();
-    }
-    if (kid.empty()) {
-      return arrow::Status::Invalid(
-          "ID token missing 'kid' header claim, required for JWKS verification");
-    }
-
-    // Get the public key
-    auto key_result = config_.jwks_manager->GetKeyForKid(kid);
-    if (!key_result.ok()) {
-      return arrow::Status::Invalid("Failed to find public key for kid '" + kid +
-                                    "': " + key_result.status().ToString());
-    }
-
-    // Get algorithm
-    auto alg_result = config_.jwks_manager->GetAlgorithmForKid(kid);
-    std::string alg = alg_result.ok() ? *alg_result : "";
-    if (alg.empty() && decoded.has_header_claim("alg")) {
-      alg = decoded.get_header_claim("alg").as_string();
-    }
-
-    // Apply appropriate algorithm
-    if (alg == "RS256" || alg.empty()) {
-      verifier.allow_algorithm(jwt::algorithm::rs256(*key_result, "", "", ""));
-    } else if (alg == "RS384") {
-      verifier.allow_algorithm(jwt::algorithm::rs384(*key_result, "", "", ""));
-    } else if (alg == "RS512") {
-      verifier.allow_algorithm(jwt::algorithm::rs512(*key_result, "", "", ""));
-    } else if (alg == "ES256") {
-      verifier.allow_algorithm(jwt::algorithm::es256(*key_result, "", "", ""));
-    } else if (alg == "ES384") {
-      verifier.allow_algorithm(jwt::algorithm::es384(*key_result, "", "", ""));
-    } else if (alg == "ES512") {
-      verifier.allow_algorithm(jwt::algorithm::es512(*key_result, "", "", ""));
-    } else {
-      return arrow::Status::Invalid("Unsupported JWT algorithm: " + alg);
-    }
-
-    verifier.verify(decoded);
 
     // Extract username (prefer email, fallback to sub)
     std::string email;
@@ -413,7 +423,7 @@ arrow::Result<std::string> OAuthHttpServer::ValidateAndCreateSession(
     }
     std::string username = email.empty() ? decoded.get_subject() : email;
 
-    // Check email authorization
+    // Check email authorization (early rejection for better browser UX)
     if (!IsEmailAuthorized(username)) {
       GIZMOSQL_LOGKV(WARNING,
                      "OAuth: User '" + username + "' not in authorized email list",
@@ -423,31 +433,15 @@ arrow::Result<std::string> OAuthHttpServer::ValidateAndCreateSession(
       return arrow::Status::Invalid("User '" + username + "' is not authorized");
     }
 
-    // Determine role
-    std::string role;
-    if (decoded.has_payload_claim("role")) {
-      role = decoded.get_payload_claim("role").as_string();
-    } else {
-      role = config_.token_default_role;
-    }
-    if (role.empty()) {
-      return arrow::Status::Invalid(
-          "ID token missing 'role' claim and no default role configured");
-    }
-
-    // Create GizmoSQL session JWT
-    auto gizmosql_jwt = gizmosql::CreateGizmoSQLJWT(
-        username, role, "OAuthCodeExchange", config_.secret_key, config_.instance_id);
-
     GIZMOSQL_LOGKV(INFO,
-                   "OAuth: Session created for user '" + username + "' with role '" + role + "'",
-                   {"user", username}, {"role", role}, {"kind", "authentication"},
+                   "OAuth: Code exchange successful for user '" + username + "'",
+                   {"user", username}, {"kind", "authentication"},
                    {"authentication_type", "oauth"}, {"authentication_method", "code_exchange"},
                    {"result", "success"});
 
-    return gizmosql_jwt;
+    return arrow::Status::OK();
   } catch (const std::exception& e) {
-    return arrow::Status::Invalid("ID token verification failed: " +
+    return arrow::Status::Invalid("Failed to decode ID token: " +
                                   std::string(e.what()));
   }
 }

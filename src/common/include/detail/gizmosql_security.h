@@ -123,6 +123,10 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   /// Set the default role for tokens that lack a 'role' claim (e.g., IdP tokens).
   void SetTokenDefaultRole(const std::string& role) { token_default_role_ = role; }
 
+  /// Set the OAuth base URL for client discovery via Handshake.
+  /// When a client sends username="__discover__", the server returns this URL.
+  void SetOAuthBaseUrl(const std::string& url) { oauth_base_url_ = url; }
+
   /// Set authorized email patterns for OIDC user filtering (Enterprise feature).
   /// Accepts a comma-separated string of patterns with wildcard support.
   void SetTokenAuthorizedEmails(const std::string& patterns);
@@ -153,6 +157,7 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   std::string instance_id_;
   std::string token_default_role_;
   std::vector<std::string> token_authorized_email_patterns_;
+  std::string oauth_base_url_;  // OAuth server URL for client discovery
 
   /// Check if an email matches the authorized email patterns.
   bool IsEmailAuthorized(const std::string& email) const;

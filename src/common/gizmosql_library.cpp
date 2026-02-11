@@ -311,7 +311,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& oauth_client_secret,
     const std::string& oauth_scopes,
     const int& oauth_port,
-    const std::string& oauth_redirect_uri) {
+    const std::string& oauth_redirect_uri,
+    const bool& oauth_disable_tls) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -436,20 +437,22 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         .client_secret = oauth_client_secret,
         .scopes = oauth_scopes,
         .redirect_uri = oauth_redirect_uri,
-        .token_allowed_issuer = token_allowed_issuer,
-        .token_allowed_audience = token_allowed_audience,
         .secret_key = secret_key,
-        .instance_id = "",  // Set after server creates instance UUID
-        .token_default_role = token_default_role,
         .authorized_email_patterns = email_patterns,
+        .disable_tls = oauth_disable_tls,
         .tls_cert_path = tls_cert_path.string(),
         .tls_key_path = tls_key_path.string(),
         .authorization_endpoint = oidc_authorization_endpoint,
         .token_endpoint = oidc_token_endpoint,
-        .jwks_manager = jwks_manager,
     };
     g_oauth_http_server = std::make_unique<gizmosql::enterprise::OAuthHttpServer>(oauth_config);
     GIZMOSQL_LOG(INFO) << "OAuth HTTP server configured on port " << oauth_port;
+
+    // Advertise the OAuth base URL for client discovery via Handshake
+    std::string oauth_scheme = (!tls_cert_path.empty() && !oauth_disable_tls) ? "https" : "http";
+    std::string oauth_base_url = oauth_scheme + "://localhost:" + std::to_string(oauth_port);
+    header_middleware->SetOAuthBaseUrl(oauth_base_url);
+    GIZMOSQL_LOG(INFO) << "OAuth discovery URL: " << oauth_base_url;
   }
 #endif
 
@@ -518,7 +521,6 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 #ifdef GIZMOSQL_ENTERPRISE
     // Start OAuth HTTP server now that instance_id is known
     if (g_oauth_http_server) {
-      g_oauth_http_server->SetInstanceId(instance_id);
       auto oauth_status = g_oauth_http_server->Start();
       if (!oauth_status.ok()) {
         return oauth_status;
@@ -742,7 +744,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string oauth_client_secret,
     std::string oauth_scopes,
     int oauth_port,
-    std::string oauth_redirect_uri) {
+    std::string oauth_redirect_uri,
+    const bool& oauth_disable_tls) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1007,7 +1010,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       query_log_level, auth_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
-      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri);
+      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri,
+      oauth_disable_tls);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1070,7 +1074,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string oauth_client_secret,
                        std::string oauth_scopes,
                        int oauth_port,
-                       std::string oauth_redirect_uri) {
+                       std::string oauth_redirect_uri,
+                       const bool& oauth_disable_tls) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1181,7 +1186,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       query_timeout, query_level, auth_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
-      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri);
+      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri,
+      oauth_disable_tls);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

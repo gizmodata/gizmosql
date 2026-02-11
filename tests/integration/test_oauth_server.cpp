@@ -396,7 +396,8 @@ class OAuthServerTest : public ::testing::Test {
         /*oauth_client_secret=*/kTestClientSecret,
         /*oauth_scopes=*/"openid profile email",
         /*oauth_port=*/kOAuthTestPort,
-        /*oauth_redirect_uri=*/"");
+        /*oauth_redirect_uri=*/"",
+        /*oauth_disable_tls=*/false);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;
@@ -455,34 +456,42 @@ std::atomic<bool> OAuthServerTest::server_ready_{false};
 // ============================================================================
 
 TEST_F(OAuthServerTest, SuccessfulOAuthFlow) {
-  // 1. Generate a UUID (client-side secret)
-  std::string uuid = GenerateUUID();
-
-  // 2. Compute session hash = HMAC-SHA256(secret_key, uuid)
-  std::string session_hash = HMAC_SHA256_Hex(kSecretKey, uuid);
-
-  // 3. Simulate browser: GET /oauth/start?session=HASH
+  // 1. Call /oauth/initiate to get UUID and auth URL
   httplib::Client oauth_client("http://localhost:" + std::to_string(kOAuthTestPort));
-  oauth_client.set_follow_location(false);  // Don't follow redirects
+  oauth_client.set_follow_location(false);
 
-  auto start_res = oauth_client.Get("/oauth/start?session=" + session_hash);
-  ASSERT_TRUE(start_res) << "Failed to connect to OAuth server";
-  ASSERT_EQ(start_res->status, 302) << "Expected redirect, got: " << start_res->status;
+  auto initiate_res = oauth_client.Get("/oauth/initiate");
+  ASSERT_TRUE(initiate_res) << "Failed to connect to OAuth server";
+  ASSERT_EQ(initiate_res->status, 200) << "Initiate failed: " << initiate_res->body;
 
-  // Verify redirect URL contains the IdP authorization endpoint
-  auto location = start_res->get_header_value("Location");
-  ASSERT_FALSE(location.empty()) << "Missing Location header in redirect";
-  ASSERT_TRUE(location.find("/authorize") != std::string::npos)
-      << "Redirect should go to IdP authorization endpoint";
-  ASSERT_TRUE(location.find("client_id=" + kTestClientId) != std::string::npos)
-      << "Redirect should include client_id";
+  auto initiate_json = nlohmann::json::parse(initiate_res->body);
+  ASSERT_TRUE(initiate_json.contains("session_uuid"));
+  ASSERT_TRUE(initiate_json.contains("auth_url"));
 
-  // 4. Simulate IdP callback with authorization code
+  std::string uuid = initiate_json["session_uuid"];
+  std::string auth_url = initiate_json["auth_url"];
+  ASSERT_FALSE(uuid.empty());
+  ASSERT_FALSE(auth_url.empty());
+
+  // Verify auth URL contains expected parameters
+  ASSERT_TRUE(auth_url.find("/authorize") != std::string::npos)
+      << "Auth URL should point to IdP authorization endpoint";
+  ASSERT_TRUE(auth_url.find("client_id=" + kTestClientId) != std::string::npos)
+      << "Auth URL should include client_id";
+
+  // 2. Extract state (session hash) from the auth URL
+  auto state_pos = auth_url.find("state=");
+  ASSERT_TRUE(state_pos != std::string::npos) << "Auth URL should include state parameter";
+  std::string session_hash = auth_url.substr(state_pos + 6);
+  // Trim at next & if present
+  auto amp_pos = session_hash.find('&');
+  if (amp_pos != std::string::npos) {
+    session_hash = session_hash.substr(0, amp_pos);
+  }
+
+  // 3. Simulate IdP callback with authorization code
   mock_idp_->SetValidCode("test-auth-code-123");
   mock_idp_->SetEmail("testuser@gizmodata.com");
-
-  // Manually set the valid code on the mock IdP
-  mock_idp_->SetValidCode("test-auth-code-123");
 
   auto callback_res = oauth_client.Get(
       "/oauth/callback?code=test-auth-code-123&state=" + session_hash);
@@ -491,7 +500,7 @@ TEST_F(OAuthServerTest, SuccessfulOAuthFlow) {
   ASSERT_TRUE(callback_res->body.find("Authentication Successful") != std::string::npos)
       << "Expected success page, got: " << callback_res->body;
 
-  // 5. Poll for token using the raw UUID
+  // 4. Poll for token using the UUID from /oauth/initiate
   auto token_res = oauth_client.Get("/oauth/token/" + uuid);
   ASSERT_TRUE(token_res) << "Failed to poll for token";
   ASSERT_EQ(token_res->status, 200);
@@ -500,17 +509,17 @@ TEST_F(OAuthServerTest, SuccessfulOAuthFlow) {
   ASSERT_EQ(token_json["status"], "complete");
   ASSERT_TRUE(token_json.contains("token"));
 
-  std::string gizmosql_jwt = token_json["token"];
-  ASSERT_FALSE(gizmosql_jwt.empty());
+  std::string id_token = token_json["token"];
+  ASSERT_FALSE(id_token.empty());
 
-  // 6. Verify the JWT is valid and contains expected claims
-  auto decoded = jwt::decode(gizmosql_jwt);
-  ASSERT_EQ(decoded.get_issuer(), "gizmosql");
-  ASSERT_EQ(decoded.get_subject(), "testuser@gizmodata.com");
-  ASSERT_EQ(decoded.get_payload_claim("role").as_string(), "admin");
-  ASSERT_EQ(decoded.get_payload_claim("auth_method").as_string(), "OAuthCodeExchange");
+  // 5. Verify the token is the raw IdP ID token (not a GizmoSQL JWT)
+  auto decoded = jwt::decode(id_token);
+  ASSERT_EQ(decoded.get_issuer(), kTestIssuer);
+  ASSERT_TRUE(decoded.has_payload_claim("email"));
+  ASSERT_EQ(decoded.get_payload_claim("email").as_string(), "testuser@gizmodata.com");
 
-  // 7. Use the JWT as a Bearer token on the Flight port
+  // 6. Use the ID token via Basic Auth (username="token") on the Flight port.
+  // VerifyAndDecodeBootstrapToken validates the IdP token and issues a session JWT.
   arrow::flight::FlightClientOptions options;
   auto location_result =
       arrow::flight::Location::ForGrpcTcp("localhost", kFlightTestPort);
@@ -521,14 +530,52 @@ TEST_F(OAuthServerTest, SuccessfulOAuthFlow) {
   ASSERT_TRUE(client_result.ok()) << client_result.status().ToString();
   auto& client = *client_result;
 
+  auto bearer_result = client->AuthenticateBasicToken({}, "token", id_token);
+  ASSERT_TRUE(bearer_result.ok()) << "Basic auth with IdP ID token failed: "
+                                  << bearer_result.status().ToString();
+
   arrow::flight::FlightCallOptions call_options;
-  call_options.headers.push_back(
-      {"authorization", "Bearer " + gizmosql_jwt});
+  call_options.headers.push_back(*bearer_result);
 
   auto flight_client = std::make_unique<FlightSqlClient>(std::move(client));
   auto info_result = flight_client->Execute(call_options, "SELECT 1 AS result");
-  ASSERT_TRUE(info_result.ok()) << "Bearer auth with OAuth JWT failed: "
+  ASSERT_TRUE(info_result.ok()) << "Query after OAuth token auth failed: "
                                 << info_result.status().ToString();
+}
+
+TEST_F(OAuthServerTest, InitiateEndpointReturnsValidJson) {
+  httplib::Client oauth_client("http://localhost:" + std::to_string(kOAuthTestPort));
+
+  auto res = oauth_client.Get("/oauth/initiate");
+  ASSERT_TRUE(res);
+  ASSERT_EQ(res->status, 200);
+
+  auto json = nlohmann::json::parse(res->body);
+  ASSERT_TRUE(json.contains("session_uuid"));
+  ASSERT_TRUE(json.contains("auth_url"));
+
+  // UUID should be in standard format (36 chars with dashes)
+  std::string uuid = json["session_uuid"];
+  ASSERT_EQ(uuid.size(), 36u);
+  ASSERT_EQ(uuid[8], '-');
+  ASSERT_EQ(uuid[13], '-');
+  ASSERT_EQ(uuid[18], '-');
+  ASSERT_EQ(uuid[23], '-');
+
+  // Auth URL should contain expected components
+  std::string auth_url = json["auth_url"];
+  ASSERT_TRUE(auth_url.find("response_type=code") != std::string::npos);
+  ASSERT_TRUE(auth_url.find("client_id=") != std::string::npos);
+  ASSERT_TRUE(auth_url.find("redirect_uri=") != std::string::npos);
+  ASSERT_TRUE(auth_url.find("state=") != std::string::npos);
+
+  // Should be able to poll for the session (should be pending)
+  auto token_res = oauth_client.Get("/oauth/token/" + uuid);
+  ASSERT_TRUE(token_res);
+  ASSERT_EQ(token_res->status, 200);
+
+  auto token_json = nlohmann::json::parse(token_res->body);
+  ASSERT_EQ(token_json["status"], "pending");
 }
 
 TEST_F(OAuthServerTest, InvalidAuthorizationCode) {

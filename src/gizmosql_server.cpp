@@ -146,7 +146,11 @@ int main(int argc, char** argv) {
             ("oauth-redirect-uri", po::value<std::string>()->default_value(""),
               "[Enterprise] Override the OAuth redirect URI when behind a reverse proxy. "
               "Auto-constructed from hostname + oauth-port if empty. "
-              "If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.");
+              "If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.")
+            ("oauth-disable-tls", po::value<bool>()->default_value(false),
+              "[Enterprise] Disable TLS on the OAuth callback server even when the main server uses TLS. "
+              "WARNING: This should ONLY be used for localhost development/testing. "
+              "If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).");
 
   // clang-format on
 
@@ -319,6 +323,14 @@ int main(int argc, char** argv) {
   std::string oauth_redirect_uri =
       vm.count("oauth-redirect-uri") ? vm["oauth-redirect-uri"].as<std::string>() : "";
 
+  bool oauth_disable_tls = vm["oauth-disable-tls"].as<bool>();
+  if (!oauth_disable_tls) {
+    if (const char* env_val = std::getenv("GIZMOSQL_OAUTH_DISABLE_TLS")) {
+      std::string val(env_val);
+      oauth_disable_tls = (val == "1" || val == "true" || val == "TRUE" || val == "True");
+    }
+  }
+
   return RunFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
@@ -329,5 +341,5 @@ int main(int argc, char** argv) {
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
-      oauth_port, oauth_redirect_uri);
+      oauth_port, oauth_redirect_uri, oauth_disable_tls);
 }

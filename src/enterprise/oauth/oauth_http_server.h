@@ -25,18 +25,19 @@ class Response;
 }  // namespace httplib
 
 namespace gizmosql::enterprise {
-class JwksManager;
 
 /// HTTP server that handles the OAuth authorization code exchange flow.
-/// The server owns the client ID/secret, handles browser redirects, exchanges
-/// authorization codes for tokens, and issues GizmoSQL session JWTs.
+/// The server owns the client ID/secret, handles browser redirects, and exchanges
+/// authorization codes for ID tokens from the Identity Provider.
 ///
 /// Flow:
 ///   1. Client generates UUID, opens browser to /oauth/start?session=HASH
 ///   2. Server redirects to IdP authorization URL
 ///   3. IdP redirects back to /oauth/callback with authorization code
-///   4. Server exchanges code for tokens, validates ID token, creates GizmoSQL JWT
-///   5. Client polls /oauth/token/:uuid to retrieve the JWT
+///   4. Server exchanges code for ID token, checks email authorization
+///   5. Client polls /oauth/token/:uuid to retrieve the raw ID token
+///   6. Client sends ID token via Basic Auth (username="token") to Flight server
+///   7. VerifyAndDecodeBootstrapToken validates issuer/audience/JWKS and issues session JWT
 class OAuthHttpServer {
  public:
   struct Config {
@@ -45,17 +46,13 @@ class OAuthHttpServer {
     std::string client_secret;
     std::string scopes;
     std::string redirect_uri;  // Auto-constructed if empty
-    std::string token_allowed_issuer;
-    std::string token_allowed_audience;
-    std::string secret_key;
-    std::string instance_id;
-    std::string token_default_role;
+    std::string secret_key;    // For HMAC session hashing only
     std::vector<std::string> authorized_email_patterns;
+    bool disable_tls = false;    // Run plain HTTP even when main server has TLS
     std::string tls_cert_path;
     std::string tls_key_path;
     std::string authorization_endpoint;  // From OIDC discovery
     std::string token_endpoint;          // From OIDC discovery
-    std::shared_ptr<JwksManager> jwks_manager;
   };
 
   explicit OAuthHttpServer(Config config);
@@ -67,10 +64,11 @@ class OAuthHttpServer {
   /// Shut down the HTTP server and cleanup thread.
   void Shutdown();
 
-  /// Set the instance ID (called after server creates instance UUID).
-  void SetInstanceId(const std::string& id) { config_.instance_id = id; }
 
  private:
+  /// GET /oauth/initiate — Generate UUID+hash, return JSON with auth URL
+  void HandleInitiate(const httplib::Request& req, httplib::Response& res);
+
   /// GET /oauth/start?session=HASH — Redirect to IdP authorization URL
   void HandleStart(const httplib::Request& req, httplib::Response& res);
 
@@ -84,9 +82,10 @@ class OAuthHttpServer {
   /// Returns the raw ID token string on success.
   arrow::Result<std::string> ExchangeCodeForTokens(const std::string& code);
 
-  /// Validate an ID token and create a GizmoSQL session JWT.
-  /// Returns the GizmoSQL JWT on success.
-  arrow::Result<std::string> ValidateAndCreateSession(const std::string& id_token);
+  /// Decode an ID token (without cryptographic verification) and check email authorization.
+  /// Returns OK if the email is authorized, error otherwise.
+  /// Full cryptographic verification happens later in VerifyAndDecodeBootstrapToken.
+  arrow::Status CheckEmailAuthorization(const std::string& id_token);
 
   /// Check if an email matches the authorized email patterns.
   bool IsEmailAuthorized(const std::string& email) const;
@@ -99,7 +98,7 @@ class OAuthHttpServer {
 
   struct PendingAuth {
     std::chrono::steady_clock::time_point created_at;
-    std::optional<std::string> gizmosql_jwt;  // Set on success
+    std::optional<std::string> id_token;  // Raw IdP ID token, set on success
     std::optional<std::string> error;          // Set on failure
   };
 

@@ -357,57 +357,27 @@ When enabling cross-instance token acceptance:
 > and **GizmoSQL JDBC Driver v1.5.0 or later** on the client side.
 > The JDBC driver itself has no license requirement — it simply won't work unless the server has Enterprise Edition with JWKS enabled.
 
-For interactive desktop tools (DBeaver, IntelliJ, etc.), the GizmoSQL JDBC driver supports browser-based Single Sign-On (SSO) using the OIDC Authorization Code flow with PKCE. When a connection is established, the driver:
+For interactive desktop tools (DBeaver, IntelliJ, etc.), GizmoSQL supports browser-based Single Sign-On (SSO) using server-side OAuth. The GizmoSQL server acts as a confidential OAuth client — JDBC clients only need `authType=external` in their connection string.
 
-1. Opens a browser for the user to authenticate with their Identity Provider
-2. Receives an authorization code via a temporary localhost callback server
-3. Exchanges the code for an access token using PKCE (no client secret needed)
-4. Sends the token to the GizmoSQL server as a Bearer token
-5. Automatically refreshes the token using the refresh token when it expires
-
-### JDBC Connection Properties
-
-**Minimal configuration (OIDC discovery):**
+### JDBC Connection
 
 ```
-jdbc:gizmosql://hostname:31337?useEncryption=true&oidc.issuer=https://your-idp.com/realms/myrealm&oidc.clientId=gizmosql-desktop-client
+jdbc:gizmosql://hostname:31337?useEncryption=true&authType=external
 ```
 
-**Explicit endpoints (without OIDC discovery):**
-
-```
-jdbc:gizmosql://hostname:31337?useEncryption=true&oauth.flow=authorization_code&oauth.clientId=gizmosql-desktop-client&oauth.authorizationUrl=https://your-idp.com/authorize&oauth.tokenUri=https://your-idp.com/token
-```
-
-**OIDC Connection Properties:**
-
-| Property | Description | Default |
-|----------|-------------|---------|
-| `oidc.issuer` | OIDC issuer URL (enables auto-discovery of endpoints) | — |
-| `oidc.clientId` | OAuth client ID (can also use `oauth.clientId`) | — |
-| `oidc.clientSecret` | OAuth client secret (can also use `oauth.clientSecret`). Required by some IdPs such as Google, even for desktop/public apps. | — |
-| `oidc.scopes` | OAuth scopes (can also use `oauth.scope`) | `openid` |
-
-**OAuth Connection Properties (explicit endpoints):**
-
-| Property | Description |
-|----------|-------------|
-| `oauth.flow` | Set to `authorization_code` for browser-based SSO |
-| `oauth.clientId` | OAuth client ID |
-| `oauth.clientSecret` | OAuth client secret (required by some IdPs such as Google) |
-| `oauth.authorizationUrl` | Authorization endpoint URL |
-| `oauth.tokenUri` | Token endpoint URL |
-| `oauth.scope` | OAuth scopes |
+No client IDs, secrets, or OAuth endpoints need to be configured on the client side. The `authType=external` property tells the JDBC driver to use the server's OAuth flow.
 
 ### IdP Configuration
 
-Your Identity Provider must be configured with a **public client** (no client secret) that supports:
+Your Identity Provider must be configured with a **confidential client** (with a client secret) that supports:
 
-- Authorization Code flow with PKCE (`S256` challenge method)
-- Redirect URI: `http://127.0.0.1:*` (localhost with any port)
+- Authorization Code flow
+- Redirect URI: `https://<your-server>:31339/oauth/callback`
 - The client should issue tokens with:
   - `iss` claim matching the server's `--token-allowed-issuer`
   - `aud` claim matching the server's `--token-allowed-audience`
+
+See the [OAuth / SSO Setup Guide](oauth_sso_setup.md) for step-by-step instructions for Keycloak, Azure AD, Google, AWS Cognito, and Clerk.
 
 ### End-to-End Example with Keycloak
 
@@ -421,8 +391,9 @@ docker run -p 8080:8080 \
 
 **2. Configure Keycloak:**
 - Create a realm (e.g., `gizmosql`)
-- Create a public client (e.g., `gizmosql-desktop-client`) with PKCE enabled
-- Add `http://127.0.0.1:*` as a valid redirect URI
+- Create a confidential client (e.g., `gizmosql-server`) with "Client authentication" ON
+- Add `https://<your-server>:31339/oauth/callback` as a valid redirect URI
+- Copy the client secret from the **Credentials** tab
 - Create a test user
 
 **3. Start GizmoSQL server:**
@@ -431,13 +402,16 @@ gizmosql_server \
   --database-filename data/mydb.duckdb \
   --tls tls/server.pem tls/server.key \
   --token-allowed-issuer "http://localhost:8080/realms/gizmosql" \
-  --token-allowed-audience "gizmosql-desktop-client" \
-  --token-default-role admin
+  --token-allowed-audience "gizmosql-server" \
+  --token-default-role admin \
+  --oauth-client-id "gizmosql-server" \
+  --oauth-client-secret "YOUR_KEYCLOAK_CLIENT_SECRET" \
+  --oauth-port 31339
 ```
 
 **4. Connect via JDBC:**
 ```
-jdbc:gizmosql://localhost:31337?useEncryption=true&disableCertificateVerification=true&oidc.issuer=http://localhost:8080/realms/gizmosql&oidc.clientId=gizmosql-desktop-client
+jdbc:gizmosql://localhost:31337?useEncryption=true&disableCertificateVerification=true&authType=external
 ```
 
 The browser will open to the Keycloak login page. After authentication, the connection is established automatically.
@@ -450,13 +424,13 @@ Server-side OAuth code exchange simplifies client configuration by making the Gi
 
 ### How It Works
 
-1. The client generates a random UUID and computes `HASH = HMAC-SHA256(secret_key, UUID)`.
-2. The client opens a browser to `https://<server>:<oauth_port>/oauth/start?session=HASH`.
+1. The client calls `GET https://<server>:<oauth_port>/oauth/initiate`, which returns a JSON response containing a `session_uuid` and the IdP `auth_url`.
+2. The client opens a browser to the returned `auth_url`.
 3. The server redirects to the Identity Provider's authorization endpoint.
 4. The user authenticates with the IdP.
 5. The IdP redirects back to the server's `/oauth/callback` with an authorization code.
 6. The server exchanges the code for tokens, validates the ID token via JWKS, and issues a GizmoSQL session JWT.
-7. The client polls `https://<server>:<oauth_port>/oauth/token/<UUID>` to retrieve the JWT.
+7. The client polls `GET https://<server>:<oauth_port>/oauth/token/<session_uuid>` to retrieve the JWT.
 8. The client uses the JWT as a Bearer token on the Flight SQL gRPC port.
 
 ### Server Configuration
@@ -468,6 +442,7 @@ Server-side OAuth code exchange simplifies client configuration by making the Gi
 | `--oauth-scopes` | `GIZMOSQL_OAUTH_SCOPES` | `openid profile email` | OAuth scopes to request. |
 | `--oauth-port` | `GIZMOSQL_OAUTH_PORT` | `31339` | Port for the OAuth HTTP(S) server. |
 | `--oauth-redirect-uri` | `GIZMOSQL_OAUTH_REDIRECT_URI` | auto-constructed | Override redirect URI when behind a proxy. |
+| `--oauth-disable-tls` | `GIZMOSQL_OAUTH_DISABLE_TLS` | `false` | Disable TLS on the OAuth callback server. **WARNING: localhost only.** |
 
 The OAuth server **requires** `--token-allowed-issuer` and `--token-allowed-audience` to be set. OIDC endpoints (authorization, token, JWKS) are auto-discovered from the issuer.
 
@@ -493,7 +468,7 @@ gizmosql_server \
 
 **3. Client connection string:**
 ```
-jdbc:gizmosql://hostname:31337?useEncryption=true&authType=oauth
+jdbc:gizmosql://hostname:31337?useEncryption=true&authType=external
 ```
 
 ### Security Considerations
@@ -502,6 +477,7 @@ jdbc:gizmosql://hostname:31337?useEncryption=true&authType=oauth
 - Pending sessions expire after 15 minutes.
 - Email filtering (`--token-authorized-emails`) applies to OAuth-authenticated users.
 - The OAuth HTTP server uses the same TLS certificate as the Flight SQL server when TLS is enabled.
+- The `--oauth-disable-tls` flag allows running the OAuth callback server without TLS even when the main Flight server uses TLS. **This should ONLY be used for localhost development/testing** (e.g., with Keycloak on `localhost`). Never disable TLS on a server exposed to the network.
 
 ## Security Best Practices
 

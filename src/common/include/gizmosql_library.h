@@ -80,6 +80,7 @@ enum class BackendType { duckdb, sqlite };
  * @param oauth_scopes [Enterprise] OAuth scopes to request during authorization. Default is "openid profile email". If not set, uses env var GIZMOSQL_OAUTH_SCOPES.
  * @param oauth_port [Enterprise] Port for the OAuth HTTP(S) server. Default is DEFAULT_OAUTH_PORT (31339). Set to 0 to disable. If not set, uses env var GIZMOSQL_OAUTH_PORT.
  * @param oauth_redirect_uri [Enterprise] Override the OAuth redirect URI when behind a reverse proxy. Auto-constructed from hostname + oauth_port if empty. If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.
+ * @param oauth_disable_tls [Enterprise] Disable TLS on the OAuth HTTP callback server even when the main Flight server uses TLS. WARNING: This should ONLY be used for localhost development/testing. If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -122,5 +123,6 @@ int RunFlightSQLServer(
     std::string oauth_client_secret = "",
     std::string oauth_scopes = "",
     int oauth_port = 0,
-    std::string oauth_redirect_uri = "");
+    std::string oauth_redirect_uri = "",
+    const bool& oauth_disable_tls = false);
 }

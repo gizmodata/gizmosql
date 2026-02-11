@@ -285,6 +285,26 @@ std::string CreateGizmoSQLJWT(
 }
 
 // ----------------------------------------
+// Lightweight middleware that returns a discovery payload (e.g., OAuth URL) as the bearer token.
+class DiscoveryMiddleware : public flight::ServerMiddleware {
+ public:
+  explicit DiscoveryMiddleware(std::string oauth_url) : oauth_url_(std::move(oauth_url)) {}
+
+  void SendingHeaders(flight::AddCallHeaders* outgoing_headers) override {
+    // Bearer token carries JSON for extensibility; custom header carries the raw URL.
+    std::string json_payload = R"({"oauth_url":")" + oauth_url_ + R"("})";
+    outgoing_headers->AddHeader(kAuthHeader, std::string(kBearerPrefix) + json_payload);
+    outgoing_headers->AddHeader("x-gizmosql-oauth-url", oauth_url_);
+  }
+
+  void CallCompleted(const arrow::Status& /*status*/) override {}
+  std::string name() const override { return "DiscoveryMiddleware"; }
+
+ private:
+  std::string oauth_url_;
+};
+
+// ----------------------------------------
 BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
                                                      const std::string& role,
                                                      const std::string& auth_method,
@@ -459,6 +479,16 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       password = username_pwd;
     }
 
+    // Discovery handshake: client sends username="__discover__" to learn the OAuth URL
+    if (username == "__discover__") {
+      if (!oauth_base_url_.empty()) {
+        *middleware = std::make_shared<DiscoveryMiddleware>(oauth_base_url_);
+        return Status::OK();
+      }
+      return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                             "Server-side OAuth is not enabled");
+    }
+
     if (username.empty() or password.empty()) {
       return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
                              "No Username and/or Password supplied");
@@ -542,7 +572,7 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
       return Status::Invalid("Invalid token issuer");
     }
 
-    // Build verifier based on available verification method
+    // Build verifier based on available verification method (external IdP tokens)
     auto verifier = jwt::verify()
                         .with_issuer(std::string(token_allowed_issuer_))
                         .with_audience(token_allowed_audience_);
