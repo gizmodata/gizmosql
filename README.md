@@ -252,6 +252,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 🔥 [Grafana Plugin](https://github.com/gizmodata/grafana-gizmosql-datasource) **NEW!**
 - 🕸️ [JavaScript/TypeScript Client](https://github.com/gizmodata/gizmosql-client-js) **NEW!**
 - ☕️ [JDBC Driver](https://downloads.gizmodata.com/gizmosql-jdbc-driver/latest/gizmosql-jdbc-driver.jar) **NEW!**
+- 🐍 [Python ADBC Driver (with OAuth/SSO)](https://github.com/gizmodata/adbc-driver-gizmosql) **NEW!**
 ---
 
 ## 📊 Performance
