@@ -7,24 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- SQL functions for instrumentation metadata discovery: `GIZMOSQL_INSTRUMENTATION_ENABLED()`, `GIZMOSQL_INSTRUMENTATION_CATALOG()`, `GIZMOSQL_INSTRUMENTATION_SCHEMA()` — allows clients to dynamically discover instrumentation availability and catalog/schema configuration via standard SQL queries
-
-### Fixed
-
-- Catalog permissions handler no longer hardcodes `_gizmosql_instr` — now uses the actual configured instrumentation catalog name, supporting custom catalogs (e.g., DuckLake)
-
-### Changed
-
-- Docker entrypoint scripts now default to in-memory database when `DATABASE_FILENAME` is not set
+## [1.17.0] - 2026-02-11
 
 ### Added
-
-- `GIZMOSQL_EXTRA_ARGS` env var for passing additional CLI flags to `gizmosql_server` in entrypoint scripts
-- `MTLS_CA_CERT_FILENAME` and `HEALTH_PORT` env vars in entrypoint scripts
-- `:memory:` as an explicit value for `DATABASE_FILENAME` to request in-memory mode
-- Comprehensive env var documentation in entrypoint script headers
 
 #### Server-Side OAuth Code Exchange (Enterprise)
 - New server-side OAuth authorization code exchange flow — the GizmoSQL server becomes a confidential OAuth client, handling browser redirects, code exchange, ID token validation, and GizmoSQL JWT issuance
@@ -51,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `--token-default-role` CLI flag / `GIZMOSQL_TOKEN_DEFAULT_ROLE` env var to assign a default role when IdP tokens lack a `role` claim
 - Enterprise gating: JWKS-based external auth requires a valid Enterprise license; static cert path verification remains available in Core edition
 - See [Token Authentication docs](https://gizmodata.github.io/gizmosql/#/token_authentication) for details
+
+#### Instrumentation Discovery
+- SQL functions for instrumentation metadata discovery: `GIZMOSQL_INSTRUMENTATION_ENABLED()`, `GIZMOSQL_INSTRUMENTATION_CATALOG()`, `GIZMOSQL_INSTRUMENTATION_SCHEMA()` — allows clients to dynamically discover instrumentation availability and catalog/schema configuration via standard SQL queries
+
+#### Entrypoint & Configuration
+- `GIZMOSQL_EXTRA_ARGS` env var for passing additional CLI flags to `gizmosql_server` in entrypoint scripts
+- `MTLS_CA_CERT_FILENAME` and `HEALTH_PORT` env vars in entrypoint scripts
+- `:memory:` as an explicit value for `DATABASE_FILENAME` to request in-memory mode
+- Comprehensive env var documentation in entrypoint script headers
+
+### Changed
+
+- Docker entrypoint scripts now default to in-memory database when `DATABASE_FILENAME` is not set
+
+### Fixed
+
+- Catalog permissions handler no longer hardcodes `_gizmosql_instr` — now uses the actual configured instrumentation catalog name, supporting custom catalogs (e.g., DuckLake)
 
 ## [1.16.1] - 2026-02-05
 
