@@ -205,6 +205,7 @@ class BootstrapTokenEnterpriseFixture : public ::testing::Test {
         /*token_signature_verify_cert_path=*/public_key_path_,
         /*token_jwks_uri=*/"",
         /*token_default_role=*/"",
+        /*token_authorized_emails=*/"",
         /*access_logging_enabled=*/false,
         /*query_timeout=*/0,
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,

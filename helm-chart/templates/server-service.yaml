@@ -11,6 +11,10 @@ spec:
       targetPort: gizmosql-port
       protocol: TCP
       name: gizmosql-port
+    - port: {{ .Values.gizmoSQLServer.service.oauthPort }}
+      targetPort: oauth-port
+      protocol: TCP
+      name: oauth-port
   selector:
     {{- include "gizmosql.selectorLabels" . | nindent 4 }}
     app: gizmosql-server

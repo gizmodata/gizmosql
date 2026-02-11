@@ -462,6 +462,62 @@ TEST_F(InstrumentationServerFixture, RoleFunction) {
   ASSERT_EQ(role, "admin") << "GIZMOSQL_ROLE() should return 'admin' for system user";
 }
 
+// Test that GetSqlInfo returns custom instrumentation metadata
+TEST_F(InstrumentationServerFixture, InstrumentationSqlFunctions) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // Query the instrumentation SQL functions
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info,
+      sql_client.Execute(
+          call_options,
+          "SELECT GIZMOSQL_INSTRUMENTATION_ENABLED() AS enabled,"
+          " GIZMOSQL_INSTRUMENTATION_CATALOG() AS catalog,"
+          " GIZMOSQL_INSTRUMENTATION_SCHEMA() AS schema"));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                             sql_client.DoGet(call_options, info->endpoints()[0].ticket));
+  std::shared_ptr<arrow::Table> table;
+  ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+
+  ASSERT_EQ(table->num_rows(), 1) << "Expected 1 row from instrumentation SQL functions";
+  ASSERT_EQ(table->num_columns(), 3) << "Expected 3 columns";
+
+  // Verify enabled column is true
+  auto enabled_col = std::static_pointer_cast<arrow::BooleanArray>(
+      table->column(0)->chunk(0));
+  ASSERT_TRUE(enabled_col->Value(0))
+      << "GIZMOSQL_INSTRUMENTATION_ENABLED() should be true";
+
+  // Verify catalog is not empty
+  auto catalog_col = std::static_pointer_cast<arrow::StringArray>(
+      table->column(1)->chunk(0));
+  std::string catalog_value = catalog_col->GetString(0);
+  ASSERT_FALSE(catalog_value.empty())
+      << "GIZMOSQL_INSTRUMENTATION_CATALOG() should not be empty when enabled";
+
+  // Verify schema is not empty
+  auto schema_col = std::static_pointer_cast<arrow::StringArray>(
+      table->column(2)->chunk(0));
+  std::string schema_value = schema_col->GetString(0);
+  ASSERT_FALSE(schema_value.empty())
+      << "GIZMOSQL_INSTRUMENTATION_SCHEMA() should not be empty when enabled";
+}
+
 // Test that stale 'running' instances from previous unclean shutdowns are cleaned up
 // This is a unit test that directly tests InstrumentationManager::CleanupStaleRecords
 TEST(InstrumentationManagerTest, StaleInstanceCleanup) {

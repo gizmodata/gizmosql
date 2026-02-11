@@ -82,6 +82,11 @@ int main(int argc, char** argv) {
              "Default role to assign when an external token lacks a 'role' claim (e.g., 'admin', 'user'). "
              "If not set, uses env var 'GIZMOSQL_TOKEN_DEFAULT_ROLE'. If a token has no 'role' claim and no default is configured, "
              "the token is rejected.")
+            ("token-authorized-emails", po::value<std::string>()->default_value(""),
+             "[Enterprise] Comma-separated list of authorized email patterns for OIDC user filtering. "
+             "Supports wildcards (e.g., '*@company.com,admin@partner.com'). "
+             "Default is '*' (all authenticated users allowed). "
+             "If not set, uses env var 'GIZMOSQL_TOKEN_AUTHORIZED_EMAILS'.")
             // -------- Logging controls (raw strings; library normalizes) --------
             ("log-level",  po::value<std::string>()->default_value(""),
              "Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_LOG_LEVEL or defaults to info.")
@@ -123,7 +128,29 @@ int main(int argc, char** argv) {
               "Allow tokens issued by other server instances (with the same secret key) to be accepted. "
               "Default is false (strict mode - tokens must be from this instance). "
               "Useful for load-balanced deployments where clients may reconnect to different instances. "
-              "If not set, uses env var GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS (1/true to enable).");
+              "If not set, uses env var GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS (1/true to enable).")
+            ("oauth-client-id", po::value<std::string>()->default_value(""),
+              "[Enterprise] OAuth client ID. Setting this enables the server-side OAuth code exchange flow. "
+              "The server handles browser redirects and token exchange as a confidential OAuth client. "
+              "Requires --token-allowed-issuer and --token-allowed-audience. "
+              "If not set, uses env var GIZMOSQL_OAUTH_CLIENT_ID.")
+            ("oauth-client-secret", po::value<std::string>()->default_value(""),
+              "[Enterprise] OAuth client secret (confidential, stays on server). "
+              "If not set, uses env var GIZMOSQL_OAUTH_CLIENT_SECRET.")
+            ("oauth-scopes", po::value<std::string>()->default_value(""),
+              "[Enterprise] OAuth scopes to request. Default is 'openid profile email'. "
+              "If not set, uses env var GIZMOSQL_OAUTH_SCOPES.")
+            ("oauth-port", po::value<int>()->default_value(0),
+              "[Enterprise] Port for the OAuth HTTP(S) server. Default is 31339 when --oauth-client-id is set. "
+              "Set to 0 to disable. If not set, uses env var GIZMOSQL_OAUTH_PORT.")
+            ("oauth-redirect-uri", po::value<std::string>()->default_value(""),
+              "[Enterprise] Override the OAuth redirect URI when behind a reverse proxy. "
+              "Auto-constructed from hostname + oauth-port if empty. "
+              "If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.")
+            ("oauth-disable-tls", po::value<bool>()->default_value(false),
+              "[Enterprise] Disable TLS on the OAuth callback server even when the main server uses TLS. "
+              "WARNING: This should ONLY be used for localhost development/testing. "
+              "If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).");
 
   // clang-format on
 
@@ -229,6 +256,9 @@ int main(int argc, char** argv) {
   std::string token_default_role =
       vm.count("token-default-role") ? vm["token-default-role"].as<std::string>() : "";
 
+  std::string token_authorized_emails =
+      vm.count("token-authorized-emails") ? vm["token-authorized-emails"].as<std::string>() : "";
+
   std::string log_level = vm.count("log-level") ? vm["log-level"].as<std::string>() : "";
   std::string log_format =
       vm.count("log-format") ? vm["log-format"].as<std::string>() : "";
@@ -279,14 +309,37 @@ int main(int argc, char** argv) {
     }
   }
 
+  std::string oauth_client_id =
+      vm.count("oauth-client-id") ? vm["oauth-client-id"].as<std::string>() : "";
+
+  std::string oauth_client_secret =
+      vm.count("oauth-client-secret") ? vm["oauth-client-secret"].as<std::string>() : "";
+
+  std::string oauth_scopes =
+      vm.count("oauth-scopes") ? vm["oauth-scopes"].as<std::string>() : "";
+
+  int oauth_port = vm["oauth-port"].as<int>();
+
+  std::string oauth_redirect_uri =
+      vm.count("oauth-redirect-uri") ? vm["oauth-redirect-uri"].as<std::string>() : "";
+
+  bool oauth_disable_tls = vm["oauth-disable-tls"].as<bool>();
+  if (!oauth_disable_tls) {
+    if (const char* env_val = std::getenv("GIZMOSQL_OAUTH_DISABLE_TLS")) {
+      std::string val(env_val);
+      oauth_disable_tls = (val == "1" || val == "true" || val == "TRUE" || val == "True");
+    }
+  }
+
   return RunFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
-      token_default_role, log_level, log_format,
+      token_default_role, token_authorized_emails, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,
-      allow_cross_instance_tokens);
+      allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
+      oauth_port, oauth_redirect_uri, oauth_disable_tls);
 }

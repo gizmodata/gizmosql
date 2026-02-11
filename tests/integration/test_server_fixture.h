@@ -50,6 +50,7 @@ CreateFlightSQLServer(
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     std::string token_jwks_uri, std::string token_default_role,
+    std::string token_authorized_emails,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
@@ -58,7 +59,13 @@ CreateFlightSQLServer(
     std::string instrumentation_db_path = "",
     std::string instrumentation_catalog = "",
     std::string instrumentation_schema = "",
-    const bool& allow_cross_instance_tokens = false);
+    const bool& allow_cross_instance_tokens = false,
+    std::string oauth_client_id = "",
+    std::string oauth_client_secret = "",
+    std::string oauth_scopes = "",
+    int oauth_port = 0,
+    std::string oauth_redirect_uri = "",
+    const bool& oauth_disable_tls = false);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -82,6 +89,16 @@ struct TestServerConfig {
   bool allow_cross_instance_tokens = false;     // Allow tokens from other server instances
   std::string token_jwks_uri = "";              // JWKS endpoint URL for token verification
   std::string token_default_role = "";          // Default role when token lacks 'role' claim
+  std::string token_authorized_emails = "";     // Authorized email patterns for OIDC filtering
+  std::string token_allowed_issuer = "";        // Token issuer for JWT token auth
+  std::string token_allowed_audience = "";      // Token audience for JWT token auth
+  std::string token_signature_verify_cert_path = "";  // Path to RSA PEM cert for token verification
+  std::string oauth_client_id = "";             // OAuth client ID (enables server-side OAuth)
+  std::string oauth_client_secret = "";         // OAuth client secret
+  std::string oauth_scopes = "";                // OAuth scopes
+  int oauth_port = 0;                           // OAuth HTTP server port
+  std::string oauth_redirect_uri = "";          // OAuth redirect URI override
+  bool oauth_disable_tls = false;               // Disable TLS on OAuth callback server
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -154,11 +171,12 @@ class ServerTestFixture : public ::testing::Test {
         /*init_sql_commands_file=*/fs::path(),
         /*print_queries=*/false,
         /*read_only=*/false,
-        /*token_allowed_issuer=*/"",
-        /*token_allowed_audience=*/"",
-        /*token_signature_verify_cert_path=*/fs::path(),
+        /*token_allowed_issuer=*/config_.token_allowed_issuer,
+        /*token_allowed_audience=*/config_.token_allowed_audience,
+        /*token_signature_verify_cert_path=*/fs::path(config_.token_signature_verify_cert_path),
         /*token_jwks_uri=*/config_.token_jwks_uri,
         /*token_default_role=*/config_.token_default_role,
+        /*token_authorized_emails=*/config_.token_authorized_emails,
         /*access_logging_enabled=*/false,
         /*query_timeout=*/0,
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
@@ -169,7 +187,13 @@ class ServerTestFixture : public ::testing::Test {
         /*instrumentation_db_path=*/"",
         /*instrumentation_catalog=*/config_.instrumentation_catalog,
         /*instrumentation_schema=*/config_.instrumentation_schema,
-        /*allow_cross_instance_tokens=*/config_.allow_cross_instance_tokens);
+        /*allow_cross_instance_tokens=*/config_.allow_cross_instance_tokens,
+        /*oauth_client_id=*/config_.oauth_client_id,
+        /*oauth_client_secret=*/config_.oauth_client_secret,
+        /*oauth_scopes=*/config_.oauth_scopes,
+        /*oauth_port=*/config_.oauth_port,
+        /*oauth_redirect_uri=*/config_.oauth_redirect_uri,
+        /*oauth_disable_tls=*/config_.oauth_disable_tls);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

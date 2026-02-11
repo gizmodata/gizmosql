@@ -53,6 +53,20 @@ class JwksManager {
   /// Get the JWKS URI being used.
   const std::string& GetJwksUri() const { return jwks_uri_; }
 
+  /// Result of OIDC discovery containing all relevant endpoints.
+  struct OidcDiscoveryResult {
+    std::string jwks_uri;
+    std::string authorization_endpoint;
+    std::string token_endpoint;
+  };
+
+  /// Discover OIDC endpoints (jwks_uri, authorization_endpoint, token_endpoint)
+  /// from an issuer's .well-known/openid-configuration.
+  /// @param issuer The OIDC issuer URL (e.g., https://accounts.google.com)
+  /// @return OidcDiscoveryResult with all endpoints, or error
+  static arrow::Result<OidcDiscoveryResult> DiscoverOidcEndpoints(
+      const std::string& issuer);
+
  private:
   struct CachedKey {
     std::string pem_key;     // PEM-encoded public key

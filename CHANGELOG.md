@@ -7,18 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Docker entrypoint scripts now default to in-memory database when `DATABASE_FILENAME` is not set
+## [1.17.0] - 2026-02-11
 
 ### Added
 
-- `GIZMOSQL_EXTRA_ARGS` env var for passing additional CLI flags to `gizmosql_server` in entrypoint scripts
-- `MTLS_CA_CERT_FILENAME` and `HEALTH_PORT` env vars in entrypoint scripts
-- `:memory:` as an explicit value for `DATABASE_FILENAME` to request in-memory mode
-- Comprehensive env var documentation in entrypoint script headers
+#### Server-Side OAuth Code Exchange (Enterprise)
+- New server-side OAuth authorization code exchange flow — the GizmoSQL server becomes a confidential OAuth client, handling browser redirects, code exchange, ID token validation, and GizmoSQL JWT issuance
+- New `GET /oauth/initiate` API endpoint — generates a session UUID and returns the IdP authorization URL as JSON, eliminating the need for clients to know the server's secret key
+- New `--oauth-client-id` / `GIZMOSQL_OAUTH_CLIENT_ID` — enables the OAuth HTTP server when set
+- New `--oauth-client-secret` / `GIZMOSQL_OAUTH_CLIENT_SECRET` — OAuth client secret (stays on server)
+- New `--oauth-scopes` / `GIZMOSQL_OAUTH_SCOPES` — scopes to request (default: `openid profile email`)
+- New `--oauth-port` / `GIZMOSQL_OAUTH_PORT` — port for the OAuth HTTP(S) server (default: `31339`)
+- New `--oauth-redirect-uri` / `GIZMOSQL_OAUTH_REDIRECT_URI` — override redirect URI for reverse proxy setups
+- New `--oauth-disable-tls` / `GIZMOSQL_OAUTH_DISABLE_TLS` — disable TLS on the OAuth callback server for localhost development/testing (WARNING: should never be used on network-exposed servers)
+- Clients only need `authType=external` in their connection string — no client-side secrets required
+- Security: browser URLs contain a session hash (HMAC-SHA256); the raw UUID is only known to the polling client
+- Pending sessions auto-expire after 15 minutes
+- Requires `--token-allowed-issuer`, `--token-allowed-audience`, and a valid Enterprise license with `external_auth` feature
 
 #### SSO/OAuth Authentication via JWKS Auto-Discovery (Enterprise)
+- New `--token-authorized-emails` CLI flag / `GIZMOSQL_TOKEN_AUTHORIZED_EMAILS` env var to restrict which OIDC-authenticated users can connect
+- Supports comma-separated patterns with wildcards (e.g., `*@company.com,admin@partner.com`)
+- Default is `*` (all authenticated users allowed) for backward compatibility
 - New `--token-jwks-uri` CLI flag / `GIZMOSQL_TOKEN_JWKS_URI` env var to specify a direct JWKS endpoint URL for token signature verification
 - Automatic JWKS discovery from `--token-allowed-issuer` via OIDC `.well-known/openid-configuration` when no static cert path is provided
 - Thread-safe JWKS key cache with configurable TTL and automatic refresh on key rotation (kid miss)
@@ -26,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `--token-default-role` CLI flag / `GIZMOSQL_TOKEN_DEFAULT_ROLE` env var to assign a default role when IdP tokens lack a `role` claim
 - Enterprise gating: JWKS-based external auth requires a valid Enterprise license; static cert path verification remains available in Core edition
 - See [Token Authentication docs](https://gizmodata.github.io/gizmosql/#/token_authentication) for details
+
+#### Instrumentation Discovery
+- SQL functions for instrumentation metadata discovery: `GIZMOSQL_INSTRUMENTATION_ENABLED()`, `GIZMOSQL_INSTRUMENTATION_CATALOG()`, `GIZMOSQL_INSTRUMENTATION_SCHEMA()` — allows clients to dynamically discover instrumentation availability and catalog/schema configuration via standard SQL queries
+
+#### Entrypoint & Configuration
+- `GIZMOSQL_EXTRA_ARGS` env var for passing additional CLI flags to `gizmosql_server` in entrypoint scripts
+- `MTLS_CA_CERT_FILENAME` and `HEALTH_PORT` env vars in entrypoint scripts
+- `:memory:` as an explicit value for `DATABASE_FILENAME` to request in-memory mode
+- Comprehensive env var documentation in entrypoint script headers
+
+### Changed
+
+- Docker entrypoint scripts now default to in-memory database when `DATABASE_FILENAME` is not set
+
+### Fixed
+
+- Catalog permissions handler no longer hardcodes `_gizmosql_instr` — now uses the actual configured instrumentation catalog name, supporting custom catalogs (e.g., DuckLake)
 
 ## [1.16.1] - 2026-02-05
 

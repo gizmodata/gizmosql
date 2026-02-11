@@ -228,7 +228,10 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
                                      const std::string& instance_id,
                                      const std::string& username,
                                      const std::string& role,
-                                     const std::string& edition) {
+                                     const std::string& edition,
+                                     bool instrumentation_enabled,
+                                     const std::string& instrumentation_catalog,
+                                     const std::string& instrumentation_schema) {
   std::string result;
   result.reserve(sql.size() * 2);  // Extra space for potential aliases
 
@@ -374,6 +377,55 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
       }
     }
 
+    // Check for GIZMOSQL_INSTRUMENTATION_ENABLED() at this position
+    constexpr size_t kInstrEnabledFuncLen = 34;  // length of "GIZMOSQL_INSTRUMENTATION_ENABLED()"
+    if (i + kInstrEnabledFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kInstrEnabledFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_INSTRUMENTATION_ENABLED()") {
+        result += instrumentation_enabled ? "true" : "false";
+        if (ShouldAddAlias(sql, i, i + kInstrEnabledFuncLen)) {
+          result += " AS \"GIZMOSQL_INSTRUMENTATION_ENABLED()\"";
+        }
+        i += kInstrEnabledFuncLen;
+        continue;
+      }
+    }
+
+    // Check for GIZMOSQL_INSTRUMENTATION_CATALOG() at this position
+    constexpr size_t kInstrCatalogFuncLen = 34;  // length of "GIZMOSQL_INSTRUMENTATION_CATALOG()"
+    if (i + kInstrCatalogFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kInstrCatalogFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_INSTRUMENTATION_CATALOG()") {
+        result += '\'';
+        result += instrumentation_catalog;
+        result += '\'';
+        if (ShouldAddAlias(sql, i, i + kInstrCatalogFuncLen)) {
+          result += " AS \"GIZMOSQL_INSTRUMENTATION_CATALOG()\"";
+        }
+        i += kInstrCatalogFuncLen;
+        continue;
+      }
+    }
+
+    // Check for GIZMOSQL_INSTRUMENTATION_SCHEMA() at this position
+    constexpr size_t kInstrSchemaFuncLen = 33;  // length of "GIZMOSQL_INSTRUMENTATION_SCHEMA()"
+    if (i + kInstrSchemaFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kInstrSchemaFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_INSTRUMENTATION_SCHEMA()") {
+        result += '\'';
+        result += instrumentation_schema;
+        result += '\'';
+        if (ShouldAddAlias(sql, i, i + kInstrSchemaFuncLen)) {
+          result += " AS \"GIZMOSQL_INSTRUMENTATION_SCHEMA()\"";
+        }
+        i += kInstrSchemaFuncLen;
+        continue;
+      }
+    }
+
     result += sql[i++];
   }
 
@@ -502,10 +554,25 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   std::string edition = "Core";
 #endif
 
+  // Get instrumentation state for GIZMOSQL_INSTRUMENTATION_*() functions
+  bool instrumentation_enabled = false;
+  std::string instrumentation_catalog;
+  std::string instrumentation_schema;
+#ifdef GIZMOSQL_ENTERPRISE
+  if (auto server = GetServer(*client_session)) {
+    if (auto mgr = server->GetInstrumentationManager()) {
+      instrumentation_enabled = true;
+      instrumentation_catalog = mgr->GetCatalog();
+      instrumentation_schema = mgr->GetSchema();
+    }
+  }
+#endif
+
   // Replace GIZMOSQL_* pseudo-functions with actual values
   std::string effective_sql = ReplaceGizmoSQLFunctions(
       sql, client_session->session_id, instance_id, client_session->username,
-      client_session->role, edition);
+      client_session->role, edition, instrumentation_enabled,
+      instrumentation_catalog, instrumentation_schema);
 
   if (log_queries) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC(

@@ -430,6 +430,51 @@ SELECT CASE
 END AS access_level;
 ```
 
+### `GIZMOSQL_EDITION()`
+
+Returns the edition of the GizmoSQL server (`Core` or `Enterprise`).
+
+```sql
+SELECT GIZMOSQL_EDITION();
+-- Returns: 'Enterprise'
+```
+
+### `GIZMOSQL_INSTRUMENTATION_ENABLED()`
+
+Returns whether session instrumentation is enabled on this server. Returns the SQL boolean `true` or `false` (not a quoted string).
+
+```sql
+SELECT GIZMOSQL_INSTRUMENTATION_ENABLED();
+-- Returns: true
+```
+
+### `GIZMOSQL_INSTRUMENTATION_CATALOG()`
+
+Returns the catalog name where instrumentation tables are stored (e.g., `_gizmosql_instr` or a custom DuckLake catalog). Returns an empty string when instrumentation is disabled.
+
+```sql
+SELECT GIZMOSQL_INSTRUMENTATION_CATALOG();
+-- Returns: '_gizmosql_instr'
+```
+
+### `GIZMOSQL_INSTRUMENTATION_SCHEMA()`
+
+Returns the schema name within the instrumentation catalog (default: `main`). Returns an empty string when instrumentation is disabled.
+
+```sql
+SELECT GIZMOSQL_INSTRUMENTATION_SCHEMA();
+-- Returns: 'main'
+```
+
+Clients can use these three functions to dynamically discover instrumentation availability and query the correct catalog/schema:
+
+```sql
+SELECT
+    GIZMOSQL_INSTRUMENTATION_ENABLED() AS enabled,
+    GIZMOSQL_INSTRUMENTATION_CATALOG() AS catalog,
+    GIZMOSQL_INSTRUMENTATION_SCHEMA() AS schema;
+```
+
 ---
 
 ## Session Management

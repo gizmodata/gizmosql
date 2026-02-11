@@ -32,6 +32,7 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <shared_mutex>
 #include <unordered_set>
+#include <vector>
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 
@@ -45,6 +46,15 @@ class JwksManager;
 #endif
 
 namespace gizmosql {
+
+/// Create a GizmoSQL-issued JWT token with the given claims.
+/// Used by both Basic Auth (core) and OAuth code exchange (enterprise) to issue session tokens.
+std::string CreateGizmoSQLJWT(
+    const std::string& username, const std::string& role,
+    const std::string& auth_method, const std::string& secret_key,
+    const std::string& instance_id,
+    const std::optional<std::string>& catalog_access_json = std::nullopt);
+
 class SecurityUtilities {
  public:
   static arrow::Status FlightServerTlsCertificates(const std::filesystem::path& cert_path,
@@ -113,6 +123,14 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   /// Set the default role for tokens that lack a 'role' claim (e.g., IdP tokens).
   void SetTokenDefaultRole(const std::string& role) { token_default_role_ = role; }
 
+  /// Set the OAuth base URL for client discovery via Handshake.
+  /// When a client sends username="__discover__", the server returns this URL.
+  void SetOAuthBaseUrl(const std::string& url) { oauth_base_url_ = url; }
+
+  /// Set authorized email patterns for OIDC user filtering (Enterprise feature).
+  /// Accepts a comma-separated string of patterns with wildcard support.
+  void SetTokenAuthorizedEmails(const std::string& patterns);
+
 #ifdef GIZMOSQL_ENTERPRISE
   /// Set the JWKS manager for validating externally-issued tokens via JWKS.
   void SetJwksManager(std::shared_ptr<gizmosql::enterprise::JwksManager> manager) {
@@ -138,6 +156,12 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   arrow::util::ArrowLogLevel auth_log_level_;
   std::string instance_id_;
   std::string token_default_role_;
+  std::vector<std::string> token_authorized_email_patterns_;
+  std::string oauth_base_url_;  // OAuth server URL for client discovery
+
+  /// Check if an email matches the authorized email patterns.
+  bool IsEmailAuthorized(const std::string& email) const;
+
 #ifdef GIZMOSQL_ENTERPRISE
   std::shared_ptr<gizmosql::enterprise::JwksManager> jwks_manager_;
 #endif

@@ -106,7 +106,7 @@ RUN cmake -S . -B build -G Ninja \
 COPY --chown=app_user:app_user ./tls ./tls
 
 # Install DuckDB CLI for troubleshooting, etc.
-ARG DUCKDB_VERSION="1.4.3"
+ARG DUCKDB_VERSION="1.4.4"
 
 RUN case ${TARGETPLATFORM} in \
          "linux/amd64")  DUCKDB_FILE=https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip  ;; \
@@ -117,6 +117,7 @@ RUN case ${TARGETPLATFORM} in \
     rm /tmp/duckdb.zip
 
 EXPOSE 31337
+EXPOSE 31339
 
 # Run a test to ensure that the server works...
 #RUN scripts/test_gizmosql.sh

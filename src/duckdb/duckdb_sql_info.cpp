@@ -381,6 +381,7 @@ sql::SqlInfoResultMap GetSqlInfoResultMap(const DuckDBFlightSqlServer* server,
     // Dynamic datetime functions
     result_map[SqlInfoOptions::SqlInfo::SQL_DATETIME_FUNCTIONS] =
         SqlInfoResult(GetDynamicDateTimeFunctions(server));
+
   }
 
   return result_map;

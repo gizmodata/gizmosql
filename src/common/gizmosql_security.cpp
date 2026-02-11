@@ -250,6 +250,61 @@ std::string SecurityUtilities::HMAC_SHA256(const std::string& key,
 }
 
 // ----------------------------------------
+std::string CreateGizmoSQLJWT(
+    const std::string& username, const std::string& role,
+    const std::string& auth_method, const std::string& secret_key,
+    const std::string& instance_id,
+    const std::optional<std::string>& catalog_access_json) {
+  auto builder =
+      jwt::create()
+          .set_issuer(std::string(kServerJWTIssuer))
+          .set_type("JWT")
+          .set_id("gizmosql-server-" +
+                  boost::uuids::to_string(boost::uuids::random_generator()()))
+          .set_issued_at(std::chrono::system_clock::now())
+          .set_expires_at(std::chrono::system_clock::now() +
+                          std::chrono::seconds{kJWTExpiration})
+          .set_payload_claim("sub", jwt::claim(username))
+          .set_payload_claim("role", jwt::claim(role))
+          .set_payload_claim("auth_method", jwt::claim(auth_method))
+          .set_payload_claim("instance_id", jwt::claim(instance_id))
+          .set_payload_claim(
+              "session_id",
+              jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())));
+
+  // Include catalog_access claim if present (propagated from bootstrap token)
+  if (catalog_access_json.has_value()) {
+    picojson::value json_val;
+    std::string err = picojson::parse(json_val, catalog_access_json.value());
+    if (err.empty()) {
+      builder.set_payload_claim("catalog_access", jwt::claim(json_val));
+    }
+  }
+
+  return builder.sign(jwt::algorithm::hs256{secret_key});
+}
+
+// ----------------------------------------
+// Lightweight middleware that returns a discovery payload (e.g., OAuth URL) as the bearer token.
+class DiscoveryMiddleware : public flight::ServerMiddleware {
+ public:
+  explicit DiscoveryMiddleware(std::string oauth_url) : oauth_url_(std::move(oauth_url)) {}
+
+  void SendingHeaders(flight::AddCallHeaders* outgoing_headers) override {
+    // Bearer token carries JSON for extensibility; custom header carries the raw URL.
+    std::string json_payload = R"({"oauth_url":")" + oauth_url_ + R"("})";
+    outgoing_headers->AddHeader(kAuthHeader, std::string(kBearerPrefix) + json_payload);
+    outgoing_headers->AddHeader("x-gizmosql-oauth-url", oauth_url_);
+  }
+
+  void CallCompleted(const arrow::Status& /*status*/) override {}
+  std::string name() const override { return "DiscoveryMiddleware"; }
+
+ private:
+  std::string oauth_url_;
+};
+
+// ----------------------------------------
 BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
                                                      const std::string& role,
                                                      const std::string& auth_method,
@@ -275,33 +330,49 @@ std::string BasicAuthServerMiddleware::name() const {
 }
 
 std::string BasicAuthServerMiddleware::CreateJWTToken() const {
-  auto builder =
-      jwt::create()
-          .set_issuer(std::string(kServerJWTIssuer))
-          .set_type("JWT")
-          .set_id("gizmosql-server-" +
-                  boost::uuids::to_string(boost::uuids::random_generator()()))
-          .set_issued_at(std::chrono::system_clock::now())
-          .set_expires_at(std::chrono::system_clock::now() +
-                          std::chrono::seconds{kJWTExpiration})
-          .set_payload_claim("sub", jwt::claim(username_))
-          .set_payload_claim("role", jwt::claim(role_))
-          .set_payload_claim("auth_method", jwt::claim(auth_method_))
-          .set_payload_claim("instance_id", jwt::claim(instance_id_))
-          .set_payload_claim(
-              "session_id",
-              jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())));
+  return CreateGizmoSQLJWT(username_, role_, auth_method_, secret_key_, instance_id_,
+                           catalog_access_json_);
+}
 
-  // Include catalog_access claim if present (propagated from bootstrap token)
-  if (catalog_access_json_.has_value()) {
-    picojson::value json_val;
-    std::string err = picojson::parse(json_val, catalog_access_json_.value());
-    if (err.empty()) {
-      builder.set_payload_claim("catalog_access", jwt::claim(json_val));
+void BasicAuthServerMiddlewareFactory::SetTokenAuthorizedEmails(
+    const std::string& patterns) {
+  token_authorized_email_patterns_.clear();
+  std::istringstream stream(patterns);
+  std::string pattern;
+  while (std::getline(stream, pattern, ',')) {
+    // Trim whitespace
+    auto start = pattern.find_first_not_of(" \t");
+    auto end = pattern.find_last_not_of(" \t");
+    if (start != std::string::npos) {
+      token_authorized_email_patterns_.push_back(pattern.substr(start, end - start + 1));
     }
   }
+}
 
-  return builder.sign(jwt::algorithm::hs256{secret_key_});
+bool BasicAuthServerMiddlewareFactory::IsEmailAuthorized(const std::string& email) const {
+  if (token_authorized_email_patterns_.empty()) return true;
+
+  // Convert email to lowercase for case-insensitive comparison
+  std::string lower_email = email;
+  std::transform(lower_email.begin(), lower_email.end(), lower_email.begin(), ::tolower);
+
+  for (const auto& pattern : token_authorized_email_patterns_) {
+    std::string lower_pattern = pattern;
+    std::transform(lower_pattern.begin(), lower_pattern.end(), lower_pattern.begin(), ::tolower);
+
+    if (lower_pattern == "*") return true;
+    if (lower_pattern.front() == '*') {
+      // Suffix match: *@domain.com
+      std::string suffix = lower_pattern.substr(1);
+      if (lower_email.size() >= suffix.size() &&
+          lower_email.compare(lower_email.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return true;
+      }
+    } else if (lower_email == lower_pattern) {
+      return true;  // Exact match
+    }
+  }
+  return false;
 }
 
 // ----------------------------------------
@@ -408,6 +479,16 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       password = username_pwd;
     }
 
+    // Discovery handshake: client sends username="__discover__" to learn the OAuth URL
+    if (username == "__discover__") {
+      if (!oauth_base_url_.empty()) {
+        *middleware = std::make_shared<DiscoveryMiddleware>(oauth_base_url_);
+        return Status::OK();
+      }
+      return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                             "Server-side OAuth is not enabled");
+    }
+
     if (username.empty() or password.empty()) {
       return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
                              "No Username and/or Password supplied");
@@ -491,7 +572,7 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
       return Status::Invalid("Invalid token issuer");
     }
 
-    // Build verifier based on available verification method
+    // Build verifier based on available verification method (external IdP tokens)
     auto verifier = jwt::verify()
                         .with_issuer(std::string(token_allowed_issuer_))
                         .with_audience(token_allowed_audience_);
@@ -506,7 +587,7 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
             flight::FlightStatusCode::Unauthenticated,
             "SSO/OAuth authentication via JWKS requires GizmoSQL Enterprise Edition with "
             "the 'external_auth' feature. Use username/password authentication or a static "
-            "certificate, or visit https://gizmodata.com/enterprise");
+            "certificate, or visit https://gizmodata.com/gizmosql for more details");
       }
 
       // Extract kid from JWT header
@@ -599,6 +680,25 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
     std::string role = decoded.has_payload_claim("role")
                            ? decoded.get_payload_claim("role").as_string()
                            : token_default_role_;
+
+#ifdef GIZMOSQL_ENTERPRISE
+    // Check if the user's email is authorized
+    auto username = ExtractUsername(decoded);
+    if (!IsEmailAuthorized(username)) {
+      GIZMOSQL_LOGKV(WARNING,
+                     "peer=" + context.peer() + " - User '" + username +
+                         "' is not in the authorized email list" +
+                         " - token_claims=(id=" + SafeGetTokenId(decoded) +
+                         " user=" + username + " iss=" + decoded.get_issuer() + ")",
+                     {"peer", context.peer()}, {"kind", "authentication"},
+                     {"authentication_type", "bearer"}, {"result", "failure"},
+                     {"reason", "unauthorized_email"}, {"token_id", SafeGetTokenId(decoded)},
+                     {"token_user", username}, {"token_iss", decoded.get_issuer()});
+      return MakeFlightError(
+          flight::FlightStatusCode::Unauthenticated,
+          "User '" + username + "' is not authorized. Contact your administrator.");
+    }
+#endif
 
     GIZMOSQL_LOGKV_DYNAMIC(
         auth_log_level_,

@@ -102,6 +102,9 @@ spec:
             - name: gizmosql-port
               containerPort: {{ .Values.gizmoSQLServer.service.port }}
               protocol: TCP
+            - name: oauth-port
+              containerPort: {{ .Values.gizmoSQLServer.service.oauthPort }}
+              protocol: TCP
 #          livenessProbe:
 #            httpGet:
 #              path: /

@@ -153,6 +153,26 @@ gizmosql::testing::TestServerConfig
     gizmosql::testing::ServerTestFixture<MyFeatureFixture>::config_{};
 ```
 
+## OAuth/SSO Token Flow (Important Design Decision)
+
+GizmoSQL uses **Basic Auth** (not Bearer auth) for external/OAuth identity tokens. Clients must send:
+- **Username**: `token`
+- **Password**: `<identity_token>` (the JWT from the IdP, e.g., Google)
+
+This is an intentional design choice for **client compatibility**. While the Arrow Flight protocol technically allows the server to send a replacement Bearer token in response headers, **not all client libraries reliably pick it up**:
+- **Go ADBC**: Picks up replacement tokens automatically (`bearerAuthMiddleware.HeadersReceived`)
+- **C++ client**: Only extracts new Bearer tokens in `AuthenticateBasicToken` — does NOT update from server responses on regular Bearer calls
+- **Java client**: Token update behavior via `ClientIncomingAuthHeaderMiddleware` is inconsistent
+
+The `AuthenticateBasicToken` / `Handshake` RPC is a well-defined exchange point that **every** Flight client implements consistently. By using Basic Auth for the token exchange, the GizmoSQL server can:
+1. Verify the external token (via JWKS, signature, issuer/audience checks, email filtering)
+2. Issue its **own** JWT Bearer token that includes server-managed claims (session ID, instance ID, role, etc.)
+3. Return this server-issued Bearer token to the client for all subsequent requests
+
+This simplifies session management — the server controls the Bearer token contents and can embed session tracking data. All clients (JDBC, ADBC, Node.js, UI) must follow this pattern when using OAuth/SSO.
+
+The verification happens in `BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken()` in `gizmosql_security.cpp`.
+
 ## Reminders
 
 - The test server uses `"test_secret_key_for_testing"` as the secret key

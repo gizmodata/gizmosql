@@ -38,6 +38,7 @@ gizmoSQLServer:
   service:
     type: LoadBalancer
     port: 31337
+    oauthPort: 31339
 
   resources:
     limits:
