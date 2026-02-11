@@ -42,5 +42,6 @@ COPY --chown=app_user:app_user gizmosql_client /usr/local/bin/gizmosql_client
 RUN chmod +x /usr/local/bin/gizmosql_client
 
 EXPOSE 31337
+EXPOSE 31339
 
 ENTRYPOINT ["scripts/start_gizmosql_slim.sh"]

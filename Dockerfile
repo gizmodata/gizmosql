@@ -117,6 +117,7 @@ RUN case ${TARGETPLATFORM} in \
     rm /tmp/duckdb.zip
 
 EXPOSE 31337
+EXPOSE 31339
 
 # Run a test to ensure that the server works...
 #RUN scripts/test_gizmosql.sh
