@@ -147,6 +147,10 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
 
     case Type::TIMESTAMP: {
       auto ts_type = std::static_pointer_cast<arrow::TimestampType>(arrow_type);
+      // If the Arrow timestamp carries a timezone, map to DuckDB's TIMESTAMPTZ
+      if (!ts_type->timezone().empty()) {
+        return duckdb::LogicalType::TIMESTAMP_TZ;
+      }
       switch (ts_type->unit()) {
         case arrow::TimeUnit::SECOND:
           return duckdb::LogicalType::TIMESTAMP_S;
@@ -175,6 +179,37 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
 
     case Type::NA:
       return duckdb::LogicalType::SQLNULL;
+
+    case Type::LIST:
+    case Type::LARGE_LIST: {
+      auto list_type = std::static_pointer_cast<arrow::BaseListType>(arrow_type);
+      auto child_type = GetDuckDBTypeFromArrowType(list_type->value_type());
+      return duckdb::LogicalType::LIST(child_type);
+    }
+
+    case Type::FIXED_SIZE_LIST: {
+      auto fsl_type = std::static_pointer_cast<arrow::FixedSizeListType>(arrow_type);
+      auto child_type = GetDuckDBTypeFromArrowType(fsl_type->value_type());
+      return duckdb::LogicalType::ARRAY(child_type, fsl_type->list_size());
+    }
+
+    case Type::STRUCT: {
+      auto struct_type = std::static_pointer_cast<arrow::StructType>(arrow_type);
+      duckdb::child_list_t<duckdb::LogicalType> children;
+      for (int i = 0; i < struct_type->num_fields(); i++) {
+        auto field = struct_type->field(i);
+        children.push_back(
+            std::make_pair(field->name(), GetDuckDBTypeFromArrowType(field->type())));
+      }
+      return duckdb::LogicalType::STRUCT(std::move(children));
+    }
+
+    case Type::MAP: {
+      auto map_type = std::static_pointer_cast<arrow::MapType>(arrow_type);
+      auto key_type = GetDuckDBTypeFromArrowType(map_type->key_type());
+      auto value_type = GetDuckDBTypeFromArrowType(map_type->item_type());
+      return duckdb::LogicalType::MAP(key_type, value_type);
+    }
 
     default:
       return duckdb::LogicalType::VARCHAR;  // safe fallback
@@ -324,21 +359,30 @@ duckdb::Value ConvertArrowCellToDuckDBValue(const std::shared_ptr<arrow::Array>&
     }
 
     // -------- STRINGS --------
-    case Type::STRING:
-    case Type::LARGE_STRING: {
+    case Type::STRING: {
       auto typed = std::static_pointer_cast<arrow::StringArray>(arr);
       auto view = typed->GetView(row);
       // Arrow strings are NOT guaranteed null-terminated; use length-aware ctor.
       return duckdb::Value(std::string(view.data(), view.size()));
     }
+    case Type::LARGE_STRING: {
+      auto typed = std::static_pointer_cast<arrow::LargeStringArray>(arr);
+      auto view = typed->GetView(row);
+      return duckdb::Value(std::string(view.data(), view.size()));
+    }
 
     // -------- BINARY (store as BLOB or VARCHAR, here: BLOB) --------
-    case Type::BINARY:
-    case Type::LARGE_BINARY: {
+    case Type::BINARY: {
       auto typed = std::static_pointer_cast<arrow::BinaryArray>(arr);
       int32_t len = 0;
       const uint8_t* data = typed->GetValue(row, &len);
       return duckdb::Value::BLOB(data, len);
+    }
+    case Type::LARGE_BINARY: {
+      auto typed = std::static_pointer_cast<arrow::LargeBinaryArray>(arr);
+      int64_t len = 0;
+      const uint8_t* data = typed->GetValue(row, &len);
+      return duckdb::Value::BLOB(data, static_cast<int32_t>(len));
     }
 
     // -------- DATE --------
@@ -456,6 +500,83 @@ duckdb::Value ConvertArrowCellToDuckDBValue(const std::shared_ptr<arrow::Array>&
       double d = std::stod(s);
 
       return duckdb::Value::DOUBLE(d);
+    }
+
+    // -------- LIST --------
+    case Type::LIST: {
+      auto list_arr = std::static_pointer_cast<arrow::ListArray>(arr);
+      auto values_arr = list_arr->values();
+      auto child_duckdb_type =
+          GetDuckDBTypeFromArrowType(list_arr->value_type());
+
+      int64_t start = list_arr->value_offset(row);
+      int64_t end = list_arr->value_offset(row + 1);
+
+      duckdb::vector<duckdb::Value> children;
+      children.reserve(end - start);
+      for (int64_t i = start; i < end; ++i) {
+        children.push_back(ConvertArrowCellToDuckDBValue(values_arr, i));
+      }
+      return duckdb::Value::LIST(child_duckdb_type, std::move(children));
+    }
+
+    // -------- LARGE_LIST --------
+    case Type::LARGE_LIST: {
+      auto list_arr = std::static_pointer_cast<arrow::LargeListArray>(arr);
+      auto values_arr = list_arr->values();
+      auto child_duckdb_type =
+          GetDuckDBTypeFromArrowType(list_arr->value_type());
+
+      int64_t start = list_arr->value_offset(row);
+      int64_t end = list_arr->value_offset(row + 1);
+
+      duckdb::vector<duckdb::Value> children;
+      children.reserve(end - start);
+      for (int64_t i = start; i < end; ++i) {
+        children.push_back(ConvertArrowCellToDuckDBValue(values_arr, i));
+      }
+      return duckdb::Value::LIST(child_duckdb_type, std::move(children));
+    }
+
+    // -------- STRUCT --------
+    case Type::STRUCT: {
+      auto struct_arr = std::static_pointer_cast<arrow::StructArray>(arr);
+      auto struct_type = std::static_pointer_cast<arrow::StructType>(arr->type());
+
+      duckdb::child_list_t<duckdb::Value> children;
+      for (int i = 0; i < struct_type->num_fields(); ++i) {
+        auto field = struct_type->field(i);
+        auto child_arr = struct_arr->field(i);
+        children.push_back(
+            std::make_pair(field->name(),
+                           ConvertArrowCellToDuckDBValue(child_arr, row)));
+      }
+      return duckdb::Value::STRUCT(std::move(children));
+    }
+
+    // -------- MAP --------
+    case Type::MAP: {
+      auto map_arr = std::static_pointer_cast<arrow::MapArray>(arr);
+      auto map_type = std::static_pointer_cast<arrow::MapType>(arr->type());
+
+      auto keys_arr = map_arr->keys();
+      auto items_arr = map_arr->items();
+      auto key_duckdb_type = GetDuckDBTypeFromArrowType(map_type->key_type());
+      auto value_duckdb_type = GetDuckDBTypeFromArrowType(map_type->item_type());
+
+      int64_t start = map_arr->value_offset(row);
+      int64_t end = map_arr->value_offset(row + 1);
+
+      duckdb::vector<duckdb::Value> key_values;
+      duckdb::vector<duckdb::Value> val_values;
+      key_values.reserve(end - start);
+      val_values.reserve(end - start);
+      for (int64_t i = start; i < end; ++i) {
+        key_values.push_back(ConvertArrowCellToDuckDBValue(keys_arr, i));
+        val_values.push_back(ConvertArrowCellToDuckDBValue(items_arr, i));
+      }
+      return duckdb::Value::MAP(key_duckdb_type, value_duckdb_type,
+                                std::move(key_values), std::move(val_values));
     }
 
     // -------- FALLBACK: string representation --------

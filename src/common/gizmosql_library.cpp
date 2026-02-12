@@ -533,6 +533,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Run DuckDB init commands first
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;"
+        // Install and load ICU extension for timezone support (TIMESTAMPTZ)
+        "INSTALL icu; LOAD icu;"
         // Install and load spatial extension, then register GeoArrow for seamless geometry export
         "INSTALL spatial; LOAD spatial; CALL register_geoarrow_extensions();";
 
