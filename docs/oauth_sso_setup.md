@@ -171,6 +171,7 @@ gizmosql_server \
   --token-allowed-issuer "https://accounts.google.com" \
   --token-allowed-audience "YOUR_CLIENT_ID.apps.googleusercontent.com" \
   --token-default-role admin \
+  --token-authorized-emails "*@yourcompany.com" \
   --oauth-client-id "YOUR_CLIENT_ID.apps.googleusercontent.com" \
   --oauth-client-secret "GOCSPX-YOUR_CLIENT_SECRET" \
   --oauth-port 31339
@@ -183,6 +184,8 @@ jdbc:gizmosql://gizmosql.example.com:31337?useEncryption=true&useSystemTrustStor
 ```
 
 **Issuer URL:** `https://accounts.google.com` (fixed, global)
+
+> **Tip:** When using Google as an **External** application, any Google account holder can authenticate. Use `--token-authorized-emails` to restrict access to specific domains or users (e.g., `*@yourcompany.com`). See [Authorized Email Filtering](token_authentication.md#authorized-email-filtering-enterprise) for details.
 
 ---
 
@@ -300,6 +303,7 @@ For all providers, the server-side configuration follows the same pattern:
 | `--token-allowed-issuer` | Must match the `iss` claim in tokens from your IdP. |
 | `--token-allowed-audience` | Must match the `aud` claim (usually the client ID). |
 | `--token-default-role` | Role to assign when IdP tokens lack a `role` claim. |
+| `--token-authorized-emails` | Comma-separated list of authorized email patterns (e.g., `*@company.com`). Default: `*` (all). |
 | `--token-jwks-uri` | *(Optional)* Explicit JWKS endpoint; auto-discovered from issuer if not set. |
 
 **Environment variables:**
@@ -312,6 +316,7 @@ export GIZMOSQL_OAUTH_PORT="31339"
 export GIZMOSQL_TOKEN_ALLOWED_ISSUER="https://your-idp.com"
 export GIZMOSQL_TOKEN_ALLOWED_AUDIENCE="your-client-id"
 export GIZMOSQL_TOKEN_DEFAULT_ROLE="admin"
+# export GIZMOSQL_TOKEN_AUTHORIZED_EMAILS="*@yourcompany.com"  # Restrict by email pattern
 ```
 
 See [Token Authentication](token_authentication.md) for complete server configuration details.
@@ -356,6 +361,14 @@ Standard OIDC tokens don't include a `role` claim. Set `--token-default-role` on
 
 ```bash
 gizmosql_server --token-default-role admin ...
+```
+
+### "Email not authorized" / User Rejected After Login
+
+The user authenticated successfully with the IdP but their email doesn't match any pattern in `--token-authorized-emails`. Either add their email or domain pattern:
+
+```bash
+--token-authorized-emails "*@yourcompany.com,partner@external.com"
 ```
 
 ### "SSO/OAuth authentication requires GizmoSQL Enterprise"
