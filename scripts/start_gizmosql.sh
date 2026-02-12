@@ -77,7 +77,10 @@ fi
 ARGS=()
 
 ARGS+=(--backend="${L_DATABASE_BACKEND}")
-ARGS+=(--database-filename="${L_DATABASE_FILENAME}")
+
+if [ -n "${L_DATABASE_FILENAME}" ]; then
+  ARGS+=(--database-filename="${L_DATABASE_FILENAME}")
+fi
 
 # TLS: generate self-signed certs if needed
 if [ "${L_TLS_ENABLED}" = "1" ]; then
