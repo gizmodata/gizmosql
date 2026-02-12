@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.2] - 2026-02-12
+
+### Fixed
+
+- Docker entrypoint scripts (`start_gizmosql.sh`, `start_gizmosql_slim.sh`) no longer pass `--database-filename=""` when the filename is empty, which caused Boost.ProgramOptions to reject the argument — in-memory mode now works correctly with `DATABASE_FILENAME=":memory:"` or when unset
+
 ## [1.17.0] - 2026-02-11
 
 ### Added
