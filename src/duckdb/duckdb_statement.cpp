@@ -484,21 +484,45 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
       return arrow::uint32();
     case duckdb::LogicalTypeId::UBIGINT:
       return arrow::int64();
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      return arrow::timestamp(arrow::TimeUnit::MICRO, "UTC");
+    case duckdb::LogicalTypeId::TIME_TZ:
+      return arrow::time64(arrow::TimeUnit::MICRO);
+    case duckdb::LogicalTypeId::HUGEINT:
+      return arrow::decimal128(38, 0);
     case duckdb::LogicalTypeId::INVALID:
     case duckdb::LogicalTypeId::SQLNULL:
     case duckdb::LogicalTypeId::UNKNOWN:
     case duckdb::LogicalTypeId::ANY:
     case duckdb::LogicalTypeId::USER:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-    case duckdb::LogicalTypeId::TIME_TZ:
-    case duckdb::LogicalTypeId::HUGEINT:
-      return arrow::decimal128(38, 0);
+      return arrow::null();
+    case duckdb::LogicalTypeId::LIST: {
+      auto child_type = duckdb::ListType::GetChildType(duckdb_type);
+      return arrow::list(GetDataTypeFromDuckDbType(child_type));
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      auto& child_types = duckdb::StructType::GetChildTypes(duckdb_type);
+      arrow::FieldVector fields;
+      for (auto& child : child_types) {
+        fields.push_back(
+            arrow::field(child.first, GetDataTypeFromDuckDbType(child.second)));
+      }
+      return arrow::struct_(fields);
+    }
+    case duckdb::LogicalTypeId::MAP: {
+      auto key_type = duckdb::MapType::KeyType(duckdb_type);
+      auto value_type = duckdb::MapType::ValueType(duckdb_type);
+      return arrow::map(GetDataTypeFromDuckDbType(key_type),
+                        GetDataTypeFromDuckDbType(value_type));
+    }
+    case duckdb::LogicalTypeId::ARRAY: {
+      auto child_type = duckdb::ArrayType::GetChildType(duckdb_type);
+      auto array_size = duckdb::ArrayType::GetSize(duckdb_type);
+      return arrow::fixed_size_list(GetDataTypeFromDuckDbType(child_type), array_size);
+    }
     case duckdb::LogicalTypeId::POINTER:
     case duckdb::LogicalTypeId::VALIDITY:
     case duckdb::LogicalTypeId::UUID:
-    case duckdb::LogicalTypeId::STRUCT:
-    case duckdb::LogicalTypeId::LIST:
-    case duckdb::LogicalTypeId::MAP:
     case duckdb::LogicalTypeId::TABLE:
     case duckdb::LogicalTypeId::ENUM:
     default:

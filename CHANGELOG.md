@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- ICU extension is now loaded by default on server startup, enabling `TIMESTAMPTZ` support and timezone-aware timestamp operations
+- Arrow type mapping for `LIST`, `LARGE_LIST`, `FIXED_SIZE_LIST`, `STRUCT`, and `MAP` types in both `GetDuckDBTypeFromArrowType` and `GetDataTypeFromDuckDbType`
+- Arrow value conversion for `LIST`, `LARGE_LIST`, `STRUCT`, and `MAP` types in `ConvertArrowCellToDuckDBValue`, enabling ADBC bulk ingest of complex/nested types
+
+### Fixed
+
+- `TIMESTAMP_TZ` now correctly maps to `arrow::timestamp(MICRO, "UTC")` instead of `arrow::decimal128(38, 0)` in parameter schemas
+- `TIME_TZ` now correctly maps to `arrow::time64(MICRO)` instead of `arrow::decimal128(38, 0)` in parameter schemas
+- `HUGEINT` now maps to `arrow::decimal128(38, 0)` in its own case, separated from null/unknown types which now correctly map to `arrow::null()`
+- `LARGE_STRING` and `LARGE_BINARY` Arrow types are now handled with their correct array types (`LargeStringArray`, `LargeBinaryArray`) instead of being combined with `STRING`/`BINARY`
+- Arrow timestamps with timezone info now correctly map to `TIMESTAMP_TZ` in DuckDB (via timezone detection in `GetDuckDBTypeFromArrowType`)
+
 ## [1.17.2] - 2026-02-12
 
 ### Fixed
