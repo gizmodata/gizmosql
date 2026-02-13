@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.4] - 2026-02-13
+
 ### Added
 
+- `--oauth-base-url` CLI flag (and `GIZMOSQL_OAUTH_BASE_URL` env var) to override the base URL for the OAuth HTTP server (e.g., `https://my-proxy:443`). Both the redirect URI (`/oauth/callback`) and the discovery URL advertised to clients are derived from this, replacing the previous `--oauth-redirect-uri` flag
 - ICU extension is now loaded by default on server startup, enabling `TIMESTAMPTZ` support and timezone-aware timestamp operations
 - Arrow type mapping for `LIST`, `LARGE_LIST`, `FIXED_SIZE_LIST`, `STRUCT`, and `MAP` types in both `GetDuckDBTypeFromArrowType` and `GetDataTypeFromDuckDbType`
 - Arrow value conversion for `LIST`, `LARGE_LIST`, `STRUCT`, and `MAP` types in `ConvertArrowCellToDuckDBValue`, enabling ADBC bulk ingest of complex/nested types
+
+### Changed
+
+- `--oauth-redirect-uri` / `GIZMOSQL_OAUTH_REDIRECT_URI` replaced by `--oauth-base-url` / `GIZMOSQL_OAUTH_BASE_URL` — the redirect URI is now automatically derived as `<base-url>/oauth/callback`
 
 ### Fixed
 

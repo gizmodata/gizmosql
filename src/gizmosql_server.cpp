@@ -143,10 +143,12 @@ int main(int argc, char** argv) {
             ("oauth-port", po::value<int>()->default_value(0),
               "[Enterprise] Port for the OAuth HTTP(S) server. Default is 31339 when --oauth-client-id is set. "
               "Set to 0 to disable. If not set, uses env var GIZMOSQL_OAUTH_PORT.")
-            ("oauth-redirect-uri", po::value<std::string>()->default_value(""),
-              "[Enterprise] Override the OAuth redirect URI when behind a reverse proxy. "
-              "Auto-constructed from hostname + oauth-port if empty. "
-              "If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.")
+            ("oauth-base-url", po::value<std::string>()->default_value(""),
+              "[Enterprise] Override the base URL for the OAuth HTTP server (e.g., 'https://my-proxy:443'). "
+              "The redirect URI (/oauth/callback) and discovery URL advertised to clients are derived from this. "
+              "Auto-constructed from scheme + localhost + oauth-port if empty. "
+              "Use this when the server is behind a reverse proxy or accessed remotely. "
+              "If not set, uses env var GIZMOSQL_OAUTH_BASE_URL.")
             ("oauth-disable-tls", po::value<bool>()->default_value(false),
               "[Enterprise] Disable TLS on the OAuth callback server even when the main server uses TLS. "
               "WARNING: This should ONLY be used for localhost development/testing. "
@@ -320,8 +322,8 @@ int main(int argc, char** argv) {
 
   int oauth_port = vm["oauth-port"].as<int>();
 
-  std::string oauth_redirect_uri =
-      vm.count("oauth-redirect-uri") ? vm["oauth-redirect-uri"].as<std::string>() : "";
+  std::string oauth_base_url =
+      vm.count("oauth-base-url") ? vm["oauth-base-url"].as<std::string>() : "";
 
   bool oauth_disable_tls = vm["oauth-disable-tls"].as<bool>();
   if (!oauth_disable_tls) {
@@ -341,5 +343,5 @@ int main(int argc, char** argv) {
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
-      oauth_port, oauth_redirect_uri, oauth_disable_tls);
+      oauth_port, oauth_base_url, oauth_disable_tls);
 }

@@ -441,7 +441,7 @@ Server-side OAuth code exchange simplifies client configuration by making the Gi
 | `--oauth-client-secret` | `GIZMOSQL_OAUTH_CLIENT_SECRET` | | OAuth client secret (confidential, stays on server). |
 | `--oauth-scopes` | `GIZMOSQL_OAUTH_SCOPES` | `openid profile email` | OAuth scopes to request. |
 | `--oauth-port` | `GIZMOSQL_OAUTH_PORT` | `31339` | Port for the OAuth HTTP(S) server. |
-| `--oauth-redirect-uri` | `GIZMOSQL_OAUTH_REDIRECT_URI` | auto-constructed | Override redirect URI when behind a proxy. |
+| `--oauth-base-url` | `GIZMOSQL_OAUTH_BASE_URL` | auto-constructed | Override the base URL for the OAuth server (e.g., `https://my-proxy:443`). Redirect URI and discovery URL are derived from this. |
 | `--oauth-disable-tls` | `GIZMOSQL_OAUTH_DISABLE_TLS` | `false` | Disable TLS on the OAuth callback server. **WARNING: localhost only.** |
 
 The OAuth server **requires** `--token-allowed-issuer` and `--token-allowed-audience` to be set. OIDC endpoints (authorization, token, JWKS) are auto-discovered from the issuer.

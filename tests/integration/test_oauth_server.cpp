@@ -396,7 +396,7 @@ class OAuthServerTest : public ::testing::Test {
         /*oauth_client_secret=*/kTestClientSecret,
         /*oauth_scopes=*/"openid profile email",
         /*oauth_port=*/kOAuthTestPort,
-        /*oauth_redirect_uri=*/"",
+        /*oauth_base_url=*/"",
         /*oauth_disable_tls=*/false);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();

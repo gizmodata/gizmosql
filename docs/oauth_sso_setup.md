@@ -298,7 +298,7 @@ For all providers, the server-side configuration follows the same pattern:
 | `--oauth-client-secret` | OAuth client secret (confidential, stays on server). |
 | `--oauth-scopes` | OAuth scopes to request (default: `openid profile email`). |
 | `--oauth-port` | Port for the OAuth HTTP(S) server (default: `31339`). |
-| `--oauth-redirect-uri` | Override redirect URI when behind a proxy (default: auto-constructed). |
+| `--oauth-base-url` | Override the base URL for the OAuth server (e.g., `https://my-proxy:443`). Redirect URI and discovery URL are derived from this. Auto-constructed from `localhost` if empty. |
 | `--oauth-disable-tls` | Disable TLS on the OAuth callback server. **WARNING: localhost only.** |
 | `--token-allowed-issuer` | Must match the `iss` claim in tokens from your IdP. |
 | `--token-allowed-audience` | Must match the `aud` claim (usually the client ID). |
@@ -312,6 +312,7 @@ For all providers, the server-side configuration follows the same pattern:
 export GIZMOSQL_OAUTH_CLIENT_ID="your-client-id"
 export GIZMOSQL_OAUTH_CLIENT_SECRET="your-client-secret"
 export GIZMOSQL_OAUTH_PORT="31339"
+# export GIZMOSQL_OAUTH_BASE_URL="https://my-proxy:443"  # Override base URL when behind a reverse proxy
 # export GIZMOSQL_OAUTH_DISABLE_TLS="true"  # WARNING: localhost development only
 export GIZMOSQL_TOKEN_ALLOWED_ISSUER="https://your-idp.com"
 export GIZMOSQL_TOKEN_ALLOWED_AUDIENCE="your-client-id"
@@ -338,7 +339,7 @@ No client IDs, secrets, or OAuth endpoints need to be configured on the client s
 The IdP rejected the redirect URI. Ensure the redirect URI registered in your IdP exactly matches the GizmoSQL server's OAuth callback URL.
 
 - Default callback URL: `https://<your-server>:31339/oauth/callback`
-- If using `--oauth-redirect-uri`, ensure the override matches what's registered in the IdP
+- If using `--oauth-base-url`, the redirect URI is derived as `<base-url>/oauth/callback` — ensure this matches what's registered in the IdP
 - Check for `http` vs `https` mismatches
 
 ### "Token validation failed: issuer mismatch"

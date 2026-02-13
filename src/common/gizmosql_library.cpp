@@ -311,7 +311,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& oauth_client_secret,
     const std::string& oauth_scopes,
     const int& oauth_port,
-    const std::string& oauth_redirect_uri,
+    const std::string& oauth_base_url,
     const bool& oauth_disable_tls) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
@@ -431,12 +431,24 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       }
     }
 
+    // Derive the effective base URL (for discovery URL and redirect URI)
+    std::string effective_base_url;
+    if (!oauth_base_url.empty()) {
+      effective_base_url = oauth_base_url;
+    } else {
+      std::string oauth_scheme = (!tls_cert_path.empty() && !oauth_disable_tls) ? "https" : "http";
+      effective_base_url = oauth_scheme + "://localhost:" + std::to_string(oauth_port);
+    }
+
+    // Derive redirect URI from base URL
+    std::string derived_redirect_uri = effective_base_url + "/oauth/callback";
+
     gizmosql::enterprise::OAuthHttpServer::Config oauth_config{
         .port = oauth_port,
         .client_id = oauth_client_id,
         .client_secret = oauth_client_secret,
         .scopes = oauth_scopes,
-        .redirect_uri = oauth_redirect_uri,
+        .redirect_uri = derived_redirect_uri,
         .secret_key = secret_key,
         .authorized_email_patterns = email_patterns,
         .disable_tls = oauth_disable_tls,
@@ -448,11 +460,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     g_oauth_http_server = std::make_unique<gizmosql::enterprise::OAuthHttpServer>(oauth_config);
     GIZMOSQL_LOG(INFO) << "OAuth HTTP server configured on port " << oauth_port;
 
-    // Advertise the OAuth base URL for client discovery via Handshake
-    std::string oauth_scheme = (!tls_cert_path.empty() && !oauth_disable_tls) ? "https" : "http";
-    std::string oauth_base_url = oauth_scheme + "://localhost:" + std::to_string(oauth_port);
-    header_middleware->SetOAuthBaseUrl(oauth_base_url);
-    GIZMOSQL_LOG(INFO) << "OAuth discovery URL: " << oauth_base_url;
+    // Advertise the base URL for client discovery via Handshake
+    header_middleware->SetOAuthBaseUrl(effective_base_url);
+    GIZMOSQL_LOG(INFO) << "OAuth discovery URL: " << effective_base_url;
+    GIZMOSQL_LOG(INFO) << "OAuth redirect URI: " << derived_redirect_uri;
   }
 #endif
 
@@ -747,7 +758,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string oauth_client_secret,
     std::string oauth_scopes,
     int oauth_port,
-    std::string oauth_redirect_uri,
+    std::string oauth_base_url,
     const bool& oauth_disable_tls) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
@@ -989,8 +1000,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   if (oauth_port == 0 && !oauth_client_id.empty()) {
     oauth_port = DEFAULT_OAUTH_PORT;  // Default to 31339 when OAuth is enabled
   }
-  if (oauth_redirect_uri.empty()) {
-    oauth_redirect_uri = SafeGetEnvVarValue("GIZMOSQL_OAUTH_REDIRECT_URI");
+  if (oauth_base_url.empty()) {
+    oauth_base_url = SafeGetEnvVarValue("GIZMOSQL_OAUTH_BASE_URL");
   }
 
   // Validate OAuth configuration
@@ -1013,7 +1024,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       query_log_level, auth_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
-      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri,
+      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_disable_tls);
 }
 
@@ -1077,7 +1088,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string oauth_client_secret,
                        std::string oauth_scopes,
                        int oauth_port,
-                       std::string oauth_redirect_uri,
+                       std::string oauth_base_url,
                        const bool& oauth_disable_tls) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
@@ -1189,7 +1200,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       query_timeout, query_level, auth_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
-      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_redirect_uri,
+      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_disable_tls);
 
   if (create_server_result.ok()) {
