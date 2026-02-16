@@ -25,12 +25,25 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_catalog_permissions_enterprise.cpp
         integration/test_cross_instance_tokens.cpp
         integration/test_health_check.cpp
+        integration/test_interactive_client.cpp
         integration/test_sqlite_backend.cpp
         integration/test_token_authorized_emails.cpp
         integration/test_tpch_benchmark.cpp
         integration/test_ducklake.cpp
         integration/test_enterprise_gating.cpp
         integration/test_geoarrow.cpp
+)
+
+# Client library sources needed by interactive client tests
+set(GIZMOSQL_CLIENT_LIB_SRCS
+        ${CMAKE_SOURCE_DIR}/src/client/client_config.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/flight_connection.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/oauth_flow.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/sql_processor.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/command_processor.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/output_renderer.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/password_prompt.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/shell_loop.cpp
 )
 
 # Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)
@@ -46,6 +59,7 @@ endif()
 add_executable(gizmosql_integration_tests
         ${GIZMOSQL_CORE_TEST_SRCS}
         ${GIZMOSQL_ENTERPRISE_TEST_SRCS}
+        ${GIZMOSQL_CLIENT_LIB_SRCS}
 )
 
 # ---------------------------------------------------------
@@ -54,9 +68,11 @@ add_executable(gizmosql_integration_tests
 target_include_directories(gizmosql_integration_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/common/include
+        ${CMAKE_SOURCE_DIR}/src/client
         ${DUCKDB_INCLUDE_DIR}
         ${SQLITE_INCLUDE_DIR}
         ${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include
+        ${HTTPLIB_INCLUDE_DIR}
         ${HEALTH_PROTO_GEN_DIR}
         ${PROTOBUF_INCLUDE_DIR}
         ${GRPC_INCLUDE_DIR}
@@ -88,6 +104,8 @@ target_link_libraries(gizmosql_integration_tests PRIVATE
         Arrow::arrow_static
         ArrowFlightSql::arrow_flight_sql_static
         arrow_absl              # Arrow 23 abseil libraries
+        nlohmann_json::nlohmann_json  # for client OAuth flow tests
+        replxx                        # for client shell_loop
         Threads::Threads
 )
 

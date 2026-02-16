@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Result Rendering Improvements (`gizmosql_client`)
+- **Split display**: When row truncation is active, box/table renderers show the first and last rows with 3 dot indicator rows (`·`) in between (DuckDB-style), e.g. top 20 rows + `···` + bottom 20 rows for a 40-row limit
+- **In-table footer**: Row/column counts are rendered inside the box border with a merged footer row (e.g., `│ 60175 rows (40 shown)  16 columns │`), matching DuckDB's output style
+- **Row truncation**: Interactive box/table mode shows 40 rows by default; configurable via `.maxrows N` dot command (0 = unlimited)
+- **Column truncation**: Box/table output fits to terminal width by capping column widths and omitting rightmost columns that don't fit; configurable via `.maxwidth N` dot command (0 = auto-detect terminal)
+- **Column data types**: Box and table renderers show Arrow type names (e.g., `int64`, `string`, `double`) in a centered row below column names
+- **Right-aligned numbers**: Numeric columns (integer, float, decimal) are right-aligned in box and table output modes
+- New `.maxrows [N]` dot command to show or set maximum rows displayed
+- New `.maxwidth [N]` dot command to show or set maximum display width
+
+#### Interactive Client Shell (`gizmosql_client`)
+- New interactive SQL shell replacing the old single-shot client, modeled after psql and DuckDB CLI
+- **Line editing**: replxx-based input with persistent history (`~/.gizmosql_history`), cursor navigation, and multi-line SQL accumulation
+- **15 output modes**: `box` (default, Unicode), `table` (ASCII), `csv`, `tabs`, `json`, `jsonlines`, `markdown`, `line`, `list`, `html`, `latex`, `insert`, `quote`, `ascii`, `trash` — selectable via `--csv`, `--json`, `--table`, `--box`, `--markdown` CLI flags or `.mode` dot command
+- **Dot commands**: `.tables`, `.schema`, `.catalogs`, `.mode`, `.headers`, `.timer`, `.output`, `.once`, `.nullvalue`, `.separator`, `.show`, `.echo`, `.bail`, `.read`, `.shell`, `.cd`, `.prompt`, `.help`, `.quit`
+- **Non-interactive modes**: `-c "SQL"` for single commands, `-f FILE` for script files, stdin pipe/heredoc for scripted workflows
+- **Init file support**: Automatically loads `~/.gizmosqlrc` on startup (override with `--init FILE`, disable with `--no-init`)
+- **Output redirection**: `-o FILE` flag and `.output FILE` / `.once FILE` dot commands
+- **OAuth/SSO browser login**: `--auth-type external` initiates browser-based OAuth flow using the server's `/oauth/initiate` and `/oauth/token` endpoints (via cpp-httplib)
+- **TLS support**: `--tls`, `--tls-roots`, `--tls-skip-verify`, `--mtls-cert`, `--mtls-key`
+- **Environment variables**: `GIZMOSQL_HOST`, `GIZMOSQL_PORT`, `GIZMOSQL_USER`, `GIZMOSQL_PASSWORD`, `GIZMOSQL_TLS`, `GIZMOSQL_TLS_ROOTS`, `GIZMOSQL_OAUTH_PORT`
+- **Password prompt**: Secure interactive password entry with `-W` when connected to a terminal (password cannot be passed as a CLI argument, like psql)
+- **Timer**: `--timer` flag or `.timer on` to display query execution time
+- **Disconnected mode**: Start the client without connection parameters and use `.connect` to connect interactively
+- **`.connect` dot command**: Connect (or reconnect) to a server from within the interactive shell, supports both positional args (`.connect HOST PORT USERNAME`) and URI format (`.connect gizmosql://host:port?params`)
+- **Connection URI**: `--uri` flag and positional argument support for `gizmosql://HOST:PORT[?username=X&useEncryption=true&authType=external]` connection strings
+
+### Changed
+
+- CLI parsing switched from gflags to Boost.ProgramOptions (with short options: `-h`, `-p`, `-u`, `-c`, `-f`, `-o`, `-q`, `-e`, `-v`)
+- **`--password`/`-W` no longer accepts a value** — like `psql`, the flag only forces an interactive prompt. Use the `GIZMOSQL_PASSWORD` environment variable for non-interactive password auth
+
+### Removed
+
+- Old single-shot `gizmosql_client` based on gflags (replaced by the new interactive shell)
+
 ## [1.17.4] - 2026-02-13
 
 ### Added

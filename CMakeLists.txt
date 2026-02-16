@@ -368,36 +368,55 @@ install(TARGETS gizmosql_server
 
 # ------------ Client Executable section ------------
 
-# --------------------- GFlags ---------------------
-configure_file(third_party/gflags_CMakeLists.txt.in
-        gflags/CMakeLists.txt
+# --------------------- replxx ---------------------
+configure_file(third_party/replxx_CMakeLists.txt.in
+        replxx/CMakeLists.txt
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/gflags"
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/replxx"
         COMMAND_ERROR_IS_FATAL ANY
 )
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/gflags"
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/replxx"
         COMMAND_ERROR_IS_FATAL ANY
 )
 
-set(GFLAGS_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/gflags")
-set(GFLAGS_LIBRARY_PATH "${GFLAGS_INSTALL_DIR}/lib/libgflags.a")
-set(GFLAGS_INCLUDE_DIR "${GFLAGS_INSTALL_DIR}/include")
+set(REPLXX_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/replxx")
+set(REPLXX_INCLUDE_DIR "${REPLXX_INSTALL_DIR}/include")
+# replxx appends -d suffix in Debug builds
+if(EXISTS "${REPLXX_INSTALL_DIR}/lib/libreplxx-d.a")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/libreplxx-d.a")
+elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/libreplxx.a")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/libreplxx.a")
+else()
+    message(FATAL_ERROR "replxx library not found in ${REPLXX_INSTALL_DIR}/lib/")
+endif()
 
-add_library(gflags STATIC IMPORTED)
-set_property(TARGET gflags PROPERTY IMPORTED_LOCATION ${GFLAGS_LIBRARY_PATH})
-set_property(TARGET gflags APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${GFLAGS_INCLUDE_DIR})
+add_library(replxx STATIC IMPORTED)
+set_property(TARGET replxx PROPERTY IMPORTED_LOCATION ${REPLXX_LIBRARY_PATH})
+set_property(TARGET replxx APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${REPLXX_INCLUDE_DIR})
 
 # ------------------------------------------
 
-add_executable(gizmosql_client
-        src/gizmosql_client.cpp
+set(GIZMOSQL_CLIENT_SRCS
+        src/client/main.cpp
+        src/client/client_config.cpp
+        src/client/flight_connection.cpp
+        src/client/oauth_flow.cpp
+        src/client/shell_loop.cpp
+        src/client/sql_processor.cpp
+        src/client/command_processor.cpp
+        src/client/output_renderer.cpp
+        src/client/password_prompt.cpp
 )
+
+add_executable(gizmosql_client ${GIZMOSQL_CLIENT_SRCS})
 
 target_include_directories(gizmosql_client
         PRIVATE
         ${CMAKE_SOURCE_DIR}/src/common/include
+        ${CMAKE_SOURCE_DIR}/src/client
+        ${HTTPLIB_INCLUDE_DIR}
 )
 
 target_link_libraries(gizmosql_client PRIVATE
@@ -405,8 +424,9 @@ target_link_libraries(gizmosql_client PRIVATE
         Arrow::arrow_static
         ArrowFlightSql::arrow_flight_sql_static
         arrow_absl
-        gflags
+        replxx
         ${Boost_LIBRARIES}
+        nlohmann_json::nlohmann_json
         "-lresolv"
 )
 
