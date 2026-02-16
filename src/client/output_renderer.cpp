@@ -25,6 +25,7 @@
 #include <arrow/array.h>
 #include <arrow/scalar.h>
 #include <arrow/type.h>
+#include <arrow/type_traits.h>
 
 #ifdef __unix__
 #include <sys/ioctl.h>
@@ -66,6 +67,73 @@ std::string GetCellValue(const std::shared_ptr<arrow::ChunkedArray>& column,
   return null_value;
 }
 
+// Map Arrow type to DuckDB-friendly display name
+std::string FriendlyTypeName(const std::shared_ptr<arrow::DataType>& type) {
+  switch (type->id()) {
+    case arrow::Type::NA:
+      return "null";
+    case arrow::Type::BOOL:
+      return "boolean";
+    case arrow::Type::INT8:
+      return "tinyint";
+    case arrow::Type::INT16:
+      return "smallint";
+    case arrow::Type::INT32:
+      return "integer";
+    case arrow::Type::INT64:
+      return "bigint";
+    case arrow::Type::UINT8:
+      return "utinyint";
+    case arrow::Type::UINT16:
+      return "usmallint";
+    case arrow::Type::UINT32:
+      return "uinteger";
+    case arrow::Type::UINT64:
+      return "ubigint";
+    case arrow::Type::HALF_FLOAT:
+      return "float";
+    case arrow::Type::FLOAT:
+      return "float";
+    case arrow::Type::DOUBLE:
+      return "double";
+    case arrow::Type::STRING:
+    case arrow::Type::LARGE_STRING:
+      return "varchar";
+    case arrow::Type::BINARY:
+    case arrow::Type::LARGE_BINARY:
+      return "blob";
+    case arrow::Type::DATE32:
+    case arrow::Type::DATE64:
+      return "date";
+    case arrow::Type::TIME32:
+    case arrow::Type::TIME64:
+      return "time";
+    case arrow::Type::TIMESTAMP: {
+      auto ts_type = std::static_pointer_cast<arrow::TimestampType>(type);
+      if (!ts_type->timezone().empty()) {
+        return "timestamptz";
+      }
+      return "timestamp";
+    }
+    case arrow::Type::DURATION:
+      return "interval";
+    case arrow::Type::DECIMAL128:
+    case arrow::Type::DECIMAL256: {
+      auto dec_type = std::static_pointer_cast<arrow::DecimalType>(type);
+      return "decimal(" + std::to_string(dec_type->precision()) + "," +
+             std::to_string(dec_type->scale()) + ")";
+    }
+    case arrow::Type::LIST:
+    case arrow::Type::LARGE_LIST:
+    case arrow::Type::FIXED_SIZE_LIST:
+    case arrow::Type::STRUCT:
+    case arrow::Type::MAP:
+      return type->ToString();
+    default:
+      return type->ToString();
+  }
+}
+
 namespace {
 
 // Helper to compute column widths from data
@@ -88,7 +156,7 @@ std::vector<int> ComputeColumnWidths(const arrow::Table& table,
   if (show_types) {
     for (int c = 0; c < num_cols; ++c) {
       int type_len =
-          static_cast<int>(table.schema()->field(c)->type()->ToString().size());
+          static_cast<int>(FriendlyTypeName(table.schema()->field(c)->type()).size());
       widths[c] = std::max(widths[c], type_len);
     }
   }
@@ -405,12 +473,42 @@ RenderResult RenderTabular(const arrow::Table& table, std::ostream& out,
     is_numeric[c] = IsNumericType(table.schema()->field(c)->type());
   }
 
+  // Build footer parts early so we can ensure the table is wide enough
+  bool cols_truncated = cols_shown < total_cols;
+  std::vector<std::string> footer_parts;
+  footer_parts.push_back(std::to_string(total_rows) + " row" +
+                          (total_rows != 1 ? "s" : ""));
+  if (truncating_rows) {
+    footer_parts.push_back("(" + std::to_string(rows_to_show) + " shown)");
+  }
+  if (total_cols > 1 || cols_truncated) {
+    footer_parts.push_back(std::to_string(total_cols) + " column" +
+                            (total_cols != 1 ? "s" : ""));
+    if (cols_truncated) {
+      footer_parts.push_back("(" + std::to_string(cols_shown) + " shown)");
+    }
+  }
+
+  // Find the longest individual footer part (minimum single-line width)
+  int max_part_len = 0;
+  for (const auto& p : footer_parts) {
+    max_part_len = std::max(max_part_len, static_cast<int>(p.size()));
+  }
+
   // Total inner width between outer borders (for merged footer)
   int total_inner_width = 0;
   for (int c = 0; c < cols_shown; ++c) {
     total_inner_width += widths[c] + 2;  // content + padding
   }
   total_inner_width += cols_shown - 1;  // internal borders
+
+  // Widen the last column if footer text would overflow
+  int min_footer_inner = max_part_len + 2;  // +2 for padding spaces
+  if (min_footer_inner > total_inner_width && cols_shown > 0) {
+    int extra = min_footer_inner - total_inner_width;
+    widths[cols_shown - 1] += extra;
+    total_inner_width = min_footer_inner;
+  }
 
   // --- Lambdas ---
 
@@ -455,15 +553,15 @@ RenderResult RenderTabular(const arrow::Table& table, std::ostream& out,
   if (show_headers) {
     out << bs.v;
     for (int c = 0; c < cols_shown; ++c) {
-      RenderCell(out, table.schema()->field(c)->name(), widths[c], false,
-                 bs.v);
+      RenderCellCentered(out, table.schema()->field(c)->name(), widths[c],
+                         bs.v);
     }
     out << "\n";
 
     out << bs.v;
     for (int c = 0; c < cols_shown; ++c) {
       RenderCellCentered(out,
-                         table.schema()->field(c)->type()->ToString(),
+                         FriendlyTypeName(table.schema()->field(c)->type()),
                          widths[c], bs.v);
     }
     out << "\n";
@@ -480,33 +578,15 @@ RenderResult RenderTabular(const arrow::Table& table, std::ostream& out,
     for (int64_t r = 0; r < rows_to_show; ++r) render_data_row(r);
   }
 
-  // In-table footer (always for box/table modes)
-  bool cols_truncated = cols_shown < total_cols;
-
+  // In-table footer
   // Merge separator: ├──┴──┴──┤
   render_border(bs.lt, bs.bt, bs.rt);
 
-  // Build footer parts, then wrap to fit available width
+  // Pack footer parts into lines (greedy, double-space separated)
   int footer_avail = total_inner_width - 2;  // usable text width (1 space padding each side)
-
-  std::vector<std::string> parts;
-  parts.push_back(std::to_string(total_rows) + " row" +
-                  (total_rows != 1 ? "s" : ""));
-  if (truncating_rows) {
-    parts.push_back("(" + std::to_string(rows_to_show) + " shown)");
-  }
-  if (total_cols > 1 || cols_truncated) {
-    parts.push_back(std::to_string(total_cols) + " column" +
-                    (total_cols != 1 ? "s" : ""));
-    if (cols_truncated) {
-      parts.push_back("(" + std::to_string(cols_shown) + " shown)");
-    }
-  }
-
-  // Pack parts into lines (greedy, double-space separated)
   std::vector<std::string> footer_lines;
   std::string current;
-  for (const auto& part : parts) {
+  for (const auto& part : footer_parts) {
     if (current.empty()) {
       current = part;
     } else {

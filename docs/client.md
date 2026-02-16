@@ -145,16 +145,16 @@ Connected to localhost:31337
 Type '.help' for help, '.quit' to exit.
 
 gizmosql> SELECT * FROM employees WHERE dept = 'Engineering';
-┌────────┬─────────┬─────────────┬──────────┐
-│   id   │  name   │    dept     │  salary  │
-│ bigint │ varchar │   varchar   │  double  │
-├────────┼─────────┼─────────────┼──────────┤
-│      1 │ Alice   │ Engineering │ 120000.0 │
-│      3 │ Charlie │ Engineering │ 110000.0 │
-│      5 │ Eve     │ Engineering │ 130000.0 │
-├────────┴─────────┴─────────────┴──────────┤
-│ 3 rows  4 columns                         │
-└───────────────────────────────────────────┘
+┌────────┬─────────┬─────────────┬────────┐
+│   id   │  name   │    dept     │ salary │
+│ bigint │ varchar │   varchar   │ double │
+├────────┼─────────┼─────────────┼────────┤
+│      1 │ Alice   │ Engineering │ 120000 │
+│      3 │ Charlie │ Engineering │ 110000 │
+│      5 │ Eve     │ Engineering │ 130000 │
+├────────┴─────────┴─────────────┴────────┤
+│ 3 rows  4 columns                       │
+└─────────────────────────────────────────┘
 ```
 
 If **no** connection parameters are provided, the client starts in **disconnected mode**. You can then use `.connect` to establish a connection:
@@ -304,8 +304,8 @@ GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
 
 ```json
 [
-{"name": "Alice", "salary": 120000.0},
-{"name": "Bob", "salary": 85000.0}
+  {"name": "Alice", "salary": 120000},
+  {"name": "Bob", "salary": 85000}
 ]
 ```
 
@@ -345,35 +345,36 @@ In interactive mode with `box` or `table` output, results are automatically trun
 **Example output (small result):**
 
 ```
-┌────────┬─────────┬─────────────┬──────────┐
-│   id   │  name   │    dept     │  salary  │
-│ bigint │ varchar │   varchar   │  double  │
-├────────┼─────────┼─────────────┼──────────┤
-│      5 │ Eve     │ Engineering │ 130000.0 │
-│      1 │ Alice   │ Engineering │ 120000.0 │
-│      3 │ Charlie │ Engineering │ 110000.0 │
-├────────┴─────────┴─────────────┴──────────┤
-│ 3 rows  4 columns                         │
-└───────────────────────────────────────────┘
+┌────────┬─────────┬─────────────┬────────┐
+│   id   │  name   │    dept     │ salary │
+│ bigint │ varchar │   varchar   │ double │
+├────────┼─────────┼─────────────┼────────┤
+│      5 │ Eve     │ Engineering │ 130000 │
+│      1 │ Alice   │ Engineering │ 120000 │
+│      3 │ Charlie │ Engineering │ 110000 │
+├────────┴─────────┴─────────────┴────────┤
+│ 3 rows  4 columns                       │
+└─────────────────────────────────────────┘
 ```
 
 **Example output (truncated result with split display):**
 
 ```
-┌──────────────────────────────┐
-│              x               │
-│            int64             │
-├──────────────────────────────┤
-│                            1 │
-│                            2 │
-│              ·               │
-│              ·               │
-│              ·               │
-│                           99 │
-│                          100 │
-├──────────────────────────────┤
-│ 100 rows (4 shown)  1 column │
-└──────────────────────────────┘
+┌───────────┐
+│     x     │
+│  bigint   │
+├───────────┤
+│         1 │
+│         2 │
+│     ·     │
+│     ·     │
+│     ·     │
+│        99 │
+│       100 │
+├───────────┤
+│ 100 rows  │
+│ (4 shown) │
+└───────────┘
 ```
 
 | Scenario | Row Limit | Column Width |
@@ -422,11 +423,14 @@ Dot commands are available in interactive mode and in piped/heredoc input. They 
 
 ```
 gizmosql> .tables
-┌─────────────────┬────────┬────────────┬────────────┐
-│ catalog_name    │ ...    │ table_name │ table_type │
-├─────────────────┼────────┼────────────┼────────────┤
-│ shell_test.db   │ main   │ employees  │ BASE TABLE │
-└─────────────────┴────────┴────────────┴────────────┘
+┌──────────────┬────────────────┬────────────┬────────────┐
+│ catalog_name │ db_schema_name │ table_name │ table_type │
+│   varchar    │    varchar     │  varchar   │  varchar   │
+├──────────────┼────────────────┼────────────┼────────────┤
+│ memory       │ main           │ employees  │ BASE TABLE │
+├──────────────┴────────────────┴────────────┴────────────┤
+│ 1 row  4 columns                                        │
+└─────────────────────────────────────────────────────────┘
 ```
 
 **Switch output mode mid-session:**
@@ -453,7 +457,7 @@ gizmosql> .output
 gizmosql> .show
 --- Server ---
      version: v1.17.4
-     edition: Community
+     edition: Core
  instance_id: a1b2c3d4-...
       engine: duckdb v1.4.4
        arrow: 23.0.0
@@ -462,8 +466,8 @@ gizmosql> .show
          uri: gizmosql://localhost:31337?username=admin
         host: localhost
         port: 31337
-    username: admin
          tls: off
+    username: admin
   session_id: e5f6a7b8-...
         role: admin
      catalog: memory
@@ -476,8 +480,8 @@ gizmosql> .show
        timer: off
         echo: off
         bail: off
-     maxrows: 0
-    maxwidth: 120
+     maxrows: 40
+    maxwidth: 0
 ```
 
 ## Init File
