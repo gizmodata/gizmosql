@@ -343,35 +343,35 @@ In interactive mode with `box` or `table` output, results are automatically trun
 **Example output (small result):**
 
 ```
-┌────┬─────────┬─────────────┬──────────┐
-│ id │  name   │    dept     │  salary  │
+┌────────┬─────────┬─────────────┬──────────┐
+│   id   │  name   │    dept     │  salary  │
 │ bigint │ varchar │   varchar   │  double  │
-├────┼─────────┼─────────────┼──────────┤
-│  5 │ Eve     │ Engineering │ 130000.0 │
-│  1 │ Alice   │ Engineering │ 120000.0 │
-│  3 │ Charlie │ Engineering │ 110000.0 │
-├────┴─────────┴─────────────┴──────────┤
-│ 3 rows  4 columns                     │
-└───────────────────────────────────────┘
+├────────┼─────────┼─────────────┼──────────┤
+│      5 │ Eve     │ Engineering │ 130000.0 │
+│      1 │ Alice   │ Engineering │ 120000.0 │
+│      3 │ Charlie │ Engineering │ 110000.0 │
+├────────┴─────────┴─────────────┴──────────┤
+│ 3 rows  4 columns                        │
+└───────────────────────────────────────────┘
 ```
 
 **Example output (truncated result with split display):**
 
 ```
-┌──────┐
-│ x    │
-│ int64│
-├──────┤
-│    1 │
-│    2 │
-│  ·   │
-│  ·   │
-│  ·   │
-│   99 │
-│  100 │
-├──────┤
-│ 100 rows (4 shown)  1 column  │
-└───────────────────────────────┘
+┌──────────────────────────────┐
+│              x               │
+│            int64             │
+├──────────────────────────────┤
+│                            1 │
+│                            2 │
+│              ·               │
+│              ·               │
+│              ·               │
+│                           99 │
+│                          100 │
+├──────────────────────────────┤
+│ 100 rows (4 shown)  1 column │
+└──────────────────────────────┘
 ```
 
 | Scenario | Row Limit | Column Width |
