@@ -145,14 +145,16 @@ Connected to localhost:31337
 Type '.help' for help, '.quit' to exit.
 
 gizmosql> SELECT * FROM employees WHERE dept = 'Engineering';
-┌────┬─────────┬─────────────┬──────────┐
-│ id │ name    │ dept        │ salary   │
-├────┼─────────┼─────────────┼──────────┤
-│  1 │ Alice   │ Engineering │ 120000.0 │
-│  3 │ Charlie │ Engineering │ 110000.0 │
-│  5 │ Eve     │ Engineering │ 130000.0 │
-└────┴─────────┴─────────────┴──────────┘
-3 rows (4 columns)
+┌────────┬─────────┬─────────────┬──────────┐
+│   id   │  name   │    dept     │  salary  │
+│ bigint │ varchar │   varchar   │  double  │
+├────────┼─────────┼─────────────┼──────────┤
+│      1 │ Alice   │ Engineering │ 120000.0 │
+│      3 │ Charlie │ Engineering │ 110000.0 │
+│      5 │ Eve     │ Engineering │ 130000.0 │
+├────────┴─────────┴─────────────┴──────────┤
+│ 3 rows  4 columns                         │
+└───────────────────────────────────────────┘
 ```
 
 If **no** connection parameters are provided, the client starts in **disconnected mode**. You can then use `.connect` to establish a connection:
@@ -351,7 +353,7 @@ In interactive mode with `box` or `table` output, results are automatically trun
 │      1 │ Alice   │ Engineering │ 120000.0 │
 │      3 │ Charlie │ Engineering │ 110000.0 │
 ├────────┴─────────┴─────────────┴──────────┤
-│ 3 rows  4 columns                        │
+│ 3 rows  4 columns                         │
 └───────────────────────────────────────────┘
 ```
 
