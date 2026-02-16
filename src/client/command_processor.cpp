@@ -26,6 +26,9 @@
 
 #include <unistd.h>
 
+#include <arrow/array.h>
+#include <arrow/flight/sql/types.h>
+
 #include "output_renderer.hpp"
 #include "password_prompt.hpp"
 
@@ -53,6 +56,38 @@ void RenderTable(const std::shared_ptr<arrow::Table>& table,
                  ClientConfig& config) {
   auto renderer = CreateRenderer(config.output_mode, config);
   renderer->Render(*table, *config.output_stream);
+}
+
+// Extract a string value from a SqlInfo result table for a given info_name key.
+// The table has columns: info_name (uint32), value (dense union).
+// Returns empty string if not found or on error.
+std::string ExtractSqlInfoString(const std::shared_ptr<arrow::Table>& table,
+                                 int info_name) {
+  if (!table || table->num_rows() == 0 || table->num_columns() < 2) return "";
+
+  auto name_col = table->column(0);   // uint32
+  auto value_col = table->column(1);   // dense union
+
+  for (int chunk_idx = 0; chunk_idx < name_col->num_chunks(); ++chunk_idx) {
+    auto name_array =
+        std::static_pointer_cast<arrow::UInt32Array>(name_col->chunk(chunk_idx));
+    auto union_array =
+        std::static_pointer_cast<arrow::DenseUnionArray>(value_col->chunk(chunk_idx));
+
+    for (int64_t r = 0; r < name_array->length(); ++r) {
+      if (static_cast<int>(name_array->Value(r)) == info_name) {
+        // Type code 0 = string in the SqlInfo union schema
+        int8_t type_code = union_array->type_code(r);
+        if (type_code == 0) {
+          auto str_array = std::static_pointer_cast<arrow::StringArray>(
+              union_array->field(0));
+          return str_array->GetString(union_array->value_offset(r));
+        }
+        return "";
+      }
+    }
+  }
+  return "";
 }
 
 }  // namespace
@@ -367,9 +402,20 @@ CommandResult CommandProcessor::Process(const std::string& line) {
     return CommandResult::OK;
   }
 
+  // .refresh
+  if (cmd == ".refresh") {
+    if (refresh_callback_) refresh_callback_();
+    *config_.output_stream << "Schema cache refreshed." << std::endl;
+    return CommandResult::OK;
+  }
+
   std::cerr << "Error: unknown command '" << cmd
             << "'. Type '.help' for available commands." << std::endl;
   return CommandResult::ERROR;
+}
+
+void CommandProcessor::SetRefreshCallback(std::function<void()> callback) {
+  refresh_callback_ = std::move(callback);
 }
 
 void CommandProcessor::ShowHelp(const std::string& pattern) {
@@ -397,6 +443,7 @@ void CommandProcessor::ShowHelp(const std::string& pattern) {
       {".prompt MAIN [CONT]", "Set prompt strings"},
       {".quit", "Exit this program"},
       {".read FILE", "Execute SQL from FILE"},
+      {".refresh", "Refresh tab-completion schema cache"},
       {".schema [PATTERN]", "Show database schemas"},
       {".separator COL [ROW]", "Set separators for list/csv mode"},
       {".shell CMD...", "Execute CMD in system shell"},
@@ -419,12 +466,71 @@ void CommandProcessor::ShowHelp(const std::string& pattern) {
 
 void CommandProcessor::ShowSettings() {
   auto& out = *config_.output_stream;
+
+  // --- Server ---
+  if (conn_.IsConnected()) {
+    out << "--- Server ---\n";
+
+    // Fetch engine and arrow version from FlightSQL SqlInfo metadata
+    namespace sql = arrow::flight::sql;
+    auto sql_info_result = conn_.GetSqlInfo(
+        {sql::SqlInfoOptions::FLIGHT_SQL_SERVER_VERSION,
+         sql::SqlInfoOptions::FLIGHT_SQL_SERVER_ARROW_VERSION});
+
+    auto result = conn_.ExecuteQuery(
+        "SELECT GIZMOSQL_VERSION(), GIZMOSQL_EDITION(), GIZMOSQL_CURRENT_INSTANCE()");
+    if (result.ok()) {
+      auto table = *result;
+      if (table->num_rows() > 0) {
+        out << "     version: " << GetCellValue(table->column(0), 0, "") << "\n";
+        out << "     edition: " << GetCellValue(table->column(1), 0, "") << "\n";
+        out << " instance_id: " << GetCellValue(table->column(2), 0, "") << "\n";
+      }
+    }
+
+    if (sql_info_result.ok()) {
+      auto info_table = *sql_info_result;
+      auto engine = ExtractSqlInfoString(
+          info_table, sql::SqlInfoOptions::FLIGHT_SQL_SERVER_VERSION);
+      auto arrow_ver = ExtractSqlInfoString(
+          info_table, sql::SqlInfoOptions::FLIGHT_SQL_SERVER_ARROW_VERSION);
+      if (!engine.empty()) {
+        out << "      engine: " << engine << "\n";
+      }
+      if (!arrow_ver.empty()) {
+        out << "       arrow: " << arrow_ver << "\n";
+      }
+    }
+  }
+
+  // --- Session ---
+  out << "--- Session ---\n";
   out << "   connected: " << (conn_.IsConnected() ? "yes" : "no") << "\n";
   out << "         uri: " << BuildConnectionURI(config_) << "\n";
   out << "        host: " << config_.host << "\n";
   out << "        port: " << config_.port << "\n";
-  out << "    username: " << config_.username << "\n";
   out << "         tls: " << (config_.use_tls ? "on" : "off") << "\n";
+
+  if (conn_.IsConnected()) {
+    auto session_result = conn_.ExecuteQuery(
+        "SELECT GIZMOSQL_CURRENT_SESSION(), GIZMOSQL_ROLE(), "
+        "CURRENT_CATALOG(), CURRENT_SCHEMA(), GIZMOSQL_USER()");
+    if (session_result.ok()) {
+      auto table = *session_result;
+      if (table->num_rows() > 0) {
+        out << "    username: " << GetCellValue(table->column(4), 0, "") << "\n";
+        out << "  session_id: " << GetCellValue(table->column(0), 0, "") << "\n";
+        out << "        role: " << GetCellValue(table->column(1), 0, "") << "\n";
+        out << "     catalog: " << GetCellValue(table->column(2), 0, "") << "\n";
+        out << "      schema: " << GetCellValue(table->column(3), 0, "") << "\n";
+      }
+    }
+  } else {
+    out << "    username: " << config_.username << "\n";
+  }
+
+  // --- Settings ---
+  out << "--- Settings ---\n";
   out << "        mode: " << OutputModeToString(config_.output_mode) << "\n";
   out << "     headers: " << (config_.show_headers ? "on" : "off") << "\n";
   out << "   nullvalue: \"" << config_.null_value << "\"\n";
@@ -514,6 +620,9 @@ CommandResult CommandProcessor::HandleConnect(
 
   std::cout << "Connected to " << config_.host << ":" << config_.port
             << std::endl;
+
+  if (refresh_callback_) refresh_callback_();
+
   return CommandResult::OK;
 }
 

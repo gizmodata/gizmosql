@@ -14,10 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **In-table footer**: Row/column counts are rendered inside the box border with a merged footer row (e.g., `│ 60175 rows (40 shown)  16 columns │`), matching DuckDB's output style
 - **Row truncation**: Interactive box/table mode shows 40 rows by default; configurable via `.maxrows N` dot command (0 = unlimited)
 - **Column truncation**: Box/table output fits to terminal width by capping column widths and omitting rightmost columns that don't fit; configurable via `.maxwidth N` dot command (0 = auto-detect terminal)
-- **Column data types**: Box and table renderers show Arrow type names (e.g., `int64`, `string`, `double`) in a centered row below column names
+- **Column data types**: Box and table renderers show DuckDB-friendly type names (e.g., `bigint`, `varchar`, `double`, `date`) in a centered row below column names
+- **Centered column headers**: Column names are now centered in box and table output modes (matching DuckDB style)
+- **DuckDB-friendly type names**: Arrow types are displayed as familiar names (`varchar` instead of `string`, `bigint` instead of `int64`, `date` instead of `date32[day]`, `decimal(P,S)` instead of `decimal128(P, S)`, etc.)
 - **Right-aligned numbers**: Numeric columns (integer, float, decimal) are right-aligned in box and table output modes
 - New `.maxrows [N]` dot command to show or set maximum rows displayed
 - New `.maxwidth [N]` dot command to show or set maximum display width
+
+#### Tab Completion (`gizmosql_client`)
+- **Context-aware tab completion**: DuckDB-style tab completion using FlightSQL metadata endpoints for schema introspection
+- **Table name completion**: `select * from line<TAB>` completes to `lineitem` (uses `GetTables()` RPC)
+- **SQL keyword completion**: ~100 common SQL keywords with case preservation (lowercase prefix → lowercase, uppercase → uppercase)
+- **Dot command completion**: All dot commands (`.tables`, `.schema`, etc.) with green highlighting
+- **Schema-qualified completion**: `main.line<TAB>` completes `main.lineitem`
+- **Inline hints**: Single-match completions appear as gray inline hints
+- **Lazy schema cache**: First TAB press populates the cache; auto-invalidated after DDL statements (`CREATE`/`DROP`/`ALTER`/`ATTACH`/`DETACH`) and `.connect`
+- New `.refresh` dot command to manually refresh the tab-completion schema cache
+
+#### `.show` Improvements (`gizmosql_client`)
+- **Sectioned output**: `.show` now organizes information into three sections: **Server** (version, edition, instance, engine, Arrow version), **Session** (connection details, session ID, role, catalog, schema), and **Settings** (client-configurable options)
+- **Server metadata via FlightSQL**: Engine version and Arrow version are fetched from the FlightSQL `GetSqlInfo` metadata endpoint (`FLIGHT_SQL_SERVER_VERSION`, `FLIGHT_SQL_SERVER_ARROW_VERSION`)
+- **Session info**: Shows session ID, role, current catalog, and current schema from server-side pseudo-functions
 
 #### Interactive Client Shell (`gizmosql_client`)
 - New interactive SQL shell replacing the old single-shot client, modeled after psql and DuckDB CLI
@@ -35,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Disconnected mode**: Start the client without connection parameters and use `.connect` to connect interactively
 - **`.connect` dot command**: Connect (or reconnect) to a server from within the interactive shell, supports both positional args (`.connect HOST PORT USERNAME`) and URI format (`.connect gizmosql://host:port?params`)
 - **Connection URI**: `--uri` flag and positional argument support for `gizmosql://HOST:PORT[?username=X&useEncryption=true&authType=external]` connection strings
+
+### Fixed
+
+- **OAuth discovery** (`gizmosql_client`): The client now discovers the OAuth endpoint URL from the server via a discovery handshake (`username="__discover__"`), instead of constructing it from the gRPC connection's TLS setting. This fixes OAuth login when the server's OAuth HTTP port uses a different TLS configuration than the gRPC port (e.g., `--oauth-disable-tls`). Falls back to the previous behavior for older servers that don't support discovery.
 
 ### Changed
 

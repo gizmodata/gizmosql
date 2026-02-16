@@ -32,11 +32,7 @@ constexpr int kPollIntervalMs = 1000;
 constexpr int kPollTimeoutSeconds = 300;  // 5 minutes
 }  // namespace
 
-arrow::Result<std::string> OAuthFlow::Authenticate(const ClientConfig& config) {
-  std::string scheme = config.use_tls ? "https" : "http";
-  std::string oauth_base_url =
-      scheme + "://" + config.host + ":" + std::to_string(config.oauth_port);
-
+arrow::Result<std::string> OAuthFlow::Authenticate(const std::string& oauth_base_url) {
   ARROW_ASSIGN_OR_RAISE(auto initiate_result, Initiate(oauth_base_url));
   auto& session_uuid = initiate_result.first;
   auto& auth_url = initiate_result.second;

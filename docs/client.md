@@ -115,10 +115,12 @@ gizmosql_client -h my-server.example.com --auth-type external
 
 This opens your default browser to the identity provider's login page. After authentication, the client automatically receives the token and connects.
 
+The client automatically discovers the OAuth endpoint URL from the server via a discovery handshake. This ensures the correct URL is used even when the server's OAuth HTTP port uses a different TLS setting than the gRPC port (e.g., `--oauth-disable-tls`). If discovery is unavailable (e.g., connecting to an older server), the client falls back to constructing the URL from `--oauth-port` and the connection's TLS setting.
+
 | Option | Env Var | Default | Description |
 |--------|---------|---------|-------------|
 | `--auth-type` | | `password` | Auth type: `password` or `external` |
-| `--oauth-port` | `GIZMOSQL_OAUTH_PORT` | `31339` | OAuth HTTP server port |
+| `--oauth-port` | `GIZMOSQL_OAUTH_PORT` | `31339` | OAuth HTTP server port (used as fallback if discovery is unavailable) |
 
 **Non-interactive OAuth** (for scripted workflows):
 
@@ -192,6 +194,16 @@ gizmosql> SELECT
 ```
 
 **History** is saved to `~/.gizmosql_history` and persists across sessions.
+
+**Tab completion** provides context-aware suggestions as you type:
+
+- **Table names**: Type `select * from line` then press `TAB` to complete table names (e.g., `lineitem`)
+- **SQL keywords**: Type `sel` then press `TAB` to complete to `select` (case-preserving: `SEL` → `SELECT`)
+- **Dot commands**: Type `.ta` then press `TAB` to complete to `.tables`
+- **Schema-qualified names**: Type `main.line` then press `TAB` to complete `main.lineitem`
+- **Inline hints**: When there's a single match, a gray hint appears inline (press right arrow to accept)
+
+The completion system uses FlightSQL metadata endpoints to fetch table and schema names. The cache is automatically refreshed after DDL statements (`CREATE`, `DROP`, `ALTER`, `ATTACH`, `DETACH`) and after `.connect`. Use `.refresh` to manually refresh the cache.
 
 ### Command Mode (`-c`)
 
@@ -325,15 +337,15 @@ In interactive mode with `box` or `table` output, results are automatically trun
 - **In-table footer**: Row and column counts are rendered inside the box border in a merged footer row
 - **Row truncation**: Large results show 40 rows by default (20 top + `···` + 20 bottom)
 - **Column truncation**: Wide tables are capped to the terminal width; columns that don't fit are omitted
-- **Column data types**: A type row (e.g., `int64`, `string`) appears below each column name
+- **Column data types**: A type row with DuckDB-friendly names (e.g., `bigint`, `varchar`, `date`) appears centered below each column name
 - **Right-aligned numbers**: Numeric columns are right-aligned for readability
 
 **Example output (small result):**
 
 ```
 ┌────┬─────────┬─────────────┬──────────┐
-│ id │ name    │ dept        │ salary   │
-│ int64  │ varchar │ varchar     │  double  │
+│ id │  name   │    dept     │  salary  │
+│ bigint │ varchar │   varchar   │  double  │
 ├────┼─────────┼─────────────┼──────────┤
 │  5 │ Eve     │ Engineering │ 130000.0 │
 │  1 │ Alice   │ Engineering │ 120000.0 │
@@ -394,6 +406,7 @@ Dot commands are available in interactive mode and in piped/heredoc input. They 
 | `.prompt MAIN [CONT]` | Customize prompt strings |
 | `.quit` | Exit the program |
 | `.read FILE` | Execute SQL from FILE |
+| `.refresh` | Refresh tab-completion schema cache |
 | `.schema [PATTERN]` | Show database schemas |
 | `.separator COL [ROW]` | Set column/row separators for list/CSV mode |
 | `.shell CMD...` | Execute a system shell command |
@@ -436,12 +449,24 @@ gizmosql> .output
 
 ```
 gizmosql> .show
+--- Server ---
+     version: v1.17.4
+     edition: Community
+ instance_id: a1b2c3d4-...
+      engine: duckdb v1.4.4
+       arrow: 23.0.0
+--- Session ---
    connected: yes
          uri: gizmosql://localhost:31337?username=admin
         host: localhost
         port: 31337
     username: admin
          tls: off
+  session_id: e5f6a7b8-...
+        role: admin
+     catalog: memory
+      schema: main
+--- Settings ---
         mode: box
      headers: on
    nullvalue: "NULL"
@@ -449,6 +474,8 @@ gizmosql> .show
        timer: off
         echo: off
         bail: off
+     maxrows: 0
+    maxwidth: 120
 ```
 
 ## Init File

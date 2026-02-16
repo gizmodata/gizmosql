@@ -23,13 +23,11 @@
 #include <arrow/result.h>
 #include <arrow/status.h>
 
-#include "client_config.hpp"
-
 namespace gizmosql::client {
 
 class OAuthFlow {
  public:
-  arrow::Result<std::string> Authenticate(const ClientConfig& config);
+  arrow::Result<std::string> Authenticate(const std::string& oauth_base_url);
 
  private:
   arrow::Result<std::pair<std::string, std::string>> Initiate(

@@ -20,10 +20,12 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <vector>
 
 #include <arrow/table.h>
+#include <nlohmann/json.hpp>
 
 namespace gizmosql::client {
 
@@ -102,9 +104,39 @@ arrow::Status FlightConnection::Connect(const ClientConfig& config) {
 
   // Authenticate on the raw FlightClient before wrapping in FlightSqlClient
   if (config.auth_type_external) {
+    // Step 1: Discovery handshake — ask server for OAuth endpoint URL
+    std::string oauth_base_url;
+    auto discover_result = flight_client->AuthenticateBasicToken(
+        call_options_, "__discover__", "");
+    if (discover_result.ok()) {
+      // Bearer token value is: "Bearer {"oauth_url":"http://host:port"}"
+      std::string bearer_value = discover_result->second;
+      const std::string bearer_prefix = "Bearer ";
+      if (bearer_value.size() > bearer_prefix.size() &&
+          bearer_value.substr(0, bearer_prefix.size()) == bearer_prefix) {
+        auto json = nlohmann::json::parse(
+            bearer_value.substr(bearer_prefix.size()), nullptr, false);
+        if (!json.is_discarded() && json.contains("oauth_url")) {
+          oauth_base_url = json["oauth_url"].get<std::string>();
+        }
+      }
+    }
+
+    // Step 2: Fallback if discovery failed (e.g., older server)
+    if (oauth_base_url.empty()) {
+      std::string oauth_scheme = config.use_tls ? "https" : "http";
+      oauth_base_url = oauth_scheme + "://" + config.host + ":" +
+                       std::to_string(config.oauth_port);
+      std::cerr << "OAuth discovery unavailable; using fallback URL: "
+                << oauth_base_url << std::endl;
+    }
+
+    // Step 3: OAuth browser flow
     OAuthFlow oauth;
-    auto id_token_result = oauth.Authenticate(config);
+    auto id_token_result = oauth.Authenticate(oauth_base_url);
     if (!id_token_result.ok()) return friendly_error(id_token_result.status());
+
+    // Step 4: Exchange token via Basic Auth
     auto bearer_result = flight_client->AuthenticateBasicToken(
         call_options_, "token", *id_token_result);
     if (!bearer_result.ok()) return friendly_error(bearer_result.status());
@@ -198,6 +230,12 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::GetDbSchemas(
 arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::GetCatalogs() {
   ARROW_ASSIGN_OR_RAISE(auto info, client_->GetCatalogs(call_options_));
   return CollectResults(info);
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::GetSqlInfo(
+    const std::vector<int>& info) {
+  ARROW_ASSIGN_OR_RAISE(auto flight_info, client_->GetSqlInfo(call_options_, info));
+  return CollectResults(flight_info);
 }
 
 }  // namespace gizmosql::client
