@@ -502,7 +502,7 @@ jobs:
                   GIZMOSQL_PASSWORD=tiger gizmosql_client --host localhost --username scott
 
                 Run a single query:
-                  GIZMOSQL_PASSWORD=tiger gizmosql_client --host localhost --username scott -c "SELECT 1"
+                  GIZMOSQL_PASSWORD=tiger gizmosql_client --host localhost --username scott --command "SELECT 1"
 
                 For TLS and authentication options, see:
                   gizmosql_server --help

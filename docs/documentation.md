@@ -225,7 +225,7 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --tls-skip-verify
 ```
 
-Or run a single query with `-c`:
+Or run a single query with `--command`:
 ```bash
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --host "localhost" \
@@ -233,7 +233,7 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --username "gizmosql_username" \
   --tls \
   --tls-skip-verify \
-  -c "SELECT version()"
+  --command "SELECT version()"
 ```
 
 For full details, see the [Client Shell documentation](https://docs.gizmosql.com/#/client).
