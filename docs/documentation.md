@@ -217,29 +217,23 @@ You can also use the new `gizmosql_client` CLI tool to connect to the Flight SQL
 
 Example (run from the host computer's terminal):
 ```bash
-gizmosql_client \
-  --command Execute \
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --host "localhost" \
   --port 31337 \
   --username "gizmosql_username" \
-  --password "gizmosql_password" \
-  --query "SELECT version()" \
-  --use-tls \
-  --tls-skip-verify
+  --tls \
+  --tls-skip-verify \
+  --command "SELECT version()"
 ```
 
-That should return:
+That should return the DuckDB version, e.g.:
 ```text
-Results from endpoint 1 of 1
-Schema:
-version(): string
-
-Results:
-version():   [
-    "v1.4.4"
-  ]
-
-Total: 1
+┌─────────────┐
+│  version()  │
+│   varchar   │
+├─────────────┤
+│ v1.4.4      │
+└─────────────┘
 ```
 
 ### Connecting via [Ibis](https://ibis-project.org)

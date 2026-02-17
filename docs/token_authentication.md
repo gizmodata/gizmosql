@@ -221,14 +221,12 @@ with gizmosql.connect(
 ### CLI Client
 
 ```bash
-gizmosql_client \
+GIZMOSQL_PASSWORD="$(cat token.jwt)" gizmosql_client \
   --host localhost \
   --port 31337 \
   --username token \
-  --password "$(cat token.jwt)" \
-  --query "SELECT 1" \
-  --command Execute \
-  --use-tls
+  --tls \
+  --command "SELECT 1"
 ```
 
 ## Catalog-Level Access Control *(Enterprise)*
