@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Apache Arrow** updated from 23.0.0 to **23.0.1**
 - CLI parsing switched from gflags to Boost.ProgramOptions (with short options: `-h`, `-p`, `-u`, `-c`, `-f`, `-o`, `-q`, `-e`, `-v`)
 - **`--password`/`-W` no longer accepts a value** — like `psql`, the flag only forces an interactive prompt. Use the `GIZMOSQL_PASSWORD` environment variable for non-interactive password auth
 
