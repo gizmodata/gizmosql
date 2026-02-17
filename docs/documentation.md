@@ -212,10 +212,20 @@ n_nationkey: [[24]]
 n_name: [["UNITED STATES"]]
 ```
 
-### Connecting via the new `gizmosql_client` CLI tool
-You can also use the new `gizmosql_client` CLI tool to connect to the Flight SQL server, and then run a single command.  This tool is built into the Docker image, and is also available as a standalone executable for Linux and MacOS.   
+### Connecting via `gizmosql_client`
+GizmoSQL ships with an interactive SQL shell (`gizmosql_client`), inspired by `psql` and the DuckDB CLI. It is built into the Docker image and also available as a standalone executable for Linux and macOS.
 
-Example (run from the host computer's terminal):
+Start an interactive session:
+```bash
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
+  --host "localhost" \
+  --port 31337 \
+  --username "gizmosql_username" \
+  --tls \
+  --tls-skip-verify
+```
+
+Or run a single query with `-c`:
 ```bash
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --host "localhost" \
@@ -223,18 +233,10 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --username "gizmosql_username" \
   --tls \
   --tls-skip-verify \
-  --command "SELECT version()"
+  -c "SELECT version()"
 ```
 
-That should return the DuckDB version, e.g.:
-```text
-┌─────────────┐
-│  version()  │
-│   varchar   │
-├─────────────┤
-│ v1.4.4      │
-└─────────────┘
-```
+For full details, see the [Client Shell documentation](https://docs.gizmosql.com/#/client).
 
 ### Connecting via [Ibis](https://ibis-project.org)
 See: https://github.com/gizmodata/ibis-gizmosql
