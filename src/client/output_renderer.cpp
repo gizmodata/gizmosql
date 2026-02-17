@@ -180,7 +180,8 @@ std::vector<int> ComputeColumnWidths(const arrow::Table& table,
 }
 
 // Cap column widths to fit within max_width, omitting rightmost columns if needed.
-// Returns the capped widths and number of columns shown.
+// Uses a "water-level" algorithm: narrow columns keep their natural width,
+// only wide columns get truncated — matching DuckDB's proportional approach.
 std::pair<std::vector<int>, int> CapColumnWidths(std::vector<int> widths,
                                                   int max_width) {
   int num_cols = static_cast<int>(widths.size());
@@ -197,14 +198,50 @@ std::pair<std::vector<int>, int> CapColumnWidths(std::vector<int> widths,
     return total;
   };
 
-  // Step 1: Cap individual column widths proportionally
-  int available_per_col = (max_width - 1 - num_cols * kBorderOverhead) / num_cols;
-  int cap = std::max(kMinColWidth, available_per_col);
-  for (auto& w : widths) {
-    w = std::min(w, cap);
+  // If already fits, nothing to do
+  if (calc_total(num_cols) <= max_width) {
+    return {widths, num_cols};
   }
 
-  // Step 2: Remove rightmost columns if still too wide
+  // Available content space (total width minus borders)
+  int available = max_width - 1 - num_cols * kBorderOverhead;
+
+  // Water-level algorithm: iteratively fix small columns at their natural
+  // width and redistribute the remaining budget among wider columns.
+  // Each pass fixes columns that fit within the current fair share,
+  // freeing more space for the remaining larger columns.
+  std::vector<bool> fixed(num_cols, false);
+  int remaining = available;
+  int unfixed = num_cols;
+
+  for (int iter = 0; iter < num_cols; ++iter) {
+    int fair_share = remaining / std::max(1, unfixed);
+    bool any_fixed = false;
+
+    for (int c = 0; c < num_cols; ++c) {
+      if (fixed[c]) continue;
+      if (widths[c] <= fair_share) {
+        fixed[c] = true;
+        remaining -= widths[c];
+        unfixed--;
+        any_fixed = true;
+      }
+    }
+
+    if (!any_fixed) break;
+  }
+
+  // Cap the remaining wide columns to an equal share of the leftover budget
+  if (unfixed > 0) {
+    int cap = std::max(kMinColWidth, remaining / unfixed);
+    for (int c = 0; c < num_cols; ++c) {
+      if (!fixed[c]) {
+        widths[c] = cap;
+      }
+    }
+  }
+
+  // Remove rightmost columns if still too wide (extreme cases)
   int cols_shown = num_cols;
   while (cols_shown > 1 && calc_total(cols_shown) > max_width) {
     --cols_shown;
