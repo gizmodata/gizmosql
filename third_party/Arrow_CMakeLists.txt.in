@@ -13,7 +13,7 @@ ExternalProject_Add(
     arrow_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/apache/arrow.git
-    GIT_TAG apache-arrow-23.0.0
+    GIT_TAG apache-arrow-23.0.1
     SOURCE_SUBDIR cpp
     PATCH_COMMAND sed -i.bak -e "/set_target_properties.*c-ares::cares.*PROPERTIES/d" -e "/LIBRESOLV_LIBRARY/d" <SOURCE_DIR>/cpp/cmake_modules/ThirdpartyToolchain.cmake
     CMAKE_ARGS

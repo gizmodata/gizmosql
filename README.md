@@ -65,7 +65,7 @@ For more details, see the [Editions documentation](https://docs.gizmosql.com/#/e
 |----------------------------------------------------------------------------------|---------|
 | [DuckDB](https://duckdb.org)                                                     | v1.4.4  |
 | [SQLite](https://sqlite.org)                                                     | 3.51.1  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.0 |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1 |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.1  |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
 
@@ -179,9 +179,33 @@ See: https://github.com/gizmodata/generate-gizmosql-token for an example of how 
 
 ### 💻 CLI Client
 
+GizmoSQL ships with an interactive SQL shell inspired by `psql` and the DuckDB CLI:
+
 ```bash
-gizmosql_client   --command Execute   --host localhost --port 31337   --username gizmosql_username   --password gizmosql_password   --query "SELECT version()"   --use-tls --tls-skip-verify
+# Interactive session
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client --host localhost --username gizmosql_username --tls --tls-skip-verify
 ```
+
+Run a single query with `--command`:
+
+```bash
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
+  --host localhost --username gizmosql_username --tls --tls-skip-verify \
+  --command "SELECT version()"
+```
+
+Pipe SQL from a heredoc:
+
+```bash
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
+  --host localhost --username gizmosql_username --tls --tls-skip-verify --quiet <<'EOF'
+SELECT n_nationkey, n_name
+FROM nation
+WHERE n_nationkey = 24;
+EOF
+```
+
+More info: [Client Shell documentation](https://docs.gizmosql.com/#/client)
 
 ---
 

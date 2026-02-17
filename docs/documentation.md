@@ -46,7 +46,7 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 |----------------------------------------------------------------------------------|---------|
 | [DuckDB](https://duckdb.org)                                                     | v1.4.4  |
 | [SQLite](https://sqlite.org)                                                     | 3.51.1  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.0 |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1 |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.1  |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
 
@@ -212,35 +212,31 @@ n_nationkey: [[24]]
 n_name: [["UNITED STATES"]]
 ```
 
-### Connecting via the new `gizmosql_client` CLI tool
-You can also use the new `gizmosql_client` CLI tool to connect to the Flight SQL server, and then run a single command.  This tool is built into the Docker image, and is also available as a standalone executable for Linux and MacOS.   
+### Connecting via `gizmosql_client`
+GizmoSQL ships with an interactive SQL shell (`gizmosql_client`), inspired by `psql` and the DuckDB CLI. It is built into the Docker image and also available as a standalone executable for Linux and macOS.
 
-Example (run from the host computer's terminal):
+Start an interactive session:
 ```bash
-gizmosql_client \
-  --command Execute \
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --host "localhost" \
   --port 31337 \
   --username "gizmosql_username" \
-  --password "gizmosql_password" \
-  --query "SELECT version()" \
-  --use-tls \
+  --tls \
   --tls-skip-verify
 ```
 
-That should return:
-```text
-Results from endpoint 1 of 1
-Schema:
-version(): string
-
-Results:
-version():   [
-    "v1.4.4"
-  ]
-
-Total: 1
+Or run a single query with `--command`:
+```bash
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
+  --host "localhost" \
+  --port 31337 \
+  --username "gizmosql_username" \
+  --tls \
+  --tls-skip-verify \
+  --command "SELECT version()"
 ```
+
+For full details, see the [Client Shell documentation](https://docs.gizmosql.com/#/client).
 
 ### Connecting via [Ibis](https://ibis-project.org)
 See: https://github.com/gizmodata/ibis-gizmosql
@@ -428,7 +424,7 @@ $ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 23.0.0
+Apache Arrow version: 23.0.1
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.4.4
 Running Init SQL command: 
@@ -456,7 +452,7 @@ The above will produce output similar to the following:
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 23.0.0
+Apache Arrow version: 23.0.1
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
 Using database file: "/Users/philip/Documents/git/gizmosql/data/TPC-H-small.sqlite"

@@ -62,6 +62,10 @@ jobs:
         run: |
           ./build/tests/gizmosql_integration_tests
 
+      - name: Run Client Shell Tests
+        run: |
+          cd build && bash ../tests/test_client_shell.sh
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -239,6 +243,10 @@ jobs:
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests
+
+      - name: Run Client Shell Tests
+        run: |
+          cd build && bash ../tests/test_client_shell.sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -495,11 +503,14 @@ jobs:
 
             def caveats
               <<~EOS
-                GizmoSQL server can be started with:
-                  GIZMOSQL_PASSWORD=tiger gizmosql_server --database-filename /path/to/database.duckdb --username scott
+                Start a GizmoSQL server:
+                  GIZMOSQL_PASSWORD=tiger gizmosql_server --database-filename my_database.duckdb --username scott
 
-                GizmoSQL client can connect with:
-                  gizmosql_client --host localhost --port 31337 --username scott --password tiger --command Execute --query "SELECT 1"
+                Connect with the interactive SQL shell:
+                  GIZMOSQL_PASSWORD=tiger gizmosql_client --host localhost --username scott
+
+                Run a single query:
+                  GIZMOSQL_PASSWORD=tiger gizmosql_client --host localhost --username scott --command "SELECT 1"
 
                 For TLS and authentication options, see:
                   gizmosql_server --help

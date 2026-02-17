@@ -45,15 +45,13 @@ python "${SCRIPT_DIR}/test_gizmosql.py"
 RC=$?
 
 # Test the gizmosql_client
-gizmosql_client \
-  --command Execute \
+GIZMOSQL_PASSWORD="${GIZMOSQL_PASSWORD}" gizmosql_client \
   --host "localhost" \
   --port 31337 \
   --username "gizmosql_username" \
-  --password "${GIZMOSQL_PASSWORD}" \
-  --query "SELECT version()" \
-  --use-tls \
-  --tls-skip-verify
+  --tls \
+  --tls-skip-verify \
+  --command "SELECT version()"
 
 RC=$((RC + $?))
 
