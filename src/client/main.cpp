@@ -231,6 +231,7 @@ int main(int argc, char** argv) {
   if (config.is_interactive && !config.output_file.has_value()) {
     config.max_rows = 40;
     config.max_width = GetTerminalWidth();
+    config.auto_width = true;
   }
 
   // Set up output file redirect
