@@ -460,7 +460,7 @@ gizmosql> .show
      edition: Core
  instance_id: a1b2c3d4-...
       engine: duckdb v1.4.4
-       arrow: 23.0.0
+       arrow: 23.0.1
 --- Session ---
    connected: yes
          uri: gizmosql://localhost:31337?username=admin

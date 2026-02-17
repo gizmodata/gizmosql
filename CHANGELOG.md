@@ -273,7 +273,7 @@ GizmoSQL is now available in two editions:
 
 | Component | Version |
 |-----------|---------|
-| Apache Arrow | **23.0.0** |
+| Apache Arrow | **23.0.1** |
 | DuckDB | v1.4.4 |
 | SQLite | 3.51.1 |
 | jwt-cpp | v0.7.1 |
