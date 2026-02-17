@@ -415,13 +415,13 @@ run_test "Non-interactive shows all rows - 100 rows" "100 rows" "$OUTPUT"
 
 # Type row in box mode
 OUTPUT=$($CLIENT_BIN -h localhost -p "$SERVER_PORT" -u "$USERNAME" -q --box -c "SELECT 42 AS num, 'hello' AS str" 2>/dev/null)
-run_test "Box mode shows integer type" "int" "$OUTPUT"
-run_test "Box mode shows string type" "string" "$OUTPUT"
+run_test "Box mode shows integer type" "integer" "$OUTPUT"
+run_test "Box mode shows varchar type" "varchar" "$OUTPUT"
 
 # Type row in table mode
 OUTPUT=$($CLIENT_BIN -h localhost -p "$SERVER_PORT" -u "$USERNAME" -q --table -c "SELECT 42 AS num, 'hello' AS str" 2>/dev/null)
-run_test "Table mode shows integer type" "int" "$OUTPUT"
-run_test "Table mode shows string type" "string" "$OUTPUT"
+run_test "Table mode shows integer type" "integer" "$OUTPUT"
+run_test "Table mode shows varchar type" "varchar" "$OUTPUT"
 
 # CSV mode does NOT show type row (regression test)
 OUTPUT=$($CLIENT_BIN -h localhost -p "$SERVER_PORT" -u "$USERNAME" -q --csv -c "SELECT 42 AS num" 2>/dev/null)

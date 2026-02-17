@@ -62,6 +62,10 @@ jobs:
         run: |
           ./build/tests/gizmosql_integration_tests
 
+      - name: Run Client Shell Tests
+        run: |
+          cd build && bash ../tests/test_client_shell.sh
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -239,6 +243,10 @@ jobs:
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests
+
+      - name: Run Client Shell Tests
+        run: |
+          cd build && bash ../tests/test_client_shell.sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
