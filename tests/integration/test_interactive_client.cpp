@@ -31,6 +31,7 @@
 #include "client/command_processor.hpp"
 #include "client/flight_connection.hpp"
 #include "client/output_renderer.hpp"
+#include "client/shell_completer.hpp"
 #include "client/shell_loop.hpp"
 #include "client/sql_processor.hpp"
 
@@ -638,6 +639,7 @@ TEST_F(InteractiveClientFixture, SqlProcessorIsUpdateStatement) {
   EXPECT_TRUE(SqlProcessor::IsUpdateStatement("CREATE TABLE t (x INT)"));
   EXPECT_TRUE(SqlProcessor::IsUpdateStatement("DROP TABLE t"));
   EXPECT_TRUE(SqlProcessor::IsUpdateStatement("ALTER TABLE t ADD y INT"));
+  EXPECT_TRUE(SqlProcessor::IsUpdateStatement("USE my_catalog"));
   EXPECT_FALSE(SqlProcessor::IsUpdateStatement("SELECT * FROM t"));
   EXPECT_FALSE(SqlProcessor::IsUpdateStatement("  SELECT 1"));
   EXPECT_FALSE(SqlProcessor::IsUpdateStatement("WITH cte AS (SELECT 1) SELECT * FROM cte"));
@@ -808,8 +810,35 @@ TEST_F(InteractiveClientFixture, DotShow) {
   proc.Process(".show");
   std::string output = out.str();
 
+  // Section headers
+  EXPECT_NE(output.find("--- Server ---"), std::string::npos);
+  EXPECT_NE(output.find("--- Session ---"), std::string::npos);
+  EXPECT_NE(output.find("--- Settings ---"), std::string::npos);
+  // Server section
+  EXPECT_NE(output.find("version:"), std::string::npos)
+      << "Should show server version";
+  EXPECT_NE(output.find("edition:"), std::string::npos)
+      << "Should show edition";
+  EXPECT_NE(output.find("instance_id:"), std::string::npos)
+      << "Should show instance_id";
+  EXPECT_NE(output.find("engine:"), std::string::npos)
+      << "Should show engine (from SqlInfo)";
+  EXPECT_NE(output.find("duckdb"), std::string::npos)
+      << "Engine should contain 'duckdb'";
+  EXPECT_NE(output.find("arrow:"), std::string::npos)
+      << "Should show Arrow version";
+  // Session section
   EXPECT_NE(output.find("host:"), std::string::npos);
   EXPECT_NE(output.find("port:"), std::string::npos);
+  EXPECT_NE(output.find("session_id:"), std::string::npos)
+      << "Should show session_id";
+  EXPECT_NE(output.find("role:"), std::string::npos)
+      << "Should show role";
+  EXPECT_NE(output.find("catalog:"), std::string::npos)
+      << "Should show current catalog";
+  EXPECT_NE(output.find("schema:"), std::string::npos)
+      << "Should show current schema";
+  // Settings section
   EXPECT_NE(output.find("mode:"), std::string::npos);
   EXPECT_NE(output.find("headers:"), std::string::npos);
 }
@@ -1442,11 +1471,11 @@ TEST_F(InteractiveClientFixture, BoxRendererShowsColumnTypes) {
   renderer->Render(**result, out);
   std::string output = out.str();
 
-  // Should show type names below column names
+  // Should show friendly type names below column names
   EXPECT_NE(output.find("int"), std::string::npos)
       << "Should show integer type";
-  EXPECT_NE(output.find("string"), std::string::npos)
-      << "Should show string type";
+  EXPECT_NE(output.find("varchar"), std::string::npos)
+      << "Should show varchar type";
 }
 
 TEST_F(InteractiveClientFixture, BoxRendererRightAlignsNumbers) {
@@ -1492,8 +1521,8 @@ TEST_F(InteractiveClientFixture, TableRendererShowsColumnTypes) {
 
   EXPECT_NE(output.find("int"), std::string::npos)
       << "Should show integer type";
-  EXPECT_NE(output.find("string"), std::string::npos)
-      << "Should show string type";
+  EXPECT_NE(output.find("varchar"), std::string::npos)
+      << "Should show varchar type";
 }
 
 TEST_F(InteractiveClientFixture, ShowSettingsIncludesMaxRowsMaxWidth) {
@@ -1673,4 +1702,305 @@ TEST_F(InteractiveClientFixture, TableRendererSplitDisplay) {
   EXPECT_EQ(render_result.rows_rendered, 8);
   EXPECT_TRUE(render_result.footer_rendered);
   EXPECT_NE(output.find("8 shown"), std::string::npos);
+}
+
+// ============================================================================
+// Tab Completion Tests
+// ============================================================================
+
+TEST_F(InteractiveClientFixture, CompleterReturnsTableNames) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  ShellCompleter completer(conn);
+  int ctx_len = 0;
+  auto completions = completer.Complete("select * from test_d", ctx_len);
+
+  bool found = false;
+  for (const auto& c : completions) {
+    if (c.text() == "test_data") found = true;
+  }
+  EXPECT_TRUE(found) << "Should complete table name 'test_data'";
+  EXPECT_GT(ctx_len, 0);
+}
+
+TEST_F(InteractiveClientFixture, CompleterReturnsSqlKeywords) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  ShellCompleter completer(conn);
+  int ctx_len = 0;
+  auto completions = completer.Complete("sel", ctx_len);
+
+  bool found = false;
+  for (const auto& c : completions) {
+    if (c.text() == "select") found = true;
+  }
+  EXPECT_TRUE(found) << "Should complete SQL keyword 'select'";
+}
+
+TEST_F(InteractiveClientFixture, CompleterReturnsDotCommands) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  ShellCompleter completer(conn);
+  int ctx_len = 0;
+  auto completions = completer.Complete(".ta", ctx_len);
+
+  bool found = false;
+  for (const auto& c : completions) {
+    if (c.text() == ".tables") found = true;
+  }
+  EXPECT_TRUE(found) << "Should complete dot command '.tables'";
+}
+
+TEST_F(InteractiveClientFixture, CompleterCasePreservation) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  ShellCompleter completer(conn);
+  int ctx_len = 0;
+
+  // Uppercase prefix -> uppercase completions
+  auto upper = completer.Complete("SEL", ctx_len);
+  bool found_upper = false;
+  for (const auto& c : upper) {
+    if (c.text() == "SELECT") found_upper = true;
+  }
+  EXPECT_TRUE(found_upper) << "Uppercase prefix should get uppercase completion";
+
+  // Lowercase prefix -> lowercase completions
+  auto lower = completer.Complete("sel", ctx_len);
+  bool found_lower = false;
+  for (const auto& c : lower) {
+    if (c.text() == "select") found_lower = true;
+  }
+  EXPECT_TRUE(found_lower) << "Lowercase prefix should get lowercase completion";
+}
+
+TEST_F(InteractiveClientFixture, CompleterHintSingleMatch) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  ShellCompleter completer(conn);
+  int ctx_len = 0;
+  replxx::Replxx::Color color = replxx::Replxx::Color::DEFAULT;
+
+  // ".refr" should uniquely match ".refresh"
+  auto hints = completer.Hint(".refr", ctx_len, color);
+  ASSERT_EQ(hints.size(), 1);
+  EXPECT_EQ(hints[0], ".refresh");
+  EXPECT_EQ(color, replxx::Replxx::Color::GRAY);
+}
+
+TEST_F(InteractiveClientFixture, CompleterHintMultipleNoHint) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  ShellCompleter completer(conn);
+  int ctx_len = 0;
+  replxx::Replxx::Color color = replxx::Replxx::Color::DEFAULT;
+
+  // ".s" matches .schema, .separator, .shell, .show — no single hint
+  auto hints = completer.Hint(".s", ctx_len, color);
+  EXPECT_TRUE(hints.empty()) << "Multiple matches should produce no hint";
+}
+
+TEST_F(InteractiveClientFixture, CompleterCacheInvalidation) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  ShellCompleter completer(conn);
+
+  // Populate cache
+  int ctx_len = 0;
+  completer.Complete("select * from ", ctx_len);
+
+  // Create a new table
+  auto create_result = conn.ExecuteUpdate(
+      "CREATE TABLE completer_test_xyz (a INTEGER)");
+  ASSERT_TRUE(create_result.ok());
+
+  // Before invalidation: cache still has old data
+  auto before = completer.Complete("select * from completer_test_", ctx_len);
+  bool found_before = false;
+  for (const auto& c : before) {
+    if (c.text() == "completer_test_xyz") found_before = true;
+  }
+
+  // Invalidate and retry
+  completer.InvalidateCache();
+  auto after = completer.Complete("select * from completer_test_", ctx_len);
+  bool found_after = false;
+  for (const auto& c : after) {
+    if (c.text() == "completer_test_xyz") found_after = true;
+  }
+  EXPECT_TRUE(found_after) << "After invalidation, new table should appear";
+
+  // Cleanup
+  conn.ExecuteUpdate("DROP TABLE completer_test_xyz");
+}
+
+TEST_F(InteractiveClientFixture, CompleterDisconnectedGraceful) {
+  FlightConnection conn;
+  ASSERT_FALSE(conn.IsConnected());
+
+  ShellCompleter completer(conn);
+  int ctx_len = 0;
+
+  // Should not crash; returns keywords only
+  auto completions = completer.Complete("sel", ctx_len);
+  bool found = false;
+  for (const auto& c : completions) {
+    if (c.text() == "select") found = true;
+  }
+  EXPECT_TRUE(found) << "Should return keywords even when disconnected";
+
+  // Table names should be empty (no connection)
+  auto table_completions = completer.Complete("select * from te", ctx_len);
+  // Should only have keywords, not table names
+  for (const auto& c : table_completions) {
+    EXPECT_NE(c.text(), "test_data")
+        << "Should not have table names when disconnected";
+  }
+}
+
+// ============================================================================
+// Display Polish Tests (Centered Headers, Friendly Type Names)
+// ============================================================================
+
+TEST_F(InteractiveClientFixture, BoxRendererCentersColumnNames) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  auto result = conn.ExecuteQuery(
+      "SELECT 1 AS a, 'hello_world' AS long_name");
+  ASSERT_TRUE(result.ok());
+
+  ClientConfig config;
+  auto renderer = CreateRenderer(OutputMode::BOX, config);
+
+  std::ostringstream out;
+  renderer->Render(**result, out);
+  std::string output = out.str();
+
+  // Parse the header line for 'a' column — should be centered
+  // In the output, find the line containing column names
+  std::istringstream iss(output);
+  std::string line;
+  while (std::getline(iss, line)) {
+    // Look for the line containing " a " (the column header for 'a')
+    // If 'a' is centered in a wider column, it should have spaces on both sides
+    if (line.find("long_name") != std::string::npos) {
+      // This is the header line — "long_name" should be centered
+      // Find the position of "long_name" — it should have spaces on both sides
+      auto pos = line.find("long_name");
+      ASSERT_NE(pos, std::string::npos);
+      // Check that there is at least one space before "long_name" (centering)
+      EXPECT_EQ(line[pos - 1], ' ') << "Column name should have padding";
+      break;
+    }
+  }
+}
+
+TEST_F(InteractiveClientFixture, BoxRendererFriendlyTypeNames) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+
+  auto result = conn.ExecuteQuery(
+      "SELECT 42::BIGINT AS num, 'hello' AS str, "
+      "3.14::DOUBLE AS dbl, DATE '2026-01-01' AS dt");
+  ASSERT_TRUE(result.ok());
+
+  ClientConfig config;
+  auto renderer = CreateRenderer(OutputMode::BOX, config);
+
+  std::ostringstream out;
+  renderer->Render(**result, out);
+  std::string output = out.str();
+
+  // Should show friendly type names
+  EXPECT_NE(output.find("bigint"), std::string::npos)
+      << "Should show 'bigint' not 'int64'";
+  EXPECT_NE(output.find("varchar"), std::string::npos)
+      << "Should show 'varchar' not 'string'";
+  EXPECT_NE(output.find("double"), std::string::npos)
+      << "Should show 'double'";
+  EXPECT_NE(output.find("date"), std::string::npos)
+      << "Should show 'date' not 'date32[day]'";
+
+  // Should NOT show raw Arrow type names
+  EXPECT_EQ(output.find("int64"), std::string::npos)
+      << "Should not show raw Arrow type 'int64'";
+  EXPECT_EQ(output.find("string"), std::string::npos)
+      << "Should not show raw Arrow type 'string'";
+  EXPECT_EQ(output.find("date32"), std::string::npos)
+      << "Should not show raw Arrow type 'date32[day]'";
+}
+
+TEST_F(InteractiveClientFixture, FriendlyTypeNameMappings) {
+  // Unit tests for the FriendlyTypeName function
+  EXPECT_EQ(FriendlyTypeName(arrow::utf8()), "varchar");
+  EXPECT_EQ(FriendlyTypeName(arrow::int8()), "tinyint");
+  EXPECT_EQ(FriendlyTypeName(arrow::int16()), "smallint");
+  EXPECT_EQ(FriendlyTypeName(arrow::int32()), "integer");
+  EXPECT_EQ(FriendlyTypeName(arrow::int64()), "bigint");
+  EXPECT_EQ(FriendlyTypeName(arrow::uint8()), "utinyint");
+  EXPECT_EQ(FriendlyTypeName(arrow::uint16()), "usmallint");
+  EXPECT_EQ(FriendlyTypeName(arrow::uint32()), "uinteger");
+  EXPECT_EQ(FriendlyTypeName(arrow::uint64()), "ubigint");
+  EXPECT_EQ(FriendlyTypeName(arrow::float32()), "float");
+  EXPECT_EQ(FriendlyTypeName(arrow::float64()), "double");
+  EXPECT_EQ(FriendlyTypeName(arrow::boolean()), "boolean");
+  EXPECT_EQ(FriendlyTypeName(arrow::date32()), "date");
+  EXPECT_EQ(FriendlyTypeName(arrow::binary()), "blob");
+  EXPECT_EQ(FriendlyTypeName(arrow::null()), "null");
+  EXPECT_EQ(FriendlyTypeName(arrow::decimal128(15, 2)), "decimal(15,2)");
+  EXPECT_EQ(FriendlyTypeName(arrow::timestamp(arrow::TimeUnit::MICRO)),
+            "timestamp");
+  EXPECT_EQ(
+      FriendlyTypeName(arrow::timestamp(arrow::TimeUnit::MICRO, "UTC")),
+      "timestamptz");
+  EXPECT_EQ(FriendlyTypeName(arrow::duration(arrow::TimeUnit::MICRO)),
+            "interval");
+}
+
+// ============================================================================
+// SqlProcessor::IsDdlStatement Tests
+// ============================================================================
+
+TEST_F(InteractiveClientFixture, SqlProcessorIsDdlStatement) {
+  EXPECT_TRUE(SqlProcessor::IsDdlStatement("CREATE TABLE t (x INT)"));
+  EXPECT_TRUE(SqlProcessor::IsDdlStatement("  DROP TABLE t"));
+  EXPECT_TRUE(SqlProcessor::IsDdlStatement("ALTER TABLE t ADD y INT"));
+  EXPECT_TRUE(SqlProcessor::IsDdlStatement("ATTACH ':memory:'"));
+  EXPECT_TRUE(SqlProcessor::IsDdlStatement("DETACH db"));
+  EXPECT_TRUE(SqlProcessor::IsDdlStatement("USE my_catalog"));
+  EXPECT_TRUE(SqlProcessor::IsDdlStatement("  use main"));
+  EXPECT_FALSE(SqlProcessor::IsDdlStatement("SELECT * FROM t"));
+  EXPECT_FALSE(SqlProcessor::IsDdlStatement("INSERT INTO t VALUES(1)"));
+  EXPECT_FALSE(SqlProcessor::IsDdlStatement("UPDATE t SET x=1"));
+  EXPECT_FALSE(SqlProcessor::IsDdlStatement("DELETE FROM t"));
+}
+
+// ============================================================================
+// .refresh Dot Command Test
+// ============================================================================
+
+TEST_F(InteractiveClientFixture, DotRefreshCommand) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  auto conn = ConnectClient();
+  auto config = MakeConfig();
+
+  std::ostringstream out;
+  config.output_stream = &out;
+  CommandProcessor proc(conn, config);
+
+  bool callback_called = false;
+  proc.SetRefreshCallback([&callback_called]() { callback_called = true; });
+
+  auto result = proc.Process(".refresh");
+  EXPECT_EQ(result, CommandResult::OK);
+  EXPECT_TRUE(callback_called) << "Refresh callback should be called";
+  EXPECT_NE(out.str().find("Schema cache refreshed"), std::string::npos);
 }

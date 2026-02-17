@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,10 @@ class CommandProcessor {
   // Process a dot command. Returns the result.
   CommandResult Process(const std::string& line);
 
+  // Set a callback to be called when schema cache should be refreshed
+  // (e.g., after .connect or .refresh)
+  void SetRefreshCallback(std::function<void()> callback);
+
  private:
   void ShowHelp(const std::string& pattern);
   void ShowSettings();
@@ -52,6 +57,7 @@ class CommandProcessor {
   ClientConfig& config_;
   std::ofstream* output_file_ = nullptr;
   bool once_mode_ = false;
+  std::function<void()> refresh_callback_;
 };
 
 }  // namespace gizmosql::client

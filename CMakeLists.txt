@@ -404,6 +404,7 @@ set(GIZMOSQL_CLIENT_SRCS
         src/client/flight_connection.cpp
         src/client/oauth_flow.cpp
         src/client/shell_loop.cpp
+        src/client/shell_completer.cpp
         src/client/sql_processor.cpp
         src/client/command_processor.cpp
         src/client/output_renderer.cpp

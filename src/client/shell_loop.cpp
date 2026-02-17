@@ -25,6 +25,7 @@
 #include <replxx.hxx>
 
 #include "output_renderer.hpp"
+#include "shell_completer.hpp"
 #include "version.h"
 
 namespace gizmosql::client {
@@ -204,6 +205,27 @@ int RunShellLoop(FlightConnection& conn, CommandProcessor& cmd_proc,
   std::string history_path = GetHistoryPath();
   rx.history_load(history_path);
 
+  // Tab completion and hints
+  ShellCompleter completer(conn);
+
+  rx.set_word_break_characters(" \t\n\r\"'`@$><=;|&{(,+-*/%~!^)}");
+  rx.set_completion_count_cutoff(100);
+  rx.set_double_tab_completion(false);
+  rx.set_complete_on_empty(false);
+  rx.set_max_hint_rows(4);
+
+  rx.set_completion_callback(
+      [&completer](const std::string& input, int& ctx) {
+        return completer.Complete(input, ctx);
+      });
+  rx.set_hint_callback(
+      [&completer](const std::string& input, int& ctx,
+                    replxx::Replxx::Color& color) {
+        return completer.Hint(input, ctx, color);
+      });
+
+  cmd_proc.SetRefreshCallback([&completer]() { completer.InvalidateCache(); });
+
   if (!config.quiet) {
     std::cout << "GizmoSQL Client " << PROJECT_VERSION << std::endl;
     if (conn.IsConnected()) {
@@ -281,6 +303,9 @@ int RunShellLoop(FlightConnection& conn, CommandProcessor& cmd_proc,
 
       if (!stmt.empty()) {
         ExecuteStatement(conn, config, stmt);
+        if (SqlProcessor::IsDdlStatement(stmt)) {
+          completer.InvalidateCache();
+        }
       }
 
       // Process any remaining text after the semicolon
@@ -291,6 +316,9 @@ int RunShellLoop(FlightConnection& conn, CommandProcessor& cmd_proc,
           sql_proc.Reset();
           if (!stmt.empty()) {
             ExecuteStatement(conn, config, stmt);
+            if (SqlProcessor::IsDdlStatement(stmt)) {
+              completer.InvalidateCache();
+            }
           }
         } else {
           break;

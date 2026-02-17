@@ -34,6 +34,9 @@ class SqlProcessor {
   // Check if a SQL statement is a DML/DDL command that should use ExecuteUpdate.
   static bool IsUpdateStatement(const std::string& sql);
 
+  // Check if a SQL statement is a DDL command that changes the schema.
+  static bool IsDdlStatement(const std::string& sql);
+
  private:
   std::string buffer_;
   size_t semicolon_pos_ = std::string::npos;

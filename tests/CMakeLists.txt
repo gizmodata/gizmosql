@@ -44,6 +44,7 @@ set(GIZMOSQL_CLIENT_LIB_SRCS
         ${CMAKE_SOURCE_DIR}/src/client/output_renderer.cpp
         ${CMAKE_SOURCE_DIR}/src/client/password_prompt.cpp
         ${CMAKE_SOURCE_DIR}/src/client/shell_loop.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/shell_completer.cpp
 )
 
 # Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)

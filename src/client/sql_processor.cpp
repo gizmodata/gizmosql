@@ -142,7 +142,25 @@ bool SqlProcessor::IsUpdateStatement(const std::string& sql) {
          prefix.find("INSTALL") == 0 ||
          prefix.find("COPY") == 0 ||
          prefix.find("ATTACH") == 0 ||
-         prefix.find("DETACH") == 0;
+         prefix.find("DETACH") == 0 ||
+         prefix.find("USE") == 0;
+}
+
+bool SqlProcessor::IsDdlStatement(const std::string& sql) {
+  std::string trimmed = sql;
+  size_t start = trimmed.find_first_not_of(" \t\n\r");
+  if (start == std::string::npos) return false;
+  trimmed = trimmed.substr(start);
+
+  std::string prefix = trimmed.substr(0, 10);
+  std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::toupper);
+
+  return prefix.find("CREATE") == 0 ||
+         prefix.find("DROP") == 0 ||
+         prefix.find("ALTER") == 0 ||
+         prefix.find("ATTACH") == 0 ||
+         prefix.find("DETACH") == 0 ||
+         prefix.find("USE") == 0;
 }
 
 }  // namespace gizmosql::client

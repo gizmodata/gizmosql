@@ -55,4 +55,7 @@ std::string GetCellValue(const std::shared_ptr<arrow::ChunkedArray>& column,
 // Utility: get terminal width
 int GetTerminalWidth();
 
+// Map Arrow type to DuckDB-friendly display name (e.g., "varchar", "bigint")
+std::string FriendlyTypeName(const std::shared_ptr<arrow::DataType>& type);
+
 }  // namespace gizmosql::client

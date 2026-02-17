@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <arrow/flight/sql/api.h>
 #include <arrow/status.h>
@@ -45,6 +46,9 @@ class FlightConnection {
       const std::string& catalog_pattern = "",
       const std::string& schema_pattern = "");
   arrow::Result<std::shared_ptr<arrow::Table>> GetCatalogs();
+
+  arrow::Result<std::shared_ptr<arrow::Table>> GetSqlInfo(
+      const std::vector<int>& info);
 
   void Disconnect();
 
