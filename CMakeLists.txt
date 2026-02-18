@@ -55,6 +55,16 @@ configure_file(
 )
 
 # --------------------- Arrow ---------------------
+# When cross-compiling for ARM64 on an x64 host, Arrow's auto-detection finds
+# SSE4.2 on the host and tries to use x86intrin.h, which fails for ARM64.
+option(GIZMOSQL_CROSS_ARM64 "Cross-compiling for ARM64 (disables Arrow x86 SIMD)" OFF)
+set(ARROW_SIMD_LEVEL "DEFAULT")
+set(ARROW_RUNTIME_SIMD_LEVEL "MAX")
+if(GIZMOSQL_CROSS_ARM64)
+    set(ARROW_SIMD_LEVEL "NONE")
+    set(ARROW_RUNTIME_SIMD_LEVEL "NONE")
+endif()
+
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
 )

@@ -340,16 +340,19 @@ jobs:
   build-project-windows:
     name: Build Project - Windows (${{ matrix.platform }})
     strategy:
+      fail-fast: false
       matrix:
         include:
           - platform: x64
             arch: amd64
             msvc_arch: amd64
             vcpkg_triplet: x64-windows-static
+            cross_arm64: OFF
           - platform: arm64
             arch: arm64
             msvc_arch: amd64_arm64
             vcpkg_triplet: arm64-windows-static
+            cross_arm64: ON
     runs-on: windows-2022
     env:
       zip_file_name: gizmosql_cli_windows_${{ matrix.arch }}.zip
@@ -378,7 +381,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} `
             -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} `
-            -DGIZMOSQL_ENTERPRISE=ON
+            -DGIZMOSQL_ENTERPRISE=ON `
+            -DGIZMOSQL_CROSS_ARM64=${{ matrix.cross_arm64 }}
 
       - name: Build
         run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }}
