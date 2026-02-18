@@ -357,6 +357,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -365,6 +367,7 @@ jobs:
 
       - name: Setup vcpkg and install dependencies
         run: |
+          if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           C:\vcpkg\bootstrap-vcpkg.bat
           C:\vcpkg\vcpkg install boost-program-options boost-algorithm boost-uuid --triplet ${{ matrix.vcpkg_triplet }}

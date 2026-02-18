@@ -15,7 +15,7 @@ ExternalProject_Add(
     GIT_REPOSITORY https://github.com/apache/arrow.git
     GIT_TAG apache-arrow-23.0.1
     SOURCE_SUBDIR cpp
-    PATCH_COMMAND ${CMAKE_COMMAND} -DARROW_SOURCE_DIR=<SOURCE_DIR> -P ${CMAKE_SOURCE_DIR}/third_party/patch_arrow.cmake
+    PATCH_COMMAND "${CMAKE_COMMAND}" -DARROW_SOURCE_DIR=<SOURCE_DIR> -P "${CMAKE_SOURCE_DIR}/third_party/patch_arrow.cmake"
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/arrow
       -DCMAKE_INSTALL_LIBDIR=lib
