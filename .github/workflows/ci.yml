@@ -337,10 +337,216 @@ jobs:
           no-cache: true
           provenance: false
 
+  build-project-windows:
+    name: Build Project - Windows (${{ matrix.platform }})
+    strategy:
+      matrix:
+        include:
+          - platform: x64
+            arch: amd64
+            msvc_arch: amd64
+            vcpkg_triplet: x64-windows-static
+          - platform: arm64
+            arch: arm64
+            msvc_arch: amd64_arm64
+            vcpkg_triplet: arm64-windows-static
+    runs-on: windows-2022
+    env:
+      zip_file_name: gizmosql_cli_windows_${{ matrix.arch }}.zip
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Setup vcpkg and install dependencies
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg install boost-program-options boost-algorithm boost-uuid --triplet ${{ matrix.vcpkg_triplet }}
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} `
+            -DGIZMOSQL_ENTERPRISE=ON
+
+      - name: Build
+        run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }}
+
+      - name: Run Tests (x64 only)
+        if: matrix.platform == 'x64'
+        run: .\build\tests\gizmosql_integration_tests.exe
+
+      - name: Zip artifacts
+        run: |
+          copy build\gizmosql_server.exe .
+          copy build\gizmosql_client.exe .
+          7z a ${{ env.zip_file_name }} gizmosql_server.exe gizmosql_client.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.zip_file_name }}
+          path: ${{ env.zip_file_name }}
+
+      - name: Upload unsigned executables for signing
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: gizmosql-windows-${{ matrix.arch }}-unsigned
+          path: |
+            build/gizmosql_server.exe
+            build/gizmosql_client.exe
+
+  sign-windows:
+    name: Sign Windows (${{ matrix.arch }})
+    needs: build-project-windows
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: windows-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download unsigned executables
+        uses: actions/download-artifact@v4
+        with:
+          name: gizmosql-windows-${{ matrix.arch }}-unsigned
+          path: unsigned
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install AzureSignTool
+        run: dotnet tool install --global AzureSignTool
+
+      - name: Sign executables
+        run: |
+          Get-ChildItem -Path unsigned -Filter *.exe -Recurse | ForEach-Object {
+            AzureSignTool sign `
+              --azure-key-vault-url "${{ secrets.AZURE_KEY_VAULT_URI }}" `
+              --azure-key-vault-certificate "${{ secrets.AZURE_CERT_NAME }}" `
+              --azure-key-vault-managed-identity `
+              --timestamp-rfc3161 http://timestamp.digicert.com `
+              --timestamp-digest sha256 `
+              --file-digest sha256 `
+              --verbose `
+              $_.FullName
+          }
+
+      - name: Upload signed executables
+        uses: actions/upload-artifact@v4
+        with:
+          name: gizmosql-windows-${{ matrix.arch }}-signed
+          path: unsigned/**/*.exe
+          if-no-files-found: error
+
+  build-msi:
+    name: Build MSI (${{ matrix.arch }})
+    needs: sign-windows
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: windows-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download signed executables
+        uses: actions/download-artifact@v4
+        with:
+          name: gizmosql-windows-${{ matrix.arch }}-signed
+          path: installer/bin
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --global wix
+
+      - name: Convert logo to BMP
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $logo = [System.Drawing.Image]::FromFile("${{ github.workspace }}\installer\gizmosql_logo.png")
+          # Banner (493x58)
+          $banner = New-Object System.Drawing.Bitmap(493, 58)
+          $g = [System.Drawing.Graphics]::FromImage($banner)
+          $g.Clear([System.Drawing.Color]::White)
+          $g.DrawImage($logo, 10, 4, 200, 50)
+          $g.Dispose()
+          $banner.Save("${{ github.workspace }}\installer\banner.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+          # Dialog (493x312)
+          $dialog = New-Object System.Drawing.Bitmap(493, 312)
+          $g = [System.Drawing.Graphics]::FromImage($dialog)
+          $g.Clear([System.Drawing.Color]::White)
+          $g.DrawImage($logo, 20, 20, 300, 75)
+          $g.Dispose()
+          $dialog.Save("${{ github.workspace }}\installer\dialog.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+          $logo.Dispose()
+
+      - name: Create license.rtf
+        run: |
+          $license = Get-Content "${{ github.workspace }}\LICENSE" -Raw
+          $rtf = "{\rtf1\ansi\deff0 {\fonttbl {\f0 Consolas;}}\f0\fs18 " + ($license -replace "`n", "\par ") + "}"
+          Set-Content -Path "${{ github.workspace }}\installer\license.rtf" -Value $rtf
+
+      - name: Build MSI
+        run: |
+          wix build `
+            "${{ github.workspace }}\installer\GizmoSQL.wxs" `
+            -bindpath:BinDir="${{ github.workspace }}\installer\bin" `
+            -o "${{ github.workspace }}\installer\GizmoSQL-${{ matrix.arch }}.msi" `
+            -ext WixToolset.UI.wixext
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install AzureSignTool
+        run: dotnet tool install --global AzureSignTool
+
+      - name: Sign MSI
+        run: |
+          AzureSignTool sign `
+            --azure-key-vault-url "${{ secrets.AZURE_KEY_VAULT_URI }}" `
+            --azure-key-vault-certificate "${{ secrets.AZURE_CERT_NAME }}" `
+            --azure-key-vault-managed-identity `
+            --timestamp-rfc3161 http://timestamp.digicert.com `
+            --timestamp-digest sha256 `
+            --file-digest sha256 `
+            --verbose `
+            "${{ github.workspace }}\installer\GizmoSQL-${{ matrix.arch }}.msi"
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: GizmoSQL-${{ matrix.arch }}.msi
+          path: installer/GizmoSQL-${{ matrix.arch }}.msi
+          if-no-files-found: error
+
   create-release:
     name: Create a release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-project-macos, build-project-linux]
+    needs: [build-project-macos, build-project-linux, build-project-windows, build-msi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -350,11 +556,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download All Artifacts
+      - name: Download CLI zip artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: gizmosql_cli_*.zip
+          merge-multiple: true
+
+      - name: Download MSI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: GizmoSQL-*.msi
           merge-multiple: true
 
       - name: Attest build provenance - Linux AMD64
@@ -372,11 +585,32 @@ jobs:
         with:
           subject-path: artifacts/gizmosql_cli_macos_arm64.zip
 
+      - name: Attest build provenance - Windows AMD64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_windows_amd64.zip
+
+      - name: Attest build provenance - Windows ARM64
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_windows_arm64.zip
+
+      - name: Attest build provenance - Windows AMD64 MSI
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/GizmoSQL-amd64.msi
+
+      - name: Attest build provenance - Windows ARM64 MSI
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/GizmoSQL-arm64.msi
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/gizmosql_cli_*.zip
+            artifacts/GizmoSQL-*.msi
             LICENSE
 
   update-image-manifest:

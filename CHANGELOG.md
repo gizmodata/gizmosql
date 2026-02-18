@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Windows x64 and ARM64 support**: Native MSVC builds for Windows x64 (with tests) and ARM64 (cross-compiled). Includes DigiCert EV code signing via Azure Key Vault and MSI installer with system PATH integration.
+- **Windows MSI installer**: WiX v4-based MSI installer that installs `gizmosql_server.exe` and `gizmosql_client.exe` to `Program Files\GizmoSQL` and adds the install directory to the system PATH.
 - **Dynamic terminal width** (`gizmosql_client`): Output width now automatically adapts when the terminal window is resized — each query re-reads the terminal dimensions before rendering. Explicit `.maxwidth N` overrides auto-detection; `.maxwidth 0` re-enables it.
+
+### Changed
+
+- **Cross-platform CMake build**: Library paths, linker flags, and third-party build scripts now use platform-conditional logic for Windows, macOS, and Linux. Arrow patch command replaced with a portable CMake script (no more `sed`).
 
 ## [1.18.0] - 2026-02-17
 

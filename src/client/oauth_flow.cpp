@@ -21,6 +21,11 @@
 #include <iostream>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -84,18 +89,28 @@ arrow::Result<std::pair<std::string, std::string>> OAuthFlow::Initiate(
 }
 
 arrow::Status OAuthFlow::OpenBrowser(const std::string& url) {
-#ifdef __APPLE__
+#ifdef _WIN32
+  // Windows: use ShellExecuteA to open URL in default browser
+  auto result = reinterpret_cast<intptr_t>(
+      ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+  if (result <= 32) {
+    return arrow::Status::IOError("Failed to open browser");
+  }
+  return arrow::Status::OK();
+#elif defined(__APPLE__)
   std::string cmd = "open \"" + url + "\"";
 #elif defined(__linux__)
   std::string cmd = "xdg-open \"" + url + "\"";
 #else
   return arrow::Status::NotImplemented("Browser opening not supported on this platform");
 #endif
+#ifndef _WIN32
   int ret = std::system(cmd.c_str());
   if (ret != 0) {
     return arrow::Status::IOError("Failed to open browser");
   }
   return arrow::Status::OK();
+#endif
 }
 
 arrow::Result<std::string> OAuthFlow::PollForToken(

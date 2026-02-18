@@ -3,6 +3,24 @@ project(gizmosql)
 
 set(CMAKE_CXX_STANDARD 17)
 
+# --------------------- Platform Settings ---------------------
+if(WIN32)
+    set(LIB_PREFIX "")
+    set(LIB_SUFFIX ".lib")
+else()
+    set(LIB_PREFIX "lib")
+    set(LIB_SUFFIX ".a")
+endif()
+
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+set(EXE_SUFFIX "")
+if(WIN32)
+    set(EXE_SUFFIX ".exe")
+endif()
+
 # --------------------- Enterprise Edition Option ---------------------
 option(GIZMOSQL_ENTERPRISE "Build with enterprise features (instrumentation, kill session)" ON)
 
@@ -63,7 +81,7 @@ find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 # We need to link the abseil libraries that Arrow built separately.
 # On Linux, abseil libraries have circular dependencies, so we use link groups.
 set(ABSL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/_deps/absl-build")
-file(GLOB_RECURSE ABSL_LIBRARIES "${ABSL_BUILD_DIR}/absl/*.a")
+file(GLOB_RECURSE ABSL_LIBRARIES "${ABSL_BUILD_DIR}/absl/*${LIB_SUFFIX}")
 add_library(arrow_absl INTERFACE)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Use linker groups to handle circular dependencies in abseil
@@ -92,7 +110,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --install .
 )
 
 set(SQLITE_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install/include")
-set(SQLITE_LIBRARY_PATH "${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install/lib/libsqlite3.a")
+set(SQLITE_LIBRARY_PATH "${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install/lib/${LIB_PREFIX}sqlite3${LIB_SUFFIX}")
 
 add_library(sqlite STATIC IMPORTED)
 set_property(TARGET sqlite PROPERTY IMPORTED_LOCATION ${SQLITE_LIBRARY_PATH})
@@ -112,7 +130,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 
 set(DUCKDB_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/duckdb")
 
-set(DUCKDB_LIBRARY_PATH "${DUCKDB_INSTALL_DIR}/lib/libduckdb_static.a")
+set(DUCKDB_LIBRARY_PATH "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_static${LIB_SUFFIX}")
 set(DUCKDB_INCLUDE_DIR "${DUCKDB_INSTALL_DIR}/include")
 
 add_library(duckdb STATIC IMPORTED)
@@ -121,27 +139,27 @@ set_property(TARGET duckdb APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${DUCKD
 
 target_link_libraries(duckdb
         INTERFACE
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_fastpforlib.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_fmt.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_fsst.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_hyperloglog.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_mbedtls.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_miniz.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_pg_query.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_re2.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_utf8proc.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_yyjson.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_zstd.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libparquet_extension.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libcore_functions_extension.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_skiplistlib.a"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_fastpforlib${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_fmt${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_fsst${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_hyperloglog${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_mbedtls${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_miniz${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_pg_query${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_re2${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_utf8proc${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_yyjson${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_zstd${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
 )
 
 # Only link jemalloc_extension on Linux
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(duckdb
             INTERFACE
-            "${DUCKDB_INSTALL_DIR}/lib/libjemalloc_extension.a"
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}jemalloc_extension${LIB_SUFFIX}"
     )
 endif ()
 
@@ -193,11 +211,11 @@ find_package(Boost COMPONENTS program_options REQUIRED)
 set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
 
 # Arrow 23 FetchContent paths
-set(PROTOC_EXECUTABLE "${ARROW_BUILD_DIR}/_deps/protobuf-build/protoc")
-set(GRPC_CPP_PLUGIN "${ARROW_BUILD_DIR}/_deps/grpc-build/grpc_cpp_plugin")
+set(PROTOC_EXECUTABLE "${ARROW_BUILD_DIR}/_deps/protobuf-build/protoc${EXE_SUFFIX}")
+set(GRPC_CPP_PLUGIN "${ARROW_BUILD_DIR}/_deps/grpc-build/grpc_cpp_plugin${EXE_SUFFIX}")
 set(PROTOBUF_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/protobuf-src/src")
 set(GRPC_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/grpc-src/include")
-set(GRPC_REFLECTION_LIBRARY "${ARROW_BUILD_DIR}/_deps/grpc-build/libgrpc++_reflection.a")
+set(GRPC_REFLECTION_LIBRARY "${ARROW_BUILD_DIR}/_deps/grpc-build/${LIB_PREFIX}grpc++_reflection${LIB_SUFFIX}")
 set(ABSL_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/absl-src")
 
 # Define the proto source and output paths
@@ -331,15 +349,15 @@ target_link_libraries(gizmosqlserver
         ${Boost_LIBRARIES}
         nlohmann_json::nlohmann_json
         ${GRPC_REFLECTION_LIBRARY}
-        "-lresolv"
 )
 
-if (APPLE)
-    # macOS-specific libraries and options
-    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation")
-elseif (UNIX AND NOT APPLE)
-    target_link_libraries(gizmosqlserver PRIVATE "-lssl -lcrypto")
-endif ()
+if(WIN32)
+    target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32)
+elseif(APPLE)
+    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-lresolv")
+elseif(UNIX)
+    target_link_libraries(gizmosqlserver PRIVATE "-lssl" "-lcrypto" "-lresolv")
+endif()
 
 # Specify the installation directory for the library
 install(TARGETS gizmosqlserver
@@ -360,7 +378,9 @@ target_link_libraries(gizmosql_server PRIVATE
         ${GRPC_REFLECTION_LIBRARY}
 )
 
-target_compile_options(gizmosql_server PRIVATE "-static")
+if(NOT MSVC)
+    target_compile_options(gizmosql_server PRIVATE "-static")
+endif()
 
 install(TARGETS gizmosql_server
         DESTINATION bin
@@ -384,10 +404,10 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 set(REPLXX_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/replxx")
 set(REPLXX_INCLUDE_DIR "${REPLXX_INSTALL_DIR}/include")
 # replxx appends -d suffix in Debug builds
-if(EXISTS "${REPLXX_INSTALL_DIR}/lib/libreplxx-d.a")
-    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/libreplxx-d.a")
-elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/libreplxx.a")
-    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/libreplxx.a")
+if(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
+elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
 else()
     message(FATAL_ERROR "replxx library not found in ${REPLXX_INSTALL_DIR}/lib/")
 endif()
@@ -428,17 +448,19 @@ target_link_libraries(gizmosql_client PRIVATE
         replxx
         ${Boost_LIBRARIES}
         nlohmann_json::nlohmann_json
-        "-lresolv"
 )
 
-if (APPLE)
-    # macOS-specific libraries and options
-    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation")
-elseif (UNIX AND NOT APPLE)
-    target_link_libraries(gizmosql_client PRIVATE "-lssl -lcrypto")
-endif ()
+if(WIN32)
+    target_link_libraries(gizmosql_client PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32)
+elseif(APPLE)
+    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation" "-lresolv")
+elseif(UNIX)
+    target_link_libraries(gizmosql_client PRIVATE "-lssl" "-lcrypto" "-lresolv")
+endif()
 
-target_compile_options(gizmosql_client PRIVATE "-static")
+if(NOT MSVC)
+    target_compile_options(gizmosql_client PRIVATE "-static")
+endif()
 
 install(TARGETS gizmosql_client
         DESTINATION bin

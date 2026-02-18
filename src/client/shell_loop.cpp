@@ -36,7 +36,11 @@ namespace {
 constexpr int kHistorySize = 1000;
 
 std::string GetHistoryPath() {
+#ifdef _WIN32
+  const char* home = std::getenv("USERPROFILE");
+#else
   const char* home = std::getenv("HOME");
+#endif
   if (home) {
     return std::string(home) + "/.gizmosql_history";
   }

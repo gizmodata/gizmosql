@@ -27,10 +27,9 @@
 #include <arrow/type.h>
 #include <arrow/type_traits.h>
 
-#ifdef __unix__
-#include <sys/ioctl.h>
-#include <unistd.h>
-#elif defined(__APPLE__)
+#ifdef _WIN32
+#include <windows.h>
+#elif defined(__unix__) || defined(__APPLE__)
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
@@ -38,7 +37,13 @@
 namespace gizmosql::client {
 
 int GetTerminalWidth() {
-#if defined(__unix__) || defined(__APPLE__)
+#ifdef _WIN32
+  CONSOLE_SCREEN_BUFFER_INFO csbi;
+  if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
+    int width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    if (width > 0) return width;
+  }
+#elif defined(__unix__) || defined(__APPLE__)
   struct winsize ws;
   if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
     return ws.ws_col;

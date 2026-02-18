@@ -24,7 +24,12 @@
 #include <sstream>
 #include <vector>
 
+#ifdef _WIN32
+#include <direct.h>
+#define chdir _chdir
+#else
 #include <unistd.h>
+#endif
 
 #include <arrow/array.h>
 #include <arrow/flight/sql/types.h>
@@ -382,7 +387,11 @@ CommandResult CommandProcessor::Process(const std::string& line) {
   if (cmd == ".cd") {
     if (args.size() < 2) {
       // cd to home
+#ifdef _WIN32
+      const char* home = std::getenv("USERPROFILE");
+#else
       const char* home = std::getenv("HOME");
+#endif
       if (home) chdir(home);
     } else {
       if (chdir(args[1].c_str()) != 0) {
