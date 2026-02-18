@@ -371,7 +371,7 @@ jobs:
           if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           C:\vcpkg\bootstrap-vcpkg.bat
-          C:\vcpkg\vcpkg install boost-program-options boost-algorithm boost-uuid --triplet ${{ matrix.vcpkg_triplet }}
+          C:\vcpkg\vcpkg install boost-program-options boost-algorithm boost-uuid zlib --triplet ${{ matrix.vcpkg_triplet }}
 
       - name: Configure
         run: |
