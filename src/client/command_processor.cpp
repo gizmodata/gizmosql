@@ -339,8 +339,10 @@ CommandResult CommandProcessor::Process(const std::string& line) {
         int val = std::stoi(args[1]);
         if (val == 0) {
           config_.max_width = GetTerminalWidth();
+          config_.auto_width = true;
         } else {
           config_.max_width = val;
+          config_.auto_width = false;
         }
       } catch (...) {
         std::cerr << "Error: invalid number '" << args[1] << "'" << std::endl;

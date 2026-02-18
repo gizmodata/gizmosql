@@ -83,6 +83,7 @@ struct ClientConfig {
   std::string insert_table = "table";
   int max_rows = 0;
   int max_width = 0;
+  bool auto_width = false;  // When true, re-read terminal width before each render
 
   // Runtime
   bool is_interactive = false;

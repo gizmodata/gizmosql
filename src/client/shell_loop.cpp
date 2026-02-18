@@ -84,6 +84,11 @@ bool ExecuteStatement(FlightConnection& conn, ClientConfig& config,
       auto ms =
           std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
 
+      // Re-read terminal width if in auto-width mode (tracks window resizes)
+      if (config.auto_width) {
+        config.max_width = GetTerminalWidth();
+      }
+
       auto renderer = CreateRenderer(config.output_mode, config);
       auto render_result = renderer->Render(**result, *config.output_stream);
 
