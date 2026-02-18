@@ -55,12 +55,12 @@ configure_file(
 )
 
 # --------------------- Arrow ---------------------
-# When cross-compiling for ARM64 on an x64 host, Arrow's auto-detection finds
-# SSE4.2 on the host and tries to use x86intrin.h, which fails for ARM64.
-option(GIZMOSQL_CROSS_ARM64 "Cross-compiling for ARM64 (disables Arrow x86 SIMD)" OFF)
+# Arrow's SIMD auto-detection defines __SSE4_2__ etc., which causes Abseil
+# (bundled by Arrow) to include x86intrin.h — a GCC/Clang header that MSVC
+# doesn't have. Disable SIMD on Windows to avoid this incompatibility.
 set(ARROW_SIMD_LEVEL "DEFAULT")
 set(ARROW_RUNTIME_SIMD_LEVEL "MAX")
-if(GIZMOSQL_CROSS_ARM64)
+if(WIN32)
     set(ARROW_SIMD_LEVEL "NONE")
     set(ARROW_RUNTIME_SIMD_LEVEL "NONE")
 endif()
