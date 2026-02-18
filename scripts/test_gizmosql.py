@@ -13,7 +13,7 @@ def main():
     for attempt in range(max_attempts):
         try:
             with gizmosql.connect(uri="grpc+tls://localhost:31337",
-                                  db_kwargs={"username": "gizmosql_username",
+                                  db_kwargs={"username": "gizmosql_user",
                                                "password": gizmosql_password,
                                                # Not needed if you use a trusted CA-signed TLS cert
                                                DatabaseOptions.TLS_SKIP_VERIFY.value: "true"

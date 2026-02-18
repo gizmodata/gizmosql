@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Default username**: Changed the default username from `gizmosql_username` to `gizmosql_user` for brevity. If you were relying on the old default (without explicitly setting `--username` or `GIZMOSQL_USERNAME`), update your client connections accordingly.
 - **Cross-platform CMake build**: Library paths, linker flags, and third-party build scripts now use platform-conditional logic for Windows, macOS, and Linux. Arrow patch command replaced with a portable CMake script (no more `sed`).
 
 ## [1.18.0] - 2026-02-17
@@ -209,7 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import geopandas as gpd
 
   with gizmosql.connect(uri="grpc+tls://localhost:31337",
-                        db_kwargs={"username": "gizmosql_username",
+                        db_kwargs={"username": "gizmosql_user",
                                    "password": "gizmosql_password",
                                    DatabaseOptions.TLS_SKIP_VERIFY.value: "true"},
                         autocommit=True) as conn:

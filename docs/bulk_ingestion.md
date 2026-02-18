@@ -35,7 +35,7 @@ data = pa.table({
 with gizmosql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password"
     },
     autocommit=True
@@ -81,7 +81,7 @@ lineitem_reader = duckdb_conn.table("lineitem").fetch_arrow_reader(batch_size=10
 with gizmosql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password"
     },
     autocommit=True
@@ -114,7 +114,7 @@ table = pq.read_table("data.parquet")
 with gizmosql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password"
     },
     autocommit=True
@@ -150,7 +150,7 @@ arrow_table = pa.Table.from_pandas(df)
 with gizmosql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password"
     },
     autocommit=True
@@ -174,7 +174,7 @@ from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
 with gizmosql.connect(
     uri="grpc+tls://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password",
         DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Only for self-signed certs
     },
@@ -221,7 +221,7 @@ def bulk_ingest_tpch(scale_factor=0.1):
     with gizmosql.connect(
         uri="grpc://localhost:31337",
         db_kwargs={
-            "username": "gizmosql_username",
+            "username": "gizmosql_user",
             "password": "gizmosql_password"
         },
         autocommit=True

@@ -13,7 +13,7 @@ import pyarrow.flight as flight
 from pyarrow import flight as fl
 import pyarrow as pa
 
-def create_flight_client(host='localhost', port=31337, username='gizmosql_username', 
+def create_flight_client(host='localhost', port=31337, username='gizmosql_user', 
                         password='gizmosql_password', use_tls=False):
     """Create a Flight SQL client connection."""
     if use_tls:
@@ -152,7 +152,7 @@ def main():
     # Parse command line arguments
     host = os.getenv('GIZMOSQL_HOST', 'localhost')
     port = int(os.getenv('GIZMOSQL_PORT', '31337'))
-    username = os.getenv('GIZMOSQL_USERNAME', 'gizmosql_username')
+    username = os.getenv('GIZMOSQL_USERNAME', 'gizmosql_user')
     password = os.getenv('GIZMOSQL_PASSWORD', 'gizmosql_password')
     use_tls = os.getenv('TLS_ENABLED', '0') == '1'
     

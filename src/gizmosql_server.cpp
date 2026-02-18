@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
              "Specify the database filename (absolute or relative to the current working directory).  If not set, we will open an in-memory database.")
             ("username,U", po::value<std::string>()->default_value(""),
              "Specify the username to allow to connect to the GizmoSQL Server for clients.  If not set, we will use env var: 'GIZMOSQL_USERNAME'.  "
-             "If that isn't set, we will use the default of: 'gizmosql_username'.")
+             "If that isn't set, we will use the default of: 'gizmosql_user'.")
             ("password,P", po::value<std::string>()->default_value(""),
              "Specify the password to set on the GizmoSQL Server for clients to connect with.  If not set, we will use env var: 'GIZMOSQL_PASSWORD'.  "
              "If that isn't set, the server will exit with failure.")

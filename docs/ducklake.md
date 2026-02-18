@@ -263,7 +263,7 @@ from adbc_driver_flightsql import dbapi as flight_sql, DatabaseOptions
 conn = flight_sql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
     },
     autocommit=True

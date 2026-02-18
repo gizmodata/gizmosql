@@ -79,9 +79,12 @@ For detailed instructions and configuration information, see our full documentat
 
 ## 🚀 Quick Start
 
+> **Default credentials:** The server's default username is `gizmosql_user` (override with `--username` or `GIZMOSQL_USERNAME`). A password is always required via `--password` or `GIZMOSQL_PASSWORD`.
+
 ### Option 1: Run from Docker
 
 ```bash
+# Username defaults to "gizmosql_user" when GIZMOSQL_USERNAME is not set
 docker run --name gizmosql \
            --detach \
            --rm \
@@ -128,7 +131,7 @@ Supported platforms:
 - Linux (x86-64 / AMD64)
 - Linux (ARM64)
 
-Then run the server:
+Then run the server (username defaults to `gizmosql_user`):
 
 ```bash
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename your.duckdb --print-queries
@@ -143,7 +146,7 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename your.d
 Use with DBeaver or other JDBC clients:
 
 ```text
-jdbc:gizmosql://localhost:31337?useEncryption=true&user=gizmosql_username&password=gizmosql_password&disableCertificateVerification=true
+jdbc:gizmosql://localhost:31337?useEncryption=true&user=gizmosql_user&password=gizmosql_password&disableCertificateVerification=true
 ```
 
 More info: [Setup guide](https://github.com/gizmodata/setup-gizmosql-jdbc-driver-in-dbeaver)
@@ -158,7 +161,7 @@ from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
 
 
 with gizmosql.connect(uri="grpc+tls://localhost:31337",
-                      db_kwargs={"username": os.getenv("GIZMOSQL_USERNAME", "gizmosql_username"),
+                      db_kwargs={"username": os.getenv("GIZMOSQL_USERNAME", "gizmosql_user"),
                                  "password": os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
                                  DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Not needed if you use a trusted CA-signed TLS cert
                                  },
@@ -183,14 +186,14 @@ GizmoSQL ships with an interactive SQL shell inspired by `psql` and the DuckDB C
 
 ```bash
 # Interactive session
-GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client --host localhost --username gizmosql_username --tls --tls-skip-verify
+GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client --host localhost --username gizmosql_user --tls --tls-skip-verify
 ```
 
 Run a single query with `--command`:
 
 ```bash
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
-  --host localhost --username gizmosql_username --tls --tls-skip-verify \
+  --host localhost --username gizmosql_user --tls --tls-skip-verify \
   --command "SELECT version()"
 ```
 
@@ -198,7 +201,7 @@ Pipe SQL from a heredoc:
 
 ```bash
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
-  --host localhost --username gizmosql_username --tls --tls-skip-verify --quiet <<'EOF'
+  --host localhost --username gizmosql_user --tls --tls-skip-verify --quiet <<'EOF'
 SELECT n_nationkey, n_name
 FROM nation
 WHERE n_nationkey = 24;

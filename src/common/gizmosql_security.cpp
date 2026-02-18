@@ -32,7 +32,7 @@ using arrow::Status;
 namespace gizmosql {
 const std::string kServerJWTIssuer = "gizmosql";
 const int kJWTExpiration = 24 * 3600;
-const std::string kValidUsername = "gizmosql_username";
+const std::string kValidUsername = "gizmosql_user";
 const std::string kTokenUsername = "token";
 const std::string kBasicPrefix = "Basic ";
 const std::string kBearerPrefix = "Bearer ";

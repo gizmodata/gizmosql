@@ -20,7 +20,7 @@ import geopandas as gpd
 with gizmosql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password"
     },
     autocommit=True
@@ -148,7 +148,7 @@ import geopandas as gpd
 with gizmosql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password"
     },
     autocommit=True
@@ -185,7 +185,7 @@ arrow_table = gdf.to_arrow()
 with gizmosql.connect(
     uri="grpc://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password"
     },
     autocommit=True
@@ -254,7 +254,7 @@ from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
 with gizmosql.connect(
     uri="grpc+tls://localhost:31337",
     db_kwargs={
-        "username": "gizmosql_username",
+        "username": "gizmosql_user",
         "password": "gizmosql_password",
         DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Only for self-signed certs
     },

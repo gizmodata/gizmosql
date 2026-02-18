@@ -23,7 +23,7 @@
 // Constants
 const std::string GIZMOSQL_SERVER_VERSION = PROJECT_VERSION;
 const std::string DEFAULT_GIZMOSQL_HOSTNAME = "0.0.0.0";
-const std::string DEFAULT_GIZMOSQL_USERNAME = "gizmosql_username";
+const std::string DEFAULT_GIZMOSQL_USERNAME = "gizmosql_user";
 const int DEFAULT_FLIGHT_PORT = 31337;
 const int DEFAULT_HEALTH_PORT = 31338;  // Plaintext health check port for Kubernetes
 const int DEFAULT_OAUTH_PORT = 31339;  // OAuth HTTP server port
@@ -42,7 +42,7 @@ enum class BackendType { duckdb, sqlite };
  *   and fallback to: DEFAULT_GIZMOSQL_HOSTNAME if that is not set.
  * @param port The port to listen on for the GizmoSQL Server. Default is DEFAULT_FLIGHT_PORT
  * @param username The username to use for authentication. Default is now "" - if not set, we use environment variable: "GIZMOSQL_USERNAME",
- *   if this is not defined we set this to "gizmosql_username" again in gizmosql_library.
+ *   if this is not defined we set this to "gizmosql_user" again in gizmosql_library.
  * @param password The password for authentication. Default is "" - if so, we use environment variable: "GIZMOSQL_PASSWORD",
  *   if both are not set, we exit with an error.
  * @param secret_key The secret key for authentication. Default is "", if so, we use environment variable: "SECRET_KEY",
