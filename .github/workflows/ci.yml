@@ -35,6 +35,9 @@ jobs:
         run: |
           brew install automake boost gflags
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
         with:
@@ -42,6 +45,8 @@ jobs:
           run-build: true
           options: |
             GIZMOSQL_ENTERPRISE=ON
+            CMAKE_C_COMPILER_LAUNCHER=sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Run Tests (Core Edition - No License)
         run: |
@@ -189,6 +194,9 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
         with:
@@ -197,6 +205,8 @@ jobs:
           options: |
             CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
             GIZMOSQL_ENTERPRISE=ON
+            CMAKE_C_COMPILER_LAUNCHER=sccache
+            CMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Start MinIO and setup bucket
         run: |
@@ -366,17 +376,30 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache vcpkg installed packages
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-${{ matrix.vcpkg_triplet }}-boost-zlib-v1
+
       - name: Setup vcpkg and install dependencies
         run: |
-          if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat
+          if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
+            if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+            C:\vcpkg\bootstrap-vcpkg.bat
+          }
           C:\vcpkg\vcpkg install boost-program-options boost-algorithm boost-uuid zlib --triplet ${{ matrix.vcpkg_triplet }}
 
       - name: Configure
         run: |
           cmake -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} `
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache `
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache `
             -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} `
             -DGIZMOSQL_ENTERPRISE=ON
