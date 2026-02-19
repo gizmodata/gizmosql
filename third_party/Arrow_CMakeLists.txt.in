@@ -41,6 +41,11 @@ ExternalProject_Add(
       $<$<BOOL:${WIN32}>:-DARROW_USE_STATIC_CRT=ON>
       # On Windows, use vcpkg-installed zlib instead of bundled (avoids gRPC build
       # timing issue where gRPC needs zlib.h before Arrow's bundled zlib is built).
-      $<$<BOOL:${VCPKG_PREFIX_PATH}>:-DZLIB_SOURCE=SYSTEM>
-      $<$<BOOL:${VCPKG_PREFIX_PATH}>:-DCMAKE_PREFIX_PATH=${VCPKG_PREFIX_PATH}>
+      # These variables are empty on non-Windows (set in root CMakeLists.txt).
+      ${ARROW_ZLIB_SOURCE_ARG}
+      ${ARROW_PREFIX_PATH_ARG}
+      ${ARROW_ZLIB_ROOT_ARG}
+      ${ARROW_TOOLCHAIN_ARG}
+      ${ARROW_VCPKG_TRIPLET_ARG}
+      ${ARROW_VCPKG_MANIFEST_ARG}
 )

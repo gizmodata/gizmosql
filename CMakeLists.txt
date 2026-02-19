@@ -82,6 +82,17 @@ if(WIN32 AND VCPKG_TARGET_TRIPLET)
         set(VCPKG_PREFIX_PATH "${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
     endif()
     if(VCPKG_PREFIX_PATH)
+        set(ARROW_ZLIB_SOURCE_ARG "-DZLIB_SOURCE=SYSTEM")
+        set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${VCPKG_PREFIX_PATH}")
+        set(ARROW_ZLIB_ROOT_ARG "-DZLIB_ROOT=${VCPKG_PREFIX_PATH}")
+        # Pass the vcpkg toolchain file to Arrow so nested builds (gRPC via
+        # FetchContent) also find vcpkg packages. Use VCPKG_MANIFEST_MODE=OFF
+        # to prevent Arrow from auto-installing packages via vcpkg manifest.
+        if(CMAKE_TOOLCHAIN_FILE)
+            set(ARROW_TOOLCHAIN_ARG "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
+            set(ARROW_VCPKG_TRIPLET_ARG "-DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}")
+            set(ARROW_VCPKG_MANIFEST_ARG "-DVCPKG_MANIFEST_MODE=OFF")
+        endif()
         message(STATUS "Windows: vcpkg prefix path for Arrow zlib: ${VCPKG_PREFIX_PATH}")
     endif()
 endif()
