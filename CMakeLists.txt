@@ -70,8 +70,16 @@ endif()
 # the vcpkg-installed zlib so gRPC can find it. Do NOT pass the vcpkg toolchain
 # file — it auto-installs packages (gRPC, thrift, etc.) which fills the disk.
 set(ARROW_PREFIX_PATH_ARG "")
-if(WIN32 AND VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
-    set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+if(WIN32 AND VCPKG_TARGET_TRIPLET)
+    if(VCPKG_INSTALLED_DIR)
+        set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    elseif(CMAKE_TOOLCHAIN_FILE)
+        # Derive vcpkg root from toolchain: .../scripts/buildsystems/vcpkg.cmake
+        get_filename_component(_VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
+        get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
+        get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
+        set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
+    endif()
 endif()
 
 configure_file(third_party/Arrow_CMakeLists.txt.in

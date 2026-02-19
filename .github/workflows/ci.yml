@@ -371,6 +371,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Free disk space
+        shell: pwsh
+        run: |
+          @(
+            "C:\Program Files\Android",
+            "C:\Program Files\Eclipse Adoptium",
+            "C:\ghcup",
+            "$env:AGENT_TOOLSDIRECTORY"
+          ) | ForEach-Object {
+            if (Test-Path $_) {
+              Write-Host "Removing $_"
+              Remove-Item -Recurse -Force $_ -ErrorAction SilentlyContinue
+            }
+          }
+          Get-PSDrive C | Select-Object Name, @{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}}
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -379,20 +395,18 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Cache vcpkg installed packages
-        uses: actions/cache@v4
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v7
         with:
-          path: C:\vcpkg\installed
-          key: vcpkg-${{ matrix.vcpkg_triplet }}-boost-zlib-v1
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Setup vcpkg and install dependencies
+        env:
+          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
         run: |
-          if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
-            if (Test-Path C:\vcpkg) { Remove-Item -Recurse -Force C:\vcpkg }
-            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-            C:\vcpkg\bootstrap-vcpkg.bat
-          }
-          C:\vcpkg\vcpkg install boost-program-options boost-algorithm boost-uuid zlib --triplet ${{ matrix.vcpkg_triplet }}
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib --triplet ${{ matrix.vcpkg_triplet }} --clean-after-build
 
       - name: Configure
         run: |
@@ -400,8 +414,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} `
             -DCMAKE_C_COMPILER_LAUNCHER=sccache `
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }} `
+            -DVCPKG_MANIFEST_MODE=OFF `
             -DGIZMOSQL_ENTERPRISE=ON
 
       - name: Build
