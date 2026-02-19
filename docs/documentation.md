@@ -162,13 +162,13 @@ For instructions on setting up the JDBC driver in popular Database IDE tool: [DB
 
 **Note** - if you stop/restart the Flight SQL Docker container, and attempt to connect via JDBC with the same password - you could get error: "Invalid bearer token provided. Detail: Unauthenticated".  This is because the client JDBC driver caches the bearer token signed with the previous instance's secret key.  Just change the password in the new container by changing the "GIZMOSQL_PASSWORD" env var setting - and then use that to connect via JDBC.  
 
-### Connecting to the server via the [GizmoSQL ADBC Python driver](https://pypi.org/project/adbc-driver-gizmosql/)
+### Connecting to the server via the GizmoSQL ADBC Python driver
 
-You can use the GizmoSQL ADBC Python driver to query the Flight SQL server. ADBC offers performance advantages over JDBC - because it minimizes serialization/deserialization, and data stays in columnar format at all phases.
+You can use the [GizmoSQL ADBC Python driver](https://pypi.org/project/adbc-driver-gizmosql/) to query the Flight SQL server. ADBC offers performance advantages over JDBC - because it minimizes serialization/deserialization, and data stays in columnar format at all phases.
 
 You can learn more about ADBC and Flight SQL [here](https://voltrondata.com/resources/simplifying-database-connectivity-with-arrow-flight-sql-and-adbc).
 
-Ensure you have Python 3.9+ installed, then open a terminal, then run:
+Ensure you have Python 3.10+ installed, then open a terminal, then run:
 ```bash
 # Create a Python virtual environment
 python3 -m venv .venv
@@ -184,7 +184,9 @@ pip install pandas pyarrow adbc-driver-gizmosql
 python
 ```
 
-In the Python shell - you can then run:
+#### SELECT queries
+
+In the Python shell - you can query data using `cursor.execute()` and `fetch_arrow_table()`:
 ```python
 from adbc_driver_gizmosql import dbapi as gizmosql
 
@@ -211,6 +213,46 @@ n_name: string
 ----
 n_nationkey: [[24]]
 n_name: [["UNITED STATES"]]
+```
+
+#### DDL and DML statements
+
+For DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE), use `gizmosql.execute_update()` instead of `cursor.execute()`. This is necessary because GizmoSQL uses **lazy execution** — `cursor.execute()` for DDL/DML will not fire the statement until results are fetched. `execute_update()` handles this automatically and returns `0` for DDL or the affected row count for DML.
+
+```python
+from adbc_driver_gizmosql import dbapi as gizmosql
+
+with gizmosql.connect(
+    "grpc+tls://localhost:31337",
+    username="gizmosql_user",
+    password="gizmosql_password",
+    tls_skip_verify=True,
+) as conn:
+    with conn.cursor() as cur:
+        # DDL — create a table
+        gizmosql.execute_update(cur, """
+            CREATE TABLE my_table (
+                id INTEGER,
+                name VARCHAR,
+                score DOUBLE
+            )
+        """)
+
+        # DML — insert data (returns affected row count)
+        rows_affected = gizmosql.execute_update(cur, """
+            INSERT INTO my_table VALUES
+                (1, 'Alice', 95.5),
+                (2, 'Bob', 87.3),
+                (3, 'Charlie', 92.1)
+        """)
+        print(f"Inserted {rows_affected} rows")
+
+        # SELECT — use cursor.execute() as usual
+        cur.execute("SELECT * FROM my_table ORDER BY score DESC")
+        print(cur.fetch_arrow_table().to_pandas())
+
+        # Cleanup
+        gizmosql.execute_update(cur, "DROP TABLE my_table")
 ```
 
 ### Connecting via `gizmosql_client`
