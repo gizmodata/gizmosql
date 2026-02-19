@@ -458,11 +458,13 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 
 set(REPLXX_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/replxx")
 set(REPLXX_INCLUDE_DIR "${REPLXX_INSTALL_DIR}/include")
-# replxx appends -d suffix in Debug builds
+# replxx appends -d suffix in Debug builds; on Windows the target is "replxx-static"
 if(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
     set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
 elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
     set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
+elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/replxx-static.lib")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/replxx-static.lib")
 else()
     message(FATAL_ERROR "replxx library not found in ${REPLXX_INSTALL_DIR}/lib/")
 endif()
