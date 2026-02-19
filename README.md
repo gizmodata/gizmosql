@@ -5,7 +5,7 @@
 [![Documentation](https://img.shields.io/badge/Documentation-dev-yellow.svg)](https://arrow.apache.org/docs/format/FlightSql.html)
 [![GitHub](https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github)](https://github.com/gizmodata/gizmosql)
 [![JDBC Driver](https://img.shields.io/badge/GizmoSQL%20JDBC%20Driver-download%20artifact-red?logo=Apache%20Maven)](https://downloads.gizmodata.com/gizmosql-jdbc-driver/latest/gizmosql-jdbc-driver.jar)
-[![ADBC PyPI](https://img.shields.io/badge/PyPI-Arrow%20ADBC%20Flight%20SQL%20driver-blue?logo=PyPI)](https://pypi.org/project/adbc-driver-flightsql/)
+[![ADBC PyPI](https://img.shields.io/badge/PyPI-GizmoSQL%20ADBC%20Driver-blue?logo=PyPI)](https://pypi.org/project/adbc-driver-gizmosql/)
 [![SQLAlchemy Dialect](https://img.shields.io/badge/PyPI-GizmoSQL%20SQLAlchemy%20Dialect-blue?logo=PyPI)](https://pypi.org/project/sqlalchemy-gizmosql-adbc-dialect/)
 [![Ibis Backend](https://img.shields.io/badge/PyPI-GizmoSQL%20Ibis%20Backend-blue?logo=PyPI)](https://pypi.org/project/ibis-gizmosql/)
 
@@ -155,24 +155,30 @@ More info: [Setup guide](https://github.com/gizmodata/setup-gizmosql-jdbc-driver
 
 ### 🐍 Python (ADBC)
 
+**Prerequisite:** Install the [GizmoSQL ADBC driver](https://pypi.org/project/adbc-driver-gizmosql/):
+
+```bash
+pip install adbc-driver-gizmosql
+```
+
+The driver also supports OAuth/SSO authentication for GizmoSQL Enterprise users.
+
 ```python
-import os
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
-
-with gizmosql.connect(uri="grpc+tls://localhost:31337",
-                      db_kwargs={"username": os.getenv("GIZMOSQL_USERNAME", "gizmosql_user"),
-                                 "password": os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
-                                 DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Not needed if you use a trusted CA-signed TLS cert
-                                 },
-                      autocommit=True
-                      ) as conn:
-  with conn.cursor() as cur:
-    cur.execute("SELECT n_nationkey, n_name FROM nation WHERE n_nationkey = ?",
-                parameters=[24]
-                )
-    x = cur.fetch_arrow_table()
-    print(x)
+with gizmosql.connect(
+    "grpc+tls://localhost:31337",
+    username="gizmosql_user",
+    password="gizmosql_password",
+    tls_skip_verify=True,  # Not needed if you use a trusted CA-signed TLS cert
+) as conn:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT n_nationkey, n_name FROM nation WHERE n_nationkey = ?",
+            parameters=[24],
+        )
+        x = cur.fetch_arrow_table()
+        print(x)
 ```
 
 ---

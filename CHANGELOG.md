@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ADBC driver migration**: All Python examples, docs, tests, and CI now use [`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/) instead of `adbc-driver-flightsql`. The new driver provides a simplified connection API (no `db_kwargs`/`DatabaseOptions`), `execute_update()` for DDL/DML statements (avoids lazy execution pitfalls), and OAuth/SSO support for Enterprise users.
 - **Default username**: Changed the default username from `gizmosql_username` to `gizmosql_user` for brevity. If you were relying on the old default (without explicitly setting `--username` or `GIZMOSQL_USERNAME`), update your client connections accordingly.
 - **Cross-platform CMake build**: Library paths, linker flags, and third-party build scripts now use platform-conditional logic for Windows, macOS, and Linux. Arrow patch command replaced with a portable CMake script (no more `sed`).
 

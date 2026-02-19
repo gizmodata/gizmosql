@@ -1,7 +1,6 @@
 import os
 from time import sleep
-import pyarrow
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 
 # Setup variables
@@ -12,13 +11,12 @@ gizmosql_password = os.environ["GIZMOSQL_PASSWORD"]
 def main():
     for attempt in range(max_attempts):
         try:
-            with gizmosql.connect(uri="grpc+tls://localhost:31337",
-                                  db_kwargs={"username": "gizmosql_user",
-                                               "password": gizmosql_password,
-                                               # Not needed if you use a trusted CA-signed TLS cert
-                                               DatabaseOptions.TLS_SKIP_VERIFY.value: "true"
-                                               }
-                                  ) as conn:
+            with gizmosql.connect(
+                "grpc+tls://localhost:31337",
+                username="gizmosql_user",
+                password=gizmosql_password,
+                tls_skip_verify=True,  # Not needed if you use a trusted CA-signed TLS cert
+            ) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT n_nationkey, n_name FROM nation WHERE n_nationkey = ?",
                                 parameters=[24]

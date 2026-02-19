@@ -87,7 +87,7 @@ Python tests verify end-to-end functionality using ADBC (Arrow Database Connecti
 
 ```bash
 # Install Python test dependencies
-pip install adbc-driver-flightsql pyarrow geopandas shapely duckdb
+pip install adbc-driver-gizmosql pyarrow geopandas shapely duckdb
 
 # Start the server (in a separate terminal)
 ./build/gizmosql_server --password gizmosql_password

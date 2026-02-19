@@ -253,29 +253,28 @@ ATTACH 'ducklake:ducklake_gcs_secret' AS gcs_lakehouse;
 
 ## Python Client Example
 
-Using the ADBC Flight SQL driver:
+Using the GizmoSQL ADBC driver:
 
 ```python
 import os
-from adbc_driver_flightsql import dbapi as flight_sql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 # Connect to GizmoSQL
-conn = flight_sql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_user",
-        "password": os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
-    },
-    autocommit=True
+conn = gizmosql.connect(
+    "grpc://localhost:31337",
+    username="gizmosql_user",
+    password=os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
 )
 
 cursor = conn.cursor()
 
-# Set up DuckLake
-cursor.execute("INSTALL ducklake; LOAD ducklake;")
-cursor.execute("INSTALL postgres; LOAD postgres;")
+# Set up DuckLake — use execute_update() for DDL/DML statements.
+# GizmoSQL uses lazy execution, so cursor.execute() alone won't fire
+# DDL/DML until results are fetched. execute_update() handles this automatically.
+gizmosql.execute_update(cursor, "INSTALL ducklake; LOAD ducklake;")
+gizmosql.execute_update(cursor, "INSTALL postgres; LOAD postgres;")
 
-cursor.execute("""
+gizmosql.execute_update(cursor, """
     CREATE OR REPLACE SECRET postgres_secret (
         TYPE postgres,
         HOST 'localhost',
@@ -286,7 +285,7 @@ cursor.execute("""
     )
 """)
 
-cursor.execute("""
+gizmosql.execute_update(cursor, """
     CREATE OR REPLACE SECRET ducklake_secret (
         TYPE DUCKLAKE,
         METADATA_PATH '',
@@ -295,11 +294,11 @@ cursor.execute("""
     )
 """)
 
-cursor.execute("ATTACH 'ducklake:ducklake_secret' AS lakehouse")
-cursor.execute("USE lakehouse")
+gizmosql.execute_update(cursor, "ATTACH 'ducklake:ducklake_secret' AS lakehouse")
+gizmosql.execute_update(cursor, "USE lakehouse")
 
-# Create and query a table
-cursor.execute("""
+# Create and populate a table
+gizmosql.execute_update(cursor, """
     CREATE OR REPLACE TABLE events (
         event_id INTEGER,
         event_type VARCHAR,
@@ -307,13 +306,14 @@ cursor.execute("""
     )
 """)
 
-cursor.execute("""
+gizmosql.execute_update(cursor, """
     INSERT INTO events VALUES
         (1, 'click', '2024-01-20 10:00:00'),
         (2, 'view', '2024-01-20 10:01:00'),
         (3, 'purchase', '2024-01-20 10:05:00')
 """)
 
+# Query data (SELECT — use cursor.execute() as usual)
 cursor.execute("SELECT * FROM events ORDER BY event_time")
 result = cursor.fetch_arrow_table()
 print(result.to_pandas())
@@ -321,6 +321,8 @@ print(result.to_pandas())
 cursor.close()
 conn.close()
 ```
+
+> **Note:** Use `gizmosql.execute_update(cursor, sql)` for DDL statements (CREATE, DROP, ALTER, INSTALL, LOAD, ATTACH, USE) and DML statements (INSERT, UPDATE, DELETE). It returns the affected row count for DML, or `0` for DDL.
 
 ## Session Setup with Init Commands
 

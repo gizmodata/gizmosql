@@ -6,7 +6,7 @@ Tests that GEOMETRY types from DuckDB's SPATIAL extension are properly
 exported as GeoArrow format, enabling seamless integration with GeoPandas.
 
 Requirements:
-    pip install adbc-driver-flightsql geopandas shapely pyarrow
+    pip install adbc-driver-gizmosql geopandas shapely pyarrow
 
 Usage:
     # Start GizmoSQL server first, then:
@@ -23,7 +23,7 @@ import traceback
 
 def test_geoarrow_export():
     """Test that GEOMETRY columns export with GeoArrow metadata."""
-    from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+    from adbc_driver_gizmosql import dbapi as gizmosql
 
     host = os.getenv("GIZMOSQL_HOST", "localhost")
     port = os.getenv("GIZMOSQL_PORT", "31337")
@@ -35,14 +35,14 @@ def test_geoarrow_export():
 
     print(f"Connecting to GizmoSQL at {uri}")
 
-    db_kwargs = {
+    connect_kwargs = {
         "username": username,
         "password": password,
     }
     if use_tls:
-        db_kwargs[DatabaseOptions.TLS_SKIP_VERIFY.value] = "true"
+        connect_kwargs["tls_skip_verify"] = True
 
-    with gizmosql.connect(uri=uri, db_kwargs=db_kwargs, autocommit=True) as conn:
+    with gizmosql.connect(uri, **connect_kwargs) as conn:
         with conn.cursor() as cur:
             # Test 1: Query a simple point geometry
             print("\nTest 1: Query point geometry...")
@@ -162,7 +162,7 @@ def main():
     except ImportError as e:
         print(f"\n✗ Missing required package: {e}")
         print("\nInstall requirements with:")
-        print("  pip install adbc-driver-flightsql geopandas shapely pyarrow")
+        print("  pip install adbc-driver-gizmosql geopandas shapely pyarrow")
         return 1
 
     except Exception as e:
