@@ -39,9 +39,11 @@ ExternalProject_Add(
       -DARROW_SIMD_LEVEL=${ARROW_SIMD_LEVEL}
       -DARROW_RUNTIME_SIMD_LEVEL=${ARROW_RUNTIME_SIMD_LEVEL}
       $<$<BOOL:${WIN32}>:-DARROW_USE_STATIC_CRT=ON>
-      # On Windows, use vcpkg-installed zlib instead of bundled (avoids gRPC build
-      # timing issue where gRPC needs zlib.h before Arrow's bundled zlib is built).
-      # These variables are empty on non-Windows (set in root CMakeLists.txt).
+      # On Windows, override ARROW_DEPENDENCY_SOURCE from BUNDLED to AUTO and
+      # pass vcpkg toolchain so Arrow finds zlib from vcpkg and tells gRPC to
+      # use gRPC_ZLIB_PROVIDER=package (not module). The ARROW_*_ARG variables
+      # are empty on non-Windows (set in root CMakeLists.txt).
+      ${ARROW_DEPENDENCY_SOURCE_ARG}
       ${ARROW_ZLIB_SOURCE_ARG}
       ${ARROW_PREFIX_PATH_ARG}
       ${ARROW_ZLIB_ROOT_ARG}

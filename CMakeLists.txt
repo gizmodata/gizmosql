@@ -82,6 +82,10 @@ if(WIN32 AND VCPKG_TARGET_TRIPLET)
         set(VCPKG_PREFIX_PATH "${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
     endif()
     if(VCPKG_PREFIX_PATH)
+        # Use AUTO instead of BUNDLED so Arrow finds vcpkg zlib via the
+        # toolchain, then sets gRPC_ZLIB_PROVIDER=package for gRPC.
+        # With BUNDLED, Arrow overrides ZLIB_SOURCE and sets gRPC to "module".
+        set(ARROW_DEPENDENCY_SOURCE_ARG "-DARROW_DEPENDENCY_SOURCE=AUTO")
         set(ARROW_ZLIB_SOURCE_ARG "-DZLIB_SOURCE=SYSTEM")
         set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${VCPKG_PREFIX_PATH}")
         set(ARROW_ZLIB_ROOT_ARG "-DZLIB_ROOT=${VCPKG_PREFIX_PATH}")
