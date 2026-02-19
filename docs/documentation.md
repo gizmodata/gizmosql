@@ -16,11 +16,11 @@ It was forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) and has
 
 ## 📦 Installation & Deployment
 
-#### [GizmoSQL](https://gizmodata.com/gizmosql) - by [GizmoData™](https://gizmodata.com)
+#### [GizmoSQL](https://gizmodata.com/gizmosql) - by&nbsp;[GizmoData™](https://gizmodata.com)
 
 #### Copyright © 2025 GizmoData LLC
 
-#### An [Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with [DuckDB](https://duckdb.org) or [SQLite](https://sqlite.org) back-end execution engines
+#### An&nbsp;[Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with&nbsp;[DuckDB](https://duckdb.org) or&nbsp;[SQLite](https://sqlite.org) back-end execution engines
 
 [<img src="https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker">](https://hub.docker.com/r/gizmodata/gizmosql)
 [<img src="https://img.shields.io/badge/github--package-container--image-green.svg?logo=Docker">](https://github.com/gizmodata/gizmosql/pkgs/container/gizmosql)
@@ -281,10 +281,10 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
 
 For full details, see the [Client Shell documentation](https://docs.gizmosql.com/#/client).
 
-### Connecting via [Ibis](https://ibis-project.org)
+### Connecting via&nbsp;[Ibis](https://ibis-project.org)
 See: https://github.com/gizmodata/ibis-gizmosql
 
-### Connecting via [SQLAlchemy](https://www.sqlalchemy.org)
+### Connecting via&nbsp;[SQLAlchemy](https://www.sqlalchemy.org)
 See: https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect
 
 ### Tear-down
