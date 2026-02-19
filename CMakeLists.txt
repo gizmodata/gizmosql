@@ -66,19 +66,24 @@ if(WIN32)
 endif()
 
 # On Windows, Arrow's bundled gRPC needs zlib at configure time, but Arrow's
-# own bundled zlib is only available at build time. Pass CMAKE_PREFIX_PATH to
-# the vcpkg-installed zlib so gRPC can find it. Do NOT pass the vcpkg toolchain
-# file — it auto-installs packages (gRPC, thrift, etc.) which fills the disk.
-set(ARROW_PREFIX_PATH_ARG "")
+# own bundled zlib is only available at build time. Set CMAKE_PREFIX_PATH as
+# an environment variable pointing to vcpkg-installed zlib so it propagates
+# through all nested cmake processes (our cmake → Arrow ExternalProject →
+# Arrow's bundled gRPC ExternalProject → find_package(ZLIB)).
+# Do NOT pass the vcpkg toolchain file — it auto-installs packages.
 if(WIN32 AND VCPKG_TARGET_TRIPLET)
     if(VCPKG_INSTALLED_DIR)
-        set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+        set(_ZLIB_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
     elseif(CMAKE_TOOLCHAIN_FILE)
         # Derive vcpkg root from toolchain: .../scripts/buildsystems/vcpkg.cmake
         get_filename_component(_VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
         get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
         get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
-        set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
+        set(_ZLIB_PREFIX "${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
+    endif()
+    if(_ZLIB_PREFIX)
+        set(ENV{CMAKE_PREFIX_PATH} "${_ZLIB_PREFIX}")
+        message(STATUS "Windows: Set CMAKE_PREFIX_PATH env to ${_ZLIB_PREFIX} for Arrow's bundled gRPC zlib resolution")
     endif()
 endif()
 
