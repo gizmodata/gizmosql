@@ -65,14 +65,12 @@ if(WIN32)
     set(ARROW_RUNTIME_SIMD_LEVEL "NONE")
 endif()
 
-# On Windows with vcpkg, pass the toolchain through to Arrow so it can find
-# vcpkg-provided packages (zlib). Arrow's bundled zlib ExternalProject is only
-# available at build time, but gRPC needs it at configure time.
-set(ARROW_DEPENDENCY_SOURCE "BUNDLED")
+# On Windows with vcpkg, pass the toolchain through to Arrow so that
+# sub-dependencies (e.g. gRPC's find_package(ZLIB)) can find vcpkg packages.
+# Keep BUNDLED so Arrow uses its own gRPC (we need the grpc++_reflection target).
 set(ARROW_TOOLCHAIN_FILE_ARG "")
 set(ARROW_VCPKG_TRIPLET_ARG "")
 if(WIN32 AND CMAKE_TOOLCHAIN_FILE)
-    set(ARROW_DEPENDENCY_SOURCE "AUTO")
     set(ARROW_TOOLCHAIN_FILE_ARG "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
     if(VCPKG_TARGET_TRIPLET)
         set(ARROW_VCPKG_TRIPLET_ARG "-DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}")
