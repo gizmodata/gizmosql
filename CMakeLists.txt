@@ -97,6 +97,10 @@ if(WIN32 AND VCPKG_TARGET_TRIPLET)
         # when building gRPC from source. Since gRPC is built via FetchContent
         # (add_subdirectory), this cache variable propagates to gRPC's cmake.
         set(ARROW_GRPC_ZLIB_ARG "-DgRPC_ZLIB_PROVIDER=package")
+        # Force Arrow to download its own Boost headers. With AUTO, Arrow finds
+        # vcpkg Boost (which only has our app's components) and then fails when
+        # Arrow-internal headers like boost/multiprecision/cpp_int.hpp are missing.
+        set(ARROW_BOOST_SOURCE_ARG "-DBoost_SOURCE=BUNDLED")
         if(CMAKE_TOOLCHAIN_FILE)
             set(ARROW_TOOLCHAIN_ARG "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
             set(ARROW_VCPKG_TRIPLET_ARG "-DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}")

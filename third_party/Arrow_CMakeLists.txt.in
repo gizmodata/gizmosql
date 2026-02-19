@@ -52,4 +52,5 @@ ExternalProject_Add(
       ${ARROW_VCPKG_TRIPLET_ARG}
       ${ARROW_VCPKG_MANIFEST_ARG}
       ${ARROW_GRPC_ZLIB_ARG}
+      ${ARROW_BOOST_SOURCE_ARG}
 )
