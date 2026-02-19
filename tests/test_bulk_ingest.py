@@ -118,7 +118,7 @@ def test_bulk_ingest():
 
             # Step 6: Clean up
             print("\nStep 6: Cleaning up...")
-            gizmosql.execute_update(cursor, "DROP TABLE IF EXISTS bulk_ingest_lineitem")
+            cursor.execute_update("DROP TABLE IF EXISTS bulk_ingest_lineitem")
             print("  Table dropped")
 
     duckdb_conn.close()

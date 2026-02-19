@@ -271,10 +271,10 @@ cursor = conn.cursor()
 # Set up DuckLake — use execute_update() for DDL/DML statements.
 # GizmoSQL uses lazy execution, so cursor.execute() alone won't fire
 # DDL/DML until results are fetched. execute_update() handles this automatically.
-gizmosql.execute_update(cursor, "INSTALL ducklake; LOAD ducklake;")
-gizmosql.execute_update(cursor, "INSTALL postgres; LOAD postgres;")
+cursor.execute_update("INSTALL ducklake; LOAD ducklake;")
+cursor.execute_update("INSTALL postgres; LOAD postgres;")
 
-gizmosql.execute_update(cursor, """
+cursor.execute_update("""
     CREATE OR REPLACE SECRET postgres_secret (
         TYPE postgres,
         HOST 'localhost',
@@ -285,7 +285,7 @@ gizmosql.execute_update(cursor, """
     )
 """)
 
-gizmosql.execute_update(cursor, """
+cursor.execute_update("""
     CREATE OR REPLACE SECRET ducklake_secret (
         TYPE DUCKLAKE,
         METADATA_PATH '',
@@ -294,11 +294,11 @@ gizmosql.execute_update(cursor, """
     )
 """)
 
-gizmosql.execute_update(cursor, "ATTACH 'ducklake:ducklake_secret' AS lakehouse")
-gizmosql.execute_update(cursor, "USE lakehouse")
+cursor.execute_update("ATTACH 'ducklake:ducklake_secret' AS lakehouse")
+cursor.execute_update("USE lakehouse")
 
 # Create and populate a table
-gizmosql.execute_update(cursor, """
+cursor.execute_update("""
     CREATE OR REPLACE TABLE events (
         event_id INTEGER,
         event_type VARCHAR,
@@ -306,7 +306,7 @@ gizmosql.execute_update(cursor, """
     )
 """)
 
-gizmosql.execute_update(cursor, """
+cursor.execute_update("""
     INSERT INTO events VALUES
         (1, 'click', '2024-01-20 10:00:00'),
         (2, 'view', '2024-01-20 10:01:00'),
@@ -322,7 +322,7 @@ cursor.close()
 conn.close()
 ```
 
-> **Note:** Use `gizmosql.execute_update(cursor, sql)` for DDL statements (CREATE, DROP, ALTER, INSTALL, LOAD, ATTACH, USE) and DML statements (INSERT, UPDATE, DELETE). It returns the affected row count for DML, or `0` for DDL.
+> **Note:** Use `cursor.execute_update(sql)` for DDL statements (CREATE, DROP, ALTER, INSTALL, LOAD, ATTACH, USE) and DML statements (INSERT, UPDATE, DELETE). It returns the affected row count for DML, or `0` for DDL. Requires `adbc-driver-gizmosql` >= 1.0.5.
 
 ## Session Setup with Init Commands
 

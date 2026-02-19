@@ -217,7 +217,9 @@ n_name: [["UNITED STATES"]]
 
 #### DDL and DML statements
 
-For DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE), use `gizmosql.execute_update()` instead of `cursor.execute()`. This is necessary because GizmoSQL uses **lazy execution** — `cursor.execute()` for DDL/DML will not fire the statement until results are fetched. `execute_update()` handles this automatically and returns `0` for DDL or the affected row count for DML.
+For DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE), use `cursor.execute_update()` instead of `cursor.execute()`. This is necessary because GizmoSQL uses **lazy execution** — `cursor.execute()` for DDL/DML will not fire the statement until results are fetched. `execute_update()` handles this automatically and returns `0` for DDL or the affected row count for DML.
+
+> **Note:** `cursor.execute_update()` requires `adbc-driver-gizmosql` version 1.0.5 or later.
 
 ```python
 from adbc_driver_gizmosql import dbapi as gizmosql
@@ -229,8 +231,8 @@ with gizmosql.connect(
     tls_skip_verify=True,
 ) as conn:
     with conn.cursor() as cur:
-        # DDL — create a table
-        gizmosql.execute_update(cur, """
+        # DDL — create a table (returns 0)
+        cur.execute_update("""
             CREATE TABLE my_table (
                 id INTEGER,
                 name VARCHAR,
@@ -239,7 +241,7 @@ with gizmosql.connect(
         """)
 
         # DML — insert data (returns affected row count)
-        rows_affected = gizmosql.execute_update(cur, """
+        rows_affected = cur.execute_update("""
             INSERT INTO my_table VALUES
                 (1, 'Alice', 95.5),
                 (2, 'Bob', 87.3),
@@ -252,7 +254,7 @@ with gizmosql.connect(
         print(cur.fetch_arrow_table().to_pandas())
 
         # Cleanup
-        gizmosql.execute_update(cur, "DROP TABLE my_table")
+        cur.execute_update("DROP TABLE my_table")
 ```
 
 ### Connecting via `gizmosql_client`
