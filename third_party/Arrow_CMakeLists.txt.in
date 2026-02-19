@@ -39,4 +39,8 @@ ExternalProject_Add(
       -DARROW_SIMD_LEVEL=${ARROW_SIMD_LEVEL}
       -DARROW_RUNTIME_SIMD_LEVEL=${ARROW_RUNTIME_SIMD_LEVEL}
       $<$<BOOL:${WIN32}>:-DARROW_USE_STATIC_CRT=ON>
+      # On Windows, use vcpkg-installed zlib instead of bundled (avoids gRPC build
+      # timing issue where gRPC needs zlib.h before Arrow's bundled zlib is built).
+      $<$<BOOL:${VCPKG_PREFIX_PATH}>:-DZLIB_SOURCE=SYSTEM>
+      $<$<BOOL:${VCPKG_PREFIX_PATH}>:-DCMAKE_PREFIX_PATH=${VCPKG_PREFIX_PATH}>
 )

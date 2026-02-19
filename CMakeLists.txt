@@ -65,25 +65,24 @@ if(WIN32)
     set(ARROW_RUNTIME_SIMD_LEVEL "NONE")
 endif()
 
-# On Windows, Arrow's bundled gRPC needs zlib at configure time, but Arrow's
-# own bundled zlib is only available at build time. Set CMAKE_PREFIX_PATH as
-# an environment variable pointing to vcpkg-installed zlib so it propagates
-# through all nested cmake processes (our cmake → Arrow ExternalProject →
-# Arrow's bundled gRPC ExternalProject → find_package(ZLIB)).
-# Do NOT pass the vcpkg toolchain file — it auto-installs packages.
+# On Windows, Arrow's bundled gRPC needs zlib at compile time. Rather than
+# building zlib from source (which has timing issues with gRPC), tell Arrow
+# to use the system/vcpkg-installed zlib via -DZLIB_SOURCE=SYSTEM and pass
+# CMAKE_PREFIX_PATH so Arrow (and gRPC via FetchContent) can find it.
+# This mirrors the approach used by the gizmosql-odbc-driver.
+set(VCPKG_PREFIX_PATH "")
 if(WIN32 AND VCPKG_TARGET_TRIPLET)
     if(VCPKG_INSTALLED_DIR)
-        set(_ZLIB_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+        set(VCPKG_PREFIX_PATH "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
     elseif(CMAKE_TOOLCHAIN_FILE)
         # Derive vcpkg root from toolchain: .../scripts/buildsystems/vcpkg.cmake
         get_filename_component(_VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
         get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
         get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
-        set(_ZLIB_PREFIX "${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
+        set(VCPKG_PREFIX_PATH "${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
     endif()
-    if(_ZLIB_PREFIX)
-        set(ENV{CMAKE_PREFIX_PATH} "${_ZLIB_PREFIX}")
-        message(STATUS "Windows: Set CMAKE_PREFIX_PATH env to ${_ZLIB_PREFIX} for Arrow's bundled gRPC zlib resolution")
+    if(VCPKG_PREFIX_PATH)
+        message(STATUS "Windows: vcpkg prefix path for Arrow zlib: ${VCPKG_PREFIX_PATH}")
     endif()
 endif()
 
