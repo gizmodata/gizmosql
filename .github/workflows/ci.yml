@@ -75,7 +75,7 @@ jobs:
         run: |
           python3 -m venv /tmp/test_venv
           source /tmp/test_venv/bin/activate
-          pip install adbc-driver-flightsql geopandas shapely pyarrow duckdb
+          pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb
 
           # Start server in background
           ./build/gizmosql_server --password gizmosql_password &
@@ -257,7 +257,7 @@ jobs:
         run: |
           python3 -m venv /tmp/test_venv
           source /tmp/test_venv/bin/activate
-          pip install adbc-driver-flightsql geopandas shapely pyarrow duckdb
+          pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb
 
           # Start server in background
           ./build/gizmosql_server --password gizmosql_password &

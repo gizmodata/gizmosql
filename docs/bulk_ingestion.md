@@ -15,13 +15,13 @@ Bulk ingestion with ADBC provides significant performance advantages over row-by
 Install the required Python packages:
 
 ```bash
-pip install adbc-driver-flightsql pyarrow duckdb
+pip install adbc-driver-gizmosql pyarrow duckdb
 ```
 
 ## Quick Example
 
 ```python
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 import pyarrow as pa
 
 # Create sample data
@@ -33,12 +33,9 @@ data = pa.table({
 
 # Connect to GizmoSQL and bulk ingest
 with gizmosql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password"
-    },
-    autocommit=True
+    "grpc://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
         # Bulk ingest the data
@@ -66,7 +63,7 @@ For large datasets, use a RecordBatch reader to stream data in batches:
 
 ```python
 import duckdb
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 # Generate TPC-H data (1GB scale factor)
 duckdb_conn = duckdb.connect()
@@ -79,12 +76,9 @@ lineitem_reader = duckdb_conn.table("lineitem").fetch_arrow_reader(batch_size=10
 
 # Bulk ingest into GizmoSQL
 with gizmosql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password"
-    },
-    autocommit=True
+    "grpc://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
         rows_loaded = cursor.adbc_ingest(
@@ -106,18 +100,15 @@ You can also bulk ingest directly from Parquet files:
 
 ```python
 import pyarrow.parquet as pq
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 # Read Parquet file as Arrow table
 table = pq.read_table("data.parquet")
 
 with gizmosql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password"
-    },
-    autocommit=True
+    "grpc://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
         rows_loaded = cursor.adbc_ingest(
@@ -135,7 +126,7 @@ Convert Pandas DataFrames to Arrow for bulk ingestion:
 ```python
 import pandas as pd
 import pyarrow as pa
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 # Create a Pandas DataFrame
 df = pd.DataFrame({
@@ -148,12 +139,9 @@ df = pd.DataFrame({
 arrow_table = pa.Table.from_pandas(df)
 
 with gizmosql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password"
-    },
-    autocommit=True
+    "grpc://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
         rows_loaded = cursor.adbc_ingest(
@@ -169,16 +157,13 @@ with gizmosql.connect(
 For TLS-enabled servers:
 
 ```python
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    uri="grpc+tls://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password",
-        DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Only for self-signed certs
-    },
-    autocommit=True
+    "grpc+tls://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
+    tls_skip_verify=True,  # Only for self-signed certs
 ) as conn:
     # ... bulk ingest operations
     pass
@@ -198,7 +183,7 @@ Here's a complete example that generates TPC-H data and measures ingestion perfo
 ```python
 import time
 import duckdb
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 
 def bulk_ingest_tpch(scale_factor=0.1):
@@ -219,12 +204,9 @@ def bulk_ingest_tpch(scale_factor=0.1):
 
     # Step 3: Bulk ingest
     with gizmosql.connect(
-        uri="grpc://localhost:31337",
-        db_kwargs={
-            "username": "gizmosql_username",
-            "password": "gizmosql_password"
-        },
-        autocommit=True
+        "grpc://localhost:31337",
+        username="gizmosql_username",
+        password="gizmosql_password",
     ) as conn:
         with conn.cursor() as cursor:
             start = time.perf_counter()

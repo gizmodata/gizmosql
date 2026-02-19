@@ -14,38 +14,35 @@ GizmoSQL provides:
 ## Quick Example
 
 ```python
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 import geopandas as gpd
 
 with gizmosql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password"
-    },
-    autocommit=True
+    "grpc://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cur:
         # Create a table with geometry
-        cur.execute("""
+        # Use execute_update() for DDL/DML — GizmoSQL uses lazy execution,
+        # so cursor.execute() alone won't fire DDL/DML until results are fetched.
+        gizmosql.execute_update(cur, """
             CREATE TABLE locations (
                 id INTEGER,
                 name VARCHAR,
                 geom GEOMETRY
             )
         """)
-        cur.fetchall()  # Execute DDL
 
         # Insert some points
-        cur.execute("""
+        gizmosql.execute_update(cur, """
             INSERT INTO locations VALUES
                 (1, 'New York', ST_Point(-74.006, 40.7128)),
                 (2, 'Los Angeles', ST_Point(-118.2437, 34.0522)),
                 (3, 'Chicago', ST_Point(-87.6298, 41.8781))
         """)
-        cur.fetchall()  # Execute DML
 
-        # Query with spatial functions
+        # Query with spatial functions (SELECT — use cursor.execute() as usual)
         cur.execute("""
             SELECT name, ST_X(geom) as lon, ST_Y(geom) as lat
             FROM locations
@@ -58,6 +55,8 @@ with gizmosql.connect(
         gdf = gpd.GeoDataFrame.from_arrow(arrow_table)
         print(gdf)
 ```
+
+> **Note:** Use `gizmosql.execute_update(cursor, sql)` for DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE). GizmoSQL uses lazy execution — `cursor.execute()` for DDL/DML will not fire until results are fetched. `execute_update()` handles this automatically and returns the affected row count for DML, or `0` for DDL.
 
 ## Supported Geometry Types
 
@@ -142,16 +141,13 @@ SELECT ST_Union(geom1, geom2) FROM shapes;
 GizmoSQL automatically exports GEOMETRY columns with GeoArrow extension metadata. This enables zero-copy integration with GeoArrow-aware tools like GeoPandas.
 
 ```python
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 import geopandas as gpd
 
 with gizmosql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password"
-    },
-    autocommit=True
+    "grpc://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM my_spatial_table")
@@ -174,7 +170,7 @@ with gizmosql.connect(
 ```python
 import geopandas as gpd
 import pyarrow as pa
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 # Read GeoJSON file
 gdf = gpd.read_file("data.geojson")
@@ -183,12 +179,9 @@ gdf = gpd.read_file("data.geojson")
 arrow_table = gdf.to_arrow()
 
 with gizmosql.connect(
-    uri="grpc://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password"
-    },
-    autocommit=True
+    "grpc://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
         cursor.adbc_ingest(
@@ -249,16 +242,13 @@ LIMIT 10;
 For TLS-enabled servers:
 
 ```python
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    uri="grpc+tls://localhost:31337",
-    db_kwargs={
-        "username": "gizmosql_username",
-        "password": "gizmosql_password",
-        DatabaseOptions.TLS_SKIP_VERIFY.value: "true"  # Only for self-signed certs
-    },
-    autocommit=True
+    "grpc+tls://localhost:31337",
+    username="gizmosql_username",
+    password="gizmosql_password",
+    tls_skip_verify=True,  # Only for self-signed certs
 ) as conn:
     # ... spatial operations
     pass

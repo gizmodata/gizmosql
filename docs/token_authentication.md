@@ -199,18 +199,15 @@ jdbc:gizmosql://hostname:31337?useEncryption=true&user=token&password=YOUR_JWT_H
 
 ```python
 import os
-from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+from adbc_driver_gizmosql import dbapi as gizmosql
 
 token = os.getenv("GIZMOSQL_TOKEN")
 
 with gizmosql.connect(
-    uri="grpc+tls://localhost:31337",
-    db_kwargs={
-        "username": "token",
-        "password": token,
-        DatabaseOptions.TLS_SKIP_VERIFY.value: "true",
-    },
-    autocommit=True
+    "grpc+tls://localhost:31337",
+    username="token",
+    password=token,
+    tls_skip_verify=True,
 ) as conn:
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM my_table")

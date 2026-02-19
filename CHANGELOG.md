@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dynamic terminal width** (`gizmosql_client`): Output width now automatically adapts when the terminal window is resized — each query re-reads the terminal dimensions before rendering. Explicit `.maxwidth N` overrides auto-detection; `.maxwidth 0` re-enables it.
 
+### Changed
+
+- **ADBC driver migration**: All Python examples, docs, tests, and CI now use [`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/) instead of `adbc-driver-flightsql`. The new driver provides a simplified connection API (no `db_kwargs`/`DatabaseOptions`), `execute_update()` for DDL/DML statements (avoids lazy execution pitfalls), and OAuth/SSO support for Enterprise users.
+
 ## [1.18.0] - 2026-02-17
 
 ### Added

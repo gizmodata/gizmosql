@@ -6,7 +6,7 @@ Tests ADBC bulk ingestion functionality using adbc_ingest() method.
 Generates TPC-H data in DuckDB and bulk loads it into GizmoSQL.
 
 Requirements:
-    pip install adbc-driver-flightsql duckdb pyarrow
+    pip install adbc-driver-gizmosql duckdb pyarrow
 
 Usage:
     # Start GizmoSQL server first, then:
@@ -25,7 +25,7 @@ import traceback
 def test_bulk_ingest():
     """Test bulk ingestion of TPC-H lineitem data into GizmoSQL."""
     import duckdb
-    from adbc_driver_flightsql import dbapi as gizmosql, DatabaseOptions
+    from adbc_driver_gizmosql import dbapi as gizmosql
 
     host = os.getenv("GIZMOSQL_HOST", "localhost")
     port = os.getenv("GIZMOSQL_PORT", "31337")
@@ -69,14 +69,14 @@ def test_bulk_ingest():
     # Step 3: Bulk ingest into GizmoSQL
     print("\nStep 3: Bulk ingesting into GizmoSQL...")
 
-    db_kwargs = {
+    connect_kwargs = {
         "username": username,
         "password": password,
     }
     if use_tls:
-        db_kwargs[DatabaseOptions.TLS_SKIP_VERIFY.value] = "true"
+        connect_kwargs["tls_skip_verify"] = True
 
-    with gizmosql.connect(uri=uri, db_kwargs=db_kwargs, autocommit=True) as conn:
+    with gizmosql.connect(uri, **connect_kwargs) as conn:
         with conn.cursor() as cursor:
             ingest_start = time.perf_counter()
 
@@ -118,8 +118,7 @@ def test_bulk_ingest():
 
             # Step 6: Clean up
             print("\nStep 6: Cleaning up...")
-            cursor.execute("DROP TABLE IF EXISTS bulk_ingest_lineitem")
-            cursor.fetchall()  # Execute DDL
+            gizmosql.execute_update(cursor, "DROP TABLE IF EXISTS bulk_ingest_lineitem")
             print("  Table dropped")
 
     duckdb_conn.close()
@@ -148,7 +147,7 @@ def main():
     except ImportError as e:
         print(f"\nMissing required package: {e}")
         print("\nInstall requirements with:")
-        print("  pip install adbc-driver-flightsql duckdb pyarrow")
+        print("  pip install adbc-driver-gizmosql duckdb pyarrow")
         return 1
 
     except Exception as e:
