@@ -28,6 +28,7 @@
 #include <arrow/type_traits.h>
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <windows.h>
 #elif defined(__unix__) || defined(__APPLE__)
 #include <sys/ioctl.h>

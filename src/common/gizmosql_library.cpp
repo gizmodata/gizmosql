@@ -28,6 +28,7 @@
 #include <sstream>
 #include <vector>
 #ifdef _WIN32
+#define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
@@ -597,7 +598,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   if (!mtls_ca_cert_path.empty()) {
     GIZMOSQL_LOG(INFO) << "Using mTLS CA certificate: " << mtls_ca_cert_path;
     ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerMtlsCACertificate(
-        mtls_ca_cert_path, &options.root_certificates));
+        mtls_ca_cert_path.string(), &options.root_certificates));
     options.verify_client = true;
   }
 
@@ -617,7 +618,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     db_type = "SQLite";
     std::shared_ptr<gizmosql::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(sqlite_server, gizmosql::sqlite::SQLiteFlightSqlServer::Create(
-                                             database_filename, read_only));
+                                             database_filename.string(), read_only));
     RUN_INIT_COMMANDS(sqlite_server, init_sql_commands);
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
@@ -626,7 +627,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Create DuckDB server first (without instrumentation manager)
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
-                                             database_filename, read_only, print_queries,
+                                             database_filename.string(), read_only, print_queries,
                                              query_timeout, query_log_level,
                                              nullptr))  // No instrumentation manager yet
 
