@@ -65,16 +65,13 @@ if(WIN32)
     set(ARROW_RUNTIME_SIMD_LEVEL "NONE")
 endif()
 
-# On Windows with vcpkg, pass the toolchain through to Arrow so that
-# sub-dependencies (e.g. gRPC's find_package(ZLIB)) can find vcpkg packages.
-# Keep BUNDLED so Arrow uses its own gRPC (we need the grpc++_reflection target).
-set(ARROW_TOOLCHAIN_FILE_ARG "")
-set(ARROW_VCPKG_TRIPLET_ARG "")
-if(WIN32 AND CMAKE_TOOLCHAIN_FILE)
-    set(ARROW_TOOLCHAIN_FILE_ARG "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
-    if(VCPKG_TARGET_TRIPLET)
-        set(ARROW_VCPKG_TRIPLET_ARG "-DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}")
-    endif()
+# On Windows, Arrow's bundled gRPC needs zlib at configure time, but Arrow's
+# own bundled zlib is only available at build time. Pass CMAKE_PREFIX_PATH to
+# the vcpkg-installed zlib so gRPC can find it. Do NOT pass the vcpkg toolchain
+# file — it auto-installs packages (gRPC, thrift, etc.) which fills the disk.
+set(ARROW_PREFIX_PATH_ARG "")
+if(WIN32 AND VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+    set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 endif()
 
 configure_file(third_party/Arrow_CMakeLists.txt.in
