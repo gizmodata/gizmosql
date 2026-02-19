@@ -26,7 +26,7 @@ with gizmosql.connect(
         # Create a table with geometry
         # Use execute_update() for DDL/DML — GizmoSQL uses lazy execution,
         # so cursor.execute() alone won't fire DDL/DML until results are fetched.
-        gizmosql.execute_update(cur, """
+        cur.execute_update("""
             CREATE TABLE locations (
                 id INTEGER,
                 name VARCHAR,
@@ -35,7 +35,7 @@ with gizmosql.connect(
         """)
 
         # Insert some points
-        gizmosql.execute_update(cur, """
+        cur.execute_update("""
             INSERT INTO locations VALUES
                 (1, 'New York', ST_Point(-74.006, 40.7128)),
                 (2, 'Los Angeles', ST_Point(-118.2437, 34.0522)),
@@ -56,7 +56,7 @@ with gizmosql.connect(
         print(gdf)
 ```
 
-> **Note:** Use `gizmosql.execute_update(cursor, sql)` for DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE). GizmoSQL uses lazy execution — `cursor.execute()` for DDL/DML will not fire until results are fetched. `execute_update()` handles this automatically and returns the affected row count for DML, or `0` for DDL.
+> **Note:** Use `cursor.execute_update(sql)` for DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE). GizmoSQL uses lazy execution — `cursor.execute()` for DDL/DML will not fire until results are fetched. `execute_update()` handles this automatically and returns the affected row count for DML, or `0` for DDL. Requires `adbc-driver-gizmosql` >= 1.0.5.
 
 ## Supported Geometry Types
 
