@@ -162,9 +162,9 @@ For instructions on setting up the JDBC driver in popular Database IDE tool: [DB
 
 **Note** - if you stop/restart the Flight SQL Docker container, and attempt to connect via JDBC with the same password - you could get error: "Invalid bearer token provided. Detail: Unauthenticated".  This is because the client JDBC driver caches the bearer token signed with the previous instance's secret key.  Just change the password in the new container by changing the "GIZMOSQL_PASSWORD" env var setting - and then use that to connect via JDBC.  
 
-### Connecting to the server via the GizmoSQL ADBC Python driver
+### Connecting to the server via the&nbsp;[GizmoSQL ADBC Python driver](https://pypi.org/project/adbc-driver-gizmosql/)
 
-You can use the [GizmoSQL ADBC Python driver](https://pypi.org/project/adbc-driver-gizmosql/) to query the Flight SQL server. ADBC offers performance advantages over JDBC - because it minimizes serialization/deserialization, and data stays in columnar format at all phases.
+You can use the GizmoSQL ADBC Python driver to query the Flight SQL server. ADBC offers performance advantages over JDBC - because it minimizes serialization/deserialization, and data stays in columnar format at all phases.
 
 You can learn more about ADBC and Flight SQL [here](https://voltrondata.com/resources/simplifying-database-connectivity-with-arrow-flight-sql-and-adbc).
 
@@ -346,7 +346,7 @@ gizmosql_server --help
 
 
 
-In order to run build the solution manually, and run SQLite and DuckDB Flight SQL server, you need to set up a new Python 3.9+ virtual environment on your machine. 
+In order to run build the solution manually, and run SQLite and DuckDB Flight SQL server, you need to set up a new Python 3.10+ virtual environment on your machine. 
 Follow these steps to do so (thanks to David Li!).
 
 1. Clone the repo and build the static library and executable
@@ -358,7 +358,7 @@ cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --build build --target install
 ```
 
-2. Install Python requirements for ADBC client interaction - (ensure you have Python 3.9+ installed first)
+2. Install Python requirements for ADBC client interaction - (ensure you have Python 3.10+ installed first)
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate

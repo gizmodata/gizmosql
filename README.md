@@ -155,7 +155,7 @@ More info: [Setup guide](https://github.com/gizmodata/setup-gizmosql-jdbc-driver
 
 ### 🐍 Python (ADBC)
 
-**Prerequisite:** Install the [GizmoSQL ADBC driver](https://pypi.org/project/adbc-driver-gizmosql/):
+**Prerequisite:** Python 3.10+ and the [GizmoSQL ADBC driver](https://pypi.org/project/adbc-driver-gizmosql/):
 
 ```bash
 pip install adbc-driver-gizmosql
