@@ -15,6 +15,7 @@ if(WIN32)
         CONFIGURE_COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}"
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install"
+            "-DSQLITE_SOURCE_DIR=<SOURCE_DIR>"
             -S "${CMAKE_SOURCE_DIR}/third_party/sqlite_cmake"
             -B <BINARY_DIR>
         BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --config ${CMAKE_BUILD_TYPE}
