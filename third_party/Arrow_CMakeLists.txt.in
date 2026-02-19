@@ -50,4 +50,5 @@ ExternalProject_Add(
       ${ARROW_TOOLCHAIN_ARG}
       ${ARROW_VCPKG_TRIPLET_ARG}
       ${ARROW_VCPKG_MANIFEST_ARG}
+      ${ARROW_GRPC_ZLIB_ARG}
 )

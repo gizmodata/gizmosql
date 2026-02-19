@@ -92,6 +92,11 @@ if(WIN32 AND VCPKG_TARGET_TRIPLET)
         # Pass the vcpkg toolchain file to Arrow so nested builds (gRPC via
         # FetchContent) also find vcpkg packages. Use VCPKG_MANIFEST_MODE=OFF
         # to prevent Arrow from auto-installing packages via vcpkg manifest.
+        # Force gRPC to use find_package(ZLIB) instead of its local module.
+        # Arrow's ThirdpartyToolchain unconditionally sets gRPC_ZLIB_PROVIDER=module
+        # when building gRPC from source. Since gRPC is built via FetchContent
+        # (add_subdirectory), this cache variable propagates to gRPC's cmake.
+        set(ARROW_GRPC_ZLIB_ARG "-DgRPC_ZLIB_PROVIDER=package")
         if(CMAKE_TOOLCHAIN_FILE)
             set(ARROW_TOOLCHAIN_ARG "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
             set(ARROW_VCPKG_TRIPLET_ARG "-DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}")
