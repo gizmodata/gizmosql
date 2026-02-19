@@ -16,11 +16,11 @@ It was forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) and has
 
 ## 📦 Installation & Deployment
 
-#### [GizmoSQL](https://gizmodata.com/gizmosql) - by [GizmoData™](https://gizmodata.com)
+#### [GizmoSQL](https://gizmodata.com/gizmosql) - by&nbsp;[GizmoData™](https://gizmodata.com)
 
 #### Copyright © 2025 GizmoData LLC
 
-#### An [Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with [DuckDB](https://duckdb.org) or [SQLite](https://sqlite.org) back-end execution engines
+#### An&nbsp;[Arrow Flight SQL Server](https://arrow.apache.org/docs/format/FlightSql.html) with&nbsp;[DuckDB](https://duckdb.org) or&nbsp;[SQLite](https://sqlite.org) back-end execution engines
 
 [<img src="https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker">](https://hub.docker.com/r/gizmodata/gizmosql)
 [<img src="https://img.shields.io/badge/github--package-container--image-green.svg?logo=Docker">](https://github.com/gizmodata/gizmosql/pkgs/container/gizmosql)
@@ -159,9 +159,9 @@ For instructions on setting up the JDBC driver in popular Database IDE tool: [DB
 
 **Note** - if you stop/restart the Flight SQL Docker container, and attempt to connect via JDBC with the same password - you could get error: "Invalid bearer token provided. Detail: Unauthenticated".  This is because the client JDBC driver caches the bearer token signed with the previous instance's secret key.  Just change the password in the new container by changing the "GIZMOSQL_PASSWORD" env var setting - and then use that to connect via JDBC.  
 
-### Connecting to the server via the GizmoSQL ADBC Python driver
+### Connecting to the server via the&nbsp;[GizmoSQL ADBC Python driver](https://pypi.org/project/adbc-driver-gizmosql/)
 
-You can use the [GizmoSQL ADBC Python driver](https://pypi.org/project/adbc-driver-gizmosql/) to query the Flight SQL server. ADBC offers performance advantages over JDBC - because it minimizes serialization/deserialization, and data stays in columnar format at all phases.
+You can use the GizmoSQL ADBC Python driver to query the Flight SQL server. ADBC offers performance advantages over JDBC - because it minimizes serialization/deserialization, and data stays in columnar format at all phases.
 
 You can learn more about ADBC and Flight SQL [here](https://voltrondata.com/resources/simplifying-database-connectivity-with-arrow-flight-sql-and-adbc).
 
@@ -278,10 +278,10 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
 
 For full details, see the [Client Shell documentation](https://docs.gizmosql.com/#/client).
 
-### Connecting via [Ibis](https://ibis-project.org)
+### Connecting via&nbsp;[Ibis](https://ibis-project.org)
 See: https://github.com/gizmodata/ibis-gizmosql
 
-### Connecting via [SQLAlchemy](https://www.sqlalchemy.org)
+### Connecting via&nbsp;[SQLAlchemy](https://www.sqlalchemy.org)
 See: https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect
 
 ### Tear-down
@@ -343,7 +343,7 @@ gizmosql_server --help
 
 
 
-In order to run build the solution manually, and run SQLite and DuckDB Flight SQL server, you need to set up a new Python 3.9+ virtual environment on your machine. 
+In order to run build the solution manually, and run SQLite and DuckDB Flight SQL server, you need to set up a new Python 3.10+ virtual environment on your machine. 
 Follow these steps to do so (thanks to David Li!).
 
 1. Clone the repo and build the static library and executable
@@ -355,7 +355,7 @@ cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local
 cmake --build build --target install
 ```
 
-2. Install Python requirements for ADBC client interaction - (ensure you have Python 3.9+ installed first)
+2. Install Python requirements for ADBC client interaction - (ensure you have Python 3.10+ installed first)
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
