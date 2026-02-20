@@ -531,8 +531,10 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   // Use a temporary database for this test
   std::string test_db_path = "stale_cleanup_test_instr.db";
 
-  // Clean up any existing test database
-  fs::remove(test_db_path);
+  // Clean up any existing test database (use error_code to avoid throwing on Windows)
+  std::error_code ec;
+  fs::remove(test_db_path, ec);
+  fs::remove(test_db_path + ".wal", ec);
 
   // Create a DuckDB instance
   duckdb::DuckDB db(":memory:");
@@ -664,9 +666,15 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   // Clean up
   manager2->Shutdown();
   manager2.reset();
-  // Release the shared DuckDB instance so file locks are freed (Windows)
+  // Explicitly detach and release the DuckDB instance so file locks are freed (Windows)
+  {
+    duckdb::Connection conn(*shared_db);
+    conn.Query("DETACH IF EXISTS _gizmosql_instr");
+  }
   shared_db.reset();
-  fs::remove(test_db_path);
+  std::error_code ec;
+  fs::remove(test_db_path, ec);
+  fs::remove(test_db_path + ".wal", ec);
 }
 
 // Test that SIGTERM gracefully closes instrumentation records
