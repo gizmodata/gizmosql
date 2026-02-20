@@ -415,6 +415,13 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }}
 
+      - name: Copy VC++ runtime DLLs for DuckDB extension compatibility
+        run: |
+          $crtDir = Join-Path $env:VCToolsRedistDir "x64\Microsoft.VC143.CRT"
+          Copy-Item "$crtDir\vcruntime140.dll" build\
+          Copy-Item "$crtDir\vcruntime140_1.dll" build\
+          Copy-Item "$crtDir\msvcp140.dll" build\
+
       - name: Run Tests
         run: .\build\tests\gizmosql_integration_tests.exe
 
@@ -425,6 +432,9 @@ jobs:
           path: |
             build/gizmosql_server.exe
             build/gizmosql_client.exe
+            build/vcruntime140.dll
+            build/vcruntime140_1.dll
+            build/msvcp140.dll
 
   sign-windows:
     name: Sign Windows (amd64)
@@ -474,7 +484,7 @@ jobs:
 
       - name: Create signed zip
         run: |
-          7z a gizmosql_cli_windows_amd64.zip .\unsigned\*.exe
+          7z a gizmosql_cli_windows_amd64.zip .\unsigned\*.exe .\unsigned\*.dll
 
       - name: Upload signed zip
         uses: actions/upload-artifact@v4

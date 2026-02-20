@@ -28,6 +28,9 @@ jobs:
           # Copy a real Windows EXE to use as dummy (has valid PE headers with version info)
           Copy-Item "$env:SystemRoot\System32\cmd.exe" installer\bin\gizmosql_server.exe
           Copy-Item "$env:SystemRoot\System32\cmd.exe" installer\bin\gizmosql_client.exe
+          Copy-Item "$env:SystemRoot\System32\vcruntime140.dll" installer\bin\
+          Copy-Item "$env:SystemRoot\System32\vcruntime140_1.dll" installer\bin\
+          Copy-Item "$env:SystemRoot\System32\msvcp140.dll" installer\bin\
 
       - name: Convert logo to BMP
         run: |

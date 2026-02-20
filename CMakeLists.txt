@@ -77,6 +77,7 @@ configure_file(
 
 # Configure Windows version resource files
 if(WIN32)
+    file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/installer/gizmosql.ico" RC_ICON_PATH)
     set(RC_FILE_DESCRIPTION "GizmoSQL Server")
     set(RC_INTERNAL_NAME "gizmosql_server")
     set(RC_ORIGINAL_FILENAME "gizmosql_server.exe")
@@ -84,6 +85,7 @@ if(WIN32)
             ${CMAKE_SOURCE_DIR}/src/common/version.rc.in
             ${CMAKE_BINARY_DIR}/gizmosql_server_version.rc
     )
+    file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/installer/gizmosql_client.ico" RC_ICON_PATH)
     set(RC_FILE_DESCRIPTION "GizmoSQL Client")
     set(RC_INTERNAL_NAME "gizmosql_client")
     set(RC_ORIGINAL_FILENAME "gizmosql_client.exe")

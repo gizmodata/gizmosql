@@ -7,6 +7,9 @@
            UpgradeCode="{D29A3161-264E-4D77-99F4-EE327AFE8DFA}"
            Scope="perMachine">
 
+    <Icon Id="gizmosql.ico" SourceFile="gizmosql.ico" />
+    <Property Id="ARPPRODUCTICON" Value="gizmosql.ico" />
+
     <MajorUpgrade DowngradeErrorMessage="A newer version of GizmoSQL is already installed." />
     <Media Id="1" Cabinet="gizmosql.cab" EmbedCab="yes" />
 
@@ -35,6 +38,11 @@
       </Component>
       <Component Id="ClientExe" Guid="{3B012805-89BA-4295-80BC-04470334BABE}">
         <File Id="GizmoSqlClient" Source="!(bindpath.BinDir)\gizmosql_client.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="VCRuntime" Guid="{16322E96-725B-463A-99A7-0D61A622E069}">
+        <File Id="vcruntime140" Source="!(bindpath.BinDir)\vcruntime140.dll" />
+        <File Id="vcruntime140_1" Source="!(bindpath.BinDir)\vcruntime140_1.dll" />
+        <File Id="msvcp140" Source="!(bindpath.BinDir)\msvcp140.dll" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 
