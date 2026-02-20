@@ -432,7 +432,6 @@ jobs:
           path: ${{ env.zip_file_name }}
 
       - name: Upload unsigned executables for signing
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: gizmosql-windows-amd64-unsigned
@@ -443,7 +442,6 @@ jobs:
   sign-windows:
     name: Sign Windows (amd64)
     needs: build-project-windows
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     environment: production
     permissions:
@@ -490,7 +488,6 @@ jobs:
   build-msi:
     name: Build MSI (amd64)
     needs: sign-windows
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     environment: production
     permissions:
