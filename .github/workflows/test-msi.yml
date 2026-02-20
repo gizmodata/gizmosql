@@ -1,0 +1,64 @@
+name: Test MSI Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-msi:
+    name: Test MSI Build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install WiX Toolset
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          wix extension add WixToolset.UI.wixext/6.0.2
+
+      - name: Create dummy executables
+        run: |
+          New-Item -ItemType Directory -Force -Path installer\bin
+          # Create minimal valid PE executables with version info
+          # For testing, we just need files that WiX can read
+          Set-Content -Path installer\bin\gizmosql_server.exe -Value "dummy" -Encoding Byte
+          Set-Content -Path installer\bin\gizmosql_client.exe -Value "dummy" -Encoding Byte
+
+      - name: Convert logo to BMP
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $logo = [System.Drawing.Image]::FromFile("${{ github.workspace }}\installer\gizmosql_logo.png")
+          $banner = New-Object System.Drawing.Bitmap(493, 58)
+          $g = [System.Drawing.Graphics]::FromImage($banner)
+          $g.Clear([System.Drawing.Color]::White)
+          $g.DrawImage($logo, 10, 4, 200, 50)
+          $g.Dispose()
+          $banner.Save("${{ github.workspace }}\installer\banner.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+          $dialog = New-Object System.Drawing.Bitmap(493, 312)
+          $g = [System.Drawing.Graphics]::FromImage($dialog)
+          $g.Clear([System.Drawing.Color]::White)
+          $g.DrawImage($logo, 20, 20, 300, 75)
+          $g.Dispose()
+          $dialog.Save("${{ github.workspace }}\installer\dialog.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+          $logo.Dispose()
+
+      - name: Create license.rtf
+        run: |
+          $license = Get-Content "${{ github.workspace }}\LICENSE" -Raw
+          $rtf = "{\rtf1\ansi\deff0 {\fonttbl {\f0 Consolas;}}\f0\fs18 " + ($license -replace "`n", "\par ") + "}"
+          Set-Content -Path "${{ github.workspace }}\installer\license.rtf" -Value $rtf
+
+      - name: Build MSI
+        run: |
+          wix build `
+            "${{ github.workspace }}\installer\GizmoSQL.wxs" `
+            -b BinDir="${{ github.workspace }}\installer\bin" `
+            -o "${{ github.workspace }}\installer\GizmoSQL-amd64.msi" `
+            -ext WixToolset.UI.wixext
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: GizmoSQL-test-amd64.msi
+          path: installer/GizmoSQL-amd64.msi
+          if-no-files-found: error
