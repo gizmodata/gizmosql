@@ -672,7 +672,6 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
     conn.Query("DETACH IF EXISTS _gizmosql_instr");
   }
   shared_db.reset();
-  std::error_code ec;
   fs::remove(test_db_path, ec);
   fs::remove(test_db_path + ".wal", ec);
 }
