@@ -13,6 +13,10 @@ jobs:
   test-msi:
     name: Test MSI Build
     runs-on: windows-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,6 +68,28 @@ jobs:
             -b "${{ github.workspace }}\installer" `
             -o "${{ github.workspace }}\installer\GizmoSQL-amd64.msi" `
             -ext WixToolset.UI.wixext
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Install AzureSignTool
+        run: dotnet tool install --global AzureSignTool
+
+      - name: Sign MSI
+        run: |
+          AzureSignTool sign `
+            --azure-key-vault-url "${{ secrets.AZURE_KEY_VAULT_URI }}" `
+            --azure-key-vault-certificate "${{ secrets.AZURE_CERT_NAME }}" `
+            --azure-key-vault-managed-identity `
+            --timestamp-rfc3161 http://timestamp.digicert.com `
+            --timestamp-digest sha256 `
+            --file-digest sha256 `
+            --verbose `
+            "${{ github.workspace }}\installer\GizmoSQL-amd64.msi"
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
