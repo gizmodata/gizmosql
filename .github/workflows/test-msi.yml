@@ -2,6 +2,12 @@ name: Test MSI Build
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 'feature/windows-build-support'
+    paths:
+      - 'installer/**'
+      - '.github/workflows/test-msi.yml'
 
 jobs:
   test-msi:
@@ -19,10 +25,9 @@ jobs:
       - name: Create dummy executables
         run: |
           New-Item -ItemType Directory -Force -Path installer\bin
-          # Create minimal valid PE executables with version info
-          # For testing, we just need files that WiX can read
-          Set-Content -Path installer\bin\gizmosql_server.exe -Value "dummy" -Encoding Byte
-          Set-Content -Path installer\bin\gizmosql_client.exe -Value "dummy" -Encoding Byte
+          # Copy a real Windows EXE to use as dummy (has valid PE headers with version info)
+          Copy-Item "$env:SystemRoot\System32\cmd.exe" installer\bin\gizmosql_server.exe
+          Copy-Item "$env:SystemRoot\System32\cmd.exe" installer\bin\gizmosql_client.exe
 
       - name: Convert logo to BMP
         run: |
