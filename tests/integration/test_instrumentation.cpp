@@ -664,6 +664,8 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   // Clean up
   manager2->Shutdown();
   manager2.reset();
+  // Release the shared DuckDB instance so file locks are freed (Windows)
+  shared_db.reset();
   fs::remove(test_db_path);
 }
 
