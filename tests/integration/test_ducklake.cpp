@@ -28,14 +28,20 @@
 
 #include <gtest/gtest.h>
 
-#include <arpa/inet.h>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
+#endif
 
 #include "arrow/api.h"
 #include "arrow/flight/sql/client.h"
@@ -118,8 +124,15 @@ QueryResult RunQuery(FlightSqlClient& client,
 bool IsPostgresAvailable() {
   // Try to connect to PostgreSQL using DuckDB's postgres extension
   // We'll do a quick TCP check instead
+#ifdef _WIN32
+  WSADATA wsa;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
+  SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock == INVALID_SOCKET) { WSACleanup(); return false; }
+#else
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock < 0) return false;
+#endif
 
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
@@ -130,10 +143,15 @@ bool IsPostgresAvailable() {
   struct timeval timeout;
   timeout.tv_sec = 2;
   timeout.tv_usec = 0;
-  setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+  setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
 
   int result = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+#ifdef _WIN32
+  closesocket(sock);
+  WSACleanup();
+#else
   close(sock);
+#endif
 
   return result == 0;
 }
