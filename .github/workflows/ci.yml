@@ -538,7 +538,7 @@ jobs:
         run: |
           wix build `
             "${{ github.workspace }}\installer\GizmoSQL.wxs" `
-            -bindpath:BinDir="${{ github.workspace }}\installer\bin" `
+            -b BinDir="${{ github.workspace }}\installer\bin" `
             -o "${{ github.workspace }}\installer\GizmoSQL-amd64.msi" `
             -ext WixToolset.UI.wixext
 
