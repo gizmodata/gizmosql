@@ -357,7 +357,6 @@ jobs:
     name: Build Project - Windows (x64)
     runs-on: windows-2022
     env:
-      zip_file_name: gizmosql_cli_windows_amd64.zip
       VCPKG_DEFAULT_TRIPLET: x64-windows-static
     steps:
       - name: Checkout
@@ -419,18 +418,6 @@ jobs:
       - name: Run Tests
         run: .\build\tests\gizmosql_integration_tests.exe
 
-      - name: Zip artifacts
-        run: |
-          copy build\gizmosql_server.exe .
-          copy build\gizmosql_client.exe .
-          7z a ${{ env.zip_file_name }} gizmosql_server.exe gizmosql_client.exe
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.zip_file_name }}
-          path: ${{ env.zip_file_name }}
-
       - name: Upload unsigned executables for signing
         uses: actions/upload-artifact@v4
         with:
@@ -484,6 +471,16 @@ jobs:
           name: gizmosql-windows-amd64-signed
           path: unsigned/**/*.exe
           if-no-files-found: error
+
+      - name: Create signed zip
+        run: |
+          7z a gizmosql_cli_windows_amd64.zip .\unsigned\*.exe
+
+      - name: Upload signed zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: gizmosql_cli_windows_amd64.zip
+          path: gizmosql_cli_windows_amd64.zip
 
   build-msi:
     name: Build MSI (amd64)

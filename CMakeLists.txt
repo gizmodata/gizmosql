@@ -49,11 +49,49 @@ set(PROJECT_VERSION ${LATEST_TAG})
 # Display variable values using message
 message(STATUS "PROJECT_VERSION: ${PROJECT_VERSION}")
 
+# Parse version components (strip leading 'v' if present)
+string(REGEX REPLACE "^v" "" VERSION_STRIPPED "${PROJECT_VERSION}")
+string(REPLACE "." ";" VERSION_LIST "${VERSION_STRIPPED}")
+list(LENGTH VERSION_LIST VERSION_LIST_LEN)
+if(VERSION_LIST_LEN GREATER_EQUAL 1)
+    list(GET VERSION_LIST 0 VERSION_MAJOR)
+else()
+    set(VERSION_MAJOR 0)
+endif()
+if(VERSION_LIST_LEN GREATER_EQUAL 2)
+    list(GET VERSION_LIST 1 VERSION_MINOR)
+else()
+    set(VERSION_MINOR 0)
+endif()
+if(VERSION_LIST_LEN GREATER_EQUAL 3)
+    list(GET VERSION_LIST 2 VERSION_PATCH)
+else()
+    set(VERSION_PATCH 0)
+endif()
+
 # Configure a header file with the version
 configure_file(
         ${CMAKE_SOURCE_DIR}/src/common/include/version.h.in
         ${CMAKE_SOURCE_DIR}/src/common/include/version.h
 )
+
+# Configure Windows version resource files
+if(WIN32)
+    set(RC_FILE_DESCRIPTION "GizmoSQL Server")
+    set(RC_INTERNAL_NAME "gizmosql_server")
+    set(RC_ORIGINAL_FILENAME "gizmosql_server.exe")
+    configure_file(
+            ${CMAKE_SOURCE_DIR}/src/common/version.rc.in
+            ${CMAKE_BINARY_DIR}/gizmosql_server_version.rc
+    )
+    set(RC_FILE_DESCRIPTION "GizmoSQL Client")
+    set(RC_INTERNAL_NAME "gizmosql_client")
+    set(RC_ORIGINAL_FILENAME "gizmosql_client.exe")
+    configure_file(
+            ${CMAKE_SOURCE_DIR}/src/common/version.rc.in
+            ${CMAKE_BINARY_DIR}/gizmosql_client_version.rc
+    )
+endif()
 
 # --------------------- Arrow ---------------------
 # Arrow's SIMD auto-detection defines __SSE4_2__ etc., which causes Abseil
@@ -425,6 +463,7 @@ install(TARGETS gizmosqlserver
 # ------------ Server Executable section ------------
 add_executable(gizmosql_server
         src/gizmosql_server.cpp
+        $<$<BOOL:${WIN32}>:${CMAKE_BINARY_DIR}/gizmosql_server_version.rc>
 )
 
 target_link_libraries(gizmosql_server PRIVATE
@@ -495,6 +534,10 @@ set(GIZMOSQL_CLIENT_SRCS
         src/client/output_renderer.cpp
         src/client/password_prompt.cpp
 )
+
+if(WIN32)
+    list(APPEND GIZMOSQL_CLIENT_SRCS ${CMAKE_BINARY_DIR}/gizmosql_client_version.rc)
+endif()
 
 add_executable(gizmosql_client ${GIZMOSQL_CLIENT_SRCS})
 
