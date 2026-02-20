@@ -510,6 +510,12 @@ jobs:
           name: gizmosql-windows-amd64-signed
           path: installer/bin
 
+      - name: Copy VC++ runtime DLLs
+        run: |
+          Copy-Item "$env:SystemRoot\System32\vcruntime140.dll" installer\bin\
+          Copy-Item "$env:SystemRoot\System32\vcruntime140_1.dll" installer\bin\
+          Copy-Item "$env:SystemRoot\System32\msvcp140.dll" installer\bin\
+
       - name: Install WiX Toolset
         run: |
           dotnet tool install --global wix --version 6.0.2
