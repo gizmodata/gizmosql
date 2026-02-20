@@ -473,6 +473,11 @@ endif()
 add_library(replxx STATIC IMPORTED)
 set_property(TARGET replxx PROPERTY IMPORTED_LOCATION ${REPLXX_LIBRARY_PATH})
 set_property(TARGET replxx APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${REPLXX_INCLUDE_DIR})
+# On Windows, replxx's generated export header defaults to __declspec(dllimport).
+# Define REPLXX_STATIC_DEFINE to suppress this when linking the static library.
+if(WIN32)
+    set_property(TARGET replxx APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS REPLXX_STATIC_DEFINE)
+endif()
 
 # ------------------------------------------
 

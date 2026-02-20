@@ -40,6 +40,9 @@ ExternalProject_Add(
       -DARROW_RUNTIME_SIMD_LEVEL=${ARROW_RUNTIME_SIMD_LEVEL}
       $<$<BOOL:${WIN32}>:-DARROW_USE_STATIC_CRT=ON>
       $<$<BOOL:${WIN32}>:-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>>
+      $<$<BOOL:${WIN32}>:-DCMAKE_POLICY_DEFAULT_CMP0091=NEW>
+      $<$<BOOL:${WIN32}>:-DARROW_MIMALLOC=OFF>
+      $<$<BOOL:${WIN32}>:-DARROW_JEMALLOC=OFF>
       # On Windows, override ARROW_DEPENDENCY_SOURCE from BUNDLED to AUTO and
       # pass vcpkg toolchain so Arrow finds zlib from vcpkg and tells gRPC to
       # use gRPC_ZLIB_PROVIDER=package (not module). The ARROW_*_ARG variables
