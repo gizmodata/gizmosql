@@ -408,7 +408,7 @@ target_link_libraries(gizmosqlserver
 )
 
 if(WIN32)
-    target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32)
+    target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 rstrtmgr ntdll)
 elseif(APPLE)
     target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-lresolv")
 elseif(UNIX)
@@ -509,7 +509,7 @@ target_link_libraries(gizmosql_client PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(gizmosql_client PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32)
+    target_link_libraries(gizmosql_client PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32 rstrtmgr ntdll)
 elseif(APPLE)
     target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation" "-lresolv")
 elseif(UNIX)

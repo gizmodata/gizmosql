@@ -112,7 +112,7 @@ target_link_libraries(gizmosql_integration_tests PRIVATE
 
 # Platform-specific link libraries
 if(WIN32)
-    target_link_libraries(gizmosql_integration_tests PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32)
+    target_link_libraries(gizmosql_integration_tests PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32 rstrtmgr ntdll)
 elseif(APPLE)
     target_link_libraries(gizmosql_integration_tests PRIVATE "-framework CoreFoundation")
 elseif(UNIX AND NOT APPLE)
