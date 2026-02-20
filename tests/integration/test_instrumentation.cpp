@@ -22,6 +22,11 @@
 #include <algorithm>
 #include <cstdio>
 
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
 #include <duckdb.hpp>
 
 #include "arrow/flight/sql/types.h"
@@ -666,6 +671,9 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
 // This test spawns the server as a subprocess, creates session records,
 // sends SIGTERM, and verifies records are properly closed
 TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
+#ifdef _WIN32
+  GTEST_SKIP() << "SIGTERM/pgrep process management not available on Windows";
+#endif
   namespace fs = std::filesystem;
 
   // Use unique database files for this test
@@ -857,6 +865,9 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
 // Test that GIZMOSQL_ENABLE_INSTRUMENTATION env var enables instrumentation
 // without needing the --enable-instrumentation CLI argument
 TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
+#ifdef _WIN32
+  GTEST_SKIP() << "POSIX process management (pgrep/kill) not available on Windows";
+#endif
   namespace fs = std::filesystem;
 
   // Skip if no license available (instrumentation requires enterprise license)
