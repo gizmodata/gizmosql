@@ -30,16 +30,16 @@
 
   <Fragment>
     <ComponentGroup Id="ServerComponents" Directory="INSTALLFOLDER">
-      <Component Id="ServerExe" Guid="{936EF01C-411F-4BF7-B022-4DCDB54E5EEC}" Win64="yes">
+      <Component Id="ServerExe" Guid="{936EF01C-411F-4BF7-B022-4DCDB54E5EEC}">
         <File Id="GizmoSqlServer" Source="!(bindpath.BinDir)\gizmosql_server.exe" KeyPath="yes" />
       </Component>
-      <Component Id="ClientExe" Guid="{3B012805-89BA-4295-80BC-04470334BABE}" Win64="yes">
+      <Component Id="ClientExe" Guid="{3B012805-89BA-4295-80BC-04470334BABE}">
         <File Id="GizmoSqlClient" Source="!(bindpath.BinDir)\gizmosql_client.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 
     <ComponentGroup Id="PathComponents" Directory="INSTALLFOLDER">
-      <Component Id="PathEntry" Guid="{AEBEAC22-3F2E-4663-93E2-F9C9325BFD6F}" Win64="yes">
+      <Component Id="PathEntry" Guid="{AEBEAC22-3F2E-4663-93E2-F9C9325BFD6F}">
         <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no"
                      Part="last" Action="set" System="yes" />
       </Component>
