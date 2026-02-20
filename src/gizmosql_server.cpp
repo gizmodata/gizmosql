@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
 
   std::string init_sql_commands_file = "";
   if (vm.count("init-sql-commands-file")) {
-    init_sql_commands_file = fs::path(vm["init-sql-commands-file"].as<std::string>());
+    init_sql_commands_file = vm["init-sql-commands-file"].as<std::string>();
   }
 
   fs::path mtls_ca_cert_path;
