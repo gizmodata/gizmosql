@@ -504,7 +504,9 @@ jobs:
           path: installer/bin
 
       - name: Install WiX Toolset
-        run: dotnet tool install --global wix
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          wix extension add WixToolset.UI.wixext/6.0.2
 
       - name: Convert logo to BMP
         run: |
