@@ -400,7 +400,7 @@ jobs:
         env:
           VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib --triplet x64-windows-static --clean-after-build
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet x64-windows-static --clean-after-build
 
       - name: Configure
         run: |
