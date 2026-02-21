@@ -13,15 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Query cancellation** (`gizmosql_client`): Pressing Ctrl+C during a running query now cancels the query on the server via `CancelFlightInfo` RPC and returns to the prompt. Uses a dedicated `sigwait()` thread (same approach as the JVM) for safe gRPC calls, with a separate cancel client connection for thread safety.
 - **Clean session disconnect**: The client now sends `CloseSession` RPC on exit (`.quit`, Ctrl+D, SIGTERM) so the server can clean up session state immediately.
-
-### Fixed
-
-- **Case-insensitive URI boolean parameters**: Connection URI boolean parameters (`useEncryption`, `disableCertificateVerification`) now accept any case (`true`, `True`, `TRUE`, `1`).
-
-## [1.18.2] - 2026-02-21
-
-### Added
-
 - **Windows x64 support**: Native MSVC builds for Windows x64 with full test coverage. Includes DigiCert EV code signing via Azure Key Vault for both executables and the MSI installer.
 - **Windows MSI installer**: WiX v4-based MSI installer that installs `gizmosql_server.exe` and `gizmosql_client.exe` to `Program Files\GizmoSQL` and adds the install directory to the system PATH. Includes application icon and Add/Remove Programs integration.
 - **Bundled VC++ runtime DLLs**: `vcruntime140.dll`, `vcruntime140_1.dll`, and `msvcp140.dll` are bundled with both the CLI zip and MSI installer, so DuckDB extensions (ICU, Spatial, etc.) load correctly on clean Windows installs without requiring the VC++ Redistributable.
@@ -37,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Case-insensitive URI boolean parameters**: Connection URI boolean parameters (`useEncryption`, `disableCertificateVerification`) now accept any case (`true`, `True`, `TRUE`, `1`).
 - **Unicode box-drawing on Windows**: Client output renderer now correctly displays Unicode box-drawing characters on Windows by setting the MSVC execution charset to UTF-8 and configuring the console output code page.
 
 ## [1.18.0] - 2026-02-17
