@@ -41,6 +41,13 @@ arrow::Status ReadPEMFile(const std::string& path, std::string& contents) {
 }
 
 void FlightConnection::Disconnect() {
+  if (client_) {
+    // Notify the server to close the session
+    arrow::flight::CloseSessionRequest request;
+    auto result = client_->CloseSession(call_options_, request);
+    (void)result;  // Best-effort; ignore errors on disconnect
+    client_->Close();
+  }
   client_.reset();
   call_options_ = arrow::flight::FlightCallOptions{};
 }

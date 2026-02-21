@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <csignal>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -38,6 +39,18 @@
 
 namespace po = boost::program_options;
 using namespace gizmosql::client;
+
+namespace {
+FlightConnection* g_conn = nullptr;
+
+void SignalHandler(int /*signum*/) {
+  if (g_conn) {
+    g_conn->Disconnect();
+    g_conn = nullptr;
+  }
+  std::_Exit(0);
+}
+}  // namespace
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
@@ -268,6 +281,10 @@ int main(int argc, char** argv) {
                                config.auth_type_external || uri_provided;
 
   FlightConnection conn;
+  g_conn = &conn;
+
+  // Register SIGTERM handler for clean session disconnect (e.g., kill <pid>)
+  std::signal(SIGTERM, SignalHandler);
 
   if (has_connection_params) {
     auto connect_status = conn.Connect(config);

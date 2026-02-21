@@ -33,6 +33,8 @@ arrow::Status ReadPEMFile(const std::string& path, std::string& contents);
 
 class FlightConnection {
  public:
+  ~FlightConnection() { Disconnect(); }
+
   arrow::Status Connect(const ClientConfig& config);
 
   arrow::Result<std::shared_ptr<arrow::Table>> ExecuteQuery(const std::string& sql);
