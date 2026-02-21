@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.4] - 2026-02-21
+
+### Fixed
+
+- **MSI install directory**: MSI installer now correctly installs to `C:\Program Files\GizmoSQL` instead of `C:\Program Files (x86)\GizmoSQL` by building a 64-bit MSI package (`-arch x64`).
+
 ## [1.18.3] - 2026-02-21
 
 ### Added

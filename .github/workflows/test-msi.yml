@@ -64,6 +64,7 @@ jobs:
         run: |
           wix build `
             "${{ github.workspace }}\installer\GizmoSQL.wxs" `
+            -arch x64 `
             -b BinDir="${{ github.workspace }}\installer\bin" `
             -b "${{ github.workspace }}\installer" `
             -o "${{ github.workspace }}\installer\GizmoSQL-amd64.msi" `
