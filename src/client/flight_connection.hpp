@@ -25,7 +25,6 @@
 #include <arrow/flight/sql/api.h>
 #include <arrow/status.h>
 #include <arrow/table.h>
-#include <arrow/util/cancel.h>
 
 #include "client_config.hpp"
 
@@ -35,7 +34,19 @@ arrow::Status ReadPEMFile(const std::string& path, std::string& contents);
 
 class FlightConnection {
  public:
+  FlightConnection() = default;
   ~FlightConnection() { Disconnect(); }
+
+  // Moveable but not copyable (std::atomic is not copyable)
+  FlightConnection(FlightConnection&& other) noexcept
+      : client_(std::move(other.client_)),
+        call_options_(std::move(other.call_options_)),
+        cancel_client_(std::move(other.cancel_client_)),
+        cancel_call_options_(std::move(other.cancel_call_options_)),
+        cancel_requested_(other.cancel_requested_.load()) {}
+  FlightConnection& operator=(FlightConnection&&) = delete;
+  FlightConnection(const FlightConnection&) = delete;
+  FlightConnection& operator=(const FlightConnection&) = delete;
 
   arrow::Status Connect(const ClientConfig& config);
 
@@ -56,13 +67,13 @@ class FlightConnection {
 
   void Disconnect();
 
+  /// Request cancellation (async-signal-safe — only sets an atomic flag).
+  void RequestCancel() { cancel_requested_.store(true); }
+
+  /// Send CancelFlightInfo to the server (called from cancel watcher thread).
+  void SendCancelToServer();
+
   bool IsConnected() const { return client_ != nullptr; }
-
-  // Returns true if a query is currently being executed
-  bool IsQueryActive() const { return query_active_.load(); }
-
-  // Request cancellation of the current in-flight query (async-signal-safe)
-  void RequestCancel(int signum) { stop_source_.RequestStopFromSignal(signum); }
 
  private:
   arrow::Result<std::shared_ptr<arrow::Table>> CollectResults(
@@ -70,8 +81,13 @@ class FlightConnection {
 
   std::unique_ptr<arrow::flight::sql::FlightSqlClient> client_;
   arrow::flight::FlightCallOptions call_options_;
-  arrow::StopSource stop_source_;
-  std::atomic<bool> query_active_{false};
+
+  // Separate client used exclusively for sending CancelFlightInfo from the
+  // cancel watcher thread. Using the main client_ concurrently is not safe.
+  std::unique_ptr<arrow::flight::FlightClient> cancel_client_;
+  arrow::flight::FlightCallOptions cancel_call_options_;
+
+  std::atomic<bool> cancel_requested_{false};
 };
 
 }  // namespace gizmosql::client

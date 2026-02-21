@@ -49,7 +49,35 @@ void FlightConnection::Disconnect() {
     (void)client_->Close();
   }
   client_.reset();
+  if (cancel_client_) {
+    (void)cancel_client_->Close();
+    cancel_client_.reset();
+  }
   call_options_ = arrow::flight::FlightCallOptions{};
+  cancel_call_options_ = arrow::flight::FlightCallOptions{};
+}
+
+void FlightConnection::SendCancelToServer() {
+  // Called from the sigwait thread (NOT from a signal handler).
+  // Uses cancel_client_ (a separate gRPC connection) to avoid thread-safety
+  // issues with the main client_ that's currently streaming results.
+  //
+  // We use DoAction directly instead of CancelFlightInfo() because the latter
+  // requires a non-null FlightInfo in the request (for serialization), but our
+  // server ignores it — it cancels by session, not by query descriptor.
+  // So we send a minimal CancelFlightInfo action with a dummy FlightInfo.
+  if (cancel_client_) {
+    // Build a minimal FlightInfo to satisfy serialization
+    arrow::flight::FlightInfo::Data data;
+    data.schema = "";
+    data.descriptor = arrow::flight::FlightDescriptor::Command("");
+    data.total_records = -1;
+    data.total_bytes = -1;
+    auto info = std::make_unique<arrow::flight::FlightInfo>(std::move(data));
+
+    arrow::flight::CancelFlightInfoRequest cancel_req{std::move(info)};
+    (void)cancel_client_->CancelFlightInfo(cancel_call_options_, cancel_req);
+  }
 }
 
 arrow::Status FlightConnection::Connect(const ClientConfig& config) {
@@ -158,6 +186,11 @@ arrow::Status FlightConnection::Connect(const ClientConfig& config) {
   client_ = std::make_unique<arrow::flight::sql::FlightSqlClient>(
       std::move(flight_client));
 
+  // Create a separate FlightClient for cancellation (thread-safe: own gRPC channel)
+  ARROW_ASSIGN_OR_RAISE(cancel_client_,
+                         arrow::flight::FlightClient::Connect(location, options));
+  cancel_call_options_ = call_options_;  // Same bearer token / headers
+
   return arrow::Status::OK();
 }
 
@@ -192,70 +225,59 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::CollectResults(
   return arrow::Table::FromRecordBatches(schema, all_batches);
 }
 
+// Helper: detect cancellation from gRPC CANCELLED or server INTERRUPT error
+static bool IsCancelledStatus(const arrow::Status& st) {
+  return st.IsCancelled() ||
+         st.ToString().find("INTERRUPT") != std::string::npos;
+}
+
+
 arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::ExecuteQuery(
     const std::string& sql) {
-  // Set up cancellation token for this query
-  stop_source_.Reset();
-  auto opts = call_options_;
-  opts.stop_token = stop_source_.token();
-  query_active_.store(true);
+  cancel_requested_.store(false);
 
-  // Helper: tell the server to cancel the active query for this session
-  auto cancel_on_server = [&]() {
-    arrow::flight::CancelFlightInfoRequest cancel_req;
-    (void)client_->CancelFlightInfo(call_options_, cancel_req);
-  };
-
-  auto info_result = client_->Execute(opts, sql);
-  if (!info_result.ok()) {
-    query_active_.store(false);
-    if (info_result.status().IsCancelled()) {
-      cancel_on_server();
+  // Helper: check if an error was caused by our SIGINT cancel
+  auto check_cancel = [this](const arrow::Status& st)
+      -> arrow::Result<std::shared_ptr<arrow::Table>> {
+    if (cancel_requested_.load(std::memory_order_relaxed) ||
+        IsCancelledStatus(st)) {
+      SendCancelToServer();
       return arrow::Status::Cancelled("Query cancelled");
     }
-    return info_result.status();
+    return st;
+  };
+
+  auto info_result = client_->Execute(call_options_, sql);
+  if (!info_result.ok()) {
+    return check_cancel(info_result.status());
   }
   auto& info = *info_result;
 
-  // Collect results with cancellation support
   std::vector<std::shared_ptr<arrow::RecordBatch>> all_batches;
   std::shared_ptr<arrow::Schema> schema;
 
   for (const auto& endpoint : info->endpoints()) {
-    auto stream_result = client_->DoGet(opts, endpoint.ticket);
+    auto stream_result = client_->DoGet(call_options_, endpoint.ticket);
     if (!stream_result.ok()) {
-      query_active_.store(false);
-      if (stream_result.status().IsCancelled()) {
-        cancel_on_server();
-        return arrow::Status::Cancelled("Query cancelled");
-      }
-      return stream_result.status();
+      return check_cancel(stream_result.status());
     }
     auto& stream = *stream_result;
 
     auto schema_result = stream->GetSchema();
     if (!schema_result.ok()) {
-      query_active_.store(false);
-      return schema_result.status();
+      return check_cancel(schema_result.status());
     }
     if (!schema) schema = *schema_result;
 
     while (true) {
       auto chunk_result = stream->Next();
       if (!chunk_result.ok()) {
-        query_active_.store(false);
-        if (chunk_result.status().IsCancelled()) {
-          cancel_on_server();
-          return arrow::Status::Cancelled("Query cancelled");
-        }
-        return chunk_result.status();
+        return check_cancel(chunk_result.status());
       }
       if (chunk_result->data == nullptr) break;
       all_batches.push_back(chunk_result->data);
     }
   }
-
-  query_active_.store(false);
 
   if (!schema) {
     return arrow::Status::Invalid("No schema returned from query");
@@ -267,16 +289,14 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::ExecuteQuery(
 }
 
 arrow::Result<int64_t> FlightConnection::ExecuteUpdate(const std::string& sql) {
-  stop_source_.Reset();
-  auto opts = call_options_;
-  opts.stop_token = stop_source_.token();
-  query_active_.store(true);
-  auto result = client_->ExecuteUpdate(opts, sql);
-  query_active_.store(false);
-  if (!result.ok() && result.status().IsCancelled()) {
-    arrow::flight::CancelFlightInfoRequest cancel_req;
-    (void)client_->CancelFlightInfo(call_options_, cancel_req);
-    return arrow::Status::Cancelled("Query cancelled");
+  cancel_requested_.store(false);
+  auto result = client_->ExecuteUpdate(call_options_, sql);
+  if (!result.ok()) {
+    if (cancel_requested_.load(std::memory_order_relaxed) ||
+        IsCancelledStatus(result.status())) {
+      SendCancelToServer();
+      return arrow::Status::Cancelled("Query cancelled");
+    }
   }
   return result;
 }

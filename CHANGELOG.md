@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Query cancellation** (`gizmosql_client`): Pressing Ctrl+C during a running query now cancels the query on the server via `CancelFlightInfo` RPC and returns to the prompt. If no query is active, Ctrl+C disconnects and exits.
+- **Query cancellation** (`gizmosql_client`): Pressing Ctrl+C during a running query now cancels the query on the server via `CancelFlightInfo` RPC and returns to the prompt. Uses a dedicated `sigwait()` thread (same approach as the JVM) for safe gRPC calls, with a separate cancel client connection for thread safety.
 - **Clean session disconnect**: The client now sends `CloseSession` RPC on exit (`.quit`, Ctrl+D, SIGTERM) so the server can clean up session state immediately.
+
+### Fixed
+
+- **Case-insensitive URI boolean parameters**: Connection URI boolean parameters (`useEncryption`, `disableCertificateVerification`) now accept any case (`true`, `True`, `TRUE`, `1`).
 
 ## [1.18.2] - 2026-02-21
 

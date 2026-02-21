@@ -19,10 +19,14 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <pthread.h>
+#include <unistd.h>
 #endif
 
 #define BOOST_NO_CXX98_FUNCTION_BASE
@@ -42,20 +46,6 @@ using namespace gizmosql::client;
 
 namespace {
 FlightConnection* g_conn = nullptr;
-
-void SigintHandler(int signum) {
-  if (g_conn && g_conn->IsQueryActive()) {
-    // Cancel the in-flight query (async-signal-safe)
-    g_conn->RequestCancel(signum);
-  } else {
-    // No active query — disconnect and exit
-    if (g_conn) {
-      g_conn->Disconnect();
-      g_conn = nullptr;
-    }
-    std::_Exit(0);
-  }
-}
 
 void SigtermHandler(int /*signum*/) {
   if (g_conn) {
@@ -297,10 +287,40 @@ int main(int argc, char** argv) {
   FlightConnection conn;
   g_conn = &conn;
 
-  // SIGINT: cancel active query, or disconnect+exit if idle
-  // SIGTERM: always disconnect and exit
-  std::signal(SIGINT, SigintHandler);
   std::signal(SIGTERM, SigtermHandler);
+
+  // Block SIGINT in all threads. Instead of using an async-signal handler
+  // (which is restricted to async-signal-safe functions), we use a dedicated
+  // thread that calls sigwait() to handle SIGINT synchronously — the same
+  // approach the JVM uses for Java signal handlers. This lets us safely call
+  // gRPC methods (CancelFlightInfo) from the signal-handling thread.
+  // Replxx is unaffected: it disables ISIG in raw mode and reads Ctrl+C as
+  // a keypress (ASCII 3), so SIGINT is never generated at the prompt.
+#ifndef _WIN32
+  {
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &mask, nullptr);
+
+    std::thread([&conn, mask]() {
+      sigset_t wait_mask = mask;
+      while (true) {
+        int sig = 0;
+        sigwait(&wait_mask, &sig);
+        if (sig == SIGINT) {
+          conn.RequestCancel();
+          conn.SendCancelToServer();
+        }
+      }
+    }).detach();
+  }
+#else
+  // On Windows, use signal() as fallback
+  std::signal(SIGINT, [](int) {
+    if (g_conn) g_conn->RequestCancel();
+  });
+#endif
 
   if (has_connection_params) {
     auto connect_status = conn.Connect(config);

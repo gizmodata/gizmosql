@@ -25,6 +25,14 @@
 
 namespace gizmosql::client {
 
+namespace {
+bool ParseBoolValue(const std::string& val) {
+  std::string lower = val;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  return lower == "true" || lower == "1";
+}
+}  // namespace
+
 std::string OutputModeToString(OutputMode mode) {
   switch (mode) {
     case OutputMode::TABLE:     return "table";
@@ -186,13 +194,10 @@ bool ParseConnectionURI(const std::string& uri, ClientConfig& config) {
       config.username = params["username"];
     }
     if (params.count("useEncryption")) {
-      config.use_tls = (params["useEncryption"] == "true" ||
-                        params["useEncryption"] == "1");
+      config.use_tls = ParseBoolValue(params["useEncryption"]);
     }
     if (params.count("disableCertificateVerification")) {
-      config.tls_skip_verify =
-          (params["disableCertificateVerification"] == "true" ||
-           params["disableCertificateVerification"] == "1");
+      config.tls_skip_verify = ParseBoolValue(params["disableCertificateVerification"]);
     }
     if (params.count("tlsRoots")) {
       config.tls_roots = params["tlsRoots"];
