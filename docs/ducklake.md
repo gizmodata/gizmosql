@@ -262,7 +262,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 # Connect to GizmoSQL
 conn = gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password=os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password"),
 )
 

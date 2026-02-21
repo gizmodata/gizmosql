@@ -13,7 +13,7 @@ def main():
         try:
             with gizmosql.connect(
                 "grpc+tls://localhost:31337",
-                username="gizmosql_username",
+                username="gizmosql_user",
                 password=gizmosql_password,
                 tls_skip_verify=True,  # Not needed if you use a trusted CA-signed TLS cert
             ) as conn:

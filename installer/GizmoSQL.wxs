@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="GizmoSQL"
+           Manufacturer="GizmoData LLC"
+           Version="!(bind.fileVersion.GizmoSqlServer)"
+           UpgradeCode="{D29A3161-264E-4D77-99F4-EE327AFE8DFA}"
+           Scope="perMachine">
+
+    <Icon Id="gizmosql.ico" SourceFile="gizmosql.ico" />
+    <Property Id="ARPPRODUCTICON" Value="gizmosql.ico" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of GizmoSQL is already installed." />
+    <Media Id="1" Cabinet="gizmosql.cab" EmbedCab="yes" />
+
+    <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+
+    <Feature Id="ProductFeature" Title="GizmoSQL" Level="1">
+      <ComponentGroupRef Id="ServerComponents" />
+      <ComponentGroupRef Id="PathComponents" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="GizmoSQL" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ServerComponents" Directory="INSTALLFOLDER">
+      <Component Id="ServerExe" Guid="{936EF01C-411F-4BF7-B022-4DCDB54E5EEC}">
+        <File Id="GizmoSqlServer" Source="!(bindpath.BinDir)\gizmosql_server.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="ClientExe" Guid="{3B012805-89BA-4295-80BC-04470334BABE}">
+        <File Id="GizmoSqlClient" Source="!(bindpath.BinDir)\gizmosql_client.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="VCRuntime" Guid="{16322E96-725B-463A-99A7-0D61A622E069}">
+        <File Id="vcruntime140" Source="!(bindpath.BinDir)\vcruntime140.dll" />
+        <File Id="vcruntime140_1" Source="!(bindpath.BinDir)\vcruntime140_1.dll" />
+        <File Id="msvcp140" Source="!(bindpath.BinDir)\msvcp140.dll" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="PathComponents" Directory="INSTALLFOLDER">
+      <Component Id="PathEntry" Guid="{AEBEAC22-3F2E-4663-93E2-F9C9325BFD6F}">
+        <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no"
+                     Part="last" Action="set" System="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

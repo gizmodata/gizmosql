@@ -48,7 +48,7 @@ RC=$?
 GIZMOSQL_PASSWORD="${GIZMOSQL_PASSWORD}" gizmosql_client \
   --host "localhost" \
   --port 31337 \
-  --username "gizmosql_username" \
+  --username "gizmosql_user" \
   --tls \
   --tls-skip-verify \
   --command "SELECT version()"

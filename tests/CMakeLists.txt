@@ -110,10 +110,14 @@ target_link_libraries(gizmosql_integration_tests PRIVATE
         Threads::Threads
 )
 
-# macOS / Linux specifics
-if (APPLE)
+# Platform-specific link libraries
+if(WIN32)
+    target_link_libraries(gizmosql_integration_tests PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32 rstrtmgr ntdll)
+    # Suppress dynamic CRT default libs that leak from static libs compiled with /MD
+    target_link_options(gizmosql_integration_tests PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
+elseif(APPLE)
     target_link_libraries(gizmosql_integration_tests PRIVATE "-framework CoreFoundation")
-elseif (UNIX AND NOT APPLE)
+elseif(UNIX AND NOT APPLE)
     target_link_libraries(gizmosql_integration_tests PRIVATE "-lssl -lcrypto -lresolv")
 endif()
 

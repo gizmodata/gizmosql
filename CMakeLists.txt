@@ -1,7 +1,27 @@
 cmake_minimum_required(VERSION 3.25)
 project(gizmosql)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
+
+# --------------------- Platform Settings ---------------------
+if(WIN32)
+    set(LIB_PREFIX "")
+    set(LIB_SUFFIX ".lib")
+else()
+    set(LIB_PREFIX "lib")
+    set(LIB_SUFFIX ".a")
+endif()
+
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+    add_compile_options(/utf-8)
+endif()
+
+set(EXE_SUFFIX "")
+if(WIN32)
+    set(EXE_SUFFIX ".exe")
+endif()
 
 # --------------------- Enterprise Edition Option ---------------------
 option(GIZMOSQL_ENTERPRISE "Build with enterprise features (instrumentation, kill session)" ON)
@@ -30,13 +50,108 @@ set(PROJECT_VERSION ${LATEST_TAG})
 # Display variable values using message
 message(STATUS "PROJECT_VERSION: ${PROJECT_VERSION}")
 
+# Parse version components (strip leading 'v' if present)
+string(REGEX REPLACE "^v" "" VERSION_STRIPPED "${PROJECT_VERSION}")
+string(REPLACE "." ";" VERSION_LIST "${VERSION_STRIPPED}")
+list(LENGTH VERSION_LIST VERSION_LIST_LEN)
+if(VERSION_LIST_LEN GREATER_EQUAL 1)
+    list(GET VERSION_LIST 0 VERSION_MAJOR)
+else()
+    set(VERSION_MAJOR 0)
+endif()
+if(VERSION_LIST_LEN GREATER_EQUAL 2)
+    list(GET VERSION_LIST 1 VERSION_MINOR)
+else()
+    set(VERSION_MINOR 0)
+endif()
+if(VERSION_LIST_LEN GREATER_EQUAL 3)
+    list(GET VERSION_LIST 2 VERSION_PATCH)
+else()
+    set(VERSION_PATCH 0)
+endif()
+
 # Configure a header file with the version
 configure_file(
         ${CMAKE_SOURCE_DIR}/src/common/include/version.h.in
         ${CMAKE_SOURCE_DIR}/src/common/include/version.h
 )
 
+# Configure Windows version resource files
+if(WIN32)
+    set(RC_ICON_PATH "${CMAKE_SOURCE_DIR}/installer/gizmosql.ico")
+    set(RC_FILE_DESCRIPTION "GizmoSQL Server")
+    set(RC_INTERNAL_NAME "gizmosql_server")
+    set(RC_ORIGINAL_FILENAME "gizmosql_server.exe")
+    configure_file(
+            ${CMAKE_SOURCE_DIR}/src/common/version.rc.in
+            ${CMAKE_BINARY_DIR}/gizmosql_server_version.rc
+    )
+    set(RC_ICON_PATH "${CMAKE_SOURCE_DIR}/installer/gizmosql_client.ico")
+    set(RC_FILE_DESCRIPTION "GizmoSQL Client")
+    set(RC_INTERNAL_NAME "gizmosql_client")
+    set(RC_ORIGINAL_FILENAME "gizmosql_client.exe")
+    configure_file(
+            ${CMAKE_SOURCE_DIR}/src/common/version.rc.in
+            ${CMAKE_BINARY_DIR}/gizmosql_client_version.rc
+    )
+endif()
+
 # --------------------- Arrow ---------------------
+# Arrow's SIMD auto-detection defines __SSE4_2__ etc., which causes Abseil
+# (bundled by Arrow) to include x86intrin.h — a GCC/Clang header that MSVC
+# doesn't have. Disable SIMD on Windows to avoid this incompatibility.
+set(ARROW_SIMD_LEVEL "DEFAULT")
+set(ARROW_RUNTIME_SIMD_LEVEL "MAX")
+if(WIN32)
+    set(ARROW_SIMD_LEVEL "NONE")
+    set(ARROW_RUNTIME_SIMD_LEVEL "NONE")
+endif()
+
+# On Windows, Arrow's bundled gRPC needs zlib at compile time. Rather than
+# building zlib from source (which has timing issues with gRPC), tell Arrow
+# to use the system/vcpkg-installed zlib via -DZLIB_SOURCE=SYSTEM and pass
+# CMAKE_PREFIX_PATH so Arrow (and gRPC via FetchContent) can find it.
+# This mirrors the approach used by the gizmosql-odbc-driver.
+set(VCPKG_PREFIX_PATH "")
+if(WIN32 AND VCPKG_TARGET_TRIPLET)
+    if(VCPKG_INSTALLED_DIR)
+        set(VCPKG_PREFIX_PATH "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    elseif(CMAKE_TOOLCHAIN_FILE)
+        # Derive vcpkg root from toolchain: .../scripts/buildsystems/vcpkg.cmake
+        get_filename_component(_VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
+        get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
+        get_filename_component(_VCPKG_ROOT "${_VCPKG_ROOT}" DIRECTORY)
+        set(VCPKG_PREFIX_PATH "${_VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
+    endif()
+    if(VCPKG_PREFIX_PATH)
+        # Use AUTO instead of BUNDLED so Arrow finds vcpkg zlib via the
+        # toolchain, then sets gRPC_ZLIB_PROVIDER=package for gRPC.
+        # With BUNDLED, Arrow overrides ZLIB_SOURCE and sets gRPC to "module".
+        set(ARROW_DEPENDENCY_SOURCE_ARG "-DARROW_DEPENDENCY_SOURCE=AUTO")
+        set(ARROW_ZLIB_SOURCE_ARG "-DZLIB_SOURCE=SYSTEM")
+        set(ARROW_PREFIX_PATH_ARG "-DCMAKE_PREFIX_PATH=${VCPKG_PREFIX_PATH}")
+        set(ARROW_ZLIB_ROOT_ARG "-DZLIB_ROOT=${VCPKG_PREFIX_PATH}")
+        # Pass the vcpkg toolchain file to Arrow so nested builds (gRPC via
+        # FetchContent) also find vcpkg packages. Use VCPKG_MANIFEST_MODE=OFF
+        # to prevent Arrow from auto-installing packages via vcpkg manifest.
+        # Force gRPC to use find_package(ZLIB) instead of its local module.
+        # Arrow's ThirdpartyToolchain unconditionally sets gRPC_ZLIB_PROVIDER=module
+        # when building gRPC from source. Since gRPC is built via FetchContent
+        # (add_subdirectory), this cache variable propagates to gRPC's cmake.
+        set(ARROW_GRPC_ZLIB_ARG "-DgRPC_ZLIB_PROVIDER=package")
+        # Force Arrow to download its own Boost headers. With AUTO, Arrow finds
+        # vcpkg Boost (which only has our app's components) and then fails when
+        # Arrow-internal headers like boost/multiprecision/cpp_int.hpp are missing.
+        set(ARROW_BOOST_SOURCE_ARG "-DBoost_SOURCE=BUNDLED")
+        if(CMAKE_TOOLCHAIN_FILE)
+            set(ARROW_TOOLCHAIN_ARG "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}")
+            set(ARROW_VCPKG_TRIPLET_ARG "-DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET}")
+            set(ARROW_VCPKG_MANIFEST_ARG "-DVCPKG_MANIFEST_MODE=OFF")
+        endif()
+        message(STATUS "Windows: vcpkg prefix path for Arrow zlib: ${VCPKG_PREFIX_PATH}")
+    endif()
+endif()
+
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
 )
@@ -63,7 +178,7 @@ find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 # We need to link the abseil libraries that Arrow built separately.
 # On Linux, abseil libraries have circular dependencies, so we use link groups.
 set(ABSL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/_deps/absl-build")
-file(GLOB_RECURSE ABSL_LIBRARIES "${ABSL_BUILD_DIR}/absl/*.a")
+file(GLOB_RECURSE ABSL_LIBRARIES "${ABSL_BUILD_DIR}/absl/*${LIB_SUFFIX}")
 add_library(arrow_absl INTERFACE)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Use linker groups to handle circular dependencies in abseil
@@ -92,7 +207,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --install .
 )
 
 set(SQLITE_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install/include")
-set(SQLITE_LIBRARY_PATH "${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install/lib/libsqlite3.a")
+set(SQLITE_LIBRARY_PATH "${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install/lib/${LIB_PREFIX}sqlite3${LIB_SUFFIX}")
 
 add_library(sqlite STATIC IMPORTED)
 set_property(TARGET sqlite PROPERTY IMPORTED_LOCATION ${SQLITE_LIBRARY_PATH})
@@ -112,7 +227,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 
 set(DUCKDB_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/duckdb")
 
-set(DUCKDB_LIBRARY_PATH "${DUCKDB_INSTALL_DIR}/lib/libduckdb_static.a")
+set(DUCKDB_LIBRARY_PATH "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_static${LIB_SUFFIX}")
 set(DUCKDB_INCLUDE_DIR "${DUCKDB_INSTALL_DIR}/include")
 
 add_library(duckdb STATIC IMPORTED)
@@ -121,27 +236,27 @@ set_property(TARGET duckdb APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${DUCKD
 
 target_link_libraries(duckdb
         INTERFACE
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_fastpforlib.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_fmt.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_fsst.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_hyperloglog.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_mbedtls.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_miniz.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_pg_query.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_re2.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_utf8proc.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_yyjson.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_zstd.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libparquet_extension.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libcore_functions_extension.a"
-        "${DUCKDB_INSTALL_DIR}/lib/libduckdb_skiplistlib.a"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_fastpforlib${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_fmt${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_fsst${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_hyperloglog${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_mbedtls${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_miniz${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_pg_query${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_re2${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_utf8proc${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_yyjson${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_zstd${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
 )
 
 # Only link jemalloc_extension on Linux
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(duckdb
             INTERFACE
-            "${DUCKDB_INSTALL_DIR}/lib/libjemalloc_extension.a"
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}jemalloc_extension${LIB_SUFFIX}"
     )
 endif ()
 
@@ -193,11 +308,11 @@ find_package(Boost COMPONENTS program_options REQUIRED)
 set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
 
 # Arrow 23 FetchContent paths
-set(PROTOC_EXECUTABLE "${ARROW_BUILD_DIR}/_deps/protobuf-build/protoc")
-set(GRPC_CPP_PLUGIN "${ARROW_BUILD_DIR}/_deps/grpc-build/grpc_cpp_plugin")
+set(PROTOC_EXECUTABLE "${ARROW_BUILD_DIR}/_deps/protobuf-build/protoc${EXE_SUFFIX}")
+set(GRPC_CPP_PLUGIN "${ARROW_BUILD_DIR}/_deps/grpc-build/grpc_cpp_plugin${EXE_SUFFIX}")
 set(PROTOBUF_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/protobuf-src/src")
 set(GRPC_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/grpc-src/include")
-set(GRPC_REFLECTION_LIBRARY "${ARROW_BUILD_DIR}/_deps/grpc-build/libgrpc++_reflection.a")
+set(GRPC_REFLECTION_LIBRARY "${ARROW_BUILD_DIR}/_deps/grpc-build/${LIB_PREFIX}grpc++_reflection${LIB_SUFFIX}")
 set(ABSL_INCLUDE_DIR "${ARROW_BUILD_DIR}/_deps/absl-src")
 
 # Define the proto source and output paths
@@ -331,15 +446,16 @@ target_link_libraries(gizmosqlserver
         ${Boost_LIBRARIES}
         nlohmann_json::nlohmann_json
         ${GRPC_REFLECTION_LIBRARY}
-        "-lresolv"
 )
 
-if (APPLE)
-    # macOS-specific libraries and options
-    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation")
-elseif (UNIX AND NOT APPLE)
-    target_link_libraries(gizmosqlserver PRIVATE "-lssl -lcrypto")
-endif ()
+if(WIN32)
+    target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 rstrtmgr ntdll)
+    target_link_options(gizmosqlserver PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
+elseif(APPLE)
+    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-lresolv")
+elseif(UNIX)
+    target_link_libraries(gizmosqlserver PRIVATE "-lssl" "-lcrypto" "-lresolv")
+endif()
 
 # Specify the installation directory for the library
 install(TARGETS gizmosqlserver
@@ -350,6 +466,7 @@ install(TARGETS gizmosqlserver
 # ------------ Server Executable section ------------
 add_executable(gizmosql_server
         src/gizmosql_server.cpp
+        $<$<BOOL:${WIN32}>:${CMAKE_BINARY_DIR}/gizmosql_server_version.rc>
 )
 
 target_link_libraries(gizmosql_server PRIVATE
@@ -360,7 +477,9 @@ target_link_libraries(gizmosql_server PRIVATE
         ${GRPC_REFLECTION_LIBRARY}
 )
 
-target_compile_options(gizmosql_server PRIVATE "-static")
+if(NOT MSVC)
+    target_compile_options(gizmosql_server PRIVATE "-static")
+endif()
 
 install(TARGETS gizmosql_server
         DESTINATION bin
@@ -383,11 +502,13 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --build .
 
 set(REPLXX_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/replxx")
 set(REPLXX_INCLUDE_DIR "${REPLXX_INSTALL_DIR}/include")
-# replxx appends -d suffix in Debug builds
-if(EXISTS "${REPLXX_INSTALL_DIR}/lib/libreplxx-d.a")
-    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/libreplxx-d.a")
-elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/libreplxx.a")
-    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/libreplxx.a")
+# replxx appends -d suffix in Debug builds; on Windows the target is "replxx-static"
+if(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
+elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
+elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/replxx-static.lib")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/replxx-static.lib")
 else()
     message(FATAL_ERROR "replxx library not found in ${REPLXX_INSTALL_DIR}/lib/")
 endif()
@@ -395,6 +516,12 @@ endif()
 add_library(replxx STATIC IMPORTED)
 set_property(TARGET replxx PROPERTY IMPORTED_LOCATION ${REPLXX_LIBRARY_PATH})
 set_property(TARGET replxx APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${REPLXX_INCLUDE_DIR})
+# On Windows, replxx.hxx defaults to __declspec(dllimport) unless REPLXX_BUILDING_DLL
+# is defined. Define it so REPLXX_IMPEXP becomes __declspec(dllexport) instead, which
+# is harmless for static linking and avoids __imp_ symbol mismatch.
+if(WIN32)
+    set_property(TARGET replxx APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS REPLXX_BUILDING_DLL)
+endif()
 
 # ------------------------------------------
 
@@ -410,6 +537,10 @@ set(GIZMOSQL_CLIENT_SRCS
         src/client/output_renderer.cpp
         src/client/password_prompt.cpp
 )
+
+if(WIN32)
+    list(APPEND GIZMOSQL_CLIENT_SRCS ${CMAKE_BINARY_DIR}/gizmosql_client_version.rc)
+endif()
 
 add_executable(gizmosql_client ${GIZMOSQL_CLIENT_SRCS})
 
@@ -428,17 +559,20 @@ target_link_libraries(gizmosql_client PRIVATE
         replxx
         ${Boost_LIBRARIES}
         nlohmann_json::nlohmann_json
-        "-lresolv"
 )
 
-if (APPLE)
-    # macOS-specific libraries and options
-    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation")
-elseif (UNIX AND NOT APPLE)
-    target_link_libraries(gizmosql_client PRIVATE "-lssl -lcrypto")
-endif ()
+if(WIN32)
+    target_link_libraries(gizmosql_client PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32 rstrtmgr ntdll)
+    target_link_options(gizmosql_client PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
+elseif(APPLE)
+    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation" "-lresolv")
+elseif(UNIX)
+    target_link_libraries(gizmosql_client PRIVATE "-lssl" "-lcrypto" "-lresolv")
+endif()
 
-target_compile_options(gizmosql_client PRIVATE "-static")
+if(NOT MSVC)
+    target_compile_options(gizmosql_client PRIVATE "-static")
+endif()
 
 install(TARGETS gizmosql_client
         DESTINATION bin

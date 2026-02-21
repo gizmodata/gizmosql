@@ -27,11 +27,23 @@
 #include <regex>
 #include <sstream>
 #include <vector>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <windows.h>
+#include <winternl.h>
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
+#else
 #include <unistd.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/utsname.h>
+#endif
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #include <mach/mach.h>
@@ -102,6 +114,17 @@ static std::string MakeSessionId() {
   return boost::uuids::to_string(boost::uuids::random_generator()());
 }
 
+#ifdef _WIN32
+// Initialize WinSock once at process startup (needed for gethostname, etc.)
+static struct WinSockInit {
+  WinSockInit() {
+    WSADATA wsa_data;
+    WSAStartup(MAKEWORD(2, 2), &wsa_data);
+  }
+  ~WinSockInit() { WSACleanup(); }
+} g_winsock_init;
+#endif
+
 // Get the actual hostname of the machine from the OS
 static std::string GetActualHostname() {
   char hostname[256];
@@ -114,6 +137,41 @@ static std::string GetActualHostname() {
 // Get the primary IP address of the server
 // Prioritizes common primary interface names (en0/eth0), falls back to any non-loopback IPv4
 static std::string GetPrimaryIPAddress() {
+#ifdef _WIN32
+  // Windows: Use GetAdaptersAddresses from IP Helper API
+  ULONG buf_size = 15000;
+  std::vector<uint8_t> buffer(buf_size);
+  auto* addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
+
+  ULONG ret = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                                   nullptr, addresses, &buf_size);
+  if (ret == ERROR_BUFFER_OVERFLOW) {
+    buffer.resize(buf_size);
+    addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
+    ret = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                               nullptr, addresses, &buf_size);
+  }
+  if (ret != NO_ERROR) return "";
+
+  std::string fallback_ip;
+  for (auto* adapter = addresses; adapter != nullptr; adapter = adapter->Next) {
+    if (adapter->OperStatus != IfOperStatusUp) continue;
+    for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr;
+         unicast = unicast->Next) {
+      auto* sa = reinterpret_cast<struct sockaddr_in*>(unicast->Address.lpSockaddr);
+      char ip_str[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &sa->sin_addr, ip_str, sizeof(ip_str));
+      std::string ip(ip_str);
+      if (ip.rfind("127.", 0) == 0) continue;
+      if (adapter->IfType == IF_TYPE_ETHERNET_CSMACD ||
+          adapter->IfType == IF_TYPE_IEEE80211) {
+        return ip;  // Prefer Ethernet or Wi-Fi
+      }
+      if (fallback_ip.empty()) fallback_ip = ip;
+    }
+  }
+  return fallback_ip;
+#else
   struct ifaddrs* ifaddr = nullptr;
   if (getifaddrs(&ifaddr) == -1) {
     return "";
@@ -153,6 +211,7 @@ static std::string GetPrimaryIPAddress() {
 
   freeifaddrs(ifaddr);
   return primary_ip.empty() ? fallback_ip : primary_ip;
+#endif
 }
 
 // Get system information for instrumentation and logging
@@ -169,6 +228,64 @@ struct SystemInfo {
 static SystemInfo GetSystemInfo() {
   SystemInfo info;
 
+#ifdef _WIN32
+  // Windows: Get system information
+  info.os_platform = "windows";
+
+  // Get OS version using RtlGetVersion (avoids deprecated GetVersionEx)
+  typedef NTSTATUS(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+  auto ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (ntdll) {
+    auto rtl_get_version = reinterpret_cast<RtlGetVersionPtr>(
+        GetProcAddress(ntdll, "RtlGetVersion"));
+    if (rtl_get_version) {
+      RTL_OSVERSIONINFOW osvi = {};
+      osvi.dwOSVersionInfoSize = sizeof(osvi);
+      if (rtl_get_version(&osvi) == 0) {
+        info.os_version = std::to_string(osvi.dwMajorVersion) + "." +
+                          std::to_string(osvi.dwMinorVersion) + "." +
+                          std::to_string(osvi.dwBuildNumber);
+        info.os_name = "Windows " + std::to_string(osvi.dwMajorVersion);
+        if (osvi.dwMajorVersion == 10 && osvi.dwBuildNumber >= 22000) {
+          info.os_name = "Windows 11";
+        }
+      }
+    }
+  }
+
+  // Get CPU architecture and count
+  SYSTEM_INFO si;
+  GetNativeSystemInfo(&si);
+  info.cpu_count = static_cast<int>(si.dwNumberOfProcessors);
+  switch (si.wProcessorArchitecture) {
+    case PROCESSOR_ARCHITECTURE_AMD64: info.cpu_arch = "x86_64"; break;
+    case PROCESSOR_ARCHITECTURE_ARM64: info.cpu_arch = "arm64"; break;
+    case PROCESSOR_ARCHITECTURE_INTEL: info.cpu_arch = "x86"; break;
+    default: info.cpu_arch = "unknown"; break;
+  }
+
+  // Get CPU model from registry
+  HKEY hkey;
+  if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+                    "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                    0, KEY_READ, &hkey) == ERROR_SUCCESS) {
+    char cpu_name[256] = {};
+    DWORD size = sizeof(cpu_name);
+    if (RegQueryValueExA(hkey, "ProcessorNameString", nullptr, nullptr,
+                         reinterpret_cast<LPBYTE>(cpu_name), &size) == ERROR_SUCCESS) {
+      info.cpu_model = cpu_name;
+    }
+    RegCloseKey(hkey);
+  }
+
+  // Get total memory
+  MEMORYSTATUSEX mem = {};
+  mem.dwLength = sizeof(mem);
+  if (GlobalMemoryStatusEx(&mem)) {
+    info.memory_total_bytes = static_cast<int64_t>(mem.ullTotalPhys);
+  }
+
+#else
   // Get basic info from uname
   struct utsname uts;
   if (uname(&uts) == 0) {
@@ -268,7 +385,8 @@ static SystemInfo GetSystemInfo() {
   if (pages > 0 && page_size > 0) {
     info.memory_total_bytes = static_cast<int64_t>(pages) * page_size;
   }
-#endif
+#endif  // __APPLE__
+#endif  // _WIN32
 
   return info;
 }
@@ -482,7 +600,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   if (!mtls_ca_cert_path.empty()) {
     GIZMOSQL_LOG(INFO) << "Using mTLS CA certificate: " << mtls_ca_cert_path;
     ARROW_CHECK_OK(gizmosql::SecurityUtilities::FlightServerMtlsCACertificate(
-        mtls_ca_cert_path, &options.root_certificates));
+        mtls_ca_cert_path.string(), &options.root_certificates));
     options.verify_client = true;
   }
 
@@ -502,7 +620,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     db_type = "SQLite";
     std::shared_ptr<gizmosql::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(sqlite_server, gizmosql::sqlite::SQLiteFlightSqlServer::Create(
-                                             database_filename, read_only));
+                                             database_filename.string(), read_only));
     RUN_INIT_COMMANDS(sqlite_server, init_sql_commands);
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
@@ -511,7 +629,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Create DuckDB server first (without instrumentation manager)
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
-                                             database_filename, read_only, print_queries,
+                                             database_filename.string(), read_only, print_queries,
                                              query_timeout, query_log_level,
                                              nullptr))  // No instrumentation manager yet
 
@@ -698,7 +816,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     ARROW_CHECK_OK(server->Init(options));
 
     // Exit with a clean error code (0) on SIGTERM or SIGINT
+    // Windows does not support SIGTERM, so only use SIGINT there
+#ifdef _WIN32
+    ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGINT}));
+#else
     ARROW_CHECK_OK(server->SetShutdownOnSignals({SIGTERM, SIGINT}));
+#endif
 
     // Start plaintext health server for Kubernetes probes AFTER main server init succeeds.
     // This ensures we don't leave orphaned servers if main server initialization fails.

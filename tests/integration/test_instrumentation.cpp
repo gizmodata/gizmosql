@@ -22,6 +22,11 @@
 #include <algorithm>
 #include <cstdio>
 
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
 #include <duckdb.hpp>
 
 #include "arrow/flight/sql/types.h"
@@ -526,8 +531,10 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   // Use a temporary database for this test
   std::string test_db_path = "stale_cleanup_test_instr.db";
 
-  // Clean up any existing test database
-  fs::remove(test_db_path);
+  // Clean up any existing test database (use error_code to avoid throwing on Windows)
+  std::error_code ec;
+  fs::remove(test_db_path, ec);
+  fs::remove(test_db_path + ".wal", ec);
 
   // Create a DuckDB instance
   duckdb::DuckDB db(":memory:");
@@ -659,13 +666,23 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   // Clean up
   manager2->Shutdown();
   manager2.reset();
-  fs::remove(test_db_path);
+  // Explicitly detach and release the DuckDB instance so file locks are freed (Windows)
+  {
+    duckdb::Connection conn(*shared_db);
+    conn.Query("DETACH IF EXISTS _gizmosql_instr");
+  }
+  shared_db.reset();
+  fs::remove(test_db_path, ec);
+  fs::remove(test_db_path + ".wal", ec);
 }
 
 // Test that SIGTERM gracefully closes instrumentation records
 // This test spawns the server as a subprocess, creates session records,
 // sends SIGTERM, and verifies records are properly closed
 TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
+#ifdef _WIN32
+  GTEST_SKIP() << "SIGTERM/pgrep process management not available on Windows";
+#endif
   namespace fs = std::filesystem;
 
   // Use unique database files for this test
@@ -857,6 +874,9 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
 // Test that GIZMOSQL_ENABLE_INSTRUMENTATION env var enables instrumentation
 // without needing the --enable-instrumentation CLI argument
 TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
+#ifdef _WIN32
+  GTEST_SKIP() << "POSIX process management (pgrep/kill) not available on Windows";
+#endif
   namespace fs = std::filesystem;
 
   // Skip if no license available (instrumentation requires enterprise license)

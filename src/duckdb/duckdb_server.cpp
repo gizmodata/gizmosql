@@ -1146,7 +1146,7 @@ class DuckDBFlightSqlServer::Impl {
 
     std::shared_ptr<duckdb::PreparedStatement> stmt = statement->GetDuckDBStmt();
     arrow::FieldVector parameter_fields;
-    id_t parameter_count = 0;
+    size_t parameter_count = 0;
 
     if (stmt != nullptr) {
       // Traditional prepared statement - extract parameter information
@@ -1161,7 +1161,7 @@ class DuckDBFlightSqlServer::Impl {
 
       auto bind_parameter_map = prepared_statement_data->value_map;
 
-      for (id_t i = 0; i < parameter_count; i++) {
+      for (size_t i = 0; i < parameter_count; i++) {
         std::string parameter_idx_str = std::to_string(i + 1);
         std::string parameter_name = std::string("parameter_") + parameter_idx_str;
         auto parameter_duckdb_type = prepared_statement_data->GetType(parameter_idx_str);

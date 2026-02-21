@@ -34,7 +34,7 @@ data = pa.table({
 # Connect to GizmoSQL and bulk ingest
 with gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
@@ -77,7 +77,7 @@ lineitem_reader = duckdb_conn.table("lineitem").fetch_arrow_reader(batch_size=10
 # Bulk ingest into GizmoSQL
 with gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
@@ -107,7 +107,7 @@ table = pq.read_table("data.parquet")
 
 with gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
@@ -140,7 +140,7 @@ arrow_table = pa.Table.from_pandas(df)
 
 with gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
@@ -161,7 +161,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
     "grpc+tls://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,  # Only for self-signed certs
 ) as conn:
@@ -205,7 +205,7 @@ def bulk_ingest_tpch(scale_factor=0.1):
     # Step 3: Bulk ingest
     with gizmosql.connect(
         "grpc://localhost:31337",
-        username="gizmosql_username",
+        username="gizmosql_user",
         password="gizmosql_password",
     ) as conn:
         with conn.cursor() as cursor:

@@ -29,7 +29,7 @@ def test_bulk_ingest():
 
     host = os.getenv("GIZMOSQL_HOST", "localhost")
     port = os.getenv("GIZMOSQL_PORT", "31337")
-    username = os.getenv("GIZMOSQL_USERNAME", "gizmosql_username")
+    username = os.getenv("GIZMOSQL_USERNAME", "gizmosql_user")
     password = os.getenv("GIZMOSQL_PASSWORD", "gizmosql_password")
     use_tls = os.getenv("TLS_ENABLED", "0") == "1"
 

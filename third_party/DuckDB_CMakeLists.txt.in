@@ -10,6 +10,12 @@ ExternalProject_Add(
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/duckdb/duckdb
     GIT_TAG v1.4.4
+    GIT_SHALLOW TRUE
     CMAKE_ARGS
           -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/duckdb
+          -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}
+          $<$<BOOL:${WIN32}>:-DCMAKE_POLICY_DEFAULT_CMP0091=NEW>
+          $<$<BOOL:${WIN32}>:-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>>
+          $<$<BOOL:${WIN32}>:-DFORCE_STATIC_VCRT=ON>
 )

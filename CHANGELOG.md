@@ -7,13 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.2] - 2026-02-21
+
 ### Added
 
+- **Windows x64 support**: Native MSVC builds for Windows x64 with full test coverage. Includes DigiCert EV code signing via Azure Key Vault for both executables and the MSI installer.
+- **Windows MSI installer**: WiX v4-based MSI installer that installs `gizmosql_server.exe` and `gizmosql_client.exe` to `Program Files\GizmoSQL` and adds the install directory to the system PATH. Includes application icon and Add/Remove Programs integration.
+- **Bundled VC++ runtime DLLs**: `vcruntime140.dll`, `vcruntime140_1.dll`, and `msvcp140.dll` are bundled with both the CLI zip and MSI installer, so DuckDB extensions (ICU, Spatial, etc.) load correctly on clean Windows installs without requiring the VC++ Redistributable.
+- **Windows version resources**: Executables include VERSIONINFO resources with version, company, and product metadata visible in Windows file properties.
 - **Dynamic terminal width** (`gizmosql_client`): Output width now automatically adapts when the terminal window is resized — each query re-reads the terminal dimensions before rendering. Explicit `.maxwidth N` overrides auto-detection; `.maxwidth 0` re-enables it.
 
 ### Changed
 
 - **ADBC driver migration**: All Python examples, docs, tests, and CI now use [`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/) instead of `adbc-driver-flightsql`. The new driver provides a simplified connection API (no `db_kwargs`/`DatabaseOptions`), `execute_update()` for DDL/DML statements (avoids lazy execution pitfalls), and OAuth/SSO support for Enterprise users.
+- **Default username**: Changed the default username from `gizmosql_username` to `gizmosql_user` for brevity. If you were relying on the old default (without explicitly setting `--username` or `GIZMOSQL_USERNAME`), update your client connections accordingly.
+- **Cross-platform CMake build**: Library paths, linker flags, and third-party build scripts now use platform-conditional logic for Windows, macOS, and Linux. Arrow patch command replaced with a portable CMake script (no more `sed`).
+- **C++20**: Upgraded from C++17 to C++20 for MSVC designated initializer compatibility.
+
+### Fixed
+
+- **Unicode box-drawing on Windows**: Client output renderer now correctly displays Unicode box-drawing characters on Windows by setting the MSVC execution charset to UTF-8 and configuring the console output code page.
 
 ## [1.18.0] - 2026-02-17
 
@@ -207,7 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import geopandas as gpd
 
   with gizmosql.connect(uri="grpc+tls://localhost:31337",
-                        db_kwargs={"username": "gizmosql_username",
+                        db_kwargs={"username": "gizmosql_user",
                                    "password": "gizmosql_password",
                                    DatabaseOptions.TLS_SKIP_VERIFY.value: "true"},
                         autocommit=True) as conn:

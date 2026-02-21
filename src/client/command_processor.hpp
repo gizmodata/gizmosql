@@ -26,6 +26,11 @@
 
 namespace gizmosql::client {
 
+// Windows headers define ERROR as a macro; undefine it so we can use it as an enum value.
+#ifdef ERROR
+#undef ERROR
+#endif
+
 enum class CommandResult {
   OK,
   EXIT,

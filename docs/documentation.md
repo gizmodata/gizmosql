@@ -52,10 +52,13 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ### Running from Docker Image
 
+> **Default credentials:** The server's default username is `gizmosql_user` (override with `--username` or `GIZMOSQL_USERNAME`). A password is always required via `--password` or `GIZMOSQL_PASSWORD`.
+
 Open a terminal, then pull and run the published Docker image which has everything setup (change: "--detach" to "--interactive" if you wish to see the stdout on your screen) - with command:
 
 ```bash
-# Pull and run the Docker image 
+# Pull and run the Docker image
+# Username defaults to "gizmosql_user" when GIZMOSQL_USERNAME is not set
 docker run --name gizmosql \
            --detach \
            --rm \
@@ -152,7 +155,7 @@ Download the new [GizmoSQL JDBC driver](https://downloads.gizmodata.com/gizmosql
 
 You can then use the JDBC driver to connect from your host computer to the locally running Docker Flight SQL server with this JDBC string (change the password value to match the value specified for the GIZMOSQL_PASSWORD environment variable if you changed it from the example above):
 ```bash
-jdbc:gizmosql://localhost:31337?useEncryption=true&user=gizmosql_username&password=gizmosql_password&disableCertificateVerification=true
+jdbc:gizmosql://localhost:31337?useEncryption=true&user=gizmosql_user&password=gizmosql_password&disableCertificateVerification=true
 ```
 
 For instructions on setting up the JDBC driver in popular Database IDE tool: [DBeaver Community Edition](https://dbeaver.io) - see this [repo](https://github.com/gizmodata/setup-gizmosql-jdbc-driver-in-dbeaver).
@@ -189,7 +192,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
     "grpc+tls://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,  # Not needed if you use a trusted CA-signed TLS cert
 ) as conn:
@@ -223,7 +226,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
     "grpc+tls://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,
 ) as conn:
@@ -262,7 +265,7 @@ Start an interactive session:
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --host "localhost" \
   --port 31337 \
-  --username "gizmosql_username" \
+  --username "gizmosql_user" \
   --tls \
   --tls-skip-verify
 ```
@@ -272,7 +275,7 @@ Or run a single query with `--command`:
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --host "localhost" \
   --port 31337 \
-  --username "gizmosql_username" \
+  --username "gizmosql_user" \
   --tls \
   --tls-skip-verify \
   --command "SELECT version()"
@@ -404,7 +407,7 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | hostname / GIZMOSQL_HOSTNAME | Hostname to listen on. If empty, falls back to env then 0.0.0.0 | 0.0.0.0 (if unset) | --hostname, -H |
 | port / GIZMOSQL_PORT | Flight gRPC port | 31337 | --port, -R |
 | database-filename / DATABASE_FILENAME | Path to DB file (absolute or relative). Empty => in-memory DB | "" (in-memory) | --database-filename, -D |
-| username / GIZMOSQL_USERNAME | Default connection username | gizmosql_username | --username, -U |
+| username / GIZMOSQL_USERNAME | Default connection username | gizmosql_user | --username, -U |
 | password / GIZMOSQL_PASSWORD | Server password (required). If unset server will exit | (required) | --password, -P |
 | secret-key / SECRET_KEY | Secret used to sign JWTs. If unset, env SECRET_KEY used; else random key generated | "" (random if unset) | --secret-key, -S |
 | tls cert/key / TLS_CERT, TLS_KEY | TLS cert and key paths (or provide via --tls cert key) | none (disabled if not set) | --tls, -T (cert key) |

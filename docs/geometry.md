@@ -19,7 +19,7 @@ import geopandas as gpd
 
 with gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cur:
@@ -146,7 +146,7 @@ import geopandas as gpd
 
 with gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cur:
@@ -180,7 +180,7 @@ arrow_table = gdf.to_arrow()
 
 with gizmosql.connect(
     "grpc://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
     with conn.cursor() as cursor:
@@ -246,7 +246,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
     "grpc+tls://localhost:31337",
-    username="gizmosql_username",
+    username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,  # Only for self-signed certs
 ) as conn:

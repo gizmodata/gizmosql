@@ -29,16 +29,22 @@
 
 #include <duckdb.hpp>
 
-#include <arpa/inet.h>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <thread>
+#include <atomic>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
-#include <atomic>
+#endif
 #include <vector>
 #include <mutex>
 
@@ -135,8 +141,15 @@ QueryResult RunQuery(FlightSqlClient& client,
 
 // Check if a TCP port is available by attempting a connection
 bool IsPortAvailable(int port) {
+#ifdef _WIN32
+  WSADATA wsa;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
+  SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock == INVALID_SOCKET) { WSACleanup(); return false; }
+#else
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock < 0) return false;
+#endif
 
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
@@ -147,10 +160,15 @@ bool IsPortAvailable(int port) {
   struct timeval timeout;
   timeout.tv_sec = 2;
   timeout.tv_usec = 0;
-  setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+  setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
 
   int result = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+#ifdef _WIN32
+  closesocket(sock);
+  WSACleanup();
+#else
   close(sock);
+#endif
 
   return result == 0;
 }
