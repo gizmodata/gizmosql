@@ -20,6 +20,10 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #define BOOST_NO_CXX98_FUNCTION_BASE
 #include <boost/program_options.hpp>
 
@@ -36,6 +40,10 @@ namespace po = boost::program_options;
 using namespace gizmosql::client;
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+  SetConsoleOutputCP(CP_UTF8);
+#endif
+
   ClientConfig config;
 
   po::options_description desc("GizmoSQL Client Options");
