@@ -194,12 +194,91 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::CollectResults(
 
 arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::ExecuteQuery(
     const std::string& sql) {
-  ARROW_ASSIGN_OR_RAISE(auto info, client_->Execute(call_options_, sql));
-  return CollectResults(info);
+  // Set up cancellation token for this query
+  stop_source_.Reset();
+  auto opts = call_options_;
+  opts.stop_token = stop_source_.token();
+  query_active_.store(true);
+
+  // Helper: tell the server to cancel the active query for this session
+  auto cancel_on_server = [&]() {
+    arrow::flight::CancelFlightInfoRequest cancel_req{""};
+    (void)client_->CancelFlightInfo(call_options_, cancel_req);
+  };
+
+  auto info_result = client_->Execute(opts, sql);
+  if (!info_result.ok()) {
+    query_active_.store(false);
+    if (info_result.status().IsCancelled()) {
+      cancel_on_server();
+      return arrow::Status::Cancelled("Query cancelled");
+    }
+    return info_result.status();
+  }
+  auto& info = *info_result;
+
+  // Collect results with cancellation support
+  std::vector<std::shared_ptr<arrow::RecordBatch>> all_batches;
+  std::shared_ptr<arrow::Schema> schema;
+
+  for (const auto& endpoint : info->endpoints()) {
+    auto stream_result = client_->DoGet(opts, endpoint.ticket);
+    if (!stream_result.ok()) {
+      query_active_.store(false);
+      if (stream_result.status().IsCancelled()) {
+        cancel_on_server();
+        return arrow::Status::Cancelled("Query cancelled");
+      }
+      return stream_result.status();
+    }
+    auto& stream = *stream_result;
+
+    auto schema_result = stream->GetSchema();
+    if (!schema_result.ok()) {
+      query_active_.store(false);
+      return schema_result.status();
+    }
+    if (!schema) schema = *schema_result;
+
+    while (true) {
+      auto chunk_result = stream->Next();
+      if (!chunk_result.ok()) {
+        query_active_.store(false);
+        if (chunk_result.status().IsCancelled()) {
+          cancel_on_server();
+          return arrow::Status::Cancelled("Query cancelled");
+        }
+        return chunk_result.status();
+      }
+      if (chunk_result->data == nullptr) break;
+      all_batches.push_back(chunk_result->data);
+    }
+  }
+
+  query_active_.store(false);
+
+  if (!schema) {
+    return arrow::Status::Invalid("No schema returned from query");
+  }
+  if (all_batches.empty()) {
+    return arrow::Table::MakeEmpty(schema);
+  }
+  return arrow::Table::FromRecordBatches(schema, all_batches);
 }
 
 arrow::Result<int64_t> FlightConnection::ExecuteUpdate(const std::string& sql) {
-  return client_->ExecuteUpdate(call_options_, sql);
+  stop_source_.Reset();
+  auto opts = call_options_;
+  opts.stop_token = stop_source_.token();
+  query_active_.store(true);
+  auto result = client_->ExecuteUpdate(opts, sql);
+  query_active_.store(false);
+  if (!result.ok() && result.status().IsCancelled()) {
+    arrow::flight::CancelFlightInfoRequest cancel_req{""};
+    (void)client_->CancelFlightInfo(call_options_, cancel_req);
+    return arrow::Status::Cancelled("Query cancelled");
+  }
+  return result;
 }
 
 arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::GetTables(

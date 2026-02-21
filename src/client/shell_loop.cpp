@@ -78,7 +78,11 @@ bool ExecuteStatement(FlightConnection& conn, ClientConfig& config,
       }
       return true;
     } else {
-      std::cerr << "Error: " << result.status().ToString() << std::endl;
+      if (result.status().IsCancelled()) {
+        std::cerr << "Cancelled" << std::endl;
+      } else {
+        std::cerr << "Error: " << result.status().ToString() << std::endl;
+      }
       return false;
     }
   } else {
@@ -131,7 +135,11 @@ bool ExecuteStatement(FlightConnection& conn, ClientConfig& config,
       }
       return true;
     } else {
-      std::cerr << "Error: " << result.status().ToString() << std::endl;
+      if (result.status().IsCancelled()) {
+        std::cerr << "Cancelled" << std::endl;
+      } else {
+        std::cerr << "Error: " << result.status().ToString() << std::endl;
+      }
       return false;
     }
   }

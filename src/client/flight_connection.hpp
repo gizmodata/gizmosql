@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +25,7 @@
 #include <arrow/flight/sql/api.h>
 #include <arrow/status.h>
 #include <arrow/table.h>
+#include <arrow/util/cancel.h>
 
 #include "client_config.hpp"
 
@@ -56,12 +58,20 @@ class FlightConnection {
 
   bool IsConnected() const { return client_ != nullptr; }
 
+  // Returns true if a query is currently being executed
+  bool IsQueryActive() const { return query_active_.load(); }
+
+  // Request cancellation of the current in-flight query (async-signal-safe)
+  void RequestCancel(int signum) { stop_source_.RequestStopFromSignal(signum); }
+
  private:
   arrow::Result<std::shared_ptr<arrow::Table>> CollectResults(
       const std::unique_ptr<arrow::flight::FlightInfo>& info);
 
   std::unique_ptr<arrow::flight::sql::FlightSqlClient> client_;
   arrow::flight::FlightCallOptions call_options_;
+  arrow::StopSource stop_source_;
+  std::atomic<bool> query_active_{false};
 };
 
 }  // namespace gizmosql::client

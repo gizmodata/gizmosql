@@ -43,7 +43,21 @@ using namespace gizmosql::client;
 namespace {
 FlightConnection* g_conn = nullptr;
 
-void SignalHandler(int /*signum*/) {
+void SigintHandler(int signum) {
+  if (g_conn && g_conn->IsQueryActive()) {
+    // Cancel the in-flight query (async-signal-safe)
+    g_conn->RequestCancel(signum);
+  } else {
+    // No active query — disconnect and exit
+    if (g_conn) {
+      g_conn->Disconnect();
+      g_conn = nullptr;
+    }
+    std::_Exit(0);
+  }
+}
+
+void SigtermHandler(int /*signum*/) {
   if (g_conn) {
     g_conn->Disconnect();
     g_conn = nullptr;
@@ -283,8 +297,10 @@ int main(int argc, char** argv) {
   FlightConnection conn;
   g_conn = &conn;
 
-  // Register SIGTERM handler for clean session disconnect (e.g., kill <pid>)
-  std::signal(SIGTERM, SignalHandler);
+  // SIGINT: cancel active query, or disconnect+exit if idle
+  // SIGTERM: always disconnect and exit
+  std::signal(SIGINT, SigintHandler);
+  std::signal(SIGTERM, SigtermHandler);
 
   if (has_connection_params) {
     auto connect_status = conn.Connect(config);
