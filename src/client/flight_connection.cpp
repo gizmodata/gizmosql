@@ -46,7 +46,7 @@ void FlightConnection::Disconnect() {
     arrow::flight::CloseSessionRequest request;
     auto result = client_->CloseSession(call_options_, request);
     (void)result;  // Best-effort; ignore errors on disconnect
-    client_->Close();
+    (void)client_->Close();
   }
   client_.reset();
   call_options_ = arrow::flight::FlightCallOptions{};
@@ -202,7 +202,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::ExecuteQuery(
 
   // Helper: tell the server to cancel the active query for this session
   auto cancel_on_server = [&]() {
-    arrow::flight::CancelFlightInfoRequest cancel_req{""};
+    arrow::flight::CancelFlightInfoRequest cancel_req;
     (void)client_->CancelFlightInfo(call_options_, cancel_req);
   };
 
@@ -274,7 +274,7 @@ arrow::Result<int64_t> FlightConnection::ExecuteUpdate(const std::string& sql) {
   auto result = client_->ExecuteUpdate(opts, sql);
   query_active_.store(false);
   if (!result.ok() && result.status().IsCancelled()) {
-    arrow::flight::CancelFlightInfoRequest cancel_req{""};
+    arrow::flight::CancelFlightInfoRequest cancel_req;
     (void)client_->CancelFlightInfo(call_options_, cancel_req);
     return arrow::Status::Cancelled("Query cancelled");
   }
