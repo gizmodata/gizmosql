@@ -177,21 +177,19 @@ find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlight REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 
-# Arrow 23's bundled_dependencies archive doesn't include all abseil symbols.
-# We need to link the abseil libraries that Arrow built separately.
-# On Linux, abseil libraries have circular dependencies, so we use link groups.
-set(ABSL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/_deps/absl-build")
-file(GLOB_RECURSE ABSL_LIBRARIES "${ABSL_BUILD_DIR}/absl/*${LIB_SUFFIX}")
+# Arrow static link can require explicit absl archives depending on Arrow build layout.
+set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
+file(GLOB_RECURSE ABSL_LIBRARIES
+        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*.a"
+        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.a")
 add_library(arrow_absl INTERFACE)
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Use linker groups to handle circular dependencies in abseil
-    target_link_libraries(arrow_absl INTERFACE
-        -Wl,--start-group
-        ${ABSL_LIBRARIES}
-        -Wl,--end-group
-    )
-else()
-    target_link_libraries(arrow_absl INTERFACE ${ABSL_LIBRARIES})
+if(ABSL_LIBRARIES)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(arrow_absl INTERFACE
+                "$<LINK_GROUP:RESCAN,${ABSL_LIBRARIES}>")
+    else()
+        target_link_libraries(arrow_absl INTERFACE ${ABSL_LIBRARIES})
+    endif()
 endif()
 
 # --------------------- SQLite ---------------------
