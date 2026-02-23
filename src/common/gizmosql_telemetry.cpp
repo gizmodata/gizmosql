@@ -164,11 +164,11 @@ void InitTelemetry(const TelemetryConfig& config) {
     processor_opts.schedule_delay_millis = config.export_interval;
     auto processor = std::make_unique<trace_sdk::BatchSpanProcessor>(
         std::move(trace_exporter), processor_opts);
-
     auto provider = std::make_shared<trace_sdk::TracerProvider>(
         std::move(processor), resource_attrs);
 
-    trace_api::Provider::SetTracerProvider(provider);
+    trace_api::Provider::SetTracerProvider(
+        opentelemetry::nostd::shared_ptr<trace_api::TracerProvider>(provider));
     GIZMOSQL_LOG(INFO) << "OpenTelemetry tracing enabled";
   }
 
@@ -190,8 +190,8 @@ void InitTelemetry(const TelemetryConfig& config) {
     auto provider = std::make_shared<metrics_sdk::MeterProvider>(
         std::make_unique<metrics_sdk::ViewRegistry>(), resource_attrs);
     provider->AddMetricReader(std::move(reader));
-
-    metrics_api::Provider::SetMeterProvider(provider);
+    metrics_api::Provider::SetMeterProvider(
+        opentelemetry::nostd::shared_ptr<metrics_api::MeterProvider>(provider));
     GIZMOSQL_LOG(INFO) << "OpenTelemetry metrics enabled";
   }
 
