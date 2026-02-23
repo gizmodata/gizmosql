@@ -496,20 +496,27 @@ target_link_libraries(gizmosqlserver
 
 # Link OpenTelemetry libraries if enabled
 if(WITH_OPENTELEMETRY)
-    target_link_libraries(gizmosqlserver
-            PRIVATE
-            # OpenTelemetry libraries (HTTP exporter only, no gRPC)
-            "${OTEL_LIB_DIR}/libopentelemetry_trace.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_metrics.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_common.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_resources.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_otlp_recordable.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_http_client_curl.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_exporter_otlp_http.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_exporter_otlp_http_client.a"
-            "${OTEL_LIB_DIR}/libopentelemetry_exporter_otlp_http_metric.a"
-            "-lcurl"
-    )
+    find_package(CURL REQUIRED)
+
+    # OpenTelemetry installs additional static deps (notably Abseil) into the same prefix.
+    # Collect all static archives so the final static link can resolve transitive symbols.
+    file(GLOB OTEL_STATIC_LIBS "${OTEL_LIB_DIR}/*.a")
+    if(NOT OTEL_STATIC_LIBS)
+        message(FATAL_ERROR "No OpenTelemetry static libraries found in ${OTEL_LIB_DIR}")
+    endif()
+    list(SORT OTEL_STATIC_LIBS)
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(gizmosqlserver PRIVATE
+                "$<LINK_GROUP:RESCAN,${OTEL_STATIC_LIBS}>"
+                CURL::libcurl
+        )
+    else()
+        target_link_libraries(gizmosqlserver PRIVATE
+                ${OTEL_STATIC_LIBS}
+                CURL::libcurl
+        )
+    endif()
 endif()
 
 if(WIN32)
