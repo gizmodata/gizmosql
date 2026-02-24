@@ -43,13 +43,6 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
     *batch = NULLPTR;
     return Status::OK();
   } else {
-    std::shared_ptr<DuckDBStatement> schema_statement;
-
-    ARROW_ASSIGN_OR_RAISE(schema_statement, DuckDBStatement::Create(
-                                                client_session_, main_query_,
-                                                arrow::util::ArrowLogLevel::ARROW_DEBUG,
-                                                false, nullptr, "DoGetTables", true));
-
     std::shared_ptr<arrow::RecordBatch> first_batch;
 
     ARROW_RETURN_NOT_OK(reader_->ReadNext(&first_batch));
