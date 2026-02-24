@@ -358,6 +358,9 @@ jobs:
     runs-on: windows-2022
     env:
       VCPKG_DEFAULT_TRIPLET: x64-windows-static
+      # VS 2022 sets VCPKG_ROOT to its own vcpkg copy, conflicting with the
+      # runner's vcpkg at C:\vcpkg. Override to suppress the mismatch warning.
+      VCPKG_ROOT: C:\vcpkg
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -380,26 +383,39 @@ jobs:
           }
           Get-PSDrive C | Select-Object Name, @{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}}
 
+      - name: Restore vcpkg cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/installed
+          key: vcpkg-x64-windows-static-boost-zlib-openssl-v1
+          restore-keys: |
+            vcpkg-x64-windows-static-boost-zlib-openssl-
+
+      - name: Install vcpkg dependencies
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet x64-windows-static --clean-after-build --x-install-root="$env:VCPKG_ROOT\installed"
+
+      - name: Save vcpkg cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_ROOT }}/installed
+          key: vcpkg-x64-windows-static-boost-zlib-openssl-v1
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: amd64
 
+      # vcvarsall.bat (run by ilammy/msvc-dev-cmd) exports VCPKG_ROOT pointing
+      # to VS's own vcpkg copy, overriding our job-level env. Re-set it.
+      - name: Restore VCPKG_ROOT after MSVC setup
+        shell: pwsh
+        run: echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Export GitHub Actions cache variables
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Setup vcpkg and install dependencies
-        env:
-          VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-        run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet x64-windows-static --clean-after-build
 
       - name: Configure
         run: |
@@ -407,7 +423,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} `
             -DCMAKE_C_COMPILER_LAUNCHER=sccache `
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DVCPKG_MANIFEST_MODE=OFF `
             -DGIZMOSQL_ENTERPRISE=ON
