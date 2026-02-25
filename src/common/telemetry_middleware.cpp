@@ -16,28 +16,32 @@
 // under the License.
 
 #include "telemetry_middleware.h"
-#include "gizmosql_telemetry.h"
-#include "gizmosql_logging.h"
 
+#include "gizmosql_telemetry.h"
+
+#include <algorithm>
 #include <arrow/flight/server.h>
+#include <cctype>
+#include <utility>
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
-#include <opentelemetry/trace/tracer.h>
-#include <opentelemetry/trace/span.h>
+#include <opentelemetry/context/propagation/global_propagator.h>
+#include <opentelemetry/context/propagation/text_map_propagator.h>
+#include <opentelemetry/context/runtime_context.h>
+#include <opentelemetry/context/scope.h>
 #include <opentelemetry/trace/scope.h>
-#include <opentelemetry/trace/semantic_conventions.h>
+#include <opentelemetry/trace/span.h>
+#include <opentelemetry/trace/tracer.h>
 
+namespace context_api = opentelemetry::context;
+namespace context_propagation_api = opentelemetry::context::propagation;
 namespace trace_api = opentelemetry::trace;
-namespace trace_semconv = opentelemetry::trace::SemanticConventions;
 #endif
 
 namespace gizmosql {
 
-// -----------------------------------------------------------------------------
-// Helper: Convert FlightMethod to string
-// -----------------------------------------------------------------------------
-static const char* FlightMethodName(flight::FlightMethod m) {
-  switch (m) {
+static const char* FlightMethodName(flight::FlightMethod method) {
+  switch (method) {
     case flight::FlightMethod::Handshake:
       return "Handshake";
     case flight::FlightMethod::ListFlights:
@@ -64,60 +68,93 @@ static const char* FlightMethodName(flight::FlightMethod m) {
 }
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
-// -----------------------------------------------------------------------------
-// SpanHolder: Encapsulates span lifecycle
-// -----------------------------------------------------------------------------
-struct TelemetryMiddleware::SpanHolder {
-  opentelemetry::nostd::shared_ptr<trace_api::Span> span;
-  std::unique_ptr<trace_api::Scope> scope;
+class FlightCallHeadersCarrier final : public context_propagation_api::TextMapCarrier {
+ public:
+  explicit FlightCallHeadersCarrier(const flight::CallHeaders& incoming_headers)
+      : incoming_headers_(incoming_headers) {}
 
-  SpanHolder(opentelemetry::nostd::shared_ptr<trace_api::Span> s)
-      : span(std::move(s)), scope(std::make_unique<trace_api::Scope>(span)) {}
+  opentelemetry::nostd::string_view Get(
+      opentelemetry::nostd::string_view key) const noexcept override {
+    const std::string key_str(key.data(), key.size());
+    auto iter = incoming_headers_.find(key_str);
+    if (iter != incoming_headers_.end()) {
+      cached_value_ = std::string(iter->second);
+      return cached_value_;
+    }
+
+    for (auto header_iter = incoming_headers_.begin(); header_iter != incoming_headers_.end();
+         ++header_iter) {
+      if (EqualsIgnoreCase(header_iter->first, key_str)) {
+        cached_value_ = std::string(header_iter->second);
+        return cached_value_;
+      }
+    }
+
+    cached_value_.clear();
+    return {};
+  }
+
+  void Set(opentelemetry::nostd::string_view /*key*/,
+           opentelemetry::nostd::string_view /*value*/) noexcept override {}
+
+ private:
+  static bool EqualsIgnoreCase(const std::string& left, const std::string& right) {
+    return left.size() == right.size() &&
+           std::equal(left.begin(), left.end(), right.begin(), right.end(),
+                      [](unsigned char l, unsigned char r) {
+                        return std::tolower(l) == std::tolower(r);
+                      });
+  }
+
+  const flight::CallHeaders& incoming_headers_;
+  mutable std::string cached_value_;
+};
+
+struct TelemetryMiddleware::SpanHolder {
+  explicit SpanHolder(opentelemetry::nostd::shared_ptr<trace_api::Span> input_span)
+      : span(std::move(input_span)), scope(std::make_unique<trace_api::Scope>(span)) {}
 
   ~SpanHolder() {
     if (span) {
       span->End();
     }
   }
+
+  opentelemetry::nostd::shared_ptr<trace_api::Span> span;
+  std::unique_ptr<trace_api::Scope> scope;
 };
 #else
-// Dummy SpanHolder when OpenTelemetry is not available
-struct TelemetryMiddleware::SpanHolder {
-  // Empty placeholder
-};
+struct TelemetryMiddleware::SpanHolder {};
 #endif
 
-// -----------------------------------------------------------------------------
-// TelemetryMiddleware Implementation
-// -----------------------------------------------------------------------------
-
-TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::string peer)
+TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::string peer,
+                                         const flight::CallHeaders& incoming_headers)
     : method_(method),
       peer_(std::move(peer)),
       start_time_(std::chrono::steady_clock::now()) {
-
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
   if (!IsTelemetryEnabled()) {
     return;
   }
 
-  // Create span for this RPC
   auto tracer = GetTracer();
-  std::string span_name = std::string("gizmosql.") + FlightMethodName(method_);
+  trace_api::StartSpanOptions span_options;
+  span_options.kind = trace_api::SpanKind::kServer;
 
-  trace_api::StartSpanOptions opts;
-  opts.kind = trace_api::SpanKind::kServer;
+  FlightCallHeadersCarrier carrier(incoming_headers);
+  auto current_context = context_api::RuntimeContext::GetCurrent();
+  auto propagator = context_propagation_api::GlobalTextMapPropagator::GetGlobalPropagator();
+  auto extracted_context = propagator ? propagator->Extract(carrier, current_context)
+                                      : current_context;
+  context_api::Scope parent_scope(extracted_context);
+  auto span = tracer->StartSpan(std::string("gizmosql.") + FlightMethodName(method_), {},
+                                span_options);
 
-  auto span = tracer->StartSpan(span_name, {}, opts);
-
-  // Set standard RPC attributes (following OpenTelemetry semantic conventions)
-  span->SetAttribute(trace_semconv::kRpcSystem, "grpc");
-  span->SetAttribute(trace_semconv::kRpcService, "arrow.flight.protocol.FlightService");
-  span->SetAttribute(trace_semconv::kRpcMethod, FlightMethodName(method_));
-
-  // Parse peer address (format: "ipv4:address:port" or "ipv6:[address]:port")
+  span->SetAttribute("rpc.system", "grpc");
+  span->SetAttribute("rpc.service", "arrow.flight.protocol.FlightService");
+  span->SetAttribute("rpc.method", FlightMethodName(method_));
   if (!peer_.empty()) {
-    span->SetAttribute(trace_semconv::kNetPeerName, peer_);
+    span->SetAttribute("net.peer.name", peer_);
   }
 
   span_holder_ = std::make_unique<SpanHolder>(std::move(span));
@@ -126,98 +163,72 @@ TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::strin
 
 TelemetryMiddleware::~TelemetryMiddleware() = default;
 
-void TelemetryMiddleware::SendingHeaders(flight::AddCallHeaders* /*outgoing_headers*/) {
-  // Could add trace context to response headers here for bi-directional propagation
-  // For now, we don't need to propagate context back to clients
-}
+void TelemetryMiddleware::SendingHeaders(flight::AddCallHeaders* /*outgoing_headers*/) {}
 
 void TelemetryMiddleware::CallCompleted(const arrow::Status& status) {
-  auto end_time = std::chrono::steady_clock::now();
-  auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         end_time - start_time_)
-                         .count();
-
-  // Determine status string for metrics
-  std::string status_str = status.ok() ? "OK" : status.CodeAsString();
-
-  // Record metrics (works even without OpenTelemetry compiled in, as no-op)
-  metrics::RecordRpcCall(FlightMethodName(method_), status_str, static_cast<double>(duration_ms));
+  const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - start_time_)
+                              .count();
+  const std::string status_label = status.ok() ? "OK" : status.CodeAsString();
+  metrics::RecordRpcCall(FlightMethodName(method_), status_label,
+                         static_cast<double>(elapsed_ms));
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
-  // Update span if telemetry is enabled
   if (span_holder_ && span_holder_->span) {
-    auto& span = span_holder_->span;
-
-    // Record duration as attribute
-    span->SetAttribute("duration_ms", static_cast<int64_t>(duration_ms));
-
-    // Set span status based on Arrow status
+    span_holder_->span->SetAttribute("duration_ms", static_cast<int64_t>(elapsed_ms));
     if (status.ok()) {
-      span->SetStatus(trace_api::StatusCode::kOk);
-    } else {
-      span->SetStatus(trace_api::StatusCode::kError, status.ToString());
-      span->AddEvent("error", {
-          {"exception.type", status.CodeAsString()},
-          {"exception.message", status.message()}
-      });
+      span_holder_->span->SetStatus(trace_api::StatusCode::kOk);
+      span_holder_->span->SetAttribute("rpc.grpc.status_code", 0);
+      return;
     }
 
-    // Record gRPC status code (approximation from Arrow status)
-    // See https://grpc.github.io/grpc/core/md_doc_statuscodes.html
-    int grpc_code = 0;  // OK
-    if (!status.ok()) {
-      // Map Arrow status to approximate gRPC codes
-      switch (status.code()) {
-        case arrow::StatusCode::Invalid:
-        case arrow::StatusCode::TypeError:
-        case arrow::StatusCode::SerializationError:
-          grpc_code = 3;  // INVALID_ARGUMENT
-          break;
-        case arrow::StatusCode::KeyError:
-        case arrow::StatusCode::IndexError:
-          grpc_code = 5;  // NOT_FOUND
-          break;
-        case arrow::StatusCode::AlreadyExists:
-          grpc_code = 6;  // ALREADY_EXISTS
-          break;
-        case arrow::StatusCode::OutOfMemory:
-        case arrow::StatusCode::CapacityError:
-          grpc_code = 8;  // RESOURCE_EXHAUSTED
-          break;
-        case arrow::StatusCode::Cancelled:
-          grpc_code = 1;  // CANCELLED
-          break;
-        case arrow::StatusCode::NotImplemented:
-          grpc_code = 12;  // UNIMPLEMENTED
-          break;
-        case arrow::StatusCode::IOError:
-          grpc_code = 14;  // UNAVAILABLE
-          break;
-        case arrow::StatusCode::UnknownError:
-        default:
-          grpc_code = 2;  // UNKNOWN
-          break;
-      }
+    span_holder_->span->SetStatus(trace_api::StatusCode::kError, status.ToString());
+    span_holder_->span->AddEvent("error", {{"exception.type", status.CodeAsString()},
+                                           {"exception.message", status.message()}});
+
+    int grpc_code = 2;
+    switch (status.code()) {
+      case arrow::StatusCode::Invalid:
+      case arrow::StatusCode::TypeError:
+      case arrow::StatusCode::SerializationError:
+        grpc_code = 3;
+        break;
+      case arrow::StatusCode::KeyError:
+      case arrow::StatusCode::IndexError:
+        grpc_code = 5;
+        break;
+      case arrow::StatusCode::AlreadyExists:
+        grpc_code = 6;
+        break;
+      case arrow::StatusCode::OutOfMemory:
+      case arrow::StatusCode::CapacityError:
+        grpc_code = 8;
+        break;
+      case arrow::StatusCode::Cancelled:
+        grpc_code = 1;
+        break;
+      case arrow::StatusCode::NotImplemented:
+        grpc_code = 12;
+        break;
+      case arrow::StatusCode::IOError:
+        grpc_code = 14;
+        break;
+      case arrow::StatusCode::UnknownError:
+      default:
+        grpc_code = 2;
+        break;
     }
-    span->SetAttribute(trace_semconv::kRpcGrpcStatusCode, grpc_code);
+    span_holder_->span->SetAttribute("rpc.grpc.status_code", grpc_code);
   }
 #else
-  (void)status;  // Suppress unused warning when not using OpenTelemetry
+  (void)status;
 #endif
-
-  // SpanHolder destructor will end the span
 }
 
-// -----------------------------------------------------------------------------
-// TelemetryMiddlewareFactory Implementation
-// -----------------------------------------------------------------------------
-
 arrow::Status TelemetryMiddlewareFactory::StartCall(
-    const flight::CallInfo& info,
-    const flight::ServerCallContext& ctx,
+    const flight::CallInfo& info, const flight::ServerCallContext& ctx,
     std::shared_ptr<flight::ServerMiddleware>* out) {
-
-  *out = std::make_shared<TelemetryMiddleware>(info.method, ctx.peer());
+  *out = std::make_shared<TelemetryMiddleware>(info.method, ctx.peer(), ctx.incoming_headers());
   return arrow::Status::OK();
 }
 

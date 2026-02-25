@@ -35,7 +35,8 @@ namespace gizmosql {
 /// - Propagates trace context from incoming headers (W3C Trace Context)
 class TelemetryMiddleware : public flight::ServerMiddleware {
  public:
-  TelemetryMiddleware(flight::FlightMethod method, std::string peer);
+  TelemetryMiddleware(flight::FlightMethod method, std::string peer,
+                      const flight::CallHeaders& incoming_headers);
   ~TelemetryMiddleware() override;
 
   void SendingHeaders(flight::AddCallHeaders* outgoing_headers) override;
