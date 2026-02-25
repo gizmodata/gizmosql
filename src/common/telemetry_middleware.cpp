@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <arrow/flight/server.h>
 #include <cctype>
+#include <string_view>
 #include <utility>
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
@@ -97,11 +98,12 @@ class FlightCallHeadersCarrier final : public context_propagation_api::TextMapCa
            opentelemetry::nostd::string_view /*value*/) noexcept override {}
 
  private:
-  static bool EqualsIgnoreCase(const std::string& left, const std::string& right) {
+  static bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
     return left.size() == right.size() &&
            std::equal(left.begin(), left.end(), right.begin(), right.end(),
-                      [](unsigned char l, unsigned char r) {
-                        return std::tolower(l) == std::tolower(r);
+                      [](char l, char r) {
+                        return std::tolower(static_cast<unsigned char>(l)) ==
+                               std::tolower(static_cast<unsigned char>(r));
                       });
   }
 
