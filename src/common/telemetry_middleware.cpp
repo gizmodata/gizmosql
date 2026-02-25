@@ -28,7 +28,6 @@
 #include <opentelemetry/context/propagation/global_propagator.h>
 #include <opentelemetry/context/propagation/text_map_propagator.h>
 #include <opentelemetry/context/runtime_context.h>
-#include <opentelemetry/context/scope.h>
 #include <opentelemetry/trace/scope.h>
 #include <opentelemetry/trace/span.h>
 #include <opentelemetry/trace/tracer.h>
@@ -146,7 +145,7 @@ TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::strin
   auto propagator = context_propagation_api::GlobalTextMapPropagator::GetGlobalPropagator();
   auto extracted_context = propagator ? propagator->Extract(carrier, current_context)
                                       : current_context;
-  context_api::Scope parent_scope(extracted_context);
+  auto parent_context_token = context_api::RuntimeContext::Attach(extracted_context);
   auto span = tracer->StartSpan(std::string("gizmosql.") + FlightMethodName(method_), {},
                                 span_options);
 
