@@ -491,7 +491,7 @@ void CommandProcessor::ShowSettings() {
     auto result = conn_.ExecuteQuery(
         "SELECT GIZMOSQL_VERSION(), GIZMOSQL_EDITION(), GIZMOSQL_CURRENT_INSTANCE()");
     if (result.ok()) {
-      auto table = *result;
+      auto& table = result->table;
       if (table->num_rows() > 0) {
         out << "     version: " << GetCellValue(table->column(0), 0, "") << "\n";
         out << "     edition: " << GetCellValue(table->column(1), 0, "") << "\n";
@@ -527,7 +527,7 @@ void CommandProcessor::ShowSettings() {
         "SELECT GIZMOSQL_CURRENT_SESSION(), GIZMOSQL_ROLE(), "
         "CURRENT_CATALOG(), CURRENT_SCHEMA(), GIZMOSQL_USER()");
     if (session_result.ok()) {
-      auto table = *session_result;
+      auto& table = session_result->table;
       if (table->num_rows() > 0) {
         out << "    username: " << GetCellValue(table->column(4), 0, "") << "\n";
         out << "  session_id: " << GetCellValue(table->column(0), 0, "") << "\n";

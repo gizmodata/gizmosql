@@ -126,7 +126,7 @@ TEST_F(InteractiveClientFixture, ExecuteSelectQuery) {
   auto result = conn.ExecuteQuery("SELECT 42 AS answer");
   ASSERT_TRUE(result.ok()) << "Query failed: " << result.status().ToString();
 
-  auto table = *result;
+  auto table = result->table;
   ASSERT_EQ(table->num_rows(), 1);
   ASSERT_EQ(table->num_columns(), 1);
   ASSERT_EQ(table->schema()->field(0)->name(), "answer");
@@ -139,7 +139,7 @@ TEST_F(InteractiveClientFixture, ExecuteSelectMultipleRows) {
   auto result = conn.ExecuteQuery("SELECT * FROM test_data ORDER BY id");
   ASSERT_TRUE(result.ok()) << "Query failed: " << result.status().ToString();
 
-  auto table = *result;
+  auto table = result->table;
   ASSERT_EQ(table->num_rows(), 3);
   ASSERT_EQ(table->num_columns(), 3);
   ASSERT_EQ(table->schema()->field(0)->name(), "id");
@@ -154,7 +154,7 @@ TEST_F(InteractiveClientFixture, ExecuteSelectEmptyTable) {
   auto result = conn.ExecuteQuery("SELECT * FROM empty_table");
   ASSERT_TRUE(result.ok()) << "Query failed: " << result.status().ToString();
 
-  auto table = *result;
+  auto table = result->table;
   ASSERT_EQ(table->num_rows(), 0);
   ASSERT_EQ(table->num_columns(), 1);
 }
@@ -171,7 +171,7 @@ TEST_F(InteractiveClientFixture, ExecuteUpdateInsert) {
   auto query_result = conn.ExecuteQuery(
       "SELECT COUNT(*) AS cnt FROM test_data WHERE name = 'Dave'");
   ASSERT_TRUE(query_result.ok());
-  auto table = *query_result;
+  auto table = query_result->table;
   ASSERT_EQ(table->num_rows(), 1);
 
   std::string count_val = GetCellValue(table->column(0), 0, "NULL");
@@ -204,7 +204,7 @@ TEST_F(InteractiveClientFixture, ExecuteCreateAndDrop) {
   // SELECT
   auto query_result = conn.ExecuteQuery("SELECT * FROM temp_test");
   ASSERT_TRUE(query_result.ok());
-  ASSERT_EQ((*query_result)->num_rows(), 1);
+  ASSERT_EQ(query_result->table->num_rows(), 1);
 
   // DROP
   auto drop_result = conn.ExecuteUpdate("DROP TABLE temp_test");
@@ -253,7 +253,7 @@ TEST_F(InteractiveClientFixture, MultipleQueriesOnSameConnection) {
     auto result = conn.ExecuteQuery("SELECT " + std::to_string(i) + " AS val");
     ASSERT_TRUE(result.ok()) << "Query " << i
                              << " failed: " << result.status().ToString();
-    ASSERT_EQ((*result)->num_rows(), 1);
+    ASSERT_EQ(result->table->num_rows(), 1);
   }
 }
 
@@ -263,7 +263,7 @@ TEST_F(InteractiveClientFixture, NullValues) {
 
   auto result = conn.ExecuteQuery("SELECT NULL AS n, 42 AS v");
   ASSERT_TRUE(result.ok());
-  auto table = *result;
+  auto table = result->table;
   ASSERT_EQ(table->num_rows(), 1);
 
   std::string null_val = GetCellValue(table->column(0), 0, "NULL");
@@ -289,7 +289,7 @@ TEST_F(InteractiveClientFixture, BoxRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Box renderer uses Unicode box-drawing characters
@@ -310,7 +310,7 @@ TEST_F(InteractiveClientFixture, TableRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::TABLE, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("+"), std::string::npos) << "Should have ASCII borders";
@@ -331,7 +331,7 @@ TEST_F(InteractiveClientFixture, CsvRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::CSV, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Should have header line and data lines
@@ -352,7 +352,7 @@ TEST_F(InteractiveClientFixture, JsonRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::JSON, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("["), std::string::npos) << "Should be JSON array";
@@ -374,7 +374,7 @@ TEST_F(InteractiveClientFixture, JsonLinesRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::JSONLINES, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Each line should be a valid JSON object
@@ -395,7 +395,7 @@ TEST_F(InteractiveClientFixture, MarkdownRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::MARKDOWN, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("| col1"), std::string::npos);
@@ -414,7 +414,7 @@ TEST_F(InteractiveClientFixture, LineRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::LINE, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("alpha = "), std::string::npos);
@@ -432,7 +432,7 @@ TEST_F(InteractiveClientFixture, HtmlRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::HTML, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("<table>"), std::string::npos);
@@ -451,7 +451,7 @@ TEST_F(InteractiveClientFixture, LatexRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::LATEX, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("\\begin{tabular}"), std::string::npos);
@@ -471,7 +471,7 @@ TEST_F(InteractiveClientFixture, InsertRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::INSERT, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("INSERT INTO my_table VALUES("), std::string::npos);
@@ -489,7 +489,7 @@ TEST_F(InteractiveClientFixture, TabsRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::TABS, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("a\tb"), std::string::npos) << "Headers tab-separated";
@@ -506,7 +506,7 @@ TEST_F(InteractiveClientFixture, TrashRendererProducesNoOutput) {
   auto renderer = CreateRenderer(OutputMode::TRASH, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   ASSERT_EQ(out.str(), "") << "Trash renderer should produce no output";
 }
 
@@ -522,7 +522,7 @@ TEST_F(InteractiveClientFixture, RendererNoHeaders) {
   auto renderer = CreateRenderer(OutputMode::CSV, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Should NOT have header row
@@ -544,7 +544,7 @@ TEST_F(InteractiveClientFixture, RendererCustomNullValue) {
   auto renderer = CreateRenderer(OutputMode::CSV, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("(nil)"), std::string::npos)
@@ -562,7 +562,7 @@ TEST_F(InteractiveClientFixture, RendererMultipleRows) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("Alice"), std::string::npos);
@@ -904,7 +904,7 @@ TEST_F(InteractiveClientFixture, QueryAndRenderCSV) {
   auto renderer = CreateRenderer(OutputMode::CSV, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
 
   // Parse CSV output
   std::istringstream iss(out.str());
@@ -931,7 +931,7 @@ TEST_F(InteractiveClientFixture, QueryAndRenderJSON) {
   auto renderer = CreateRenderer(OutputMode::JSON, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string json = out.str();
 
   // Verify JSON structure
@@ -952,7 +952,7 @@ TEST_F(InteractiveClientFixture, QuoteRendererOutput) {
   auto renderer = CreateRenderer(OutputMode::QUOTE, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("'val'"), std::string::npos)
@@ -992,7 +992,7 @@ TEST_F(InteractiveClientFixture, ReconnectAfterDisconnect) {
   // Verify it works after reconnect
   auto result = conn.ExecuteQuery("SELECT 1 AS val");
   ASSERT_TRUE(result.ok());
-  ASSERT_EQ((*result)->num_rows(), 1);
+  ASSERT_EQ(result->table->num_rows(), 1);
 }
 
 TEST_F(InteractiveClientFixture, DotCommandsRequireConnectionTables) {
@@ -1048,7 +1048,7 @@ TEST_F(InteractiveClientFixture, DotConnectEstablishesConnection) {
   // Verify queries work after .connect
   auto query_result = conn.ExecuteQuery("SELECT 42 AS answer");
   ASSERT_TRUE(query_result.ok());
-  ASSERT_EQ((*query_result)->num_rows(), 1);
+  ASSERT_EQ(query_result->table->num_rows(), 1);
 }
 
 TEST_F(InteractiveClientFixture, DotConnectShowsConnected) {
@@ -1218,7 +1218,7 @@ TEST_F(InteractiveClientFixture, NonInteractiveBailStopsOnFirstError) {
       "SELECT COUNT(*) AS cnt FROM information_schema.tables "
       "WHERE table_name = 'bail_test_marker'");
   ASSERT_TRUE(result.ok());
-  std::string count_val = GetCellValue((*result)->column(0), 0, "NULL");
+  std::string count_val = GetCellValue(result->table->column(0), 0, "NULL");
   EXPECT_EQ(count_val, "0")
       << "Second statement should not have executed due to --bail";
 }
@@ -1301,14 +1301,14 @@ TEST_F(InteractiveClientFixture, MaxRowsTruncatesOutput) {
   auto result =
       conn.ExecuteQuery("SELECT x FROM generate_series(1, 100) t(x)");
   ASSERT_TRUE(result.ok()) << result.status().ToString();
-  ASSERT_EQ((*result)->num_rows(), 100);
+  ASSERT_EQ(result->table->num_rows(), 100);
 
   ClientConfig config;
   config.max_rows = 10;
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
 
   EXPECT_EQ(render_result.rows_rendered, 10);
   EXPECT_EQ(render_result.columns_rendered, 1);
@@ -1344,7 +1344,7 @@ TEST_F(InteractiveClientFixture, MaxRowsZeroShowsAllRows) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
 
   EXPECT_EQ(render_result.rows_rendered, 50);
   EXPECT_EQ(render_result.columns_rendered, 1);
@@ -1363,7 +1363,7 @@ TEST_F(InteractiveClientFixture, MaxWidthTruncatesColumnValues) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Should contain ellipsis character (U+2026, UTF-8: E2 80 A6)
@@ -1380,14 +1380,14 @@ TEST_F(InteractiveClientFixture, MaxWidthOmitsColumnsWhenTooNarrow) {
       "SELECT 1 AS col1, 2 AS col2, 3 AS col3, 4 AS col4, "
       "5 AS col5, 6 AS col6, 7 AS col7, 8 AS col8");
   ASSERT_TRUE(result.ok());
-  ASSERT_EQ((*result)->num_columns(), 8);
+  ASSERT_EQ(result->table->num_columns(), 8);
 
   ClientConfig config;
   config.max_width = 30;  // Very narrow for 8 columns
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
 
   EXPECT_LT(render_result.columns_rendered, 8)
       << "Should omit some columns when terminal is too narrow";
@@ -1450,7 +1450,7 @@ TEST_F(InteractiveClientFixture, NonInteractiveModeNoTruncation) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
 
   EXPECT_EQ(render_result.rows_rendered, 100)
       << "Non-interactive should show all rows";
@@ -1468,7 +1468,7 @@ TEST_F(InteractiveClientFixture, BoxRendererShowsColumnTypes) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Should show friendly type names below column names
@@ -1490,7 +1490,7 @@ TEST_F(InteractiveClientFixture, BoxRendererRightAlignsNumbers) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // For right-aligned numbers, padding should come before the value.
@@ -1516,7 +1516,7 @@ TEST_F(InteractiveClientFixture, TableRendererShowsColumnTypes) {
   auto renderer = CreateRenderer(OutputMode::TABLE, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   EXPECT_NE(output.find("int"), std::string::npos)
@@ -1558,7 +1558,7 @@ TEST_F(InteractiveClientFixture, FooterShowsTruncationInfo) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // In-table footer should show truncation info inside the box
@@ -1583,7 +1583,7 @@ TEST_F(InteractiveClientFixture, BoxRendererSplitDisplayShowsDotRows) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Should have middle dot character (U+00B7, UTF-8: C2 B7)
@@ -1612,7 +1612,7 @@ TEST_F(InteractiveClientFixture, BoxRendererInTableFooter) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // In-table footer should appear for all box results (even non-truncated)
@@ -1643,7 +1643,7 @@ TEST_F(InteractiveClientFixture, CsvRendererNoFooterRendered) {
   auto renderer = CreateRenderer(OutputMode::CSV, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
 
   EXPECT_FALSE(render_result.footer_rendered)
       << "CSV renderer should not set footer_rendered";
@@ -1663,7 +1663,7 @@ TEST_F(InteractiveClientFixture, BoxRendererFooterWrapsOnNarrowTable) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Footer should show row count and "(N shown)" on separate lines
@@ -1691,7 +1691,7 @@ TEST_F(InteractiveClientFixture, TableRendererSplitDisplay) {
   auto renderer = CreateRenderer(OutputMode::TABLE, config);
 
   std::ostringstream out;
-  auto render_result = renderer->Render(**result, out);
+  auto render_result = renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Should have middle dot character for split
@@ -1884,7 +1884,7 @@ TEST_F(InteractiveClientFixture, BoxRendererCentersColumnNames) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Parse the header line for 'a' column — should be centered
@@ -1919,7 +1919,7 @@ TEST_F(InteractiveClientFixture, BoxRendererFriendlyTypeNames) {
   auto renderer = CreateRenderer(OutputMode::BOX, config);
 
   std::ostringstream out;
-  renderer->Render(**result, out);
+  renderer->Render(*result->table, out);
   std::string output = out.str();
 
   // Should show friendly type names
