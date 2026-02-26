@@ -473,25 +473,45 @@ void UpdateWidthsForRows(const arrow::Table& table,
 // Shared tabular rendering for Box and Table modes.
 // Supports split display (top rows + dot rows + bottom rows),
 // in-table footer, column types, and right-aligned numbers.
+// footer_total_rows: override for footer total (-1 = use table size).
 RenderResult RenderTabular(const arrow::Table& table, std::ostream& out,
                            const BorderStyle& bs, bool show_headers,
                            const std::string& null_value, int max_rows,
-                           int max_width) {
+                           int max_width, int64_t footer_total_rows) {
   if (table.num_columns() == 0) return {0, 0};
 
-  int64_t total_rows = table.num_rows();
+  int64_t table_rows = table.num_rows();
   int total_cols = table.num_columns();
 
+  // footer_total_rows: -2 = not set (use table size), -1 = unknown (show N+),
+  //                    >= 0 = known total.
+  // When the total exceeds table size, the table was pre-limited.
+  bool pre_limited =
+      (footer_total_rows >= 0 && footer_total_rows > table_rows) ||
+      footer_total_rows == -1;
+
+  // -1 signals unknown total (will render as "N+ rows")
+  int64_t total_rows_for_footer =
+      footer_total_rows == -2 ? table_rows : footer_total_rows;
+
   // Row display strategy
-  bool truncating_rows = max_rows > 0 && max_rows < total_rows;
-  int64_t rows_to_show = truncating_rows ? max_rows : total_rows;
-  bool split_display = truncating_rows && rows_to_show >= 4;
+  bool truncating_rows;
+  int64_t rows_to_show;
+  if (pre_limited) {
+    // Table already contains only the rows we want to show
+    truncating_rows = true;
+    rows_to_show = table_rows;
+  } else {
+    truncating_rows = max_rows > 0 && max_rows < table_rows;
+    rows_to_show = truncating_rows ? max_rows : table_rows;
+  }
+  bool split_display = !pre_limited && truncating_rows && rows_to_show >= 4;
 
   int64_t top_count = 0, bottom_count = 0, bottom_start = 0;
   if (split_display) {
     top_count = rows_to_show / 2;
     bottom_count = rows_to_show - top_count;
-    bottom_start = total_rows - bottom_count;
+    bottom_start = table_rows - bottom_count;
   } else {
     top_count = rows_to_show;
   }
@@ -500,7 +520,7 @@ RenderResult RenderTabular(const arrow::Table& table, std::ostream& out,
   auto widths = ComputeColumnWidths(table, show_headers, null_value,
                                     show_headers, top_count);
   if (split_display) {
-    UpdateWidthsForRows(table, null_value, widths, bottom_start, total_rows);
+    UpdateWidthsForRows(table, null_value, widths, bottom_start, table_rows);
   }
 
   int cols_shown = total_cols;
@@ -519,9 +539,15 @@ RenderResult RenderTabular(const arrow::Table& table, std::ostream& out,
   // Build footer parts early so we can ensure the table is wide enough
   bool cols_truncated = cols_shown < total_cols;
   std::vector<std::string> footer_parts;
-  footer_parts.push_back(std::to_string(total_rows) + " row" +
-                          (total_rows != 1 ? "s" : ""));
-  if (truncating_rows) {
+  if (total_rows_for_footer >= 0) {
+    footer_parts.push_back(std::to_string(total_rows_for_footer) + " row" +
+                            (total_rows_for_footer != 1 ? "s" : ""));
+  } else {
+    // Unknown total — show fetched count with "+" suffix
+    footer_parts.push_back(std::to_string(rows_to_show) + "+ row" +
+                            (rows_to_show != 1 ? "s" : ""));
+  }
+  if (truncating_rows && total_rows_for_footer != rows_to_show) {
     footer_parts.push_back("(" + std::to_string(rows_to_show) + " shown)");
   }
   if (total_cols > 1 || cols_truncated) {
@@ -616,9 +642,13 @@ RenderResult RenderTabular(const arrow::Table& table, std::ostream& out,
   if (split_display) {
     for (int64_t r = 0; r < top_count; ++r) render_data_row(r);
     for (int i = 0; i < 3; ++i) render_dot_row();
-    for (int64_t r = bottom_start; r < total_rows; ++r) render_data_row(r);
+    for (int64_t r = bottom_start; r < table_rows; ++r) render_data_row(r);
   } else {
     for (int64_t r = 0; r < rows_to_show; ++r) render_data_row(r);
+    // When pre-limited, show dot rows to indicate more rows exist
+    if (pre_limited) {
+      for (int i = 0; i < 3; ++i) render_dot_row();
+    }
   }
 
   // In-table footer
@@ -666,7 +696,7 @@ class BoxRenderer : public OutputRenderer {
  public:
   RenderResult Render(const arrow::Table& table, std::ostream& out) override {
     return RenderTabular(table, out, kBoxBorder, show_headers, null_value,
-                         max_rows, max_width);
+                         max_rows, max_width, total_rows);
   }
 };
 
@@ -675,7 +705,7 @@ class TableRenderer : public OutputRenderer {
  public:
   RenderResult Render(const arrow::Table& table, std::ostream& out) override {
     return RenderTabular(table, out, kTableBorder, show_headers, null_value,
-                         max_rows, max_width);
+                         max_rows, max_width, total_rows);
   }
 };
 

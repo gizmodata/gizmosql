@@ -41,8 +41,9 @@ class OutputRenderer {
 
   bool show_headers = true;
   std::string null_value = "NULL";
-  int max_rows = 0;   // 0 = unlimited
-  int max_width = 0;  // 0 = unlimited
+  int max_rows = 0;      // 0 = unlimited
+  int max_width = 0;     // 0 = unlimited
+  int64_t total_rows = -2;  // Footer total override: -2 = not set, -1 = unknown, >= 0 = known
 };
 
 std::unique_ptr<OutputRenderer> CreateRenderer(OutputMode mode,

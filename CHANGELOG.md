@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Limit row fetching for large result sets** (`gizmosql_client`): In interactive mode, the client now fetches only the rows needed for display (default 40) instead of streaming the entire result set. The real total row count is obtained from `FlightInfo::total_records()` or a `SELECT COUNT(*)` fallback, and displayed in the footer (e.g., "6001215 rows (40 shown)"). Three dot rows (`·`) appear after the data to visually indicate truncation. Non-interactive modes (CSV, JSON, etc.) continue to fetch all rows.
+
+### Fixed
+
+- **TLS system CA certificate loading** (`gizmosql_client`): When TLS is enabled without an explicit `--tls-roots` path, the client now automatically loads system root CA certificates (macOS, Linux, and Windows Certificate Store) so server certificates can be verified without requiring a manual CA bundle.
+- **GetTables catalog filter**: The `GetTables` RPC now uses `LIKE` for catalog pattern matching instead of exact equality, allowing wildcard patterns (e.g., `%`) to match across catalogs.
+
 ## [1.18.4] - 2026-02-21
 
 ### Fixed

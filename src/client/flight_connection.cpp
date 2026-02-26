@@ -24,6 +24,15 @@
 #include <sstream>
 #include <vector>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <wincrypt.h>
+#pragma comment(lib, "crypt32.lib")
+#endif
+
+#include <arrow/scalar.h>
 #include <arrow/table.h>
 #include <nlohmann/json.hpp>
 
@@ -38,6 +47,51 @@ arrow::Status ReadPEMFile(const std::string& path, std::string& contents) {
   ss << file.rdbuf();
   contents = ss.str();
   return arrow::Status::OK();
+}
+
+/// Load system root CA certificates into a PEM string.
+/// Returns an empty string if no system certs can be found.
+static std::string LoadSystemCACerts() {
+#ifdef _WIN32
+  // Read root certificates from the Windows Certificate Store
+  std::string pem;
+  HCERTSTORE store = CertOpenSystemStoreA(0, "ROOT");
+  if (!store) return {};
+
+  PCCERT_CONTEXT cert = nullptr;
+  while ((cert = CertEnumCertificatesInStore(store, cert)) != nullptr) {
+    DWORD pem_size = 0;
+    if (!CryptBinaryToStringA(cert->pbCertEncoded, cert->cbCertEncoded,
+                               CRYPT_STRING_BASE64HEADER, nullptr, &pem_size)) {
+      continue;
+    }
+    std::string buf(pem_size, '\0');
+    if (CryptBinaryToStringA(cert->pbCertEncoded, cert->cbCertEncoded,
+                              CRYPT_STRING_BASE64HEADER, buf.data(), &pem_size)) {
+      buf.resize(pem_size);
+      pem += buf;
+    }
+  }
+  CertCloseStore(store, 0);
+  return pem;
+#else
+  // Try well-known CA bundle paths (macOS, Linux distros)
+  static const char* paths[] = {
+      "/etc/ssl/cert.pem",                   // macOS, Alpine
+      "/etc/ssl/certs/ca-certificates.crt",  // Debian, Ubuntu
+      "/etc/pki/tls/certs/ca-bundle.crt",    // RHEL, CentOS, Fedora
+      "/etc/ssl/ca-bundle.pem",              // OpenSUSE
+  };
+  for (const char* path : paths) {
+    std::ifstream f(path);
+    if (f.good()) {
+      std::stringstream ss;
+      ss << f.rdbuf();
+      return ss.str();
+    }
+  }
+  return {};
+#endif
 }
 
 void FlightConnection::Disconnect() {
@@ -93,6 +147,16 @@ arrow::Status FlightConnection::Connect(const ClientConfig& config) {
 
   if (!config.tls_roots.empty()) {
     ARROW_RETURN_NOT_OK(ReadPEMFile(config.tls_roots, options.tls_root_certs));
+  } else if (config.use_tls && !config.tls_skip_verify) {
+    // No explicit root certs provided — load system CA bundle so gRPC can
+    // verify the server certificate (gRPC's built-in default path
+    // /usr/share/grpc/roots.pem often doesn't exist).
+    options.tls_root_certs = LoadSystemCACerts();
+    if (options.tls_root_certs.empty()) {
+      return arrow::Status::IOError(
+          "TLS enabled but no root certificates found. "
+          "Use --tls-roots to provide a CA bundle.");
+    }
   }
 
   options.disable_server_verification = config.tls_skip_verify;
@@ -232,13 +296,13 @@ static bool IsCancelledStatus(const arrow::Status& st) {
 }
 
 
-arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::ExecuteQuery(
-    const std::string& sql) {
+arrow::Result<QueryResult> FlightConnection::ExecuteQuery(
+    const std::string& sql, int64_t row_limit) {
   cancel_requested_.store(false);
 
   // Helper: check if an error was caused by our SIGINT cancel
   auto check_cancel = [this](const arrow::Status& st)
-      -> arrow::Result<std::shared_ptr<arrow::Table>> {
+      -> arrow::Result<QueryResult> {
     if (cancel_requested_.load(std::memory_order_relaxed) ||
         IsCancelledStatus(st)) {
       SendCancelToServer();
@@ -253,10 +317,16 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::ExecuteQuery(
   }
   auto& info = *info_result;
 
+  int64_t server_total_records = info->total_records();
+
   std::vector<std::shared_ptr<arrow::RecordBatch>> all_batches;
   std::shared_ptr<arrow::Schema> schema;
+  int64_t rows_fetched = 0;
+  bool hit_limit = false;
 
   for (const auto& endpoint : info->endpoints()) {
+    if (hit_limit) break;
+
     auto stream_result = client_->DoGet(call_options_, endpoint.ticket);
     if (!stream_result.ok()) {
       return check_cancel(stream_result.status());
@@ -275,17 +345,86 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::ExecuteQuery(
         return check_cancel(chunk_result.status());
       }
       if (chunk_result->data == nullptr) break;
-      all_batches.push_back(chunk_result->data);
+
+      auto batch = chunk_result->data;
+
+      if (row_limit > 0 && rows_fetched + batch->num_rows() > row_limit) {
+        // Slice the batch to only take what we need
+        int64_t needed = row_limit - rows_fetched;
+        all_batches.push_back(batch->Slice(0, needed));
+        rows_fetched += needed;
+        hit_limit = true;
+        break;
+      }
+
+      all_batches.push_back(batch);
+      rows_fetched += batch->num_rows();
+
+      if (row_limit > 0 && rows_fetched >= row_limit) {
+        hit_limit = true;
+        break;
+      }
     }
   }
 
   if (!schema) {
     return arrow::Status::Invalid("No schema returned from query");
   }
+
+  std::shared_ptr<arrow::Table> table;
   if (all_batches.empty()) {
-    return arrow::Table::MakeEmpty(schema);
+    ARROW_ASSIGN_OR_RAISE(table, arrow::Table::MakeEmpty(schema));
+  } else {
+    ARROW_ASSIGN_OR_RAISE(table,
+                           arrow::Table::FromRecordBatches(schema, all_batches));
   }
-  return arrow::Table::FromRecordBatches(schema, all_batches);
+
+  // Determine total_rows
+  int64_t total_rows = table->num_rows();
+
+  if (hit_limit) {
+    // We stopped early — need the real total
+    if (server_total_records >= 0) {
+      total_rows = server_total_records;
+    } else {
+      // Fallback: run a COUNT(*) query
+      std::string count_sql =
+          "SELECT COUNT(*) FROM (" + sql + ") AS __count__";
+      auto count_result = client_->Execute(call_options_, count_sql);
+      if (count_result.ok()) {
+        auto& count_info = *count_result;
+        // Collect the count result
+        bool got_count = false;
+        for (const auto& ep : count_info->endpoints()) {
+          auto cs = client_->DoGet(call_options_, ep.ticket);
+          if (!cs.ok()) break;
+          while (true) {
+            auto cr = (*cs)->Next();
+            if (!cr.ok() || cr->data == nullptr) break;
+            if (cr->data->num_rows() > 0 && cr->data->num_columns() > 0) {
+              auto scalar_result = cr->data->column(0)->GetScalar(0);
+              if (scalar_result.ok()) {
+                auto val = std::dynamic_pointer_cast<arrow::Int64Scalar>(
+                    *scalar_result);
+                if (val && val->is_valid) {
+                  total_rows = val->value;
+                  got_count = true;
+                }
+              }
+            }
+          }
+          if (got_count) break;
+        }
+        if (!got_count) {
+          total_rows = -1;  // Unknown
+        }
+      } else {
+        total_rows = -1;  // COUNT query failed, unknown total
+      }
+    }
+  }
+
+  return QueryResult{std::move(table), total_rows};
 }
 
 arrow::Result<int64_t> FlightConnection::ExecuteUpdate(const std::string& sql) {

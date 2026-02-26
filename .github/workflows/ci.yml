@@ -41,6 +41,15 @@ jobs:
         run: |
           brew install automake boost gflags
 
+      - name: Restore Arrow cache
+        id: arrow-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/third_party
+          key: arrow-macos-arm64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          restore-keys: |
+            arrow-macos-arm64-apache-arrow-23.0.1-
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -53,6 +62,13 @@ jobs:
             GIZMOSQL_ENTERPRISE=ON
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Save Arrow cache
+        if: steps.arrow-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/third_party
+          key: arrow-macos-arm64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Run Tests (Core Edition - No License)
         run: |
@@ -143,10 +159,10 @@ jobs:
         include:
           - platform: amd64
             os: linux
-            runner: buildjet-8vcpu-ubuntu-2204
+            runner: ubuntu-latest
           - platform: arm64
             os: linux
-            runner: buildjet-8vcpu-ubuntu-2204-arm
+            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     env:
       zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
@@ -200,6 +216,15 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
+      - name: Restore Arrow cache
+        id: arrow-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/third_party
+          key: arrow-linux-${{ matrix.platform }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          restore-keys: |
+            arrow-linux-${{ matrix.platform }}-apache-arrow-23.0.1-
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -213,6 +238,13 @@ jobs:
             GIZMOSQL_ENTERPRISE=ON
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Save Arrow cache
+        if: steps.arrow-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/third_party
+          key: arrow-linux-${{ matrix.platform }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Start MinIO and setup bucket
         run: |
@@ -414,6 +446,15 @@ jobs:
         shell: pwsh
         run: echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
+      - name: Restore Arrow cache
+        id: arrow-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/third_party
+          key: arrow-windows-x64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          restore-keys: |
+            arrow-windows-x64-apache-arrow-23.0.1-
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -430,6 +471,13 @@ jobs:
 
       - name: Build
         run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }}
+
+      - name: Save Arrow cache
+        if: steps.arrow-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/third_party
+          key: arrow-windows-x64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Copy VC++ runtime DLLs for DuckDB extension compatibility
         run: |

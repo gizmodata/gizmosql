@@ -624,12 +624,12 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
                  "table_name, "
                  "table_type FROM information_schema.tables where 1=1";
 
-  table_query << " and table_catalog = ";
+  table_query << " and table_catalog ";
   if (command.catalog.has_value()) {
-    table_query << "?";
+    table_query << "LIKE ?";
     bind_parameters.emplace_back(command.catalog.value());
   } else {
-    table_query << "CURRENT_DATABASE()";
+    table_query << "= CURRENT_DATABASE()";
   }
 
   if (command.db_schema_filter_pattern.has_value()) {

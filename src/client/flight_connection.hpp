@@ -30,6 +30,11 @@
 
 namespace gizmosql::client {
 
+struct QueryResult {
+  std::shared_ptr<arrow::Table> table;
+  int64_t total_rows;  // -1 if unknown
+};
+
 arrow::Status ReadPEMFile(const std::string& path, std::string& contents);
 
 class FlightConnection {
@@ -50,7 +55,8 @@ class FlightConnection {
 
   arrow::Status Connect(const ClientConfig& config);
 
-  arrow::Result<std::shared_ptr<arrow::Table>> ExecuteQuery(const std::string& sql);
+  arrow::Result<QueryResult> ExecuteQuery(const std::string& sql,
+                                           int64_t row_limit = 0);
   arrow::Result<int64_t> ExecuteUpdate(const std::string& sql);
 
   arrow::Result<std::shared_ptr<arrow::Table>> GetTables(

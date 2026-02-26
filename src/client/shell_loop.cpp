@@ -86,11 +86,15 @@ bool ExecuteStatement(FlightConnection& conn, ClientConfig& config,
       return false;
     }
   } else {
-    auto result = conn.ExecuteQuery(sql);
+    // Pass max_rows as row_limit so we only fetch what we need
+    int64_t row_limit = config.max_rows > 0 ? config.max_rows : 0;
+    auto result = conn.ExecuteQuery(sql, row_limit);
     if (result.ok()) {
       auto elapsed = std::chrono::steady_clock::now() - start;
       auto ms =
           std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+
+      auto& query_result = *result;
 
       // Re-read terminal width if in auto-width mode (tracks window resizes)
       if (config.auto_width) {
@@ -98,21 +102,33 @@ bool ExecuteStatement(FlightConnection& conn, ClientConfig& config,
       }
 
       auto renderer = CreateRenderer(config.output_mode, config);
-      auto render_result = renderer->Render(**result, *config.output_stream);
+      renderer->total_rows = query_result.total_rows;
+      auto render_result =
+          renderer->Render(*query_result.table, *config.output_stream);
 
       // Box/table renderers include an in-table footer; skip external footer
       if (!render_result.footer_rendered) {
-        int64_t total_rows = (*result)->num_rows();
-        int total_cols = (*result)->num_columns();
-        bool rows_truncated = render_result.rows_rendered < total_rows;
+        int64_t total_rows = query_result.total_rows >= 0
+                                 ? query_result.total_rows
+                                 : query_result.table->num_rows();
+        int total_cols = query_result.table->num_columns();
+        int64_t table_rows = query_result.table->num_rows();
+        bool rows_truncated =
+            render_result.rows_rendered < total_rows ||
+            (query_result.total_rows == -1 &&
+             render_result.rows_rendered < table_rows);
         bool cols_truncated = render_result.columns_rendered < total_cols;
 
-        if (!rows_truncated && !cols_truncated) {
+        if (query_result.total_rows == -1 &&
+            table_rows == row_limit && row_limit > 0) {
+          // Unknown total — show "N+ rows"
+          *config.output_stream << table_rows << "+ row"
+                                << (table_rows != 1 ? "s" : "");
+        } else if (!rows_truncated && !cols_truncated) {
           *config.output_stream << total_rows << " row"
                                 << (total_rows != 1 ? "s" : "") << " ("
                                 << total_cols << " column"
-                                << (total_cols != 1 ? "s" : "") << ")"
-                                << std::endl;
+                                << (total_cols != 1 ? "s" : "") << ")";
         } else {
           *config.output_stream << total_rows << " row"
                                 << (total_rows != 1 ? "s" : "");
@@ -126,8 +142,8 @@ bool ExecuteStatement(FlightConnection& conn, ClientConfig& config,
             *config.output_stream << " (" << render_result.columns_rendered
                                   << " shown)";
           }
-          *config.output_stream << std::endl;
         }
+        *config.output_stream << std::endl;
       }
 
       if (config.show_timer) {
