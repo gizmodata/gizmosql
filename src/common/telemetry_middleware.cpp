@@ -284,12 +284,12 @@ arrow::Status TelemetryMiddlewareFactory::StartCall(
 
 std::shared_ptr<TelemetrySpanScope> ActivateTelemetrySpan(
     const flight::ServerCallContext& ctx) {
-  auto middleware = ctx.GetMiddleware("telemetry");
+  auto* middleware = ctx.GetMiddleware("telemetry");
   if (!middleware) {
     return nullptr;
   }
 
-  auto telemetry_middleware = std::dynamic_pointer_cast<TelemetryMiddleware>(middleware);
+  auto* telemetry_middleware = dynamic_cast<TelemetryMiddleware*>(middleware);
   if (!telemetry_middleware) {
     return nullptr;
   }
