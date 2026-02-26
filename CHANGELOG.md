@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.5] - 2026-02-26
+
 ### Added
 
 - **Limit row fetching for large result sets** (`gizmosql_client`): In interactive mode, the client now fetches only the rows needed for display (default 40) instead of streaming the entire result set. The real total row count is obtained from `FlightInfo::total_records()` or a `SELECT COUNT(*)` fallback, and displayed in the footer (e.g., "6001215 rows (40 shown)"). Three dot rows (`·`) appear after the data to visually indicate truncation. Non-interactive modes (CSV, JSON, etc.) continue to fetch all rows.
