@@ -1356,8 +1356,40 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   }
 #endif
 
-  GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: "
-                     << lvl_s;
+  GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: " << lvl_s;
+
+  std::string otel_enabled_s = pick(otel_enabled, "GIZMOSQL_OTEL_ENABLED", "off");
+  std::string otel_exporter_s = pick(otel_exporter, "GIZMOSQL_OTEL_EXPORTER", "http");
+  std::string otel_endpoint_s = pick(otel_endpoint, "GIZMOSQL_OTEL_ENDPOINT", "");
+  std::string otel_service_name_s =
+      pick(otel_service_name, "GIZMOSQL_OTEL_SERVICE_NAME", "gizmosql");
+  std::string otel_service_version_s =
+      pick("", "GIZMOSQL_OTEL_SERVICE_VERSION", GIZMOSQL_SERVER_VERSION);
+  std::string otel_headers_s = pick(otel_headers, "GIZMOSQL_OTEL_HEADERS", "");
+
+  bool telemetry_enabled = false;
+  if (!parse_bool(otel_enabled_s, telemetry_enabled)) {
+    std::cerr << "Unknown otel-enabled '" << otel_enabled_s << "', defaulting to off\n";
+    telemetry_enabled = false;
+  }
+
+  if (telemetry_enabled) {
+    gizmosql::TelemetryConfig tel_config;
+    tel_config.enabled = true;
+    tel_config.exporter_type = gizmosql::ParseExporterType(otel_exporter_s);
+    tel_config.endpoint = otel_endpoint_s;
+    tel_config.service_name = otel_service_name_s;
+    tel_config.service_version = otel_service_version_s;
+    tel_config.headers = otel_headers_s;
+    tel_config.deployment_environment =
+        gizmosql::SafeGetEnvVarValue("GIZMOSQL_ENVIRONMENT");
+    if (tel_config.deployment_environment.empty()) {
+      tel_config.deployment_environment = gizmosql::SafeGetEnvVarValue("ENVIRONMENT");
+    }
+
+    gizmosql::InitTelemetry(tel_config);
+    telemetry_enabled = gizmosql::IsTelemetryEnabled();
+  }
 
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,

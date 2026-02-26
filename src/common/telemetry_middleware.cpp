@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <arrow/flight/server.h>
 #include <cctype>
+#include <cstdlib>
 #include <string_view>
 #include <utility>
 
@@ -29,6 +30,7 @@
 #include <opentelemetry/context/propagation/global_propagator.h>
 #include <opentelemetry/context/propagation/text_map_propagator.h>
 #include <opentelemetry/context/runtime_context.h>
+#include <opentelemetry/trace/context.h>
 #include <opentelemetry/trace/scope.h>
 #include <opentelemetry/trace/span.h>
 #include <opentelemetry/trace/tracer.h>
@@ -39,6 +41,25 @@ namespace trace_api = opentelemetry::trace;
 #endif
 
 namespace gizmosql {
+
+static bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
+  return left.size() == right.size() &&
+         std::equal(left.begin(), left.end(), right.begin(), right.end(),
+                    [](char l, char r) {
+                      return std::tolower(static_cast<unsigned char>(l)) ==
+                             std::tolower(static_cast<unsigned char>(r));
+                    });
+}
+
+static bool HasHeaderIgnoreCase(const flight::CallHeaders& incoming_headers,
+                                std::string_view key) {
+  for (auto iter = incoming_headers.begin(); iter != incoming_headers.end(); ++iter) {
+    if (EqualsIgnoreCase(iter->first, key)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 static const char* FlightMethodName(flight::FlightMethod method) {
   switch (method) {
@@ -84,7 +105,7 @@ class FlightCallHeadersCarrier final : public context_propagation_api::TextMapCa
 
     for (auto header_iter = incoming_headers_.begin(); header_iter != incoming_headers_.end();
          ++header_iter) {
-      if (EqualsIgnoreCase(header_iter->first, key_str)) {
+      if (gizmosql::EqualsIgnoreCase(header_iter->first, key_str)) {
         cached_value_ = std::string(header_iter->second);
         return cached_value_;
       }
@@ -98,17 +119,17 @@ class FlightCallHeadersCarrier final : public context_propagation_api::TextMapCa
            opentelemetry::nostd::string_view /*value*/) noexcept override {}
 
  private:
-  static bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
-    return left.size() == right.size() &&
-           std::equal(left.begin(), left.end(), right.begin(), right.end(),
-                      [](char l, char r) {
-                        return std::tolower(static_cast<unsigned char>(l)) ==
-                               std::tolower(static_cast<unsigned char>(r));
-                      });
-  }
-
   const flight::CallHeaders& incoming_headers_;
   mutable std::string cached_value_;
+};
+
+class TelemetrySpanScope {
+ public:
+  explicit TelemetrySpanScope(const opentelemetry::nostd::shared_ptr<trace_api::Span>& span)
+      : scope_(span) {}
+
+ private:
+  trace_api::Scope scope_;
 };
 
 struct TelemetryMiddleware::SpanHolder {
@@ -126,6 +147,11 @@ struct TelemetryMiddleware::SpanHolder {
 };
 #else
 struct TelemetryMiddleware::SpanHolder {};
+
+class TelemetrySpanScope {
+ public:
+  TelemetrySpanScope() = default;
+};
 #endif
 
 TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::string peer,
@@ -147,13 +173,27 @@ TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::strin
   auto propagator = context_propagation_api::GlobalTextMapPropagator::GetGlobalPropagator();
   auto extracted_context = propagator ? propagator->Extract(carrier, current_context)
                                       : current_context;
+  const auto parent_span_context = trace_api::GetSpan(extracted_context)->GetContext();
+  const bool has_parent_context = parent_span_context.IsValid();
   auto parent_context_token = context_api::RuntimeContext::Attach(extracted_context);
+  (void)parent_context_token;
   auto span = tracer->StartSpan(std::string("gizmosql.") + FlightMethodName(method_), {},
                                 span_options);
 
   span->SetAttribute("rpc.system", "grpc");
   span->SetAttribute("rpc.service", "arrow.flight.protocol.FlightService");
   span->SetAttribute("rpc.method", FlightMethodName(method_));
+  span->SetAttribute("gizmosql.trace.parent_present", has_parent_context);
+  span->SetAttribute("gizmosql.trace.traceparent_present",
+                     HasHeaderIgnoreCase(incoming_headers, "traceparent"));
+  span->SetAttribute("gizmosql.trace.datadog_parent_present",
+                     HasHeaderIgnoreCase(incoming_headers, "x-datadog-parent-id"));
+
+  if (const char* service_version = std::getenv("GIZMOSQL_OTEL_SERVICE_VERSION");
+      service_version != nullptr && service_version[0] != '\0') {
+    span->SetAttribute("service.version", service_version);
+  }
+
   if (!peer_.empty()) {
     span->SetAttribute("net.peer.name", peer_);
   }
@@ -163,6 +203,15 @@ TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::strin
 }
 
 TelemetryMiddleware::~TelemetryMiddleware() = default;
+
+std::shared_ptr<TelemetrySpanScope> TelemetryMiddleware::ActivateSpanForCurrentThread() const {
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+  if (span_holder_ && span_holder_->span) {
+    return std::make_shared<TelemetrySpanScope>(span_holder_->span);
+  }
+#endif
+  return nullptr;
+}
 
 void TelemetryMiddleware::SendingHeaders(flight::AddCallHeaders* /*outgoing_headers*/) {}
 
@@ -231,6 +280,20 @@ arrow::Status TelemetryMiddlewareFactory::StartCall(
     std::shared_ptr<flight::ServerMiddleware>* out) {
   *out = std::make_shared<TelemetryMiddleware>(info.method, ctx.peer(), ctx.incoming_headers());
   return arrow::Status::OK();
+}
+
+std::shared_ptr<TelemetrySpanScope> ActivateTelemetrySpan(
+    const flight::ServerCallContext& ctx) {
+  auto middleware = ctx.GetMiddleware("telemetry");
+  if (!middleware) {
+    return nullptr;
+  }
+
+  auto telemetry_middleware = std::dynamic_pointer_cast<TelemetryMiddleware>(middleware);
+  if (!telemetry_middleware) {
+    return nullptr;
+  }
+  return telemetry_middleware->ActivateSpanForCurrentThread();
 }
 
 }  // namespace gizmosql

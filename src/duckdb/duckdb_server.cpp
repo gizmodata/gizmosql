@@ -46,6 +46,7 @@
 #include "duckdb_tables_schema_batch_reader.h"
 #include "gizmosql_security.h"
 #include "gizmosql_logging.h"
+#include "telemetry_middleware.h"
 #include "flight_sql_fwd.h"
 #include "session_context.h"
 #include "request_ctx.h"
@@ -61,6 +62,11 @@ namespace sql = flight::sql;
 
 namespace gizmosql::ddb {
 namespace {
+
+inline std::shared_ptr<::gizmosql::TelemetrySpanScope> ActivateTelemetryScope(
+    const flight::ServerCallContext& context) {
+  return ::gizmosql::ActivateTelemetrySpan(context);
+}
 
 class DuckDBTransactionGuard {
  public:
@@ -1973,44 +1979,52 @@ Result<std::vector<std::string>> DuckDBFlightSqlServer::ExecuteSqlAndGetStringVe
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoStatement(
     const flight::ServerCallContext& context, const sql::StatementQuery& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoStatement(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetStatement(
     const flight::ServerCallContext& context, const sql::StatementQueryTicket& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetStatement(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoCatalogs(
     const flight::ServerCallContext& context,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoCatalogs(context, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetCatalogs(
     const flight::ServerCallContext& context) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetCatalogs(context);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoSchemas(
     const flight::ServerCallContext& context, const sql::GetDbSchemas& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoSchemas(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetDbSchemas(
     const flight::ServerCallContext& context, const sql::GetDbSchemas& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetDbSchemas(context, command);
 }
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoTables(
     const flight::ServerCallContext& context, const sql::GetTables& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoTables(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetTables(
     const flight::ServerCallContext& context, const sql::GetTables& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetTables(context, command);
 }
 
@@ -2018,12 +2032,14 @@ Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoXdbcTypeInfo(
     const flight::ServerCallContext& context, const flight::sql::GetXdbcTypeInfo& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoTypeInfo(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetXdbcTypeInfo(const flight::ServerCallContext& context,
                                          const flight::sql::GetXdbcTypeInfo& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetTypeInfo(context, command);
 }
 
@@ -2031,16 +2047,19 @@ Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoTableTypes(
     const flight::ServerCallContext& context,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoTableTypes(context, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetTableTypes(
     const flight::ServerCallContext& context) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetTableTypes(context);
 }
 
 Result<int64_t> DuckDBFlightSqlServer::DoPutCommandStatementUpdate(
     const flight::ServerCallContext& context, const sql::StatementUpdate& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoPutCommandStatementUpdate(context, command);
 }
 
@@ -2048,12 +2067,14 @@ Result<sql::ActionCreatePreparedStatementResult>
 DuckDBFlightSqlServer::CreatePreparedStatement(
     const flight::ServerCallContext& context,
     const sql::ActionCreatePreparedStatementRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->CreatePreparedStatement(context, request);
 }
 
 Status DuckDBFlightSqlServer::ClosePreparedStatement(
     const flight::ServerCallContext& context,
     const sql::ActionClosePreparedStatementRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->ClosePreparedStatement(context, request);
 }
 
@@ -2061,6 +2082,7 @@ Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoPreparedStatement(
     const flight::ServerCallContext& context, const sql::PreparedStatementQuery& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoPreparedStatement(context, command, descriptor);
 }
 
@@ -2068,18 +2090,21 @@ Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetPreparedStatement(
     const flight::ServerCallContext& context,
     const sql::PreparedStatementQuery& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetPreparedStatement(context, command);
 }
 
 Status DuckDBFlightSqlServer::DoPutPreparedStatementQuery(
     const flight::ServerCallContext& context, const sql::PreparedStatementQuery& command,
     flight::FlightMessageReader* reader, flight::FlightMetadataWriter* writer) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoPutPreparedStatementQuery(context, command, reader, writer);
 }
 
 Result<int64_t> DuckDBFlightSqlServer::DoPutPreparedStatementUpdate(
     const flight::ServerCallContext& context, const sql::PreparedStatementUpdate& command,
     flight::FlightMessageReader* reader) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoPutPreparedStatementUpdate(context, command, reader);
 }
 
@@ -2087,11 +2112,13 @@ Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoPrimaryKeys(
     const flight::ServerCallContext& context, const sql::GetPrimaryKeys& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoPrimaryKeys(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>> DuckDBFlightSqlServer::DoGetPrimaryKeys(
     const flight::ServerCallContext& context, const sql::GetPrimaryKeys& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetPrimaryKeys(context, command);
 }
 
@@ -2099,12 +2126,14 @@ Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoImportedKeys(
     const flight::ServerCallContext& context, const sql::GetImportedKeys& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoImportedKeys(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetImportedKeys(const flight::ServerCallContext& context,
                                          const sql::GetImportedKeys& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetImportedKeys(context, command);
 }
 
@@ -2112,12 +2141,14 @@ Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoExportedKeys(
     const flight::ServerCallContext& context, const sql::GetExportedKeys& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoExportedKeys(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetExportedKeys(const flight::ServerCallContext& context,
                                          const sql::GetExportedKeys& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetExportedKeys(context, command);
 }
 
@@ -2125,60 +2156,70 @@ Result<std::unique_ptr<flight::FlightInfo>>
 DuckDBFlightSqlServer::GetFlightInfoCrossReference(
     const flight::ServerCallContext& context, const sql::GetCrossReference& command,
     const flight::FlightDescriptor& descriptor) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetFlightInfoCrossReference(context, command, descriptor);
 }
 
 Result<std::unique_ptr<flight::FlightDataStream>>
 DuckDBFlightSqlServer::DoGetCrossReference(const flight::ServerCallContext& context,
                                            const sql::GetCrossReference& command) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoGetCrossReference(context, command);
 }
 
 Result<int64_t> DuckDBFlightSqlServer::DoPutCommandStatementIngest(
     const flight::ServerCallContext& context, const flight::sql::StatementIngest& command,
     flight::FlightMessageReader* reader) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->DoPutCommandStatementIngest(context, command, reader);
 }
 
 Result<sql::ActionBeginTransactionResult> DuckDBFlightSqlServer::BeginTransaction(
     const flight::ServerCallContext& context,
     const sql::ActionBeginTransactionRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->BeginTransaction(context, request);
 }
 
 Status DuckDBFlightSqlServer::EndTransaction(
     const flight::ServerCallContext& context,
     const sql::ActionEndTransactionRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->EndTransaction(context, request);
 }
 
 Result<flight::CancelFlightInfoResult> DuckDBFlightSqlServer::CancelFlightInfo(
     const flight::ServerCallContext& context,
     const flight::CancelFlightInfoRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->CancelFlightInfo(context, request);
 }
 
 Result<flight::sql::CancelResult> DuckDBFlightSqlServer::CancelQuery(
     const flight::ServerCallContext& context,
     const flight::sql::ActionCancelQueryRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->CancelQuery(context, request);
 }
 
 Result<flight::SetSessionOptionsResult> DuckDBFlightSqlServer::SetSessionOptions(
     const flight::ServerCallContext& context,
     const flight::SetSessionOptionsRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->SetSessionOptions(context, request);
 }
 
 Result<flight::GetSessionOptionsResult> DuckDBFlightSqlServer::GetSessionOptions(
     const flight::ServerCallContext& context,
     const flight::GetSessionOptionsRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->GetSessionOptions(context, request);
 }
 
 Result<flight::CloseSessionResult> DuckDBFlightSqlServer::CloseSession(
     const flight::ServerCallContext& context,
     const flight::CloseSessionRequest& request) {
+  [[maybe_unused]] auto telemetry_scope = ActivateTelemetryScope(context);
   return impl_->CloseSession(context, request);
 }
 

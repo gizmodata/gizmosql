@@ -33,6 +33,7 @@ namespace gizmosql {
 /// - Records RPC method, peer address, and status as span attributes
 /// - Records duration metrics
 /// - Propagates trace context from incoming headers (W3C Trace Context)
+class TelemetrySpanScope;
 class TelemetryMiddleware : public flight::ServerMiddleware {
  public:
   TelemetryMiddleware(flight::FlightMethod method, std::string peer,
@@ -42,6 +43,7 @@ class TelemetryMiddleware : public flight::ServerMiddleware {
   void SendingHeaders(flight::AddCallHeaders* outgoing_headers) override;
   void CallCompleted(const arrow::Status& status) override;
   std::string name() const override { return "telemetry"; }
+  std::shared_ptr<TelemetrySpanScope> ActivateSpanForCurrentThread() const;
 
  private:
   flight::FlightMethod method_;
@@ -62,5 +64,8 @@ class TelemetryMiddlewareFactory : public flight::ServerMiddlewareFactory {
                           const flight::ServerCallContext& ctx,
                           std::shared_ptr<flight::ServerMiddleware>* out) override;
 };
+
+std::shared_ptr<TelemetrySpanScope> ActivateTelemetrySpan(
+    const flight::ServerCallContext& ctx);
 
 }  // namespace gizmosql
