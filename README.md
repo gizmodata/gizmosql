@@ -178,7 +178,6 @@ with gizmosql.connect(
             parameters=[24],
         )
         x = cur.fetch_arrow_table()
-        print(x)
 ```
 
 ---
@@ -286,6 +285,8 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 🕸️ [JavaScript/TypeScript Client](https://github.com/gizmodata/gizmosql-client-js) **NEW!**
 - ☕️ [JDBC Driver](https://downloads.gizmodata.com/gizmosql-jdbc-driver/latest/gizmosql-jdbc-driver.jar) **NEW!**
 - 🐍 [Python ADBC Driver (with OAuth/SSO)](https://github.com/gizmodata/adbc-driver-gizmosql) **NEW!**
+- 🔌 [ODBC Driver](https://github.com/gizmodata/gizmosql-odbc-driver) **NEW!**
+- 📊 [Power BI Connector](https://github.com/gizmodata/gizmosql-powerbi-connector) **NEW!**
 ---
 
 ## 📊 Performance
