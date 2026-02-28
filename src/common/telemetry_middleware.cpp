@@ -171,11 +171,12 @@ TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::strin
   FlightCallHeadersCarrier carrier(incoming_headers);
   auto current_context = context_api::RuntimeContext::GetCurrent();
   auto propagator = context_propagation_api::GlobalTextMapPropagator::GetGlobalPropagator();
-  auto extracted_context = propagator ? propagator->Extract(carrier, current_context)
-                                      : current_context;
-  const auto parent_span_context = trace_api::GetSpan(extracted_context)->GetContext();
+  auto parent_context = propagator ? propagator->Extract(carrier, current_context)
+                                   : current_context;
+  auto parent_span_context = trace_api::GetSpan(parent_context)->GetContext();
+  const bool tracecontext_parent_present = parent_span_context.IsValid();
   const bool has_parent_context = parent_span_context.IsValid();
-  auto parent_context_token = context_api::RuntimeContext::Attach(extracted_context);
+  auto parent_context_token = context_api::RuntimeContext::Attach(parent_context);
   (void)parent_context_token;
   auto span = tracer->StartSpan(std::string("gizmosql.") + FlightMethodName(method_), {},
                                 span_options);
@@ -184,10 +185,12 @@ TelemetryMiddleware::TelemetryMiddleware(flight::FlightMethod method, std::strin
   span->SetAttribute("rpc.service", "arrow.flight.protocol.FlightService");
   span->SetAttribute("rpc.method", FlightMethodName(method_));
   span->SetAttribute("gizmosql.trace.parent_present", has_parent_context);
+  span->SetAttribute("gizmosql.trace.tracecontext_parent_present",
+                     tracecontext_parent_present);
+  span->SetAttribute("gizmosql.trace.parent_format",
+                     tracecontext_parent_present ? "tracecontext" : "none");
   span->SetAttribute("gizmosql.trace.traceparent_present",
                      HasHeaderIgnoreCase(incoming_headers, "traceparent"));
-  span->SetAttribute("gizmosql.trace.datadog_parent_present",
-                     HasHeaderIgnoreCase(incoming_headers, "x-datadog-parent-id"));
 
   if (const char* service_version = std::getenv("GIZMOSQL_OTEL_SERVICE_VERSION");
       service_version != nullptr && service_version[0] != '\0') {
