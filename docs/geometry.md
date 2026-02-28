@@ -24,9 +24,7 @@ with gizmosql.connect(
 ) as conn:
     with conn.cursor() as cur:
         # Create a table with geometry
-        # Use execute_update() for DDL/DML — GizmoSQL uses lazy execution,
-        # so cursor.execute() alone won't fire DDL/DML until results are fetched.
-        cur.execute_update("""
+        cur.execute("""
             CREATE TABLE locations (
                 id INTEGER,
                 name VARCHAR,
@@ -35,14 +33,14 @@ with gizmosql.connect(
         """)
 
         # Insert some points
-        cur.execute_update("""
+        cur.execute("""
             INSERT INTO locations VALUES
                 (1, 'New York', ST_Point(-74.006, 40.7128)),
                 (2, 'Los Angeles', ST_Point(-118.2437, 34.0522)),
                 (3, 'Chicago', ST_Point(-87.6298, 41.8781))
         """)
 
-        # Query with spatial functions (SELECT — use cursor.execute() as usual)
+        # Query with spatial functions
         cur.execute("""
             SELECT name, ST_X(geom) as lon, ST_Y(geom) as lat
             FROM locations
@@ -56,7 +54,7 @@ with gizmosql.connect(
         print(gdf)
 ```
 
-> **Note:** Use `cursor.execute_update(sql)` for DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE). GizmoSQL uses lazy execution — `cursor.execute()` for DDL/DML will not fire until results are fetched. `execute_update()` handles this automatically and returns the affected row count for DML, or `0` for DDL. Requires `adbc-driver-gizmosql` >= 1.0.5.
+> **Note:** Requires `adbc-driver-gizmosql` >= 1.1.0, which auto-detects DDL/DML in `cursor.execute()`. `cursor.execute_update(query)` is also available and returns the rows-affected count directly.
 
 ## Supported Geometry Types
 

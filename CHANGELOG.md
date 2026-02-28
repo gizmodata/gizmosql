@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Python ADBC docs updated for v1.1.0**: All documentation examples now use `cursor.execute()` for DDL/DML statements instead of `cursor.execute_update()`, reflecting the new auto-detection in `adbc-driver-gizmosql` v1.1.0. The `execute_update()` method remains available for when the rows-affected count is needed.
+
 ## [1.18.5] - 2026-02-26
 
 ### Added

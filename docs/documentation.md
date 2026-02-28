@@ -217,9 +217,7 @@ n_name: [["UNITED STATES"]]
 
 #### DDL and DML statements
 
-For DDL statements (CREATE, DROP, ALTER) and DML statements (INSERT, UPDATE, DELETE), use `cursor.execute_update()` instead of `cursor.execute()`. This is necessary because GizmoSQL uses **lazy execution** — `cursor.execute()` for DDL/DML will not fire the statement until results are fetched. `execute_update()` handles this automatically and returns `0` for DDL or the affected row count for DML.
-
-> **Note:** `cursor.execute_update()` requires `adbc-driver-gizmosql` version 1.0.5 or later.
+Starting with `adbc-driver-gizmosql` **v1.1.0**, `cursor.execute()` automatically detects DDL/DML statements and executes them immediately on the server — no special API needed. Just use `execute()` for everything:
 
 ```python
 from adbc_driver_gizmosql import dbapi as gizmosql
@@ -231,8 +229,8 @@ with gizmosql.connect(
     tls_skip_verify=True,
 ) as conn:
     with conn.cursor() as cur:
-        # DDL — create a table (returns 0)
-        cur.execute_update("""
+        # DDL — create a table
+        cur.execute("""
             CREATE TABLE my_table (
                 id INTEGER,
                 name VARCHAR,
@@ -240,22 +238,23 @@ with gizmosql.connect(
             )
         """)
 
-        # DML — insert data (returns affected row count)
-        rows_affected = cur.execute_update("""
+        # DML — insert data
+        cur.execute("""
             INSERT INTO my_table VALUES
                 (1, 'Alice', 95.5),
                 (2, 'Bob', 87.3),
                 (3, 'Charlie', 92.1)
         """)
-        print(f"Inserted {rows_affected} rows")
 
-        # SELECT — use cursor.execute() as usual
+        # SELECT — works as usual
         cur.execute("SELECT * FROM my_table ORDER BY score DESC")
         print(cur.fetch_arrow_table().to_pandas())
 
         # Cleanup
-        cur.execute_update("DROP TABLE my_table")
+        cur.execute("DROP TABLE my_table")
 ```
+
+> **Note:** `cursor.execute_update(query)` is also available and returns the rows-affected count directly — useful when you need to know how many rows were inserted, updated, or deleted: `rows = cur.execute_update("INSERT ...")`
 
 ### Connecting via `gizmosql_client`
 GizmoSQL ships with an interactive SQL shell (`gizmosql_client`), inspired by `psql` and the DuckDB CLI. It is built into the Docker image and also available as a standalone executable for Linux and macOS.

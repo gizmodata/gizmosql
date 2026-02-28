@@ -268,13 +268,11 @@ conn = gizmosql.connect(
 
 cursor = conn.cursor()
 
-# Set up DuckLake — use execute_update() for DDL/DML statements.
-# GizmoSQL uses lazy execution, so cursor.execute() alone won't fire
-# DDL/DML until results are fetched. execute_update() handles this automatically.
-cursor.execute_update("INSTALL ducklake; LOAD ducklake;")
-cursor.execute_update("INSTALL postgres; LOAD postgres;")
+# Set up DuckLake
+cursor.execute("INSTALL ducklake; LOAD ducklake;")
+cursor.execute("INSTALL postgres; LOAD postgres;")
 
-cursor.execute_update("""
+cursor.execute("""
     CREATE OR REPLACE SECRET postgres_secret (
         TYPE postgres,
         HOST 'localhost',
@@ -285,7 +283,7 @@ cursor.execute_update("""
     )
 """)
 
-cursor.execute_update("""
+cursor.execute("""
     CREATE OR REPLACE SECRET ducklake_secret (
         TYPE DUCKLAKE,
         METADATA_PATH '',
@@ -294,11 +292,11 @@ cursor.execute_update("""
     )
 """)
 
-cursor.execute_update("ATTACH 'ducklake:ducklake_secret' AS lakehouse")
-cursor.execute_update("USE lakehouse")
+cursor.execute("ATTACH 'ducklake:ducklake_secret' AS lakehouse")
+cursor.execute("USE lakehouse")
 
 # Create and populate a table
-cursor.execute_update("""
+cursor.execute("""
     CREATE OR REPLACE TABLE events (
         event_id INTEGER,
         event_type VARCHAR,
@@ -306,14 +304,14 @@ cursor.execute_update("""
     )
 """)
 
-cursor.execute_update("""
+cursor.execute("""
     INSERT INTO events VALUES
         (1, 'click', '2024-01-20 10:00:00'),
         (2, 'view', '2024-01-20 10:01:00'),
         (3, 'purchase', '2024-01-20 10:05:00')
 """)
 
-# Query data (SELECT — use cursor.execute() as usual)
+# Query data
 cursor.execute("SELECT * FROM events ORDER BY event_time")
 result = cursor.fetch_arrow_table()
 print(result.to_pandas())
@@ -322,7 +320,7 @@ cursor.close()
 conn.close()
 ```
 
-> **Note:** Use `cursor.execute_update(sql)` for DDL statements (CREATE, DROP, ALTER, INSTALL, LOAD, ATTACH, USE) and DML statements (INSERT, UPDATE, DELETE). It returns the affected row count for DML, or `0` for DDL. Requires `adbc-driver-gizmosql` >= 1.0.5.
+> **Note:** Requires `adbc-driver-gizmosql` >= 1.1.0, which auto-detects DDL/DML in `cursor.execute()`. `cursor.execute_update(query)` is also available and returns the rows-affected count directly.
 
 ## Session Setup with Init Commands
 

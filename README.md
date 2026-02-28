@@ -137,6 +137,17 @@ Then run the server (username defaults to `gizmosql_user`):
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename your.duckdb --print-queries
 ```
 
+### Option 4: Windows Installer (MSI)
+
+Download the latest MSI installer from the [GitHub Releases](https://github.com/gizmodata/gizmosql/releases) page. The installer adds `gizmosql_server.exe` and `gizmosql_client.exe` to `C:\Program Files\GizmoSQL` and updates the system PATH.
+
+Then run the server from PowerShell or Command Prompt:
+
+```powershell
+$env:GIZMOSQL_PASSWORD="gizmosql_password"
+gizmosql_server --database-filename your.duckdb --print-queries
+```
+
 ---
 
 ## 🧰 Clients and Tools
