@@ -99,19 +99,17 @@ class FlightCallHeadersCarrier final : public context_propagation_api::TextMapCa
     const std::string key_str(key.data(), key.size());
     auto iter = incoming_headers_.find(key_str);
     if (iter != incoming_headers_.end()) {
-      cached_value_ = std::string(iter->second);
-      return cached_value_;
+      return opentelemetry::nostd::string_view(iter->second.data(), iter->second.size());
     }
 
     for (auto header_iter = incoming_headers_.begin(); header_iter != incoming_headers_.end();
          ++header_iter) {
       if (gizmosql::EqualsIgnoreCase(header_iter->first, key_str)) {
-        cached_value_ = std::string(header_iter->second);
-        return cached_value_;
+        return opentelemetry::nostd::string_view(header_iter->second.data(),
+                                                 header_iter->second.size());
       }
     }
 
-    cached_value_.clear();
     return {};
   }
 
@@ -120,7 +118,6 @@ class FlightCallHeadersCarrier final : public context_propagation_api::TextMapCa
 
  private:
   const flight::CallHeaders& incoming_headers_;
-  mutable std::string cached_value_;
 };
 
 class TelemetrySpanScope {
