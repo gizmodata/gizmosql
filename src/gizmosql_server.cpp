@@ -161,12 +161,12 @@ int main(int argc, char** argv) {
   po::notify(vm);
 
   if (vm.count("help")) {
-    GIZMOSQL_LOG(INFO) << desc << "\n";
+    std::cout << desc << "\n";
     return 0;
   }
 
   if (vm.count("version")) {
-    GIZMOSQL_LOG(INFO) << "GizmoSQL Server CLI: " << GIZMOSQL_SERVER_VERSION;
+    std::cout << "GizmoSQL Server CLI: " << GIZMOSQL_SERVER_VERSION << "\n";
     return 0;
   }
 
