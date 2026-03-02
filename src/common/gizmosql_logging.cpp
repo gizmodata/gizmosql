@@ -1,6 +1,7 @@
 #include "gizmosql_logging.h"
 
 #include <arrow/util/logger.h>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <ctime>
@@ -22,12 +23,23 @@ static inline int gizmosql_getpid() { return getpid(); }
 
 #include <nlohmann/json.hpp>
 
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+#include <opentelemetry/context/runtime_context.h>
+#include <opentelemetry/nostd/span.h>
+#include <opentelemetry/trace/context.h>
+#include <opentelemetry/trace/span.h>
+#endif
+
 namespace gizmosql {
 namespace {
 using arrow::util::ArrowLogLevel;
 using arrow::util::LogDetails;
 using arrow::util::Logger;
 using arrow::util::LoggerRegistry;
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+namespace context_api = opentelemetry::context;
+namespace trace_api = opentelemetry::trace;
+#endif
 
 // Marker prefix to smuggle structured fields through Arrow's Logger message
 static constexpr const char* kKV_PREFIX = "[[KV]]";
@@ -46,6 +58,7 @@ struct GlobalState {
 };
 
 GlobalState G;
+thread_local std::optional<TraceCorrelationIds> g_log_correlation_override;
 
 // ---------- helpers
 
@@ -90,6 +103,47 @@ inline const char* LevelName(ArrowLogLevel lvl) {
 inline std::string GetInstanceId() {
   std::lock_guard<std::mutex> lk(G.instance_id_mu);
   return G.instance_id;
+}
+
+inline std::optional<TraceCorrelationIds> GetOtelTraceCorrelationIds() {
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+  auto span = trace_api::GetSpan(context_api::RuntimeContext::GetCurrent());
+  if (!span) {
+    return std::nullopt;
+  }
+
+  const auto span_context = span->GetContext();
+  if (!span_context.IsValid()) {
+    return std::nullopt;
+  }
+
+  constexpr std::size_t kTraceIdHexSize = 2 * trace_api::TraceId::kSize;
+  constexpr std::size_t kSpanIdHexSize = 2 * trace_api::SpanId::kSize;
+  std::array<char, kTraceIdHexSize> trace_id{};
+  std::array<char, kSpanIdHexSize> span_id{};
+
+  span_context.trace_id().ToLowerBase16(
+      opentelemetry::nostd::span<char, kTraceIdHexSize>(trace_id));
+  span_context.span_id().ToLowerBase16(
+      opentelemetry::nostd::span<char, kSpanIdHexSize>(span_id));
+
+  return TraceCorrelationIds{
+      std::string(trace_id.data(), trace_id.size()),
+      std::string(span_id.data(), span_id.size()),
+  };
+#else
+  return std::nullopt;
+#endif
+}
+
+inline std::optional<TraceCorrelationIds> GetEffectiveTraceCorrelationIds() {
+  if (auto active = GetOtelTraceCorrelationIds()) {
+    return active;
+  }
+  if (g_log_correlation_override) {
+    return g_log_correlation_override;
+  }
+  return std::nullopt;
 }
 
 // Encode fields into a compact JSON string (only for transport inside message)
@@ -206,6 +260,10 @@ private:
     if (!inst_id.empty()) {
       j["instance_id"] = inst_id;
     }
+    if (auto trace_ids = GetEffectiveTraceCorrelationIds()) {
+      j["trace_id"] = trace_ids->trace_id;
+      j["span_id"] = trace_ids->span_id;
+    }
 
     if (G.cfg.show_source) {
       j["file"] = file;
@@ -284,6 +342,10 @@ private:
     auto inst_id = GetInstanceId();
     if (!inst_id.empty()) {
       oss << " instance_id=" << inst_id;
+    }
+    if (auto trace_ids = GetEffectiveTraceCorrelationIds()) {
+      oss << " trace_id=" << trace_ids->trace_id;
+      oss << " span_id=" << trace_ids->span_id;
     }
 
     if (G.cfg.component) oss << " component=" << *G.cfg.component;
@@ -368,5 +430,28 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
 void SetInstanceId(const std::string& instance_id) {
   std::lock_guard<std::mutex> lk(G.instance_id_mu);
   G.instance_id = instance_id;
+}
+
+std::optional<TraceCorrelationIds> GetCurrentTraceCorrelationIds() {
+  return GetEffectiveTraceCorrelationIds();
+}
+
+ScopedLogCorrelation::ScopedLogCorrelation(std::string trace_id, std::string span_id) {
+  if (trace_id.empty() || span_id.empty()) {
+    return;
+  }
+  previous_ = g_log_correlation_override;
+  g_log_correlation_override = TraceCorrelationIds{
+      std::move(trace_id),
+      std::move(span_id),
+  };
+  active_ = true;
+}
+
+ScopedLogCorrelation::~ScopedLogCorrelation() {
+  if (!active_) {
+    return;
+  }
+  g_log_correlation_override = previous_;
 }
 } // namespace gizmosql

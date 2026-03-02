@@ -152,7 +152,20 @@ int main(int argc, char** argv) {
             ("oauth-disable-tls", po::value<bool>()->default_value(false),
               "[Enterprise] Disable TLS on the OAuth callback server even when the main server uses TLS. "
               "WARNING: This should ONLY be used for localhost development/testing. "
-              "If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).");
+              "If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).")
+            // -------- OpenTelemetry controls --------
+            ("otel-enabled", po::value<std::string>()->default_value(""),
+             "Enable OpenTelemetry: on|off. If empty, uses env GIZMOSQL_OTEL_ENABLED or defaults to off.")
+            ("otel-exporter", po::value<std::string>()->default_value(""),
+             "OTLP exporter type: http. If empty, uses env GIZMOSQL_OTEL_EXPORTER or defaults to http.")
+            ("otel-endpoint", po::value<std::string>()->default_value(""),
+             "OTLP endpoint (e.g., http://localhost:4318). "
+             "If empty, uses env GIZMOSQL_OTEL_ENDPOINT or defaults to http://localhost:4318.")
+            ("otel-service-name", po::value<std::string>()->default_value(""),
+             "Service name for telemetry. If empty, uses env GIZMOSQL_OTEL_SERVICE_NAME or defaults to 'gizmosql'.")
+            ("otel-headers", po::value<std::string>()->default_value(""),
+             "Additional headers for OTLP exporter (format: key1=value1,key2=value2). "
+             "If empty, uses env GIZMOSQL_OTEL_HEADERS. Useful for authentication (e.g., DD-API-KEY=xxx).");
 
   // clang-format on
 
@@ -333,6 +346,18 @@ int main(int argc, char** argv) {
     }
   }
 
+  // OpenTelemetry options
+  std::string otel_enabled =
+      vm.count("otel-enabled") ? vm["otel-enabled"].as<std::string>() : "";
+  std::string otel_exporter =
+      vm.count("otel-exporter") ? vm["otel-exporter"].as<std::string>() : "";
+  std::string otel_endpoint =
+      vm.count("otel-endpoint") ? vm["otel-endpoint"].as<std::string>() : "";
+  std::string otel_service_name =
+      vm.count("otel-service-name") ? vm["otel-service-name"].as<std::string>() : "";
+  std::string otel_headers =
+      vm.count("otel-headers") ? vm["otel-headers"].as<std::string>() : "";
+
   return RunFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
@@ -343,5 +368,6 @@ int main(int argc, char** argv) {
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
-      oauth_port, oauth_base_url, oauth_disable_tls);
+      oauth_port, oauth_base_url, oauth_disable_tls, otel_enabled, otel_exporter,
+      otel_endpoint, otel_service_name, otel_headers);
 }

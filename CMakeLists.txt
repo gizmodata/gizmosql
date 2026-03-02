@@ -32,6 +32,9 @@ else()
     message(STATUS "Building GizmoSQL Core Edition")
 endif()
 
+# Optional OpenTelemetry support (requires libcurl)
+option(WITH_OPENTELEMETRY "Build with OpenTelemetry tracing/metrics support" OFF)
+
 # Function to retrieve the latest Git tag
 function(get_latest_git_tag OUTPUT_VARIABLE)
     execute_process(
@@ -174,21 +177,19 @@ find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlight REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 
-# Arrow 23's bundled_dependencies archive doesn't include all abseil symbols.
-# We need to link the abseil libraries that Arrow built separately.
-# On Linux, abseil libraries have circular dependencies, so we use link groups.
-set(ABSL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/_deps/absl-build")
-file(GLOB_RECURSE ABSL_LIBRARIES "${ABSL_BUILD_DIR}/absl/*${LIB_SUFFIX}")
+# Arrow static link can require explicit absl archives depending on Arrow build layout.
+set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
+file(GLOB_RECURSE ABSL_LIBRARIES
+        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*.a"
+        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.a")
 add_library(arrow_absl INTERFACE)
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Use linker groups to handle circular dependencies in abseil
-    target_link_libraries(arrow_absl INTERFACE
-        -Wl,--start-group
-        ${ABSL_LIBRARIES}
-        -Wl,--end-group
-    )
-else()
-    target_link_libraries(arrow_absl INTERFACE ${ABSL_LIBRARIES})
+if(ABSL_LIBRARIES)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(arrow_absl INTERFACE
+                "$<LINK_GROUP:RESCAN,${ABSL_LIBRARIES}>")
+    else()
+        target_link_libraries(arrow_absl INTERFACE ${ABSL_LIBRARIES})
+    endif()
 endif()
 
 # --------------------- SQLite ---------------------
@@ -259,6 +260,42 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}jemalloc_extension${LIB_SUFFIX}"
     )
 endif ()
+
+# --------------------- OpenTelemetry (Optional) ---------------------
+if(WITH_OPENTELEMETRY)
+    message(STATUS "Building with OpenTelemetry support")
+    # Build OpenTelemetry C++ SDK with OTLP exporters
+    # This must come after Arrow (uses Arrow's bundled protobuf)
+
+    set(ARROW_PROTOBUF_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/protobuf_ep-install")
+    configure_file(third_party/OpenTelemetry_CMakeLists.txt.in opentelemetry/CMakeLists.txt @ONLY)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
+            RESULT_VARIABLE OTEL_CONFIG_RESULT
+            OUTPUT_VARIABLE OTEL_CONFIG_OUTPUT
+            ERROR_VARIABLE OTEL_CONFIG_ERROR
+    )
+    if(NOT OTEL_CONFIG_RESULT EQUAL 0)
+        message(FATAL_ERROR "OpenTelemetry configure failed:\nOutput: ${OTEL_CONFIG_OUTPUT}\nError: ${OTEL_CONFIG_ERROR}")
+    endif()
+
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build . -- -j4
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
+            RESULT_VARIABLE OTEL_BUILD_RESULT
+            OUTPUT_VARIABLE OTEL_BUILD_OUTPUT
+            ERROR_VARIABLE OTEL_BUILD_ERROR
+    )
+    if(NOT OTEL_BUILD_RESULT EQUAL 0)
+        message(FATAL_ERROR "OpenTelemetry build failed:\nOutput: ${OTEL_BUILD_OUTPUT}\nError: ${OTEL_BUILD_ERROR}")
+    endif()
+
+    set(OTEL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/opentelemetry")
+    set(OTEL_INCLUDE_DIR "${OTEL_INSTALL_DIR}/include")
+    set(OTEL_LIB_DIR "${OTEL_INSTALL_DIR}/lib")
+    add_compile_definitions(GIZMOSQL_WITH_OPENTELEMETRY)
+else()
+    message(STATUS "Building without OpenTelemetry support (use -DWITH_OPENTELEMETRY=ON to enable)")
+endif()
 
 # --------------------- JWT-CPP ---------------------
 
@@ -389,7 +426,9 @@ add_library(gizmosqlserver STATIC
         src/common/gizmosql_logging.cpp
         src/common/gizmosql_library.cpp
         src/common/gizmosql_security.cpp
+        src/common/gizmosql_telemetry.cpp
         src/common/access_log_middleware.cpp
+        src/common/telemetry_middleware.cpp
         src/common/health_service.cpp
         ${HEALTH_PROTO_SRCS}
         ${HEALTH_GRPC_SRCS}
@@ -437,6 +476,11 @@ if(GIZMOSQL_ENTERPRISE)
     target_compile_definitions(gizmosqlserver PUBLIC GIZMOSQL_ENTERPRISE)
 endif()
 
+# Add OpenTelemetry include directory if enabled
+if(WITH_OPENTELEMETRY)
+    target_include_directories(gizmosqlserver PRIVATE ${OTEL_INCLUDE_DIR})
+endif()
+
 target_link_libraries(gizmosqlserver
         PRIVATE
         Threads::Threads
@@ -447,6 +491,31 @@ target_link_libraries(gizmosqlserver
         nlohmann_json::nlohmann_json
         ${GRPC_REFLECTION_LIBRARY}
 )
+
+# Link OpenTelemetry libraries if enabled
+if(WITH_OPENTELEMETRY)
+    find_package(CURL REQUIRED)
+
+    # OpenTelemetry installs additional static deps (notably Abseil) into the same prefix.
+    # Collect all static archives so the final static link can resolve transitive symbols.
+    file(GLOB OTEL_STATIC_LIBS "${OTEL_LIB_DIR}/*.a")
+    if(NOT OTEL_STATIC_LIBS)
+        message(FATAL_ERROR "No OpenTelemetry static libraries found in ${OTEL_LIB_DIR}")
+    endif()
+    list(SORT OTEL_STATIC_LIBS)
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(gizmosqlserver PRIVATE
+                "$<LINK_GROUP:RESCAN,${OTEL_STATIC_LIBS}>"
+                CURL::libcurl
+        )
+    else()
+        target_link_libraries(gizmosqlserver PRIVATE
+                ${OTEL_STATIC_LIBS}
+                CURL::libcurl
+        )
+    endif()
+endif()
 
 if(WIN32)
     target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 rstrtmgr ntdll)

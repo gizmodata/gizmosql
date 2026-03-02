@@ -60,6 +60,7 @@ jobs:
           run-build: true
           options: |
             GIZMOSQL_ENTERPRISE=ON
+            WITH_OPENTELEMETRY=ON
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
 
@@ -210,6 +211,7 @@ jobs:
             gcc \
             git \
             libboost-all-dev \
+            libcurl4-openssl-dev \
             libgflags-dev \
             libssl-dev \
             zlib1g-dev
@@ -236,6 +238,7 @@ jobs:
           options: |
             CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
             GIZMOSQL_ENTERPRISE=ON
+            WITH_OPENTELEMETRY=ON
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
 
