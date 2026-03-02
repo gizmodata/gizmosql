@@ -65,7 +65,8 @@ CreateFlightSQLServer(
     std::string oauth_scopes = "",
     int oauth_port = 0,
     std::string oauth_base_url = "",
-    const bool& oauth_disable_tls = false);
+    const bool& oauth_disable_tls = false,
+    const bool& telemetry_enabled = false);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();

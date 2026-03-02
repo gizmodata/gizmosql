@@ -18,7 +18,7 @@ Before committing any change, ensure you have completed ALL of the following:
   - The relevant feature doc (e.g., `docs/token_authentication.md`)
   - The CLI help text in `src/gizmosql_server.cpp`
 - [ ] For new or changed environment variables, keep these in sync:
-  - `src/gizmosql_server.cpp` — native env var handling (`std::getenv` calls)
+  - `src/common/gizmosql_library.cpp` — env var fallback handling in `RunFlightSQLServer()` (see design note below)
   - `scripts/start_gizmosql.sh` and `scripts/start_gizmosql_slim.sh` — header comment env var tables
   - The relevant feature doc in `docs/` (e.g., `docs/token_authentication.md`)
 - [ ] For library API changes, update docstrings in `src/common/include/gizmosql_library.h`
@@ -51,12 +51,19 @@ Before committing any change, ensure you have completed ALL of the following:
 - `src/common/include/detail/gizmosql_security.h` - Authentication middleware
 - `tests/integration/test_server_fixture.h` - Test fixture template for integration tests
 
+### Environment Variable Handling — Design Principle
+**All environment variable fallback logic belongs in the library** (`src/common/gizmosql_library.cpp`), NOT in the CLI executable (`src/gizmosql_server.cpp`). The executable should only parse CLI flags via Boost.ProgramOptions and pass them through to `RunFlightSQLServer()`. This ensures that anyone using the C API (`RunFlightSQLServer()`) directly gets the same env var fallback behavior as the CLI.
+
+- **String params**: Use the `pick(cli_val, "ENV_NAME", "default")` lambda in `RunFlightSQLServer()`
+- **Boolean params**: Use `resolve_bool_env(val, "ENV_NAME")` in `RunFlightSQLServer()` — delegates to `parse_bool` (which accepts `on/off/yes/no/true/false/1/0`) when the CLI value is `false`
+- **Never** add `std::getenv()` calls in `gizmosql_server.cpp`
+
 ### Code Flow for New Parameters
 When adding a new configuration parameter, update these locations in order:
 1. `src/common/include/gizmosql_library.h` - Add to `RunFlightSQLServer()` signature and docstring
-2. `src/gizmosql_server.cpp` - Add CLI option and env var handling
+2. `src/gizmosql_server.cpp` - Add CLI option (Boost.ProgramOptions only — no env var handling here)
 3. `src/common/gizmosql_library.cpp` - Update:
-   - `FlightSQLServerBuilder()` signature and implementation
+   - `RunFlightSQLServer()` — add env var fallback (using `pick` for strings or `resolve_bool_env` for booleans)
    - `CreateFlightSQLServer()` signature and call to builder
    - `RunFlightSQLServer()` call to `CreateFlightSQLServer()`
 4. `tests/integration/test_server_fixture.h` - Add to `TestServerConfig` and forward declaration

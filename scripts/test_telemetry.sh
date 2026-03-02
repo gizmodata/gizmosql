@@ -116,7 +116,7 @@ start_gizmosql() {
         --database-filename /tmp/gizmosql_telemetry_test.db \
         --port "$GIZMOSQL_PORT" \
         --password "$TEST_PASSWORD" \
-        --otel-enabled on \
+        --otel-enabled true \
         --otel-exporter grpc \
         --otel-endpoint "localhost:$JAEGER_OTLP_PORT" \
         --otel-service-name "gizmosql-telemetry-test" \

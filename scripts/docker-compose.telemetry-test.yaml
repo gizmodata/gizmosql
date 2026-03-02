@@ -3,7 +3,7 @@
 #
 # This starts Jaeger for collecting and visualizing traces.
 # Then run GizmoSQL with:
-#   ./build/gizmosql_server --otel-enabled on --otel-endpoint localhost:4317 -P test
+#   ./build/gizmosql_server --otel-enabled true --otel-endpoint localhost:4317 -P test
 
 version: '3.8'
 

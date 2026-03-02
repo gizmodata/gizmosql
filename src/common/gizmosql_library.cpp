@@ -1211,19 +1211,19 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
                        int health_port, std::string health_check_query,
-                       const bool& enable_instrumentation,
+                       bool enable_instrumentation,
                        std::string instrumentation_db_path,
                        std::string instrumentation_catalog,
                        std::string instrumentation_schema,
                        std::string license_key_file,
-                       const bool& allow_cross_instance_tokens,
+                       bool allow_cross_instance_tokens,
                        std::string oauth_client_id,
                        std::string oauth_client_secret,
                        std::string oauth_scopes,
                        int oauth_port,
                        std::string oauth_base_url,
-                       const bool& oauth_disable_tls,
-                       std::string otel_enabled, std::string otel_exporter,
+                       bool oauth_disable_tls,
+                       bool otel_enabled, std::string otel_exporter,
                        std::string otel_endpoint, std::string otel_service_name,
                        std::string otel_headers) {
   // ---- Logging normalization (library-owned) ----------------
@@ -1280,36 +1280,17 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   // ----------------------------------------------------------
   gizmosql::InitLogging(log_config);
 
-  // ---- OpenTelemetry initialization ----------------
-  std::string otel_enabled_s = pick(otel_enabled, "GIZMOSQL_OTEL_ENABLED", "off");
-  std::string otel_exporter_s = pick(otel_exporter, "GIZMOSQL_OTEL_EXPORTER", "http");
-  std::string otel_endpoint_s = pick(otel_endpoint, "GIZMOSQL_OTEL_ENDPOINT", "");
-  std::string otel_service_name_s = pick(otel_service_name, "GIZMOSQL_OTEL_SERVICE_NAME", "gizmosql");
-  std::string otel_headers_s = pick(otel_headers, "GIZMOSQL_OTEL_HEADERS", "");
-
-  bool telemetry_enabled = false;
-  if (!parse_bool(otel_enabled_s, telemetry_enabled)) {
-    std::cerr << "Unknown otel-enabled '" << otel_enabled_s << "', defaulting to off\n";
-    telemetry_enabled = false;
-  }
-
-  if (telemetry_enabled) {
-    gizmosql::TelemetryConfig tel_config;
-    tel_config.enabled = true;
-    tel_config.exporter_type = gizmosql::ParseExporterType(otel_exporter_s);
-    tel_config.endpoint = otel_endpoint_s;
-    tel_config.service_name = otel_service_name_s;
-    tel_config.service_version = GIZMOSQL_SERVER_VERSION;
-    tel_config.headers = otel_headers_s;
-
-    // Get deployment environment from standard env var if available
-    tel_config.deployment_environment = gizmosql::SafeGetEnvVarValue("GIZMOSQL_ENVIRONMENT");
-    if (tel_config.deployment_environment.empty()) {
-      tel_config.deployment_environment = gizmosql::SafeGetEnvVarValue("ENVIRONMENT");
+  // ---- Boolean env var fallbacks (library-owned) -----------
+  auto resolve_bool_env = [&](bool& val, const char* env_name) {
+    if (!val) {
+      auto ev = gizmosql::SafeGetEnvVarValue(env_name);
+      if (!ev.empty()) parse_bool(ev, val);
     }
-
-    gizmosql::InitTelemetry(tel_config);
-  }
+  };
+  resolve_bool_env(enable_instrumentation, "GIZMOSQL_ENABLE_INSTRUMENTATION");
+  resolve_bool_env(allow_cross_instance_tokens, "GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS");
+  resolve_bool_env(oauth_disable_tls, "GIZMOSQL_OAUTH_DISABLE_TLS");
+  resolve_bool_env(otel_enabled, "GIZMOSQL_OTEL_ENABLED");
   // ----------------------------------------------------------
 
   auto now = std::chrono::system_clock::now();
@@ -1358,22 +1339,17 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
 
   GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: " << lvl_s;
 
-  std::string otel_enabled_s = pick(otel_enabled, "GIZMOSQL_OTEL_ENABLED", "off");
-  std::string otel_exporter_s = pick(otel_exporter, "GIZMOSQL_OTEL_EXPORTER", "http");
-  std::string otel_endpoint_s = pick(otel_endpoint, "GIZMOSQL_OTEL_ENDPOINT", "");
-  std::string otel_service_name_s =
-      pick(otel_service_name, "GIZMOSQL_OTEL_SERVICE_NAME", "gizmosql");
-  std::string otel_service_version_s =
-      pick("", "GIZMOSQL_OTEL_SERVICE_VERSION", GIZMOSQL_SERVER_VERSION);
-  std::string otel_headers_s = pick(otel_headers, "GIZMOSQL_OTEL_HEADERS", "");
-
-  bool telemetry_enabled = false;
-  if (!parse_bool(otel_enabled_s, telemetry_enabled)) {
-    std::cerr << "Unknown otel-enabled '" << otel_enabled_s << "', defaulting to off\n";
-    telemetry_enabled = false;
-  }
-
+  // ---- OpenTelemetry initialization ----------------
+  bool telemetry_enabled = otel_enabled;
   if (telemetry_enabled) {
+    std::string otel_exporter_s = pick(otel_exporter, "GIZMOSQL_OTEL_EXPORTER", "http");
+    std::string otel_endpoint_s = pick(otel_endpoint, "GIZMOSQL_OTEL_ENDPOINT", "");
+    std::string otel_service_name_s =
+        pick(otel_service_name, "GIZMOSQL_OTEL_SERVICE_NAME", "gizmosql");
+    std::string otel_service_version_s =
+        pick("", "GIZMOSQL_OTEL_SERVICE_VERSION", GIZMOSQL_SERVER_VERSION);
+    std::string otel_headers_s = pick(otel_headers, "GIZMOSQL_OTEL_HEADERS", "");
+
     gizmosql::TelemetryConfig tel_config;
     tel_config.enabled = true;
     tel_config.exporter_type = gizmosql::ParseExporterType(otel_exporter_s);
@@ -1390,6 +1366,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     gizmosql::InitTelemetry(tel_config);
     telemetry_enabled = gizmosql::IsTelemetryEnabled();
   }
+  // ----------------------------------------------------------
 
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,

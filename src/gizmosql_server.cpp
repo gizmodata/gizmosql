@@ -17,7 +17,6 @@
 
 #include "gizmosql_library.h"
 #include "common/include/detail/gizmosql_logging.h"
-#include <cstdlib>
 #include <iostream>
 #include <boost/program_options.hpp>
 
@@ -154,8 +153,9 @@ int main(int argc, char** argv) {
               "WARNING: This should ONLY be used for localhost development/testing. "
               "If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).")
             // -------- OpenTelemetry controls --------
-            ("otel-enabled", po::value<std::string>()->default_value(""),
-             "Enable OpenTelemetry: on|off. If empty, uses env GIZMOSQL_OTEL_ENABLED or defaults to off.")
+            ("otel-enabled", po::value<bool>()->default_value(false),
+             "Enable OpenTelemetry instrumentation. "
+             "If not set, uses env var GIZMOSQL_OTEL_ENABLED (1/true to enable).")
             ("otel-exporter", po::value<std::string>()->default_value(""),
              "OTLP exporter type: http. If empty, uses env GIZMOSQL_OTEL_EXPORTER or defaults to http.")
             ("otel-endpoint", po::value<std::string>()->default_value(""),
@@ -295,13 +295,6 @@ int main(int argc, char** argv) {
       vm.count("health-check-query") ? vm["health-check-query"].as<std::string>() : "";
 
   bool enable_instrumentation = vm["enable-instrumentation"].as<bool>();
-  if (!enable_instrumentation) {
-    // Check env var fallback
-    if (const char* env_val = std::getenv("GIZMOSQL_ENABLE_INSTRUMENTATION")) {
-      std::string val(env_val);
-      enable_instrumentation = (val == "1" || val == "true" || val == "TRUE" || val == "True");
-    }
-  }
 
   std::string instrumentation_db_path =
       vm.count("instrumentation-db-path") ? vm["instrumentation-db-path"].as<std::string>() : "";
@@ -316,13 +309,6 @@ int main(int argc, char** argv) {
       vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
 
   bool allow_cross_instance_tokens = vm["allow-cross-instance-tokens"].as<bool>();
-  if (!allow_cross_instance_tokens) {
-    // Check env var fallback
-    if (const char* env_val = std::getenv("GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS")) {
-      std::string val(env_val);
-      allow_cross_instance_tokens = (val == "1" || val == "true" || val == "TRUE" || val == "True");
-    }
-  }
 
   std::string oauth_client_id =
       vm.count("oauth-client-id") ? vm["oauth-client-id"].as<std::string>() : "";
@@ -339,16 +325,9 @@ int main(int argc, char** argv) {
       vm.count("oauth-base-url") ? vm["oauth-base-url"].as<std::string>() : "";
 
   bool oauth_disable_tls = vm["oauth-disable-tls"].as<bool>();
-  if (!oauth_disable_tls) {
-    if (const char* env_val = std::getenv("GIZMOSQL_OAUTH_DISABLE_TLS")) {
-      std::string val(env_val);
-      oauth_disable_tls = (val == "1" || val == "true" || val == "TRUE" || val == "True");
-    }
-  }
 
   // OpenTelemetry options
-  std::string otel_enabled =
-      vm.count("otel-enabled") ? vm["otel-enabled"].as<std::string>() : "";
+  bool otel_enabled = vm["otel-enabled"].as<bool>();
   std::string otel_exporter =
       vm.count("otel-exporter") ? vm["otel-exporter"].as<std::string>() : "";
   std::string otel_endpoint =
