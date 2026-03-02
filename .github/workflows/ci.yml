@@ -420,11 +420,12 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
-          key: vcpkg-x64-windows-static-boost-zlib-openssl-v1
+          key: vcpkg-x64-windows-static-${{ hashFiles('.github/workflows/ci.yml') }}
           restore-keys: |
-            vcpkg-x64-windows-static-boost-zlib-openssl-
+            vcpkg-x64-windows-static-
 
       - name: Install vcpkg dependencies
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         run: |
           & "$env:VCPKG_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet x64-windows-static --clean-after-build --x-install-root="$env:VCPKG_ROOT\installed"
 
@@ -433,7 +434,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
-          key: vcpkg-x64-windows-static-boost-zlib-openssl-v1
+          key: vcpkg-x64-windows-static-${{ hashFiles('.github/workflows/ci.yml') }}
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
