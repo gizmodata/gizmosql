@@ -40,6 +40,9 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+#include <opentelemetry/context/runtime_context.h>
+#endif
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
@@ -1030,9 +1033,25 @@ arrow::Result<int> DuckDBStatement::Execute() {
     return 0;
   }
 
+  // Capture the current runtime context so trace/log correlation is preserved
+  // when statement execution runs on the async worker thread.
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+  auto telemetry_context = opentelemetry::context::RuntimeContext::GetCurrent();
+#endif
+
   // Launch execution in a separate thread
   auto future = std::async(
-      std::launch::async, [this, query_timeout, log_level]() -> arrow::Result<int> {
+      std::launch::async, [this, query_timeout, log_level
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+                           ,
+                           telemetry_context
+#endif
+  ]() -> arrow::Result<int> {
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+        auto telemetry_context_token =
+            opentelemetry::context::RuntimeContext::Attach(telemetry_context);
+        (void)telemetry_context_token;
+#endif
         if (use_direct_execution_) {
           // The statement may have already been executed from the ComputeSchema() method - if so, just skip execution
           if (query_result_ != nullptr) {
