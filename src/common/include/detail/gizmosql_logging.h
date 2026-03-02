@@ -76,6 +76,11 @@ struct Field {
 
 using FieldList = std::vector<Field>;
 
+struct TraceCorrelationIds {
+  std::string trace_id;
+  std::string span_id;
+};
+
 // -----------------------------------------------------------------------------
 // Initialization
 // -----------------------------------------------------------------------------
@@ -83,11 +88,30 @@ void InitLogging(const LogConfig& cfg);
 void SetLogLevel(arrow::util::ArrowLogLevel level);
 void LogWithFields(arrow::util::ArrowLogLevel level, const char* file, int line,
                    std::string_view msg, const FieldList& fields = {});
+std::optional<TraceCorrelationIds> GetCurrentTraceCorrelationIds();
 
 /// Set the instance ID for log correlation. Once set, this ID will be included
 /// in every log entry (both JSON and text formats). Call this as early as possible
 /// after the server instance is created.
 void SetInstanceId(const std::string& instance_id);
+
+// Temporarily override trace correlation IDs for logs on the current thread.
+// This is used by async statement execution paths when OTel runtime context
+// may no longer carry the parent span.
+class ScopedLogCorrelation {
+ public:
+  ScopedLogCorrelation(std::string trace_id, std::string span_id);
+  ~ScopedLogCorrelation();
+
+  ScopedLogCorrelation(const ScopedLogCorrelation&) = delete;
+  ScopedLogCorrelation& operator=(const ScopedLogCorrelation&) = delete;
+  ScopedLogCorrelation(ScopedLogCorrelation&&) = delete;
+  ScopedLogCorrelation& operator=(ScopedLogCorrelation&&) = delete;
+
+ private:
+  bool active_ = false;
+  std::optional<TraceCorrelationIds> previous_;
+};
 
 // -----------------------------------------------------------------------------
 // Helpers

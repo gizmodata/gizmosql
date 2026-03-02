@@ -58,6 +58,7 @@ struct GlobalState {
 };
 
 GlobalState G;
+thread_local std::optional<TraceCorrelationIds> g_log_correlation_override;
 
 // ---------- helpers
 
@@ -104,12 +105,7 @@ inline std::string GetInstanceId() {
   return G.instance_id;
 }
 
-struct TraceCorrelationIds {
-  std::string trace_id;
-  std::string span_id;
-};
-
-inline std::optional<TraceCorrelationIds> GetActiveTraceCorrelationIds() {
+inline std::optional<TraceCorrelationIds> GetOtelTraceCorrelationIds() {
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
   auto span = trace_api::GetSpan(context_api::RuntimeContext::GetCurrent());
   if (!span) {
@@ -138,6 +134,16 @@ inline std::optional<TraceCorrelationIds> GetActiveTraceCorrelationIds() {
 #else
   return std::nullopt;
 #endif
+}
+
+inline std::optional<TraceCorrelationIds> GetEffectiveTraceCorrelationIds() {
+  if (auto active = GetOtelTraceCorrelationIds()) {
+    return active;
+  }
+  if (g_log_correlation_override) {
+    return g_log_correlation_override;
+  }
+  return std::nullopt;
 }
 
 // Encode fields into a compact JSON string (only for transport inside message)
@@ -254,7 +260,7 @@ private:
     if (!inst_id.empty()) {
       j["instance_id"] = inst_id;
     }
-    if (auto trace_ids = GetActiveTraceCorrelationIds()) {
+    if (auto trace_ids = GetEffectiveTraceCorrelationIds()) {
       j["trace_id"] = trace_ids->trace_id;
       j["span_id"] = trace_ids->span_id;
     }
@@ -337,7 +343,7 @@ private:
     if (!inst_id.empty()) {
       oss << " instance_id=" << inst_id;
     }
-    if (auto trace_ids = GetActiveTraceCorrelationIds()) {
+    if (auto trace_ids = GetEffectiveTraceCorrelationIds()) {
       oss << " trace_id=" << trace_ids->trace_id;
       oss << " span_id=" << trace_ids->span_id;
     }
@@ -424,5 +430,28 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
 void SetInstanceId(const std::string& instance_id) {
   std::lock_guard<std::mutex> lk(G.instance_id_mu);
   G.instance_id = instance_id;
+}
+
+std::optional<TraceCorrelationIds> GetCurrentTraceCorrelationIds() {
+  return GetEffectiveTraceCorrelationIds();
+}
+
+ScopedLogCorrelation::ScopedLogCorrelation(std::string trace_id, std::string span_id) {
+  if (trace_id.empty() || span_id.empty()) {
+    return;
+  }
+  previous_ = g_log_correlation_override;
+  g_log_correlation_override = TraceCorrelationIds{
+      std::move(trace_id),
+      std::move(span_id),
+  };
+  active_ = true;
+}
+
+ScopedLogCorrelation::~ScopedLogCorrelation() {
+  if (!active_) {
+    return;
+  }
+  g_log_correlation_override = previous_;
 }
 } // namespace gizmosql
