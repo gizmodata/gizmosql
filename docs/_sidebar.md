@@ -13,6 +13,7 @@
 
 * Features
   * [Session Instrumentation](session_instrumentation.md) *(Enterprise)*
+  * [OpenTelemetry Integration](opentelemetry.md)
 
 * Integrations
   * [Extensions & Tools](integrations.md)
