@@ -93,6 +93,33 @@ std::string GetSqlOperationForMetrics(const std::string& sql) {
   return operation;
 }
 
+int64_t GetArrayDataSize(const std::shared_ptr<arrow::ArrayData>& data) {
+  if (!data) return 0;
+
+  int64_t total_size = 0;
+  for (const auto& buffer : data->buffers) {
+    if (buffer) total_size += static_cast<int64_t>(buffer->size());
+  }
+  for (const auto& child : data->child_data) {
+    total_size += GetArrayDataSize(child);
+  }
+  if (data->dictionary) {
+    total_size += GetArrayDataSize(data->dictionary);
+  }
+
+  return total_size;
+}
+
+int64_t GetRecordBatchSizeBytes(const std::shared_ptr<arrow::RecordBatch>& batch) {
+  if (!batch) return 0;
+
+  int64_t total_size = 0;
+  for (int i = 0; i < batch->num_columns(); ++i) {
+    total_size += GetArrayDataSize(batch->column(i)->data());
+  }
+  return total_size;
+}
+
 bool IsDetachInstrumentationDb(const std::string& sql, const std::string& instrumentation_catalog = "") {
   std::string trimmed = sql;
   boost::algorithm::trim(trimmed);
@@ -1288,7 +1315,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
     synthetic_result_batch_.reset();
     if (batch) {
       ::gizmosql::metrics::RecordBytesTransferred(
-          "outbound", static_cast<int64_t>(batch->TotalBufferSize()));
+          "outbound", GetRecordBatchSizeBytes(batch));
     }
     return batch;
   }
@@ -1331,7 +1358,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                    {"num_columns", std::to_string(record_batch->num_columns())},
                    {"sql", logged_sql_});
     ::gizmosql::metrics::RecordBytesTransferred(
-        "outbound", static_cast<int64_t>(record_batch->TotalBufferSize()));
+        "outbound", GetRecordBatchSizeBytes(record_batch));
   }
 
   status = "success";
