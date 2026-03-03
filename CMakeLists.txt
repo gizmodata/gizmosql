@@ -181,7 +181,9 @@ find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
 file(GLOB_RECURSE ABSL_LIBRARIES
         "${ARROW_BUILD_DIR}/absl_ep-install/lib/*.a"
-        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.a")
+        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*.lib"
+        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.a"
+        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.lib")
 add_library(arrow_absl INTERFACE)
 if(ABSL_LIBRARIES)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
