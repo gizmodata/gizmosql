@@ -93,8 +93,16 @@ The following metric instruments are emitted:
 - `gizmosql.rpc.duration` (histogram, ms)
 - `gizmosql.rpc.count` (counter)
 - `gizmosql.query.duration` (histogram, ms)
+- `gizmosql.query.count` (counter)
 - `gizmosql.bytes.transferred` (counter, By)
+- `gizmosql.rows.transferred` (counter)
 - `gizmosql.connections.active` (up/down counter)
+
+Common attributes:
+
+- `gizmosql.rpc.duration` / `gizmosql.rpc.count`: `rpc.method`, `rpc.status`
+- `gizmosql.query.duration` / `gizmosql.query.count`: `db.operation`, `db.status`
+- `gizmosql.bytes.transferred` / `gizmosql.rows.transferred`: `direction` (`inbound`/`outbound`)
 
 ### Logs
 

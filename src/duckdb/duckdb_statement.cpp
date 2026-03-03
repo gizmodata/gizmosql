@@ -1316,6 +1316,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
     if (batch) {
       ::gizmosql::metrics::RecordBytesTransferred(
           "outbound", GetRecordBatchSizeBytes(batch));
+      ::gizmosql::metrics::RecordRowsTransferred("outbound", batch->num_rows());
     }
     return batch;
   }
@@ -1359,6 +1360,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                    {"sql", logged_sql_});
     ::gizmosql::metrics::RecordBytesTransferred(
         "outbound", GetRecordBatchSizeBytes(record_batch));
+    ::gizmosql::metrics::RecordRowsTransferred("outbound", record_batch->num_rows());
   }
 
   status = "success";

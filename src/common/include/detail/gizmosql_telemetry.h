@@ -167,6 +167,9 @@ void RecordActiveConnections(int64_t count);
 // Record bytes transferred
 void RecordBytesTransferred(const std::string& direction, int64_t bytes);
 
+// Record rows transferred
+void RecordRowsTransferred(const std::string& direction, int64_t rows);
+
 }  // namespace metrics
 
 // -----------------------------------------------------------------------------
