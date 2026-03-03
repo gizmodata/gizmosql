@@ -30,11 +30,11 @@ ExternalProject_Add(
       -DWITH_OTLP_GRPC=OFF
       # Enable HTTP exporter with curl
       -DWITH_OTLP_HTTP=ON
-      # Use Arrow's bundled protobuf (Protobuf_ROOT for module-mode FindProtobuf,
-      # Protobuf_DIR for config-mode, CMAKE_PREFIX_PATH as fallback)
-      -DProtobuf_ROOT=${PROTOBUF_INSTALL_DIR}
+      # Use Arrow's bundled protobuf — force config mode so CMake finds
+      # protobuf-config.cmake instead of using FindProtobuf.cmake module
+      # (which may not find Arrow's bundled protobuf on CI runners)
+      -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
       -DProtobuf_DIR=${PROTOBUF_INSTALL_DIR}/lib/cmake/protobuf
-      -DCMAKE_PREFIX_PATH=${PROTOBUF_INSTALL_DIR}
       -Dprotobuf_MODULE_COMPATIBLE=ON
       # Build static libraries
       -DBUILD_SHARED_LIBS=OFF
