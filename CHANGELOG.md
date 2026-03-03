@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Python ADBC connectivity guide**: New documentation page (`docs/python_adbc.md`) explaining GizmoSQL's lazy execution model and why `adbc-driver-gizmosql` is the recommended Python driver. Covers automatic DDL/DML handling, OAuth/SSO authentication, bulk ingestion, and Pandas integration. Also documents the pitfall when using `adbc-driver-flightsql` directly, where DDL/DML via `cursor.execute()` silently does nothing without an explicit fetch ([#134](https://github.com/gizmodata/gizmosql/issues/134)).
+
 ### Changed
 
 - **`--otel-enabled` flag changed from string to boolean**: The `--otel-enabled` CLI flag now uses a boolean value (`true`/`false`) instead of string (`on`/`off`), consistent with all other boolean CLI flags. The `GIZMOSQL_OTEL_ENABLED` environment variable accepts `1`/`true` to enable.
