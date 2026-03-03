@@ -30,7 +30,7 @@ Use CLI flags or environment variables (CLI takes precedence when set):
 
 | Parameter | CLI Flag | Env Var | Default | Description |
 |-----------|----------|---------|---------|-------------|
-| `otel_enabled` | `--otel-enabled` | `GIZMOSQL_OTEL_ENABLED` | `off` | Enable telemetry (`on`/`off`) |
+| `otel_enabled` | `--otel-enabled` | `GIZMOSQL_OTEL_ENABLED` | `false` | Enable telemetry (`true`/`1` to enable) |
 | `otel_exporter` | `--otel-exporter` | `GIZMOSQL_OTEL_EXPORTER` | `http` | Exporter type (`http`) |
 | `otel_endpoint` | `--otel-endpoint` | `GIZMOSQL_OTEL_ENDPOINT` | `http://localhost:4318` | Base OTLP endpoint URL |
 | `otel_service_name` | `--otel-service-name` | `GIZMOSQL_OTEL_SERVICE_NAME` | `gizmosql` | `service.name` resource attribute |
@@ -41,7 +41,7 @@ Use CLI flags or environment variables (CLI takes precedence when set):
 
 ```bash
 GIZMOSQL_PASSWORD="gizmosql_password" \
-GIZMOSQL_OTEL_ENABLED="on" \
+GIZMOSQL_OTEL_ENABLED="true" \
 GIZMOSQL_OTEL_EXPORTER="http" \
 GIZMOSQL_OTEL_ENDPOINT="http://localhost:4318" \
 GIZMOSQL_OTEL_SERVICE_NAME="gizmosql" \
@@ -56,7 +56,7 @@ Equivalent CLI-based configuration:
 GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server \
   --database-filename ./data/mydb.duckdb \
   --port 31337 \
-  --otel-enabled on \
+  --otel-enabled true \
   --otel-exporter http \
   --otel-endpoint http://localhost:4318 \
   --otel-service-name gizmosql
@@ -109,7 +109,7 @@ This enables log-to-trace correlation in observability backends.
 
 - **No telemetry data exported**
   - Confirm binary was built with `-DWITH_OPENTELEMETRY=ON`
-  - Confirm `GIZMOSQL_OTEL_ENABLED=on` (or `--otel-enabled on`)
+  - Confirm `GIZMOSQL_OTEL_ENABLED=true` (or `--otel-enabled true`)
   - Verify collector endpoint is reachable from GizmoSQL
 - **Collector requires auth**
   - Set `GIZMOSQL_OTEL_HEADERS` with required headers

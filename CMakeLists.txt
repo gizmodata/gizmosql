@@ -177,18 +177,26 @@ find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlight REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 
-# Arrow static link can require explicit absl archives depending on Arrow build layout.
+# Arrow 23 uses FetchContent for bundled deps (absl, gRPC, c-ares, protobuf, re2).
+# On some platforms / rebuild scenarios, arrow_bundled_dependencies may not contain
+# all symbols.  Collect the individual static libraries as a fallback.
 set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
-file(GLOB_RECURSE ABSL_LIBRARIES
-        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*.a"
-        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.a")
+file(GLOB_RECURSE ARROW_FETCHCONTENT_LIBS
+        # FetchContent layout (Arrow 23+)
+        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        "${ARROW_BUILD_DIR}/_deps/cares-build/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        "${ARROW_BUILD_DIR}/_deps/re2-build/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        # ExternalProject layout (older Arrow)
+        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*${CMAKE_STATIC_LIBRARY_SUFFIX}")
+# Filter out CMakeFiles/ build artifacts that match the glob
+list(FILTER ARROW_FETCHCONTENT_LIBS EXCLUDE REGEX "CMakeFiles")
 add_library(arrow_absl INTERFACE)
-if(ABSL_LIBRARIES)
+if(ARROW_FETCHCONTENT_LIBS)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(arrow_absl INTERFACE
-                "$<LINK_GROUP:RESCAN,${ABSL_LIBRARIES}>")
+                "$<LINK_GROUP:RESCAN,${ARROW_FETCHCONTENT_LIBS}>")
     else()
-        target_link_libraries(arrow_absl INTERFACE ${ABSL_LIBRARIES})
+        target_link_libraries(arrow_absl INTERFACE ${ARROW_FETCHCONTENT_LIBS})
     endif()
 endif()
 
@@ -267,7 +275,13 @@ if(WITH_OPENTELEMETRY)
     # Build OpenTelemetry C++ SDK with OTLP exporters
     # This must come after Arrow (uses Arrow's bundled protobuf)
 
-    set(ARROW_PROTOBUF_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/protobuf_ep-install")
+    # Arrow 23 builds protobuf via FetchContent — headers and libs live in the
+    # build tree, NOT the install prefix.  Point OTel at the FetchContent paths.
+    set(ARROW_BUILD_DIR_OTEL "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
+    set(ARROW_PROTOBUF_INCLUDE_DIR "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-src/src")
+    set(ARROW_PROTOBUF_LIB "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-build/${CMAKE_STATIC_LIBRARY_PREFIX}protobuf${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    set(ARROW_PROTOBUF_LITE_LIB "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-build/${CMAKE_STATIC_LIBRARY_PREFIX}protobuf-lite${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    set(ARROW_PROTOC_EXECUTABLE "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-build/protoc${CMAKE_EXECUTABLE_SUFFIX}")
     configure_file(third_party/OpenTelemetry_CMakeLists.txt.in opentelemetry/CMakeLists.txt @ONLY)
     execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
@@ -506,12 +520,13 @@ if(WITH_OPENTELEMETRY)
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(gizmosqlserver PRIVATE
-                "$<LINK_GROUP:RESCAN,${OTEL_STATIC_LIBS}>"
+                "$<LINK_GROUP:RESCAN,${OTEL_STATIC_LIBS};${ARROW_PROTOBUF_LIB}>"
                 CURL::libcurl
         )
     else()
         target_link_libraries(gizmosqlserver PRIVATE
                 ${OTEL_STATIC_LIBS}
+                ${ARROW_PROTOBUF_LIB}
                 CURL::libcurl
         )
     endif()

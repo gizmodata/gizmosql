@@ -118,6 +118,10 @@ class DuckDBStatement {
   bool is_gizmosql_admin_ =
       false;  // Flag to indicate whether the statement is a GizmoSQL administrative command
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
+#ifdef GIZMOSQL_WITH_OPENTELEMETRY
+  std::string creation_trace_id_;
+  std::string creation_span_id_;
+#endif
   arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
   std::shared_ptr<arrow::RecordBatch> synthetic_result_batch_;
   // Used to ensure thread-safe lazy init

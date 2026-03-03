@@ -5,11 +5,16 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
-# Path to Arrow's bundled protobuf (set by parent CMake via configure_file @ONLY)
-set(PROTOBUF_INSTALL_DIR "@ARROW_PROTOBUF_DIR@")
-
 # Parent build directory (set by parent CMake via configure_file @ONLY)
 set(PARENT_BINARY_DIR "@CMAKE_BINARY_DIR@")
+
+# Arrow 23 builds protobuf via FetchContent — headers and libs live in the
+# Arrow *build* tree, NOT the install prefix.  Paths are fully resolved by the
+# parent CMakeLists.txt and substituted here via configure_file @ONLY.
+set(PROTOBUF_INCLUDE_DIR "@ARROW_PROTOBUF_INCLUDE_DIR@")
+set(PROTOBUF_LIB "@ARROW_PROTOBUF_LIB@")
+set(PROTOBUF_LITE_LIB "@ARROW_PROTOBUF_LITE_LIB@")
+set(PROTOBUF_PROTOC "@ARROW_PROTOC_EXECUTABLE@")
 
 # Build OpenTelemetry with HTTP exporter only (no gRPC dependency)
 ExternalProject_Add(
@@ -30,8 +35,15 @@ ExternalProject_Add(
       -DWITH_OTLP_GRPC=OFF
       # Enable HTTP exporter with curl
       -DWITH_OTLP_HTTP=ON
-      # Use Arrow's bundled protobuf
-      -DProtobuf_DIR=${PROTOBUF_INSTALL_DIR}/lib/cmake/protobuf
+      # Use Arrow's bundled protobuf (v21.3 via FetchContent).
+      # Block any system protobuf (e.g. Homebrew) so that the cache variables
+      # below are authoritative.  CMAKE_IGNORE_PREFIX_PATH prevents config-mode
+      # find_package from discovering system packages.
+      -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew$<SEMICOLON>/usr/local
+      -DProtobuf_INCLUDE_DIR=${PROTOBUF_INCLUDE_DIR}
+      -DProtobuf_LIBRARY=${PROTOBUF_LIB}
+      -DProtobuf_LITE_LIBRARY=${PROTOBUF_LITE_LIB}
+      -DProtobuf_PROTOC_EXECUTABLE=${PROTOBUF_PROTOC}
       -Dprotobuf_MODULE_COMPATIBLE=ON
       # Build static libraries
       -DBUILD_SHARED_LIBS=OFF
