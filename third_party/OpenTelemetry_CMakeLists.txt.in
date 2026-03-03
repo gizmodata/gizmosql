@@ -11,6 +11,11 @@ set(PROTOBUF_INSTALL_DIR "@ARROW_PROTOBUF_DIR@")
 # Parent build directory (set by parent CMake via configure_file @ONLY)
 set(PARENT_BINARY_DIR "@CMAKE_BINARY_DIR@")
 
+# Platform-specific protobuf file paths (substituted by parent configure_file @ONLY)
+set(PROTOBUF_LIB "@ARROW_PROTOBUF_DIR@/lib/@CMAKE_STATIC_LIBRARY_PREFIX@protobuf@CMAKE_STATIC_LIBRARY_SUFFIX@")
+set(PROTOBUF_LITE_LIB "@ARROW_PROTOBUF_DIR@/lib/@CMAKE_STATIC_LIBRARY_PREFIX@protobuf-lite@CMAKE_STATIC_LIBRARY_SUFFIX@")
+set(PROTOBUF_PROTOC "@ARROW_PROTOBUF_DIR@/bin/protoc@CMAKE_EXECUTABLE_SUFFIX@")
+
 # Build OpenTelemetry with HTTP exporter only (no gRPC dependency)
 ExternalProject_Add(
     opentelemetry_project
@@ -30,11 +35,12 @@ ExternalProject_Add(
       -DWITH_OTLP_GRPC=OFF
       # Enable HTTP exporter with curl
       -DWITH_OTLP_HTTP=ON
-      # Use Arrow's bundled protobuf — force config mode so CMake finds
-      # protobuf-config.cmake instead of using FindProtobuf.cmake module
-      # (which may not find Arrow's bundled protobuf on CI runners)
-      -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON
-      -DProtobuf_DIR=${PROTOBUF_INSTALL_DIR}/lib/cmake/protobuf
+      # Use Arrow's bundled protobuf — set cache variables directly so
+      # FindProtobuf.cmake skips its search (CI runners lack system protobuf)
+      -DProtobuf_INCLUDE_DIR=${PROTOBUF_INSTALL_DIR}/include
+      -DProtobuf_LIBRARY=${PROTOBUF_LIB}
+      -DProtobuf_LITE_LIBRARY=${PROTOBUF_LITE_LIB}
+      -DProtobuf_PROTOC_EXECUTABLE=${PROTOBUF_PROTOC}
       -Dprotobuf_MODULE_COMPATIBLE=ON
       # Build static libraries
       -DBUILD_SHARED_LIBS=OFF
