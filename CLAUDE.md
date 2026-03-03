@@ -55,7 +55,7 @@ Before committing any change, ensure you have completed ALL of the following:
 **All environment variable fallback logic belongs in the library** (`src/common/gizmosql_library.cpp`), NOT in the CLI executable (`src/gizmosql_server.cpp`). The executable should only parse CLI flags via Boost.ProgramOptions and pass them through to `RunFlightSQLServer()`. This ensures that anyone using the C API (`RunFlightSQLServer()`) directly gets the same env var fallback behavior as the CLI.
 
 - **String params**: Use the `pick(cli_val, "ENV_NAME", "default")` lambda in `RunFlightSQLServer()`
-- **Boolean params**: Use `resolve_bool_env(val, "ENV_NAME")` in `RunFlightSQLServer()` — delegates to `parse_bool` (which accepts `on/off/yes/no/true/false/1/0`) when the CLI value is `false`
+- **Boolean params with env var fallback**: Use `std::optional<bool>` in the `RunFlightSQLServer()` signature (default `std::nullopt`). In the CLI, pass `std::nullopt` when the flag is defaulted (`vm["flag"].defaulted()`), and the explicit value otherwise. In the library, `resolve_bool_env(val, "ENV_NAME")` checks the env var only when `nullopt`, so explicit CLI `true`/`false` always wins. The `parse_bool` helper accepts `on/off/yes/no/true/false/1/0`.
 - **Never** add `std::getenv()` calls in `gizmosql_server.cpp`
 
 ### Code Flow for New Parameters
@@ -112,21 +112,22 @@ ninja gizmosql_integration_tests
 
 ## Common Patterns
 
-### Adding a New CLI Flag
+### Adding a New Boolean CLI Flag (with env var fallback)
 ```cpp
 // In gizmosql_server.cpp, add to options:
 ("my-new-flag", po::value<bool>()->default_value(false),
   "Description of what this flag does. "
   "If not set, uses env var MY_NEW_FLAG (1/true to enable).")
 
-// Parse with env var fallback:
-bool my_flag = vm["my-new-flag"].as<bool>();
-if (!my_flag) {
-  if (const char* env_val = std::getenv("MY_NEW_FLAG")) {
-    std::string val(env_val);
-    my_flag = (val == "1" || val == "true" || val == "TRUE" || val == "True");
-  }
-}
+// In gizmosql_server.cpp, parse as std::optional<bool>:
+std::optional<bool> my_flag =
+    vm["my-new-flag"].defaulted() ? std::nullopt
+                                  : std::optional(vm["my-new-flag"].as<bool>());
+
+// In gizmosql_library.h signature: std::optional<bool> my_flag = std::nullopt
+// In gizmosql_library.cpp, env var resolution is automatic via resolve_bool_env:
+resolve_bool_env(my_flag, "MY_NEW_FLAG");
+// After resolve_bool_env, my_flag is guaranteed to have a value — use .value()
 ```
 
 ### Adding a Test Fixture

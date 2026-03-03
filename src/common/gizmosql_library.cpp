@@ -1211,19 +1211,19 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
                        int health_port, std::string health_check_query,
-                       bool enable_instrumentation,
+                       std::optional<bool> enable_instrumentation,
                        std::string instrumentation_db_path,
                        std::string instrumentation_catalog,
                        std::string instrumentation_schema,
                        std::string license_key_file,
-                       bool allow_cross_instance_tokens,
+                       std::optional<bool> allow_cross_instance_tokens,
                        std::string oauth_client_id,
                        std::string oauth_client_secret,
                        std::string oauth_scopes,
                        int oauth_port,
                        std::string oauth_base_url,
-                       bool oauth_disable_tls,
-                       bool otel_enabled, std::string otel_exporter,
+                       std::optional<bool> oauth_disable_tls,
+                       std::optional<bool> otel_enabled, std::string otel_exporter,
                        std::string otel_endpoint, std::string otel_service_name,
                        std::string otel_headers) {
   // ---- Logging normalization (library-owned) ----------------
@@ -1281,10 +1281,15 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   gizmosql::InitLogging(log_config);
 
   // ---- Boolean env var fallbacks (library-owned) -----------
-  auto resolve_bool_env = [&](bool& val, const char* env_name) {
-    if (!val) {
+  // std::optional<bool>: nullopt = "not set, check env var"; true/false = "explicit, skip env var"
+  auto resolve_bool_env = [&](std::optional<bool>& val, const char* env_name) {
+    if (!val.has_value()) {
       auto ev = gizmosql::SafeGetEnvVarValue(env_name);
-      if (!ev.empty()) parse_bool(ev, val);
+      if (!ev.empty()) {
+        bool parsed = false;
+        if (parse_bool(ev, parsed)) val = parsed;
+      }
+      if (!val.has_value()) val = false;  // default to false if env var not set or invalid
     }
   };
   resolve_bool_env(enable_instrumentation, "GIZMOSQL_ENABLE_INSTRUMENTATION");
@@ -1315,7 +1320,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   GIZMOSQL_LOG(INFO) << enterprise.GetCopyrightBanner();
 
   // Check if instrumentation is requested but not licensed
-  if (enable_instrumentation && !enterprise.IsInstrumentationAvailable()) {
+  if (enable_instrumentation.value() && !enterprise.IsInstrumentationAvailable()) {
     std::cerr << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError("Instrumentation") << std::endl;
     return EXIT_FAILURE;
   }
@@ -1329,7 +1334,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                      << "\n https://www.apache.org/licenses/LICENSE-2.0";
 
   // In core edition, instrumentation is not available
-  if (enable_instrumentation) {
+  if (enable_instrumentation.value()) {
     std::cerr << "Error: Instrumentation is a commercially licensed enterprise feature.\n"
               << "       Please provide a valid license key file via --license-key-file\n"
               << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
@@ -1340,7 +1345,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: " << lvl_s;
 
   // ---- OpenTelemetry initialization ----------------
-  bool telemetry_enabled = otel_enabled;
+  bool telemetry_enabled = otel_enabled.value();
   if (telemetry_enabled) {
     std::string otel_exporter_s = pick(otel_exporter, "GIZMOSQL_OTEL_EXPORTER", "http");
     std::string otel_endpoint_s = pick(otel_endpoint, "GIZMOSQL_OTEL_ENDPOINT", "");
@@ -1375,10 +1380,10 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
       token_default_role, token_authorized_emails, access_logging_enabled,
       query_timeout, query_level, auth_level, health_port, health_check_query,
-      enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
+      enable_instrumentation.value(), instrumentation_db_path,
+      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_disable_tls, telemetry_enabled);
+      oauth_disable_tls.value(), telemetry_enabled);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

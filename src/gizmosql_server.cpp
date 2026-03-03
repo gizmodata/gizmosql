@@ -18,6 +18,7 @@
 #include "gizmosql_library.h"
 #include "common/include/detail/gizmosql_logging.h"
 #include <iostream>
+#include <optional>
 #include <boost/program_options.hpp>
 
 namespace po = boost::program_options;
@@ -294,7 +295,9 @@ int main(int argc, char** argv) {
   std::string health_check_query =
       vm.count("health-check-query") ? vm["health-check-query"].as<std::string>() : "";
 
-  bool enable_instrumentation = vm["enable-instrumentation"].as<bool>();
+  std::optional<bool> enable_instrumentation =
+      vm["enable-instrumentation"].defaulted() ? std::nullopt
+                                               : std::optional(vm["enable-instrumentation"].as<bool>());
 
   std::string instrumentation_db_path =
       vm.count("instrumentation-db-path") ? vm["instrumentation-db-path"].as<std::string>() : "";
@@ -308,7 +311,9 @@ int main(int argc, char** argv) {
   std::string license_key_file =
       vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
 
-  bool allow_cross_instance_tokens = vm["allow-cross-instance-tokens"].as<bool>();
+  std::optional<bool> allow_cross_instance_tokens =
+      vm["allow-cross-instance-tokens"].defaulted() ? std::nullopt
+                                                    : std::optional(vm["allow-cross-instance-tokens"].as<bool>());
 
   std::string oauth_client_id =
       vm.count("oauth-client-id") ? vm["oauth-client-id"].as<std::string>() : "";
@@ -324,10 +329,14 @@ int main(int argc, char** argv) {
   std::string oauth_base_url =
       vm.count("oauth-base-url") ? vm["oauth-base-url"].as<std::string>() : "";
 
-  bool oauth_disable_tls = vm["oauth-disable-tls"].as<bool>();
+  std::optional<bool> oauth_disable_tls =
+      vm["oauth-disable-tls"].defaulted() ? std::nullopt
+                                          : std::optional(vm["oauth-disable-tls"].as<bool>());
 
   // OpenTelemetry options
-  bool otel_enabled = vm["otel-enabled"].as<bool>();
+  std::optional<bool> otel_enabled =
+      vm["otel-enabled"].defaulted() ? std::nullopt
+                                     : std::optional(vm["otel-enabled"].as<bool>());
   std::string otel_exporter =
       vm.count("otel-exporter") ? vm["otel-exporter"].as<std::string>() : "";
   std::string otel_endpoint =
