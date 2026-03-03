@@ -46,6 +46,7 @@
 #include "duckdb_tables_schema_batch_reader.h"
 #include "gizmosql_security.h"
 #include "gizmosql_logging.h"
+#include "gizmosql_telemetry.h"
 #include "telemetry_middleware.h"
 #include "flight_sql_fwd.h"
 #include "session_context.h"
@@ -843,6 +844,7 @@ class DuckDBFlightSqlServer::Impl {
             std::unique_lock write_lock(sessions_mutex_);
             client_sessions_.erase(session_id);
             killed_session_ids_.insert(session_id);
+            ::gizmosql::metrics::RecordActiveConnections(-1);
           }
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
@@ -904,6 +906,7 @@ class DuckDBFlightSqlServer::Impl {
         if (it->second->kill_requested) {
           client_sessions_.erase(session_id);
           killed_session_ids_.insert(session_id);
+          ::gizmosql::metrics::RecordActiveConnections(-1);
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
         }
@@ -912,6 +915,7 @@ class DuckDBFlightSqlServer::Impl {
       }
 
       client_sessions_[session_id] = new_session;
+      ::gizmosql::metrics::RecordActiveConnections(1);
       GIZMOSQL_LOGKV_SESSION(INFO, new_session, "Client session was successfully created.",
                      {"kind", "session_create"}, {"status", "success"},
                      {"auth_method", new_session->auth_method});
@@ -1007,6 +1011,10 @@ class DuckDBFlightSqlServer::Impl {
       auto session_count = client_sessions_.size();
       client_sessions_.clear();
       if (session_count > 0) {
+        ::gizmosql::metrics::RecordActiveConnections(
+            -static_cast<int64_t>(session_count));
+      }
+      if (session_count > 0) {
         GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
       }
     }
@@ -1034,6 +1042,7 @@ class DuckDBFlightSqlServer::Impl {
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
       client_sessions_.erase(it);
+      ::gizmosql::metrics::RecordActiveConnections(-1);
       // If the session was killed, remember the session_id to prevent reconnection
       if (was_killed) {
         killed_session_ids_.insert(session_id);
@@ -1813,6 +1822,7 @@ class DuckDBFlightSqlServer::Impl {
     auto it = client_sessions_.find(client_session->session_id);
     if (it != client_sessions_.end()) {
       client_sessions_.erase(it);
+      ::gizmosql::metrics::RecordActiveConnections(-1);
       GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Client session was successfully closed.",
                      {"kind", "session_close"}, {"status", "success"});
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);

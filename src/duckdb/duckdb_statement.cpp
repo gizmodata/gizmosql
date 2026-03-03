@@ -28,6 +28,7 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include <future>
 #include <chrono>
+#include <cctype>
 #include <regex>
 
 #include <boost/algorithm/string.hpp>
@@ -40,6 +41,7 @@
 #endif
 #include "duckdb_server.h"
 #include "session_context.h"
+#include "gizmosql_telemetry.h"
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -72,6 +74,23 @@ bool IsLikelyGizmoSQLSet(const std::string& sql) {
     return false;
   }
   return upper.find("GIZMOSQL.") != std::string::npos;
+}
+
+std::string GetSqlOperationForMetrics(const std::string& sql) {
+  std::string trimmed = sql;
+  boost::algorithm::trim_left(trimmed);
+  if (trimmed.empty()) return "UNKNOWN";
+
+  const auto token_end = trimmed.find_first_of(" \t\r\n(;)");
+  std::string operation = trimmed.substr(0, token_end);
+  while (!operation.empty() &&
+         !std::isalpha(static_cast<unsigned char>(operation.front()))) {
+    operation.erase(operation.begin());
+  }
+  if (operation.empty()) return "UNKNOWN";
+
+  boost::algorithm::to_upper(operation);
+  return operation;
 }
 
 bool IsDetachInstrumentationDb(const std::string& sql, const std::string& instrumentation_catalog = "") {
@@ -982,6 +1001,18 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
   ARROW_ASSIGN_OR_RAISE(auto log_level, GetLogLevel());
+  start_time_ = std::chrono::steady_clock::now();
+
+  const std::string metric_operation =
+      is_gizmosql_admin_
+          ? "ADMIN"
+          : GetSqlOperationForMetrics(
+                use_direct_execution_ ? sql_ : (stmt_ ? stmt_->query : sql_));
+  auto record_query_metric = [this, &metric_operation](const std::string& status_label) {
+    end_time_ = std::chrono::steady_clock::now();
+    ::gizmosql::metrics::RecordQueryExecution(
+        metric_operation, status_label, static_cast<double>(GetLastExecutionDurationMs()));
+  };
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
   ScopedLogCorrelation execute_log_correlation(creation_trace_id_, creation_span_id_);
@@ -1032,6 +1063,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
         execution_instrumentation_->SetCompleted(0);
       }
 #endif
+      record_query_metric("OK");
+      execute_status = "success";
       return 0;
     }
     auto set_status = HandleGizmoSQLSet();
@@ -1042,6 +1075,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
         execution_instrumentation_->SetError(set_status.ToString());
       }
 #endif
+      record_query_metric(set_status.CodeAsString());
+      execute_status = "failure";
       return set_status;
     }
 #ifdef GIZMOSQL_ENTERPRISE
@@ -1050,6 +1085,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
       execution_instrumentation_->SetCompleted(0);
     }
 #endif
+    record_query_metric("OK");
+    execute_status = "success";
     return 0;
   }
 
@@ -1193,6 +1230,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
       execution_instrumentation_->SetTimeout();
     }
 #endif
+    record_query_metric("TIMEOUT");
+    execute_status = "timeout";
 
     return arrow::Status::ExecutionError("Query execution timed out after ",
                                          std::to_string(timeout_duration.count()),
@@ -1225,7 +1264,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
         {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_});
   }
 
-  execute_status = "success";
+  record_query_metric(result.ok() ? "OK" : result.status().CodeAsString());
+  execute_status = result.ok() ? "success" : "failure";
   return result;
 }
 
@@ -1246,6 +1286,10 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
     status = "success";
     auto batch = synthetic_result_batch_;
     synthetic_result_batch_.reset();
+    if (batch) {
+      ::gizmosql::metrics::RecordBytesTransferred(
+          "outbound", static_cast<int64_t>(batch->TotalBufferSize()));
+    }
     return batch;
   }
 
@@ -1286,6 +1330,8 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                    {"num_rows", std::to_string(record_batch->num_rows())},
                    {"num_columns", std::to_string(record_batch->num_columns())},
                    {"sql", logged_sql_});
+    ::gizmosql::metrics::RecordBytesTransferred(
+        "outbound", static_cast<int64_t>(record_batch->TotalBufferSize()));
   }
 
   status = "success";
