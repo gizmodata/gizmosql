@@ -267,7 +267,7 @@ if(WITH_OPENTELEMETRY)
     # Build OpenTelemetry C++ SDK with OTLP exporters
     # This must come after Arrow (uses Arrow's bundled protobuf)
 
-    set(ARROW_PROTOBUF_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build/protobuf_ep-install")
+    set(ARROW_PROTOBUF_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
     configure_file(third_party/OpenTelemetry_CMakeLists.txt.in opentelemetry/CMakeLists.txt @ONLY)
     execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Duplicate OpenTelemetry initialization**: Removed a duplicate OTel initialization block in `RunFlightSQLServer` that was introduced during the merge of PR #97.
+- **OpenTelemetry build protobuf path**: Fixed `ARROW_PROTOBUF_DIR` to point to Arrow's install tree (`third_party/arrow`) instead of the internal build directory (`protobuf_ep-install`), fixing the OTel CMake configure step on CI.
 
 ## [1.18.5] - 2026-02-26
 
