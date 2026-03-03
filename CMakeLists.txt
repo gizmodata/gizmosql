@@ -177,20 +177,26 @@ find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlight REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 find_package(ArrowFlightSql REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
 
-# Arrow static link can require explicit absl archives depending on Arrow build layout.
+# Arrow 23 uses FetchContent for bundled deps (absl, gRPC, c-ares, protobuf, re2).
+# On some platforms / rebuild scenarios, arrow_bundled_dependencies may not contain
+# all symbols.  Collect the individual static libraries as a fallback.
 set(ARROW_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build")
-file(GLOB_RECURSE ABSL_LIBRARIES
-        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*.a"
-        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*.lib"
-        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.a"
-        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*.lib")
+file(GLOB_RECURSE ARROW_FETCHCONTENT_LIBS
+        # FetchContent layout (Arrow 23+)
+        "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        "${ARROW_BUILD_DIR}/_deps/cares-build/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        "${ARROW_BUILD_DIR}/_deps/re2-build/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        # ExternalProject layout (older Arrow)
+        "${ARROW_BUILD_DIR}/absl_ep-install/lib/*${CMAKE_STATIC_LIBRARY_SUFFIX}")
+# Filter out CMakeFiles/ build artifacts that match the glob
+list(FILTER ARROW_FETCHCONTENT_LIBS EXCLUDE REGEX "CMakeFiles")
 add_library(arrow_absl INTERFACE)
-if(ABSL_LIBRARIES)
+if(ARROW_FETCHCONTENT_LIBS)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(arrow_absl INTERFACE
-                "$<LINK_GROUP:RESCAN,${ABSL_LIBRARIES}>")
+                "$<LINK_GROUP:RESCAN,${ARROW_FETCHCONTENT_LIBS}>")
     else()
-        target_link_libraries(arrow_absl INTERFACE ${ABSL_LIBRARIES})
+        target_link_libraries(arrow_absl INTERFACE ${ARROW_FETCHCONTENT_LIBS})
     endif()
 endif()
 
