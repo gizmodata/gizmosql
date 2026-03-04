@@ -1313,9 +1313,9 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
     status = "success";
     auto batch = synthetic_result_batch_;
     synthetic_result_batch_.reset();
-    if (batch) {
-      ::gizmosql::metrics::RecordBytesTransferred(
-          "outbound", GetRecordBatchSizeBytes(batch));
+    if (batch && ::gizmosql::IsTelemetryEnabled()) {
+      const auto batch_size_bytes = GetRecordBatchSizeBytes(batch);
+      ::gizmosql::metrics::RecordBytesTransferred("outbound", batch_size_bytes);
       ::gizmosql::metrics::RecordRowsTransferred("outbound", batch->num_rows());
     }
     return batch;
@@ -1358,9 +1358,11 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                    {"num_rows", std::to_string(record_batch->num_rows())},
                    {"num_columns", std::to_string(record_batch->num_columns())},
                    {"sql", logged_sql_});
-    ::gizmosql::metrics::RecordBytesTransferred(
-        "outbound", GetRecordBatchSizeBytes(record_batch));
-    ::gizmosql::metrics::RecordRowsTransferred("outbound", record_batch->num_rows());
+    if (::gizmosql::IsTelemetryEnabled()) {
+      const auto record_batch_size_bytes = GetRecordBatchSizeBytes(record_batch);
+      ::gizmosql::metrics::RecordBytesTransferred("outbound", record_batch_size_bytes);
+      ::gizmosql::metrics::RecordRowsTransferred("outbound", record_batch->num_rows());
+    }
   }
 
   status = "success";

@@ -1701,9 +1701,11 @@ class DuckDBFlightSqlServer::Impl {
         if (chunk.data) {
           const auto row_count = chunk.data->num_rows();
           total_rows += row_count;
-          ::gizmosql::metrics::RecordRowsTransferred("inbound", row_count);
-          ::gizmosql::metrics::RecordBytesTransferred(
-              "inbound", GetRecordBatchSizeBytes(chunk.data));
+          if (::gizmosql::IsTelemetryEnabled()) {
+            const auto batch_size_bytes = GetRecordBatchSizeBytes(chunk.data);
+            ::gizmosql::metrics::RecordRowsTransferred("inbound", row_count);
+            ::gizmosql::metrics::RecordBytesTransferred("inbound", batch_size_bytes);
+          }
           ARROW_RETURN_NOT_OK(AppendRecordBatchToDuckDB(*appender, chunk.data));
         }
       }
