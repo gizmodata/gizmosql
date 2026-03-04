@@ -161,11 +161,14 @@ void RecordQueryExecution(const std::string& operation,
                           const std::string& status,
                           double duration_ms);
 
-// Record active connections
+// Record active connection delta (+1 open, -1 close)
 void RecordActiveConnections(int64_t count);
 
 // Record bytes transferred
 void RecordBytesTransferred(const std::string& direction, int64_t bytes);
+
+// Record rows transferred
+void RecordRowsTransferred(const std::string& direction, int64_t rows);
 
 }  // namespace metrics
 

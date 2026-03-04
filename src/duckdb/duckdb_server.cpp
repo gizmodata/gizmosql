@@ -46,6 +46,7 @@
 #include "duckdb_tables_schema_batch_reader.h"
 #include "gizmosql_security.h"
 #include "gizmosql_logging.h"
+#include "gizmosql_telemetry.h"
 #include "telemetry_middleware.h"
 #include "flight_sql_fwd.h"
 #include "session_context.h"
@@ -103,6 +104,33 @@ class DuckDBTransactionGuard {
   bool active_;
   bool committed_;
 };
+
+int64_t GetArrayDataSize(const std::shared_ptr<arrow::ArrayData>& data) {
+  if (!data) return 0;
+
+  int64_t total_size = 0;
+  for (const auto& buffer : data->buffers) {
+    if (buffer) total_size += static_cast<int64_t>(buffer->size());
+  }
+  for (const auto& child : data->child_data) {
+    total_size += GetArrayDataSize(child);
+  }
+  if (data->dictionary) {
+    total_size += GetArrayDataSize(data->dictionary);
+  }
+
+  return total_size;
+}
+
+int64_t GetRecordBatchSizeBytes(const std::shared_ptr<arrow::RecordBatch>& batch) {
+  if (!batch) return 0;
+
+  int64_t total_size = 0;
+  for (int i = 0; i < batch->num_columns(); ++i) {
+    total_size += GetArrayDataSize(batch->column(i)->data());
+  }
+  return total_size;
+}
 
 duckdb::LogicalType GetDuckDBTypeFromArrowType(
     const std::shared_ptr<arrow::DataType>& arrow_type) {
@@ -841,8 +869,11 @@ class DuckDBFlightSqlServer::Impl {
           // Remove the killed session from the map
           {
             std::unique_lock write_lock(sessions_mutex_);
-            client_sessions_.erase(session_id);
+            const auto erased_count = client_sessions_.erase(session_id);
             killed_session_ids_.insert(session_id);
+            if (erased_count > 0) {
+              ::gizmosql::metrics::RecordActiveConnections(-1);
+            }
           }
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
@@ -902,8 +933,11 @@ class DuckDBFlightSqlServer::Impl {
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
         // Another thread won the race – but check if it was killed
         if (it->second->kill_requested) {
-          client_sessions_.erase(session_id);
+          const auto erased_count = client_sessions_.erase(session_id);
           killed_session_ids_.insert(session_id);
+          if (erased_count > 0) {
+            ::gizmosql::metrics::RecordActiveConnections(-1);
+          }
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
         }
@@ -912,6 +946,7 @@ class DuckDBFlightSqlServer::Impl {
       }
 
       client_sessions_[session_id] = new_session;
+      ::gizmosql::metrics::RecordActiveConnections(1);
       GIZMOSQL_LOGKV_SESSION(INFO, new_session, "Client session was successfully created.",
                      {"kind", "session_create"}, {"status", "success"},
                      {"auth_method", new_session->auth_method});
@@ -1007,6 +1042,10 @@ class DuckDBFlightSqlServer::Impl {
       auto session_count = client_sessions_.size();
       client_sessions_.clear();
       if (session_count > 0) {
+        ::gizmosql::metrics::RecordActiveConnections(
+            -static_cast<int64_t>(session_count));
+      }
+      if (session_count > 0) {
         GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
       }
     }
@@ -1034,6 +1073,7 @@ class DuckDBFlightSqlServer::Impl {
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
       client_sessions_.erase(it);
+      ::gizmosql::metrics::RecordActiveConnections(-1);
       // If the session was killed, remember the session_id to prevent reconnection
       if (was_killed) {
         killed_session_ids_.insert(session_id);
@@ -1659,7 +1699,13 @@ class DuckDBFlightSqlServer::Impl {
         }
 
         if (chunk.data) {
-          total_rows += chunk.data->num_rows();
+          const auto row_count = chunk.data->num_rows();
+          total_rows += row_count;
+          if (::gizmosql::IsTelemetryEnabled()) {
+            const auto batch_size_bytes = GetRecordBatchSizeBytes(chunk.data);
+            ::gizmosql::metrics::RecordRowsTransferred("inbound", row_count);
+            ::gizmosql::metrics::RecordBytesTransferred("inbound", batch_size_bytes);
+          }
           ARROW_RETURN_NOT_OK(AppendRecordBatchToDuckDB(*appender, chunk.data));
         }
       }
@@ -1813,6 +1859,7 @@ class DuckDBFlightSqlServer::Impl {
     auto it = client_sessions_.find(client_session->session_id);
     if (it != client_sessions_.end()) {
       client_sessions_.erase(it);
+      ::gizmosql::metrics::RecordActiveConnections(-1);
       GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Client session was successfully closed.",
                      {"kind", "session_close"}, {"status", "success"});
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);

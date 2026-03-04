@@ -93,8 +93,24 @@ The following metric instruments are emitted:
 - `gizmosql.rpc.duration` (histogram, ms)
 - `gizmosql.rpc.count` (counter)
 - `gizmosql.query.duration` (histogram, ms)
+- `gizmosql.query.count` (counter)
 - `gizmosql.bytes.transferred` (counter, By)
+- `gizmosql.rows.transferred` (counter)
 - `gizmosql.connections.active` (up/down counter)
+
+Common attributes:
+
+- `gizmosql.rpc.duration` / `gizmosql.rpc.count`: `rpc.method`, `rpc.status`
+- `gizmosql.query.duration` / `gizmosql.query.count`: `db.operation`, `db.status`
+- `gizmosql.bytes.transferred` / `gizmosql.rows.transferred`: `direction` (`inbound`/`outbound`)
+
+Metric semantics:
+
+- `gizmosql.connections.active` tracks active GizmoSQL sessions (incremented on session create, decremented on close/kill/shutdown).
+- `gizmosql.query.duration` and `gizmosql.query.count` are emitted once per executed SQL statement.
+- `db.operation` is derived from the leading SQL keyword (for example `SELECT`, `INSERT`, `CALL`) and uses `ADMIN` for GizmoSQL admin commands.
+- `db.status` records execution outcome (`OK`, `TIMEOUT`, or an Arrow status code string on failure).
+- `direction=outbound` measures query result batches sent to clients; `direction=inbound` measures Arrow record batches received by ingest paths.
 
 ### Logs
 

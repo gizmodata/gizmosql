@@ -66,7 +66,10 @@ static opentelemetry::nostd::unique_ptr<metrics_api::Histogram<double>>
     g_query_duration_histogram;
 static opentelemetry::nostd::unique_ptr<metrics_api::Counter<uint64_t>>
     g_rpc_count_counter;
+static opentelemetry::nostd::unique_ptr<metrics_api::Counter<uint64_t>>
+    g_query_count_counter;
 static opentelemetry::nostd::unique_ptr<metrics_api::Counter<uint64_t>> g_bytes_counter;
+static opentelemetry::nostd::unique_ptr<metrics_api::Counter<uint64_t>> g_rows_counter;
 static opentelemetry::nostd::unique_ptr<metrics_api::UpDownCounter<int64_t>>
     g_active_connections;
 
@@ -231,7 +234,9 @@ void ShutdownTelemetry() {
     g_rpc_duration_histogram.reset();
     g_query_duration_histogram.reset();
     g_rpc_count_counter.reset();
+    g_query_count_counter.reset();
     g_bytes_counter.reset();
+    g_rows_counter.reset();
     g_active_connections.reset();
     g_metrics_initialized = false;
   }
@@ -311,8 +316,12 @@ static void InitMetricsInstruments() {
       "gizmosql.query.duration", "Duration of query executions in milliseconds", "ms");
   g_rpc_count_counter =
       meter->CreateUInt64Counter("gizmosql.rpc.count", "Number of RPC calls", "1");
+  g_query_count_counter = meter->CreateUInt64Counter("gizmosql.query.count",
+                                                     "Number of query executions", "1");
   g_bytes_counter = meter->CreateUInt64Counter("gizmosql.bytes.transferred",
                                                "Number of bytes transferred", "By");
+  g_rows_counter = meter->CreateUInt64Counter("gizmosql.rows.transferred",
+                                              "Number of rows transferred", "1");
   g_active_connections = meter->CreateInt64UpDownCounter(
       "gizmosql.connections.active", "Number of active connections", "1");
   g_metrics_initialized = true;
@@ -343,6 +352,7 @@ void RecordQueryExecution(const std::string& operation, const std::string& statu
 
   g_query_duration_histogram->Record(duration_ms, labels,
                                      opentelemetry::context::Context{});
+  g_query_count_counter->Add(1, labels, opentelemetry::context::Context{});
 }
 
 void RecordActiveConnections(int64_t count) {
@@ -360,6 +370,15 @@ void RecordBytesTransferred(const std::string& direction, int64_t bytes) {
                        opentelemetry::context::Context{});
 }
 
+void RecordRowsTransferred(const std::string& direction, int64_t rows) {
+  if (!IsTelemetryEnabled() || rows < 0) return;
+  InitMetricsInstruments();
+
+  std::map<std::string, std::string> labels = {{"direction", direction}};
+  g_rows_counter->Add(static_cast<uint64_t>(rows), labels,
+                      opentelemetry::context::Context{});
+}
+
 }  // namespace metrics
 
 #else
@@ -370,6 +389,7 @@ void RecordRpcCall(const std::string&, const std::string&, double) {}
 void RecordQueryExecution(const std::string&, const std::string&, double) {}
 void RecordActiveConnections(int64_t) {}
 void RecordBytesTransferred(const std::string&, int64_t) {}
+void RecordRowsTransferred(const std::string&, int64_t) {}
 
 }  // namespace metrics
 
