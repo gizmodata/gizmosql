@@ -47,6 +47,7 @@ class OAuthHttpServer {
     std::string scopes;
     std::string redirect_uri;  // Auto-constructed if empty
     std::string secret_key;    // For HMAC session hashing only
+    std::string instance_id;   // Optional: embedded in state for multi-instance proxy routing
     std::vector<std::string> authorized_email_patterns;
     bool disable_tls = false;    // Run plain HTTP even when main server has TLS
     std::string tls_cert_path;

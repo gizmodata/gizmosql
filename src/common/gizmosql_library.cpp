@@ -432,6 +432,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& oauth_scopes,
     const int& oauth_port,
     const std::string& oauth_base_url,
+    const std::string& oauth_instance_id,
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled) {
   ARROW_ASSIGN_OR_RAISE(auto location,
@@ -571,6 +572,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         .scopes = oauth_scopes,
         .redirect_uri = derived_redirect_uri,
         .secret_key = secret_key,
+        .instance_id = oauth_instance_id,
         .authorized_email_patterns = email_patterns,
         .disable_tls = oauth_disable_tls,
         .tls_cert_path = tls_cert_path.string(),
@@ -891,6 +893,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string oauth_scopes,
     int oauth_port,
     std::string oauth_base_url,
+    std::string oauth_instance_id,
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled) {
   // Validate and default the arguments to env var values where applicable
@@ -1136,6 +1139,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   if (oauth_base_url.empty()) {
     oauth_base_url = SafeGetEnvVarValue("GIZMOSQL_OAUTH_BASE_URL");
   }
+  if (oauth_instance_id.empty()) {
+    oauth_instance_id = SafeGetEnvVarValue("GIZMOSQL_OAUTH_INSTANCE_ID");
+  }
 
   // Validate OAuth configuration
   if (!oauth_client_id.empty()) {
@@ -1158,7 +1164,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_disable_tls, telemetry_enabled);
+      oauth_instance_id, oauth_disable_tls, telemetry_enabled);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1222,6 +1228,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string oauth_scopes,
                        int oauth_port,
                        std::string oauth_base_url,
+                       std::string oauth_instance_id,
                        std::optional<bool> oauth_disable_tls,
                        std::optional<bool> otel_enabled, std::string otel_exporter,
                        std::string otel_endpoint, std::string otel_service_name,
@@ -1383,7 +1390,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       enable_instrumentation.value(), instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_disable_tls.value(), telemetry_enabled);
+      oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

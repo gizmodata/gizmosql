@@ -69,7 +69,8 @@ arrow::Status OAuthHttpServer::Start() {
 
   if (config_.disable_tls) {
     GIZMOSQL_LOG(WARNING) << "OAuth HTTP server TLS is DISABLED. "
-                          << "This should ONLY be used for localhost development/testing.";
+                          << "This is expected when behind a TLS-terminating reverse proxy, "
+                          << "but should NOT be used for direct internet-facing deployments.";
   }
 
   // Create server (SSL if TLS configured and not disabled)
@@ -160,7 +161,13 @@ void OAuthHttpServer::HandleInitiate(const httplib::Request& req, httplib::Respo
   auth_url += "&client_id=" + UrlEncode(config_.client_id);
   auth_url += "&redirect_uri=" + UrlEncode(config_.redirect_uri);
   auth_url += "&scope=" + UrlEncode(config_.scopes);
-  auth_url += "&state=" + session_hash;
+
+  // Embed instance_id in state for multi-instance proxy routing (optional)
+  std::string state_value = session_hash;
+  if (!config_.instance_id.empty()) {
+    state_value = config_.instance_id + "." + session_hash;
+  }
+  auth_url += "&state=" + UrlEncode(state_value);
 
   GIZMOSQL_LOG(DEBUG) << "OAuth: Initiated session for UUID: "
                       << uuid.substr(0, 8) << "...";
@@ -202,7 +209,13 @@ void OAuthHttpServer::HandleStart(const httplib::Request& req, httplib::Response
   auth_url += "&client_id=" + UrlEncode(config_.client_id);
   auth_url += "&redirect_uri=" + UrlEncode(config_.redirect_uri);
   auth_url += "&scope=" + UrlEncode(config_.scopes);
-  auth_url += "&state=" + session_hash;
+
+  // Embed instance_id in state for multi-instance proxy routing (optional)
+  std::string state_value = session_hash;
+  if (!config_.instance_id.empty()) {
+    state_value = config_.instance_id + "." + session_hash;
+  }
+  auth_url += "&state=" + UrlEncode(state_value);
 
   GIZMOSQL_LOG(DEBUG) << "OAuth: Redirecting to IdP for session hash: "
                       << session_hash.substr(0, 8) << "...";
@@ -217,6 +230,17 @@ void OAuthHttpServer::HandleCallback(const httplib::Request& req, httplib::Respo
   auto state_it = req.params.find("state");
   auto error_it = req.params.find("error");
 
+  // Helper: strip instance_id prefix from state to recover the session hash
+  auto strip_instance_prefix = [this](const std::string& state) -> std::string {
+    if (!config_.instance_id.empty()) {
+      std::string prefix = config_.instance_id + ".";
+      if (state.size() > prefix.size() && state.compare(0, prefix.size(), prefix) == 0) {
+        return state.substr(prefix.size());
+      }
+    }
+    return state;
+  };
+
   // Check for IdP-reported error
   if (error_it != req.params.end()) {
     std::string error_desc;
@@ -230,8 +254,9 @@ void OAuthHttpServer::HandleCallback(const httplib::Request& req, httplib::Respo
     GIZMOSQL_LOG(WARNING) << "OAuth: IdP returned error: " << error_desc;
 
     if (state_it != req.params.end()) {
+      std::string err_session_hash = strip_instance_prefix(state_it->second);
       std::lock_guard<std::mutex> lock(pending_mutex_);
-      auto it = pending_auths_.find(state_it->second);
+      auto it = pending_auths_.find(err_session_hash);
       if (it != pending_auths_.end()) {
         it->second.error = error_desc;
       }
@@ -248,7 +273,7 @@ void OAuthHttpServer::HandleCallback(const httplib::Request& req, httplib::Respo
   }
 
   const std::string& code = code_it->second;
-  const std::string& session_hash = state_it->second;
+  const std::string session_hash = strip_instance_prefix(state_it->second);
 
   // Verify the session hash exists and is still pending
   {

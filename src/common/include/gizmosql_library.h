@@ -130,6 +130,7 @@ int RunFlightSQLServer(
     std::string oauth_scopes = "",
     int oauth_port = 0,
     std::string oauth_base_url = "",
+    std::string oauth_instance_id = "",
     std::optional<bool> oauth_disable_tls = std::nullopt,
     std::optional<bool> otel_enabled = std::nullopt, std::string otel_exporter = "",
     std::string otel_endpoint = "", std::string otel_service_name = "",

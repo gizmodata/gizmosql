@@ -313,6 +313,7 @@ export GIZMOSQL_OAUTH_CLIENT_ID="your-client-id"
 export GIZMOSQL_OAUTH_CLIENT_SECRET="your-client-secret"
 export GIZMOSQL_OAUTH_PORT="31339"
 # export GIZMOSQL_OAUTH_BASE_URL="https://my-proxy:443"  # Override base URL when behind a reverse proxy
+# export GIZMOSQL_OAUTH_INSTANCE_ID="my-instance-uuid"  # For multi-instance OAuth proxy routing
 # export GIZMOSQL_OAUTH_DISABLE_TLS="true"  # WARNING: localhost development only
 export GIZMOSQL_TOKEN_ALLOWED_ISSUER="https://your-idp.com"
 export GIZMOSQL_TOKEN_ALLOWED_AUDIENCE="your-client-id"
