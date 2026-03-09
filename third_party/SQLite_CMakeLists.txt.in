@@ -9,7 +9,7 @@ if(WIN32)
     # Windows: Use CMake-based build for SQLite amalgamation
     ExternalProject_Add(
         sqlite_project
-        URL "https://sqlite.org/2025/sqlite-autoconf-3510100.tar.gz"
+        URL "https://sqlite.org/2026/sqlite-autoconf-3520000.tar.gz"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         PREFIX "${CMAKE_BINARY_DIR}/third_party/sqlite"
         CONFIGURE_COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}"
@@ -26,7 +26,7 @@ else()
     # Unix: Use autotools build
     ExternalProject_Add(
         sqlite_project
-        URL "https://sqlite.org/2025/sqlite-autoconf-3510100.tar.gz"
+        URL "https://sqlite.org/2026/sqlite-autoconf-3520000.tar.gz"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         PREFIX "${CMAKE_BINARY_DIR}/third_party/sqlite"
         CONFIGURE_COMMAND ../sqlite_project/configure "CFLAGS=-DSQLITE_ENABLE_COLUMN_METADATA=1" --prefix=${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install

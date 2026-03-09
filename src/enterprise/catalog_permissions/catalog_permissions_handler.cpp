@@ -62,7 +62,7 @@ bool HasWriteAccess(const ClientSession& client_session, const std::string& cata
 
 arrow::Status CheckCatalogWriteAccess(
     const std::shared_ptr<ClientSession>& client_session,
-    const std::unordered_map<std::string, duckdb::StatementProperties::CatalogIdentity>& modified_databases,
+    const std::unordered_map<std::string, duckdb::StatementProperties::ModificationInfo>& modified_databases,
     std::shared_ptr<gizmosql::ddb::InstrumentationManager> instrumentation_manager,
     const std::string& statement_id,
     const std::string& logged_sql,

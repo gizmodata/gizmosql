@@ -18,8 +18,6 @@
 // GeoArrow Integration Tests
 //
 // These tests verify that GizmoSQL correctly exports GEOMETRY types
-// using the GeoArrow Arrow extension format when the DuckDB spatial
-// extension is loaded and register_geoarrow_extensions() is called.
 //
 // This enables seamless integration with GeoArrow-aware clients like
 // GeoPandas, allowing direct consumption of geometry data without
@@ -166,12 +164,7 @@ TEST_F(GeoArrowServerFixture, GeometryExportsAsGeoArrow) {
   result = RunQuery(sql_client, call_options, "LOAD spatial;");
   ASSERT_TRUE(result.success) << "Failed to load spatial: " << result.error_message;
 
-  // Step 2: Register GeoArrow extensions for Arrow export
-  std::cerr << "Registering GeoArrow extensions..." << std::endl;
-  result = RunQuery(sql_client, call_options, "CALL register_geoarrow_extensions();");
-  ASSERT_TRUE(result.success) << "Failed to register geoarrow extensions: " << result.error_message;
-
-  // Step 3: Create a table with GEOMETRY column
+  // Step 2: Create a table with GEOMETRY column
   std::cerr << "Creating table with GEOMETRY column..." << std::endl;
   result = RunQuery(sql_client, call_options, R"(
     CREATE TABLE test_geo (
@@ -182,7 +175,7 @@ TEST_F(GeoArrowServerFixture, GeometryExportsAsGeoArrow) {
   )");
   ASSERT_TRUE(result.success) << "Failed to create table: " << result.error_message;
 
-  // Step 4: Insert some geometry data
+  // Step 3: Insert some geometry data
   std::cerr << "Inserting geometry data..." << std::endl;
   result = RunQuery(sql_client, call_options, R"(
     INSERT INTO test_geo VALUES
@@ -192,7 +185,7 @@ TEST_F(GeoArrowServerFixture, GeometryExportsAsGeoArrow) {
   )");
   ASSERT_TRUE(result.success) << "Failed to insert data: " << result.error_message;
 
-  // Step 5: Query the table and verify GeoArrow export
+  // Step 4: Query the table and verify GeoArrow export
   std::cerr << "Querying geometry data..." << std::endl;
   result = RunQuery(sql_client, call_options, "SELECT * FROM test_geo ORDER BY id;");
   ASSERT_TRUE(result.success) << "Failed to query data: " << result.error_message;
@@ -241,51 +234,6 @@ TEST_F(GeoArrowServerFixture, GeometryExportsAsGeoArrow) {
   std::cerr << "=== GeoArrow Test Complete ===" << std::endl;
 }
 
-// Test that without register_geoarrow_extensions(), geometry is plain binary
-TEST_F(GeoArrowServerFixture, GeometryWithoutRegistration) {
-  ASSERT_TRUE(IsServerReady()) << "Server not ready";
-
-  // Connect to GizmoSQL with a fresh connection
-  arrow::flight::FlightClientOptions options;
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto location, arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
-  ASSERT_ARROW_OK_AND_ASSIGN(auto flight_client,
-                             arrow::flight::FlightClient::Connect(location, options));
-
-  arrow::flight::FlightCallOptions call_options;
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto bearer,
-      flight_client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
-  call_options.headers.push_back(bearer);
-
-  FlightSqlClient sql_client(std::move(flight_client));
-
-  std::cerr << "\n=== GeoArrow Without Registration Test ===" << std::endl;
-
-  // Load spatial but DON'T call register_geoarrow_extensions()
-  auto result = RunQuery(sql_client, call_options, "LOAD spatial;");
-  ASSERT_TRUE(result.success) << "Failed to load spatial: " << result.error_message;
-
-  // Query geometry using ST_Point directly
-  result = RunQuery(sql_client, call_options, "SELECT ST_Point(1.0, 2.0) AS geom;");
-  ASSERT_TRUE(result.success) << "Failed to query: " << result.error_message;
-
-  auto geom_field = result.schema->GetFieldByName("geom");
-  ASSERT_NE(geom_field, nullptr) << "geom field should exist";
-
-  std::cerr << "Geometry field type (without registration): "
-            << geom_field->type()->ToString() << std::endl;
-
-  // Without GeoArrow registration, geometry should be plain binary (WKB)
-  // or may have different extension metadata depending on DuckDB version
-  auto metadata = geom_field->metadata();
-  if (metadata != nullptr) {
-    std::cerr << "Metadata present with " << metadata->size() << " keys" << std::endl;
-  }
-
-  std::cerr << "=== Test Complete ===" << std::endl;
-}
-
 // Test various geometry types
 TEST_F(GeoArrowServerFixture, VariousGeometryTypes) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
@@ -308,8 +256,6 @@ TEST_F(GeoArrowServerFixture, VariousGeometryTypes) {
 
   // Setup: load spatial and register GeoArrow
   auto result = RunQuery(sql_client, call_options, "LOAD spatial;");
-  ASSERT_TRUE(result.success) << result.error_message;
-  result = RunQuery(sql_client, call_options, "CALL register_geoarrow_extensions();");
   ASSERT_TRUE(result.success) << result.error_message;
 
   // Test Point

@@ -536,9 +536,13 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
   fs::remove(test_db_path, ec);
   fs::remove(test_db_path + ".wal", ec);
 
-  // Create a DuckDB instance
+  // Create a DuckDB instance with ICU loaded (needed for TIMESTAMPTZ operations)
   duckdb::DuckDB db(":memory:");
   auto shared_db = std::make_shared<duckdb::DuckDB>(std::move(db));
+  {
+    duckdb::Connection conn(*shared_db);
+    conn.Query("INSTALL icu; LOAD icu;");
+  }
 
   // Create the first instrumentation manager to set up the schema
   auto result1 = gizmosql::ddb::InstrumentationManager::Create(shared_db, test_db_path);

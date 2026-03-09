@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
 project(gizmosql)
 
+# Use Boost's own CMake config instead of the removed FindBoost module
+cmake_policy(SET CMP0167 NEW)
+
 set(CMAKE_CXX_STANDARD 20)
 
 # --------------------- Platform Settings ---------------------
@@ -256,6 +259,7 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_utf8proc${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_yyjson${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_zstd${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
@@ -536,7 +540,7 @@ if(WIN32)
     target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 rstrtmgr ntdll)
     target_link_options(gizmosqlserver PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
 elseif(APPLE)
-    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-lresolv")
+    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-framework Security" "-lresolv")
 elseif(UNIX)
     target_link_libraries(gizmosqlserver PRIVATE "-lssl" "-lcrypto" "-lresolv")
 endif()
@@ -649,7 +653,7 @@ if(WIN32)
     target_link_libraries(gizmosql_client PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32 rstrtmgr ntdll)
     target_link_options(gizmosql_client PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
 elseif(APPLE)
-    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation" "-lresolv")
+    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation" "-framework Security" "-lresolv")
 elseif(UNIX)
     target_link_libraries(gizmosql_client PRIVATE "-lssl" "-lcrypto" "-lresolv")
 endif()
