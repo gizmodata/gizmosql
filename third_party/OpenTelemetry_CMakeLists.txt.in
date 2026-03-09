@@ -21,7 +21,7 @@ ExternalProject_Add(
     opentelemetry_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/open-telemetry/opentelemetry-cpp.git
-    GIT_TAG v1.18.0
+    GIT_TAG v1.25.0
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${PARENT_BINARY_DIR}/third_party/opentelemetry
       -DCMAKE_INSTALL_LIBDIR=lib

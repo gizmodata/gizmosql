@@ -1,4 +1,4 @@
 pandas==2.3.*
-duckdb==1.4.*
+duckdb==1.5.*
 click==8.3.*
 adbc-driver-gizmosql>=1.0.5,<2.0.0

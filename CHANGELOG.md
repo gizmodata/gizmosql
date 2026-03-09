@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Upgraded DuckDB from v1.4.4 to v1.5.0**: Includes native VARIANT data type support and built-in GeoArrow export for GEOMETRY columns (the `register_geoarrow_extensions()` call has been removed as it is no longer needed). Note: DuckDB's Arrow exporter does not yet support VARIANT natively — clients should cast VARIANT columns to VARCHAR or JSON before querying.
+- **Upgraded SQLite from 3.51.1 to 3.52.0**
+- **Upgraded jwt-cpp from v0.7.1 to v0.7.2**
+- **Upgraded cpp-httplib from v0.18.3 to v0.37.0**
+- **Upgraded OpenTelemetry C++ from v1.18.0 to v1.25.0**
 - **`--otel-enabled` flag changed from string to boolean**: The `--otel-enabled` CLI flag now uses a boolean value (`true`/`false`) instead of string (`on`/`off`), consistent with all other boolean CLI flags. The `GIZMOSQL_OTEL_ENABLED` environment variable accepts `1`/`true` to enable.
 - **Python ADBC docs updated for v1.1.0**: All documentation examples now use `cursor.execute()` for DDL/DML statements instead of `cursor.execute_update()`, reflecting the new auto-detection in `adbc-driver-gizmosql` v1.1.0. The `execute_update()` method remains available for when the rows-affected count is needed.
 
@@ -334,9 +339,10 @@ GizmoSQL is now available in two editions:
 | Component | Version |
 |-----------|---------|
 | Apache Arrow | **23.0.1** |
-| DuckDB | v1.4.4 |
-| SQLite | 3.51.1 |
-| jwt-cpp | v0.7.1 |
+| DuckDB | v1.5.0 |
+| SQLite | 3.52.0 |
+| jwt-cpp | v0.7.2 |
+| OpenTelemetry C++ | v1.25.0 |
 
 #### Improvements
 - Graceful shutdown now properly closes instrumentation records

@@ -673,8 +673,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;"
         // Install and load ICU extension for timezone support (TIMESTAMPTZ)
         "INSTALL icu; LOAD icu;"
-        // Install and load spatial extension, then register GeoArrow for seamless geometry export
-        "INSTALL spatial; LOAD spatial; CALL register_geoarrow_extensions();";
+        // Install and load spatial extension
+        "INSTALL spatial; LOAD spatial;";
 
 #ifdef GIZMOSQL_ENTERPRISE
     // Instrumentation setup (Enterprise feature, conditional)

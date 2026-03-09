@@ -259,6 +259,7 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
 )
 
 # Only link jemalloc_extension on Linux
@@ -536,7 +537,7 @@ if(WIN32)
     target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 rstrtmgr ntdll)
     target_link_options(gizmosqlserver PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
 elseif(APPLE)
-    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-lresolv")
+    target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-framework Security" "-lresolv")
 elseif(UNIX)
     target_link_libraries(gizmosqlserver PRIVATE "-lssl" "-lcrypto" "-lresolv")
 endif()
@@ -649,7 +650,7 @@ if(WIN32)
     target_link_libraries(gizmosql_client PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 shell32 rstrtmgr ntdll)
     target_link_options(gizmosql_client PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
 elseif(APPLE)
-    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation" "-lresolv")
+    target_link_libraries(gizmosql_client PRIVATE "-framework CoreFoundation" "-framework Security" "-lresolv")
 elseif(UNIX)
     target_link_libraries(gizmosql_client PRIVATE "-lssl" "-lcrypto" "-lresolv")
 endif()

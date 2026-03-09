@@ -116,7 +116,7 @@ if(WIN32)
     # Suppress dynamic CRT default libs that leak from static libs compiled with /MD
     target_link_options(gizmosql_integration_tests PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
 elseif(APPLE)
-    target_link_libraries(gizmosql_integration_tests PRIVATE "-framework CoreFoundation")
+    target_link_libraries(gizmosql_integration_tests PRIVATE "-framework CoreFoundation" "-framework Security")
 elseif(UNIX AND NOT APPLE)
     target_link_libraries(gizmosql_integration_tests PRIVATE "-lssl -lcrypto -lresolv")
 endif()
