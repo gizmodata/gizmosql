@@ -244,6 +244,19 @@ ScopeGuard<F> MakeScopeGuard(F f) {
     }                                                                    \
   } while (0)
 
+// Dynamic-level logging with separate threshold and display severity.
+// THRESHOLD controls whether the message is emitted (visibility gate).
+// DISPLAY_SEV controls the severity label shown in the log output.
+#define GIZMOSQL_LOGKV_DYNAMIC_AT(THRESHOLD, DISPLAY_SEV, MSG, ...)      \
+  do {                                                                   \
+    auto _logger_sp = ::arrow::util::LoggerRegistry::GetDefaultLogger(); \
+    auto* _logger = _logger_sp.get();                                    \
+    if (_logger && (THRESHOLD >= _logger->severity_threshold())) {       \
+      ::gizmosql::LogWithFields(DISPLAY_SEV, __FILE__, __LINE__, MSG,    \
+                                ::gizmosql::FieldList{__VA_ARGS__});     \
+    }                                                                    \
+  } while (0)
+
 // -----------------------------------------------------------------------------
 // Session-aware logging macros (DRY helpers for ClientSession context)
 // -----------------------------------------------------------------------------
