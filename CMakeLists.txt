@@ -259,10 +259,10 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_utf8proc${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_yyjson${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_zstd${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
-        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
 )
 
 # Only link jemalloc_extension on Linux
