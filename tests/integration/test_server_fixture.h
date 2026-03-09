@@ -65,6 +65,7 @@ CreateFlightSQLServer(
     std::string oauth_scopes = "",
     int oauth_port = 0,
     std::string oauth_base_url = "",
+    std::string oauth_instance_id = "",
     const bool& oauth_disable_tls = false,
     const bool& telemetry_enabled = false);
 

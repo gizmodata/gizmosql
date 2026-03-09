@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Authentication log level misreporting severity**: When `--auth-log-level` was set to a level like `error`, successful authentication messages were logged with ERROR severity instead of INFO. The auth log level now acts as a visibility threshold — success messages always display at INFO severity, and the auth log level controls whether they appear at all ([#136](https://github.com/gizmodata/gizmosql/issues/136)).
+
 ## [1.19.0] - 2026-03-09
 
 ### Added

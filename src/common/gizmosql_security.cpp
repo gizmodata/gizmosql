@@ -501,8 +501,8 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
         *middleware = std::make_shared<BasicAuthServerMiddleware>(username, "admin",
                                                                   "Basic", secret_key_,
                                                                   instance_id_);
-        GIZMOSQL_LOGKV_DYNAMIC(
-            auth_log_level_,
+        GIZMOSQL_LOGKV_DYNAMIC_AT(
+            auth_log_level_, arrow::util::ArrowLogLevel::ARROW_INFO,
             "User: " + username + " (peer " + context.peer() +
                 ") - Successfully Basic authenticated via Username / Password",
             {"user", username}, {"peer", context.peer()}, {"kind", "authentication"},
@@ -700,8 +700,8 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
     }
 #endif
 
-    GIZMOSQL_LOGKV_DYNAMIC(
-        auth_log_level_,
+    GIZMOSQL_LOGKV_DYNAMIC_AT(
+        auth_log_level_, arrow::util::ArrowLogLevel::ARROW_INFO,
         "peer=" + context.peer() +
             " - Bootstrap Bearer Token was validated successfully" +
             " - token_claims=(id=" + SafeGetTokenId(decoded) +
@@ -866,10 +866,15 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
       }
     }
 
-    auto token_log_level = GetTokenLogLevel(decoded);
+    auto token_log_threshold = GetTokenLogLevel(decoded);
+    // First-seen tokens display at INFO; repeat tokens display at DEBUG
+    auto token_display_level =
+        (token_log_threshold == arrow::util::ArrowLogLevel::ARROW_DEBUG)
+            ? arrow::util::ArrowLogLevel::ARROW_DEBUG
+            : arrow::util::ArrowLogLevel::ARROW_INFO;
 
-    GIZMOSQL_LOGKV_DYNAMIC(
-        token_log_level,
+    GIZMOSQL_LOGKV_DYNAMIC_AT(
+        token_log_threshold, token_display_level,
         "peer=" + context.peer() + " - Bearer Token was validated successfully" +
             " - token_claims=(id=" + SafeGetTokenId(decoded) + " sub=" + decoded.get_subject() +
             " iss=" + decoded.get_issuer() + ")",
