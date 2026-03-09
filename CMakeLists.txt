@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
 project(gizmosql)
 
+# Use Boost's own CMake config instead of the removed FindBoost module
+cmake_policy(SET CMP0167 NEW)
+
 set(CMAKE_CXX_STANDARD 20)
 
 # --------------------- Platform Settings ---------------------
