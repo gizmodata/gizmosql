@@ -657,8 +657,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       instrumentation_catalog, instrumentation_schema);
 
   if (log_queries) {
-    GIZMOSQL_LOGKV_SESSION_DYNAMIC(
-        effective_log_level, client_session, "Client is attempting to run a SQL command",
+    GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+        effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+        client_session, "Client is attempting to run a SQL command",
         {"kind", "sql"}, {"status", "attempt"}, {"statement_id", handle},
         {"sql", logged_sql});
   }
@@ -759,8 +760,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 #endif
 
     if (log_queries) {
-      GIZMOSQL_LOGKV_SESSION_DYNAMIC(
-          effective_log_level, client_session, "Detected GizmoSQL admin SET command",
+      GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+          effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+          client_session, "Detected GizmoSQL admin SET command",
           {"kind", "sql"}, {"status", "admin"}, {"statement_id", handle},
           {"sql", logged_sql});
     }
@@ -822,8 +824,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         std::string::npos) {
       // Fallback to direct query execution for statements like PIVOT that get rewritten to multiple statements
       if (log_queries) {
-        GIZMOSQL_LOGKV_SESSION_DYNAMIC(
-            effective_log_level, client_session,
+        GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+            effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+            client_session,
             "SQL command cannot run as a prepared statement, falling back to direct "
             "query execution",
             {"kind", "sql"}, {"status", "fallback"},
@@ -1148,8 +1151,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
           // The statement may have already been executed from the ComputeSchema() method - if so, just skip execution
           if (query_result_ != nullptr) {
             if (log_queries_) {
-              GIZMOSQL_LOGKV_SESSION_DYNAMIC(
-                  log_level, client_session_,
+              GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+                  log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+                  client_session_,
                   "Direct execution of the SQL command has already occurred, skipping "
                   "re-execution",
                   {"kind", "sql"}, {"status", "already-executed"},
@@ -1190,8 +1194,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
             }
             params_str << "]";
 
-            GIZMOSQL_LOGKV_SESSION_DYNAMIC(
-                log_level, client_session_, "Executing prepared statement with bind parameters",
+            GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+                log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+                client_session_, "Executing prepared statement with bind parameters",
                 {"kind", "sql"}, {"status", "executing"},
                 {"statement_id", statement_id_}, {"bind_parameters", params_str.str()},
                 {"param_count", std::to_string(bind_parameters.size())},
@@ -1289,8 +1294,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
 #endif
 
   if (log_queries_ && result.ok()) {
-    GIZMOSQL_LOGKV_SESSION_DYNAMIC(
-        log_level, client_session_, "Client SQL command execution succeeded",
+    GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+        log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+        client_session_, "Client SQL command execution succeeded",
         {"kind", "sql"}, {"status", "success"}, {"statement_id", statement_id_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
         {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_});
