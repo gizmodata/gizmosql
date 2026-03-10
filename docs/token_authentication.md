@@ -437,6 +437,7 @@ Server-side OAuth code exchange simplifies client configuration by making the Gi
 | `--oauth-scopes` | `GIZMOSQL_OAUTH_SCOPES` | `openid profile email` | OAuth scopes to request. |
 | `--oauth-port` | `GIZMOSQL_OAUTH_PORT` | `31339` | Port for the OAuth HTTP(S) server. |
 | `--oauth-base-url` | `GIZMOSQL_OAUTH_BASE_URL` | auto-constructed | Override the base URL for the OAuth server (e.g., `https://my-proxy:443`). Redirect URI and discovery URL are derived from this. |
+| `--oauth-instance-id` | `GIZMOSQL_OAUTH_INSTANCE_ID` | *(empty)* | Instance identifier embedded in the OAuth `state` parameter for multi-instance proxy routing. When set, state becomes `<instance-id>.<session-hash>`, allowing a shared callback proxy to extract the instance ID and route to the correct server. |
 | `--oauth-disable-tls` | `GIZMOSQL_OAUTH_DISABLE_TLS` | `false` | Disable TLS on the OAuth callback server. **WARNING: localhost only.** |
 
 The OAuth server **requires** `--token-allowed-issuer` and `--token-allowed-audience` to be set. OIDC endpoints (authorization, token, JWKS) are auto-discovered from the issuer.

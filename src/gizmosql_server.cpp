@@ -149,9 +149,15 @@ int main(int argc, char** argv) {
               "Auto-constructed from scheme + localhost + oauth-port if empty. "
               "Use this when the server is behind a reverse proxy or accessed remotely. "
               "If not set, uses env var GIZMOSQL_OAUTH_BASE_URL.")
+            ("oauth-instance-id", po::value<std::string>()->default_value(""),
+              "[Enterprise] Instance identifier embedded in the OAuth state parameter for multi-instance "
+              "proxy routing. When set, the state sent to the IdP becomes '<instance-id>.<session-hash>', "
+              "allowing a shared OAuth callback proxy to extract the instance ID and route to the correct server. "
+              "If not set, uses env var GIZMOSQL_OAUTH_INSTANCE_ID.")
             ("oauth-disable-tls", po::value<bool>()->default_value(false),
               "[Enterprise] Disable TLS on the OAuth callback server even when the main server uses TLS. "
-              "WARNING: This should ONLY be used for localhost development/testing. "
+              "This is expected when behind a TLS-terminating reverse proxy (e.g., NGINX ingress), "
+              "but should NOT be used for direct internet-facing deployments. "
               "If not set, uses env var GIZMOSQL_OAUTH_DISABLE_TLS (1/true to enable).")
             // -------- OpenTelemetry controls --------
             ("otel-enabled", po::value<bool>()->default_value(false),
@@ -329,6 +335,9 @@ int main(int argc, char** argv) {
   std::string oauth_base_url =
       vm.count("oauth-base-url") ? vm["oauth-base-url"].as<std::string>() : "";
 
+  std::string oauth_instance_id =
+      vm.count("oauth-instance-id") ? vm["oauth-instance-id"].as<std::string>() : "";
+
   std::optional<bool> oauth_disable_tls =
       vm["oauth-disable-tls"].defaulted() ? std::nullopt
                                           : std::optional(vm["oauth-disable-tls"].as<bool>());
@@ -356,6 +365,6 @@ int main(int argc, char** argv) {
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
-      oauth_port, oauth_base_url, oauth_disable_tls, otel_enabled, otel_exporter,
+      oauth_port, oauth_base_url, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers);
 }
