@@ -245,13 +245,17 @@ ScopeGuard<F> MakeScopeGuard(F f) {
   } while (0)
 
 // Dynamic-level logging with separate threshold and display severity.
-// THRESHOLD controls whether the message is emitted (visibility gate).
-// DISPLAY_SEV controls the severity label shown in the log output.
+// THRESHOLD is the component's minimum level (e.g., query_log_level).
+// DISPLAY_SEV is the message's natural severity (e.g., INFO for routine logs).
+// The message is emitted only when DISPLAY_SEV >= both the component THRESHOLD
+// and the overall logger severity, ensuring that setting a component threshold
+// to ERROR suppresses INFO-level messages rather than promoting them to ERROR.
 #define GIZMOSQL_LOGKV_DYNAMIC_AT(THRESHOLD, DISPLAY_SEV, MSG, ...)      \
   do {                                                                   \
     auto _logger_sp = ::arrow::util::LoggerRegistry::GetDefaultLogger(); \
     auto* _logger = _logger_sp.get();                                    \
-    if (_logger && (THRESHOLD >= _logger->severity_threshold())) {       \
+    if (_logger && (DISPLAY_SEV >= THRESHOLD) &&                         \
+        (DISPLAY_SEV >= _logger->severity_threshold())) {                \
       ::gizmosql::LogWithFields(DISPLAY_SEV, __FILE__, __LINE__, MSG,    \
                                 ::gizmosql::FieldList{__VA_ARGS__});     \
     }                                                                    \
@@ -277,15 +281,23 @@ ScopeGuard<F> MakeScopeGuard(F f) {
 #define GIZMOSQL_LOGKV_SESSION(SEV, SESSION, MSG, ...) \
     GIZMOSQL_LOGKV(SEV, MSG, SESSION_KV_FIELDS(SESSION), __VA_ARGS__)
 
-// Session-aware dynamic-level logging variant
-#define GIZMOSQL_LOGKV_SESSION_DYNAMIC(SEV, SESSION, MSG, ...)           \
-  do {                                                                   \
-    auto _logger_sp = ::arrow::util::LoggerRegistry::GetDefaultLogger(); \
-    auto* _logger = _logger_sp.get();                                    \
-    if (_logger && (SEV >= _logger->severity_threshold())) {             \
-      ::gizmosql::LogWithFields(SEV, __FILE__, __LINE__, MSG,            \
-          ::gizmosql::FieldList{SESSION_KV_FIELDS(SESSION), __VA_ARGS__}); \
-    }                                                                    \
+// Session-aware dynamic-level logging with separate threshold and display severity.
+// THRESHOLD is the component's minimum level (e.g., query_log_level).
+// DISPLAY_SEV is the message's natural severity (e.g., INFO for routine logs).
+// See GIZMOSQL_LOGKV_DYNAMIC_AT for full semantics.
+#define GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(THRESHOLD, DISPLAY_SEV, SESSION, MSG, ...) \
+  do {                                                                               \
+    auto _logger_sp = ::arrow::util::LoggerRegistry::GetDefaultLogger();             \
+    auto* _logger = _logger_sp.get();                                                \
+    if (_logger && (DISPLAY_SEV >= THRESHOLD) &&                                     \
+        (DISPLAY_SEV >= _logger->severity_threshold())) {                            \
+      ::gizmosql::LogWithFields(DISPLAY_SEV, __FILE__, __LINE__, MSG,                \
+          ::gizmosql::FieldList{SESSION_KV_FIELDS(SESSION), __VA_ARGS__});           \
+    }                                                                                \
   } while (0)
+
+// Convenience: session-aware dynamic-level logging where the threshold IS the display level
+#define GIZMOSQL_LOGKV_SESSION_DYNAMIC(SEV, SESSION, MSG, ...) \
+    GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(SEV, SEV, SESSION, MSG, __VA_ARGS__)
 
 }  // namespace gizmosql

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Query and auth log levels now act as visibility thresholds**: When `--query-log-level` or `--auth-log-level` is set to `error`, routine INFO-level messages (e.g., "SQL command execution succeeded", "Successfully authenticated") are now properly suppressed instead of being promoted to ERROR severity. The component log level controls whether a message appears at all; the display severity always reflects the message's true nature ([#136](https://github.com/gizmodata/gizmosql/issues/136)).
+
 ## [1.19.1] - 2026-03-09
 
 ### Added
