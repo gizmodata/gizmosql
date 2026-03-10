@@ -132,6 +132,15 @@ int64_t GetRecordBatchSizeBytes(const std::shared_ptr<arrow::RecordBatch>& batch
   return total_size;
 }
 
+class ScopedDuckDBConnectionCounter {
+ public:
+  ScopedDuckDBConnectionCounter() {
+    ::gizmosql::metrics::RecordOpenDuckDBConnections(1);
+  }
+  ~ScopedDuckDBConnectionCounter() {
+    ::gizmosql::metrics::RecordOpenDuckDBConnections(-1);
+  }
+};
 duckdb::LogicalType GetDuckDBTypeFromArrowType(
     const std::shared_ptr<arrow::DataType>& arrow_type) {
   using arrow::Type;
@@ -831,6 +840,47 @@ class DuckDBFlightSqlServer::Impl {
     return search->second;
   }
 
+  int64_t RemovePreparedStatementsForSession(const std::string& session_id) {
+    std::unique_lock write_lock(statements_mutex_);
+    int64_t removed_count = 0;
+
+    for (auto it = prepared_statements_.begin(); it != prepared_statements_.end();) {
+      if (it->second && it->second->GetSessionId() == session_id) {
+        it = prepared_statements_.erase(it);
+        removed_count++;
+      } else {
+        ++it;
+      }
+    }
+
+    return removed_count;
+  }
+
+  void FinalizeSessionRemoval(const std::string& session_id) {
+    const auto removed_stmt_count = RemovePreparedStatementsForSession(session_id);
+    if (removed_stmt_count > 0) {
+      GIZMOSQL_LOG(INFO) << "Released " << removed_stmt_count
+                         << " prepared statement(s) for session " << session_id;
+    }
+    ::gizmosql::metrics::RecordActiveConnections(-1);
+  }
+
+  std::shared_ptr<duckdb::Connection> CreateTrackedSessionConnection() const {
+    duckdb::Connection* raw_connection = new duckdb::Connection(*db_instance_);
+    try {
+      std::shared_ptr<duckdb::Connection> tracked_connection(
+          raw_connection, [](duckdb::Connection* conn) {
+            delete conn;
+            ::gizmosql::metrics::RecordOpenDuckDBConnections(-1);
+          });
+      ::gizmosql::metrics::RecordOpenDuckDBConnections(1);
+      return tracked_connection;
+    } catch (...) {
+      delete raw_connection;
+      throw;
+    }
+  }
+
   static std::optional<std::string> SessionValueToString(
       const flight::SessionOptionValue& v) {
     if (auto p = std::get_if<std::string>(&v)) return *p;
@@ -866,14 +916,15 @@ class DuckDBFlightSqlServer::Impl {
         if (it->second->kill_requested) {
           // Release the read lock before taking the write lock
           read_lock.unlock();
-          // Remove the killed session from the map
+          bool removed_session = false;
           {
             std::unique_lock write_lock(sessions_mutex_);
             const auto erased_count = client_sessions_.erase(session_id);
             killed_session_ids_.insert(session_id);
-            if (erased_count > 0) {
-              ::gizmosql::metrics::RecordActiveConnections(-1);
-            }
+            removed_session = erased_count > 0;
+          }
+          if (removed_session) {
+            FinalizeSessionRemoval(session_id);
           }
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
@@ -896,7 +947,7 @@ class DuckDBFlightSqlServer::Impl {
     new_session->user_agent = tl_request_ctx.user_agent.value_or("");
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
-    new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    new_session->connection = CreateTrackedSessionConnection();
     new_session->query_timeout = query_timeout_;
     new_session->query_log_level = query_log_level_;
 
@@ -935,8 +986,9 @@ class DuckDBFlightSqlServer::Impl {
         if (it->second->kill_requested) {
           const auto erased_count = client_sessions_.erase(session_id);
           killed_session_ids_.insert(session_id);
+          write_lock.unlock();
           if (erased_count > 0) {
-            ::gizmosql::metrics::RecordActiveConnections(-1);
+            FinalizeSessionRemoval(session_id);
           }
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
@@ -1069,18 +1121,22 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false) {
-    std::unique_lock write_lock(sessions_mutex_);
-    auto it = client_sessions_.find(session_id);
-    if (it != client_sessions_.end()) {
-      client_sessions_.erase(it);
-      ::gizmosql::metrics::RecordActiveConnections(-1);
-      // If the session was killed, remember the session_id to prevent reconnection
-      if (was_killed) {
-        killed_session_ids_.insert(session_id);
+    {
+      std::unique_lock write_lock(sessions_mutex_);
+      auto it = client_sessions_.find(session_id);
+      if (it != client_sessions_.end()) {
+        client_sessions_.erase(it);
+        // If the session was killed, remember the session_id to prevent reconnection
+        if (was_killed) {
+          killed_session_ids_.insert(session_id);
+        }
+      } else {
+        return arrow::Status::KeyError("Session not found: " + session_id);
       }
-      return arrow::Status::OK();
     }
-    return arrow::Status::KeyError("Session not found: " + session_id);
+
+    FinalizeSessionRemoval(session_id);
+    return arrow::Status::OK();
   }
 
   ~Impl() = default;
@@ -1855,11 +1911,8 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::unique_lock write_lock(sessions_mutex_);
-    auto it = client_sessions_.find(client_session->session_id);
-    if (it != client_sessions_.end()) {
-      client_sessions_.erase(it);
-      ::gizmosql::metrics::RecordActiveConnections(-1);
+    const auto remove_status = RemoveSession(client_session->session_id);
+    if (remove_status.ok()) {
       GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Client session was successfully closed.",
                      {"kind", "session_close"}, {"status", "success"});
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
@@ -1883,6 +1936,7 @@ class DuckDBFlightSqlServer::Impl {
   Status ExecuteSql(const std::string& sql) const {
     // We do not have a call context, so just grab a new connection to the instance
     auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    ScopedDuckDBConnectionCounter scoped_connection_counter;
     return ExecuteSql(connection, sql);
   }
 
@@ -1916,6 +1970,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string& sql) {
     // We do not have a call context, so just grab a new connection to the instance
     auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    ScopedDuckDBConnectionCounter scoped_connection_counter;
 
     return ExecuteSqlAndGetStringVector(connection, sql);
   }

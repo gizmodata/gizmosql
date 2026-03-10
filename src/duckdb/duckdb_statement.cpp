@@ -1460,6 +1460,11 @@ long DuckDBStatement::GetLastExecutionDurationMs() const {
       .count();
 }
 
+std::string DuckDBStatement::GetSessionId() const {
+  if (!client_session_) return "";
+  return client_session_->session_id;
+}
+
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   std::string status;
 

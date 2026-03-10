@@ -97,6 +97,12 @@ The following metric instruments are emitted:
 - `gizmosql.bytes.transferred` (counter, By)
 - `gizmosql.rows.transferred` (counter)
 - `gizmosql.connections.active` (up/down counter)
+- `gizmosql.duckdb.connections.open` (up/down counter)
+
+Metric semantics:
+
+- `gizmosql.connections.active` tracks active GizmoSQL sessions.
+- `gizmosql.duckdb.connections.open` tracks open DuckDB connection objects used by GizmoSQL, including session connections and internal utility/instrumentation connections.
 
 Common attributes:
 

@@ -8,6 +8,7 @@
 #include <filesystem>
 
 #include "gizmosql_logging.h"
+#include "gizmosql_telemetry.h"
 
 namespace fs = std::filesystem;
 
@@ -281,7 +282,11 @@ InstrumentationManager::InstrumentationManager(
       schema_(schema),
       use_external_catalog_(use_external_catalog),
       db_instance_(std::move(db_instance)),
-      writer_connection_(std::move(writer_connection)) {}
+      writer_connection_(std::move(writer_connection)) {
+  if (writer_connection_) {
+    ::gizmosql::metrics::RecordOpenDuckDBConnections(1);
+  }
+}
 
 InstrumentationManager::~InstrumentationManager() { Shutdown(); }
 
@@ -519,6 +524,11 @@ void InstrumentationManager::Shutdown() {
 
   if (writer_thread_.joinable()) {
     writer_thread_.join();
+  }
+
+  if (writer_connection_) {
+    writer_connection_.reset();
+    ::gizmosql::metrics::RecordOpenDuckDBConnections(-1);
   }
 
   GIZMOSQL_LOG(INFO) << "Instrumentation manager shutdown complete";

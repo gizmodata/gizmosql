@@ -164,6 +164,9 @@ void RecordQueryExecution(const std::string& operation,
 // Record active connection delta (+1 open, -1 close)
 void RecordActiveConnections(int64_t count);
 
+// Record open DuckDB connection delta (+1 open, -1 close)
+void RecordOpenDuckDBConnections(int64_t count);
+
 // Record bytes transferred
 void RecordBytesTransferred(const std::string& direction, int64_t bytes);
 

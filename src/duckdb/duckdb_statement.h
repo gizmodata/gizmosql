@@ -87,6 +87,8 @@ class DuckDBStatement {
 
   long GetLastExecutionDurationMs() const;
 
+  std::string GetSessionId() const;
+
   duckdb::vector<duckdb::Value> bind_parameters;
 
 #ifdef GIZMOSQL_ENTERPRISE
