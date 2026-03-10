@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-03-09
+
 ### Added
 
 - **Multi-instance OAuth proxy routing** (`--oauth-instance-id` / `GIZMOSQL_OAUTH_INSTANCE_ID`): Optional instance identifier that is embedded in the OAuth `state` parameter as `<instance-id>.<session-hash>`. This allows a shared OAuth callback proxy to extract the instance ID from the state and route the callback to the correct GizmoSQL server, enabling a single registered redirect URI (e.g., `https://oauth.example.com/oauth/callback`) to serve many dynamically provisioned instances. Fully backward-compatible — when unset, behavior is identical to before.
