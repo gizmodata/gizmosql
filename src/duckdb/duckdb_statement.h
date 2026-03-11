@@ -151,5 +151,7 @@ class DuckDBStatement {
   arrow::Result<int32_t> GetQueryTimeout() const;
 
   arrow::Result<arrow::util::ArrowLogLevel> GetLogLevel() const;
+
+  arrow::Result<std::shared_ptr<ClientSession>> GetSession() const;
 };
 }  // namespace gizmosql::ddb

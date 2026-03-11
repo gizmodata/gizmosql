@@ -903,8 +903,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 }
 
 arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
-  auto session = client_session_.lock();
-  if (!session) return arrow::Status::Invalid("Session expired");
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   duckdb::Parser parser;
   try {
@@ -1037,8 +1036,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
 }
 
 arrow::Result<int> DuckDBStatement::Execute() {
-  auto session = client_session_.lock();
-  if (!session) return arrow::Status::Invalid("Session expired");
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   std::string execute_status;
 
@@ -1316,8 +1314,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult() {
-  auto session = client_session_.lock();
-  if (!session) return arrow::Status::Invalid("Session expired");
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   std::string status;
 
@@ -1400,8 +1397,7 @@ std::shared_ptr<duckdb::PreparedStatement> DuckDBStatement::GetDuckDBStmt() cons
 }
 
 arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
-  auto session = client_session_.lock();
-  if (!session) return arrow::Status::Invalid("Session expired");
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   std::string status;
 
@@ -1442,8 +1438,7 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
-  auto session = client_session_.lock();
-  if (!session) return arrow::Status::Invalid("Session expired");
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   std::string status;
 
@@ -1482,8 +1477,7 @@ std::string DuckDBStatement::GetSessionId() const {
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
-  auto session = client_session_.lock();
-  if (!session) return arrow::Status::Invalid("Session expired");
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   std::string status;
 
@@ -1532,8 +1526,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
 }
 
 arrow::Result<int32_t> DuckDBStatement::GetQueryTimeout() const {
-  auto session = client_session_.lock();
-  if (!session) return arrow::Status::Invalid("Session expired");
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   // First, try getting the value from the user's session
   if (session->query_timeout.has_value()) {
@@ -1550,9 +1543,14 @@ arrow::Result<arrow::util::ArrowLogLevel> DuckDBStatement::GetLogLevel() const {
   if (log_level_.has_value()) {
     return log_level_.value();
   }
+  ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
+  return GetSessionOrServerLogLevel(session);
+}
+
+arrow::Result<std::shared_ptr<ClientSession>> DuckDBStatement::GetSession() const {
   auto session = client_session_.lock();
   if (!session) return arrow::Status::Invalid("Session expired");
-  return GetSessionOrServerLogLevel(session);
+  return session;
 }
 
 }  // namespace gizmosql::ddb
