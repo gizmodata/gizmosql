@@ -589,14 +589,14 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 }
 
 arrow::Result<arrow::util::ArrowLogLevel> GetSessionOrServerLogLevel(
-    std::shared_ptr<ClientSession> client_session) {
+    const std::shared_ptr<ClientSession>& client_session) {
   // Fall-back to the session query log level if the statement log level is not set...
   if (client_session->query_log_level.has_value()) {
     return client_session->query_log_level.value();
   }
   // Fall-back to the server's setting if the session setting is not set...
   if (auto server = GetServer(*client_session)) {
-    return server->GetQueryLogLevel(client_session);
+    return server->GetQueryLogLevel(*client_session);
   }
   return arrow::Status::Invalid("Unable to get server instance");
 }
@@ -770,7 +770,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   }
 
   std::shared_ptr<duckdb::PreparedStatement> stmt =
-      client_session->connection->Prepare(effective_sql);
+      client_session->connection->Get().Prepare(effective_sql);
 
   if (stmt->success) {
 #ifdef GIZMOSQL_ENTERPRISE
@@ -903,6 +903,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 }
 
 arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+
   duckdb::Parser parser;
   try {
     parser.ParseQuery(sql_);
@@ -939,10 +942,10 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
     }
 
     if (scope == duckdb::SetScope::SESSION || scope == duckdb::SetScope::AUTOMATIC) {
-      client_session_->query_timeout = timeout_seconds;
+      session->query_timeout = timeout_seconds;
     } else if (scope == duckdb::SetScope::GLOBAL) {
-      if (auto server = GetServer(*client_session_)) {
-        ARROW_RETURN_NOT_OK(server->SetQueryTimeout(client_session_, timeout_seconds));
+      if (auto server = GetServer(*session)) {
+        ARROW_RETURN_NOT_OK(server->SetQueryTimeout(*session, timeout_seconds));
       }
     }
 
@@ -955,10 +958,10 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
     }
 
     if (scope == duckdb::SetScope::SESSION || scope == duckdb::SetScope::AUTOMATIC) {
-      client_session_->query_log_level = query_log_level;
+      session->query_log_level = query_log_level;
     } else if (scope == duckdb::SetScope::GLOBAL) {
-      if (auto server = GetServer(*client_session_)) {
-        ARROW_RETURN_NOT_OK(server->SetQueryLogLevel(client_session_, query_log_level));
+      if (auto server = GetServer(*session)) {
+        ARROW_RETURN_NOT_OK(server->SetQueryLogLevel(*session, query_log_level));
       }
     }
   } else {
@@ -988,6 +991,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const bool& log_queries,
                                  const std::shared_ptr<arrow::Schema>& override_schema) {
   client_session_ = client_session;
+  session_id_ = client_session->session_id;
   statement_id_ = handle;
   stmt_ = stmt;
   log_queries_ = log_queries;
@@ -1012,6 +1016,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const bool& log_queries,
                                  const std::shared_ptr<arrow::Schema>& override_schema) {
   client_session_ = client_session;
+  session_id_ = client_session->session_id;
   statement_id_ = handle;
   sql_ = sql;
   log_queries_ = log_queries;
@@ -1022,7 +1027,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
   start_time_ = std::chrono::steady_clock::now();
   override_schema_ = override_schema;
   query_result_ = nullptr;
-  client_context_ = client_session->connection->context;
+  client_context_ = client_session->connection->Get().context;
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
   if (auto trace_ids = GetCurrentTraceCorrelationIds()) {
     creation_trace_id_ = trace_ids->trace_id;
@@ -1032,6 +1037,9 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
 }
 
 arrow::Result<int> DuckDBStatement::Execute() {
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+
   std::string execute_status;
 
   ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
@@ -1072,7 +1080,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   // Create execution instrumentation
   if (instrumentation_) {
-    if (auto server = GetServer(*client_session_)) {
+    if (auto server = GetServer(*session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
         execution_instrumentation_ = std::make_unique<ExecutionInstrumentation>(
             mgr, execution_id, statement_id_, bind_params_str);
@@ -1082,9 +1090,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
 #endif
 
   GIZMOSQL_LOG_SCOPE_STATUS(
-      DEBUG, "DuckDBStatement::Execute", execute_status, {"peer", client_session_->peer},
-      {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", statement_id_},
+      DEBUG, "DuckDBStatement::Execute", execute_status, {"peer", session->peer},
+      {"session_id", session->session_id}, {"user", session->username},
+      {"role", session->role}, {"statement_id", statement_id_},
       {"execution_id", execution_id},
       {"timeout_seconds", std::to_string(query_timeout)},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
@@ -1133,7 +1141,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   // Launch execution in a separate thread
   auto future = std::async(
-      std::launch::async, [this, query_timeout, log_level
+      std::launch::async, [this, session, query_timeout, log_level
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
                            ,
                            telemetry_context,
@@ -1153,7 +1161,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
             if (log_queries_) {
               GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
                   log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
-                  client_session_,
+                  session,
                   "Direct execution of the SQL command has already occurred, skipping "
                   "re-execution",
                   {"kind", "sql"}, {"status", "already-executed"},
@@ -1162,19 +1170,19 @@ arrow::Result<int> DuckDBStatement::Execute() {
             return 0;  // Success
           }
           if (!bind_parameters.empty()) {
-            client_session_->active_sql_handle = "";
+            session->active_sql_handle = "";
             return arrow::Status::Invalid(
                 "Direct query execution does not support bind parameters");
           }
 
-          auto result = client_session_->connection->Query(sql_);
+          auto result = session->connection->Get().Query(sql_);
 
-          client_session_->active_sql_handle = "";
+          session->active_sql_handle = "";
 
           if (result->HasError()) {
             if (log_queries_) {
               GIZMOSQL_LOGKV_SESSION(
-                  WARNING, client_session_, "Client SQL command failed direct execution",
+                  WARNING, session, "Client SQL command failed direct execution",
                   {"kind", "sql"}, {"status", "failure"},
                   {"statement_id", statement_id_}, {"error", result->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
@@ -1196,7 +1204,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
             GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
                 log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
-                client_session_, "Executing prepared statement with bind parameters",
+                session, "Executing prepared statement with bind parameters",
                 {"kind", "sql"}, {"status", "executing"},
                 {"statement_id", statement_id_}, {"bind_parameters", params_str.str()},
                 {"param_count", std::to_string(bind_parameters.size())},
@@ -1205,12 +1213,12 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
           query_result_ = stmt_->Execute(bind_parameters);
 
-          client_session_->active_sql_handle = "";
+          session->active_sql_handle = "";
 
           if (query_result_->HasError()) {
             if (log_queries_) {
               GIZMOSQL_LOGKV_SESSION(
-                  WARNING, client_session_, "Client SQL command failed execution",
+                  WARNING, session, "Client SQL command failed execution",
                   {"kind", "sql"}, {"status", "failure"},
                   {"statement_id", statement_id_}, {"error", query_result_->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
@@ -1236,7 +1244,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   if (status == std::future_status::timeout) {
     if (log_queries_) {
-      GIZMOSQL_LOGKV_SESSION(WARNING, client_session_, "Client SQL command timed out - begin statement interruption",
+      GIZMOSQL_LOGKV_SESSION(WARNING, session, "Client SQL command timed out - begin statement interruption",
                      {"kind", "sql"}, {"status", "timeout"},
                      {"interruption_status", "begin"},
                      {"statement_id", statement_id_},
@@ -1245,15 +1253,15 @@ arrow::Result<int> DuckDBStatement::Execute() {
     }
 
     // Timeout occurred - interrupt the query
-    client_session_->connection->Interrupt();
+    session->connection->Get().Interrupt();
 
     // Now wait for the background thread to finish cleanly
     future.wait();
 
-    client_session_->active_sql_handle = "";
+    session->active_sql_handle = "";
 
     if (log_queries_) {
-      GIZMOSQL_LOGKV_SESSION(WARNING, client_session_, "Client SQL command timed out - completed statement interruption",
+      GIZMOSQL_LOGKV_SESSION(WARNING, session, "Client SQL command timed out - completed statement interruption",
                      {"kind", "sql"}, {"status", "timeout"},
                      {"interruption_status", "end"},
                      {"statement_id", statement_id_},
@@ -1296,7 +1304,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
   if (log_queries_ && result.ok()) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
         log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
-        client_session_, "Client SQL command execution succeeded",
+        session, "Client SQL command execution succeeded",
         {"kind", "sql"}, {"status", "success"}, {"statement_id", statement_id_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
         {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_});
@@ -1308,6 +1316,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult() {
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+
   std::string status;
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
@@ -1315,9 +1326,9 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
 #endif
 
   GIZMOSQL_LOG_SCOPE_STATUS(
-      DEBUG, "DuckDBStatement::FetchResult", status, {"peer", client_session_->peer},
-      {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", statement_id_},
+      DEBUG, "DuckDBStatement::FetchResult", status, {"peer", session->peer},
+      {"session_id", session->session_id}, {"user", session->username},
+      {"role", session->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (synthetic_result_batch_) {
@@ -1363,7 +1374,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
                                          extension_type_cast);
     ARROW_ASSIGN_OR_RAISE(record_batch, arrow::ImportRecordBatch(&res_arr, &res_schema));
 
-    GIZMOSQL_LOGKV_SESSION(DEBUG, client_session_, "Client RecordBatch Fetch",
+    GIZMOSQL_LOGKV_SESSION(DEBUG, session, "Client RecordBatch Fetch",
                    {"kind", "fetch"}, {"status", "success"},
                    {"statement_id", statement_id_},
                    {"num_rows", std::to_string(record_batch->num_rows())},
@@ -1389,6 +1400,9 @@ std::shared_ptr<duckdb::PreparedStatement> DuckDBStatement::GetDuckDBStmt() cons
 }
 
 arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+
   std::string status;
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
@@ -1397,9 +1411,9 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
 #endif
 
   GIZMOSQL_LOG_SCOPE_STATUS(
-      DEBUG, "DuckDBStatement::ExecuteUpdate", status, {"peer", client_session_->peer},
-      {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", statement_id_},
+      DEBUG, "DuckDBStatement::ExecuteUpdate", status, {"peer", session->peer},
+      {"session_id", session->session_id}, {"user", session->username},
+      {"role", session->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"}, );
 
   ARROW_RETURN_NOT_OK(Execute());
@@ -1428,6 +1442,9 @@ arrow::Result<int64_t> DuckDBStatement::ExecuteUpdate() {
 }
 
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+
   std::string status;
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
@@ -1435,9 +1452,9 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
 #endif
 
   GIZMOSQL_LOG_SCOPE_STATUS(
-      DEBUG, "DuckDBStatement::GetSchema", status, {"peer", client_session_->peer},
-      {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", statement_id_},
+      DEBUG, "DuckDBStatement::GetSchema", status, {"peer", session->peer},
+      {"session_id", session->session_id}, {"user", session->username},
+      {"role", session->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   // If there is an override schema - just return it and avoid computation...
@@ -1460,7 +1477,14 @@ long DuckDBStatement::GetLastExecutionDurationMs() const {
       .count();
 }
 
+std::string DuckDBStatement::GetSessionId() const {
+  return session_id_;
+}
+
 arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+
   std::string status;
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
@@ -1469,9 +1493,9 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
 #endif
 
   GIZMOSQL_LOG_SCOPE_STATUS(
-      DEBUG, "DuckDBStatement::ComputeSchema", status, {"peer", client_session_->peer},
-      {"session_id", client_session_->session_id}, {"user", client_session_->username},
-      {"role", client_session_->role}, {"statement_id", statement_id_},
+      DEBUG, "DuckDBStatement::ComputeSchema", status, {"peer", session->peer},
+      {"session_id", session->session_id}, {"user", session->username},
+      {"role", session->role}, {"statement_id", statement_id_},
       {"direct_execution", use_direct_execution_ ? "true" : "false"});
 
   if (is_gizmosql_admin_) {
@@ -1508,13 +1532,16 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
 }
 
 arrow::Result<int32_t> DuckDBStatement::GetQueryTimeout() const {
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+
   // First, try getting the value from the user's session
-  if (client_session_->query_timeout.has_value()) {
-    return client_session_->query_timeout.value();
+  if (session->query_timeout.has_value()) {
+    return session->query_timeout.value();
   }
   // Fall-back to the server's setting if the session setting is not set...
-  if (auto server = GetServer(*client_session_)) {
-    return server->GetQueryTimeout(client_session_);
+  if (auto server = GetServer(*session)) {
+    return server->GetQueryTimeout(*session);
   }
   return arrow::Status::Invalid("Unable to get server instance");
 }
@@ -1523,7 +1550,9 @@ arrow::Result<arrow::util::ArrowLogLevel> DuckDBStatement::GetLogLevel() const {
   if (log_level_.has_value()) {
     return log_level_.value();
   }
-  return GetSessionOrServerLogLevel(client_session_);
+  auto session = client_session_.lock();
+  if (!session) return arrow::Status::Invalid("Session expired");
+  return GetSessionOrServerLogLevel(session);
 }
 
 }  // namespace gizmosql::ddb

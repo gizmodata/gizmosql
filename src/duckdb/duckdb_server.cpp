@@ -800,12 +800,10 @@ class DuckDBFlightSqlServer::Impl {
   int32_t query_timeout_;
   arrow::util::ArrowLogLevel query_log_level_;
 
-  std::map<std::string, std::shared_ptr<DuckDBStatement>> prepared_statements_;
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
   std::default_random_engine gen_;
   std::shared_mutex sessions_mutex_;
-  std::shared_mutex statements_mutex_;
   std::shared_mutex transactions_mutex_;
   std::shared_mutex config_mutex_;
 
@@ -820,16 +818,6 @@ class DuckDBFlightSqlServer::Impl {
 
   // Set of killed session IDs - prevents reconnection with a killed session
   std::unordered_set<std::string> killed_session_ids_;
-
-  Result<std::shared_ptr<DuckDBStatement>> GetStatementByHandle(
-      const std::string& handle) {
-    std::shared_lock read_lock(statements_mutex_);
-    auto search = prepared_statements_.find(handle);
-    if (search == prepared_statements_.end()) {
-      return Status::KeyError("Prepared statement not found");
-    }
-    return search->second;
-  }
 
   static std::optional<std::string> SessionValueToString(
       const flight::SessionOptionValue& v) {
@@ -869,11 +857,8 @@ class DuckDBFlightSqlServer::Impl {
           // Remove the killed session from the map
           {
             std::unique_lock write_lock(sessions_mutex_);
-            const auto erased_count = client_sessions_.erase(session_id);
+            client_sessions_.erase(session_id);
             killed_session_ids_.insert(session_id);
-            if (erased_count > 0) {
-              ::gizmosql::metrics::RecordActiveConnections(-1);
-            }
           }
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
@@ -896,7 +881,7 @@ class DuckDBFlightSqlServer::Impl {
     new_session->user_agent = tl_request_ctx.user_agent.value_or("");
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
-    new_session->connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    new_session->connection = std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
     new_session->query_timeout = query_timeout_;
     new_session->query_log_level = query_log_level_;
 
@@ -933,11 +918,8 @@ class DuckDBFlightSqlServer::Impl {
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
         // Another thread won the race – but check if it was killed
         if (it->second->kill_requested) {
-          const auto erased_count = client_sessions_.erase(session_id);
+          client_sessions_.erase(session_id);
           killed_session_ids_.insert(session_id);
-          if (erased_count > 0) {
-            ::gizmosql::metrics::RecordActiveConnections(-1);
-          }
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
         }
@@ -955,7 +937,7 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   // Convenience method for retrieving just a database connection:
-  arrow::Result<std::shared_ptr<duckdb::Connection>> GetConnection(
+  arrow::Result<std::shared_ptr<gizmosql::TrackedDuckDBConnection>> GetConnection(
       const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto cs, GetClientSession(context));
     return cs->connection;
@@ -1025,29 +1007,13 @@ class DuckDBFlightSqlServer::Impl {
 #endif
 
   void ReleaseAllSessions() {
-    // First, clear prepared statements (which hold ExecutionInstrumentation)
-    // This must happen before sessions are cleared since statements hold session refs
-    {
-      std::unique_lock stmt_lock(statements_mutex_);
-      auto stmt_count = prepared_statements_.size();
-      prepared_statements_.clear();
-      if (stmt_count > 0) {
-        GIZMOSQL_LOG(INFO) << "Released " << stmt_count << " prepared statement(s) during shutdown";
-      }
-    }
-
-    // Then clear sessions (which triggers SessionInstrumentation destructors)
-    {
-      std::unique_lock session_lock(sessions_mutex_);
-      auto session_count = client_sessions_.size();
-      client_sessions_.clear();
-      if (session_count > 0) {
-        ::gizmosql::metrics::RecordActiveConnections(
-            -static_cast<int64_t>(session_count));
-      }
-      if (session_count > 0) {
-        GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
-      }
+    std::unique_lock session_lock(sessions_mutex_);
+    auto session_count = client_sessions_.size();
+    // Session destructors handle active connection counter decrement,
+    // prepared statement cleanup, and DuckDB connection counter decrement
+    client_sessions_.clear();
+    if (session_count > 0) {
+      GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
     }
   }
 
@@ -1072,9 +1038,9 @@ class DuckDBFlightSqlServer::Impl {
     std::unique_lock write_lock(sessions_mutex_);
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
+      // Session destructor handles active connection counter decrement,
+      // prepared statement cleanup, and DuckDB connection counter decrement
       client_sessions_.erase(it);
-      ::gizmosql::metrics::RecordActiveConnections(-1);
-      // If the session was killed, remember the session_id to prevent reconnection
       if (was_killed) {
         killed_session_ids_.insert(session_id);
       }
@@ -1184,8 +1150,8 @@ class DuckDBFlightSqlServer::Impl {
                           DuckDBStatement::Create(client_session, handle, request.query,
                                                   std::nullopt, print_queries_, nullptr,
                                                   "CreatePreparedStatement", false)) {
-      std::unique_lock write_lock(statements_mutex_);
-      prepared_statements_[handle] = statement;
+      std::unique_lock write_lock(client_session->statements_mutex);
+      client_session->prepared_statements[handle] = statement;
     }
 
     ARROW_ASSIGN_OR_RAISE(auto dataset_schema, statement->GetSchema())
@@ -1230,12 +1196,13 @@ class DuckDBFlightSqlServer::Impl {
   Status ClosePreparedStatement(const flight::ServerCallContext& context,
                                 const sql::ActionClosePreparedStatementRequest& request) {
     const std::string& prepared_statement_handle = request.prepared_statement_handle;
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
 
     {
-      std::unique_lock write_lock(statements_mutex_);
-      if (auto search = prepared_statements_.find(prepared_statement_handle);
-          search != prepared_statements_.end()) {
-        prepared_statements_.erase(prepared_statement_handle);
+      std::unique_lock write_lock(client_session->statements_mutex);
+      if (auto search = client_session->prepared_statements.find(prepared_statement_handle);
+          search != client_session->prepared_statements.end()) {
+        client_session->prepared_statements.erase(prepared_statement_handle);
       } else {
         return Status::Invalid("Prepared statement not found");
       }
@@ -1250,8 +1217,16 @@ class DuckDBFlightSqlServer::Impl {
       const flight::FlightDescriptor& descriptor) {
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
-    ARROW_ASSIGN_OR_RAISE(auto statement,
-                          GetStatementByHandle(prepared_statement_handle));
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    std::shared_ptr<DuckDBStatement> statement;
+    {
+      std::shared_lock read_lock(client_session->statements_mutex);
+      auto search = client_session->prepared_statements.find(prepared_statement_handle);
+      if (search == client_session->prepared_statements.end()) {
+        return Status::KeyError("Prepared statement not found");
+      }
+      statement = search->second;
+    }
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
 
     return GetFlightInfoForCommand(descriptor, schema);
@@ -1262,8 +1237,16 @@ class DuckDBFlightSqlServer::Impl {
       const sql::PreparedStatementQuery& command) {
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
-    ARROW_ASSIGN_OR_RAISE(auto statement,
-                          GetStatementByHandle(prepared_statement_handle));
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    std::shared_ptr<DuckDBStatement> statement;
+    {
+      std::shared_lock read_lock(client_session->statements_mutex);
+      auto search = client_session->prepared_statements.find(prepared_statement_handle);
+      if (search == client_session->prepared_statements.end()) {
+        return Status::KeyError("Prepared statement not found");
+      }
+      statement = search->second;
+    }
 
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
@@ -1275,7 +1258,16 @@ class DuckDBFlightSqlServer::Impl {
                                      flight::FlightMessageReader* reader,
                                      flight::FlightMetadataWriter* writer) {
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
-    ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle))
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    std::shared_ptr<DuckDBStatement> statement;
+    {
+      std::shared_lock read_lock(client_session->statements_mutex);
+      auto search = client_session->prepared_statements.find(prepared_statement_handle);
+      if (search == client_session->prepared_statements.end()) {
+        return Status::KeyError("Prepared statement not found");
+      }
+      statement = search->second;
+    }
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
 
     return Status::OK();
@@ -1285,7 +1277,16 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const sql::PreparedStatementUpdate& command, flight::FlightMessageReader* reader) {
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
-    ARROW_ASSIGN_OR_RAISE(auto statement, GetStatementByHandle(prepared_statement_handle))
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    std::shared_ptr<DuckDBStatement> statement;
+    {
+      std::shared_lock read_lock(client_session->statements_mutex);
+      auto search = client_session->prepared_statements.find(prepared_statement_handle);
+      if (search == client_session->prepared_statements.end()) {
+        return Status::KeyError("Prepared statement not found");
+      }
+      statement = search->second;
+    }
 
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
 
@@ -1563,7 +1564,7 @@ class DuckDBFlightSqlServer::Impl {
         {"session_id", client_session->session_id}, {"user", client_session->username},
         {"role", client_session->role}, {"query", redact_sql_for_logs(query)});
 
-    auto res = client_session->connection->Query(query);
+    auto res = client_session->connection->Get().Query(query);
     if (res->HasError()) {
       return Status::Invalid("Failed to run DuckDB query: " + query + ": " +
                              res->GetError());
@@ -1607,7 +1608,7 @@ class DuckDBFlightSqlServer::Impl {
     bool target_table_exists = false;
     {
       ARROW_ASSIGN_OR_RAISE(target_table_exists,
-                            TableExists(*client_session->connection, command.catalog,
+                            TableExists(client_session->connection->Get(), command.catalog,
                                         command.schema, command.table));
     }
 
@@ -1627,7 +1628,7 @@ class DuckDBFlightSqlServer::Impl {
     }
 
     // 3. Start transaction (RAII guard)
-    DuckDBTransactionGuard txn(*client_session->connection);
+    DuckDBTransactionGuard txn(client_session->connection->Get());
 
     // 4. Handle existence options inside the transaction
     if (target_table_exists) {
@@ -1678,15 +1679,15 @@ class DuckDBFlightSqlServer::Impl {
     try {
       // Initialize appender
       if (interim_table.has_value()) {
-        appender.emplace(*client_session->connection, interim_table.value());
+        appender.emplace(client_session->connection->Get(), interim_table.value());
       } else if (command.catalog.has_value() && command.schema.has_value()) {
-        appender.emplace(*client_session->connection, command.catalog.value(),
+        appender.emplace(client_session->connection->Get(), command.catalog.value(),
                          command.schema.value(), command.table);
       } else if (command.schema.has_value()) {
-        appender.emplace(*client_session->connection, command.schema.value(),
+        appender.emplace(client_session->connection->Get(), command.schema.value(),
                          command.table);
       } else {
-        appender.emplace(*client_session->connection, command.table);
+        appender.emplace(client_session->connection->Get(), command.table);
       }
 
       // Ingest loop
@@ -1779,7 +1780,7 @@ class DuckDBFlightSqlServer::Impl {
         client_session->active_sql_handle->empty()) {
       return Status::Invalid("No active SQL statement to cancel.");
     }
-    client_session->connection->Interrupt();
+    client_session->connection->Get().Interrupt();
     GIZMOSQL_LOGKV_SESSION(INFO, client_session, "SQL Statement was successfully canceled.",
                    {"kind", "sql"}, {"status", "canceled"},
                    {"statement_handle", client_session->active_sql_handle.value()});
@@ -1830,7 +1831,7 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
 
-    auto catalog_result = ExecuteSqlAndGetStringVector(client_session->connection,
+    auto catalog_result = ExecuteSqlAndGetStringVector(client_session->connection->Get(),
                                                        "SELECT current_catalog()");
     if (catalog_result.ok()) {
       auto current_catalog = catalog_result.ValueOrDie().front();
@@ -1839,7 +1840,7 @@ class DuckDBFlightSqlServer::Impl {
       return Status::Invalid("Could not get current catalog");
     }
 
-    auto schema_result = ExecuteSqlAndGetStringVector(client_session->connection,
+    auto schema_result = ExecuteSqlAndGetStringVector(client_session->connection->Get(),
                                                       "SELECT current_schema()");
     if (schema_result.ok()) {
       auto current_schema = schema_result.ValueOrDie().front();
@@ -1855,11 +1856,8 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::unique_lock write_lock(sessions_mutex_);
-    auto it = client_sessions_.find(client_session->session_id);
-    if (it != client_sessions_.end()) {
-      client_sessions_.erase(it);
-      ::gizmosql::metrics::RecordActiveConnections(-1);
+    const auto remove_status = RemoveSession(client_session->session_id);
+    if (remove_status.ok()) {
       GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Client session was successfully closed.",
                      {"kind", "session_close"}, {"status", "success"});
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
@@ -1871,9 +1869,8 @@ class DuckDBFlightSqlServer::Impl {
     }
   }
 
-  static Status ExecuteSql(const std::shared_ptr<duckdb::Connection>& connection,
-                           const std::string& sql) {
-    if (std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
+  static Status ExecuteSql(duckdb::Connection& connection, const std::string& sql) {
+    if (std::unique_ptr<duckdb::MaterializedQueryResult> result = connection.Query(sql);
         result->HasError()) {
       return Status::Invalid(result->GetError());
     }
@@ -1882,18 +1879,18 @@ class DuckDBFlightSqlServer::Impl {
 
   Status ExecuteSql(const std::string& sql) const {
     // We do not have a call context, so just grab a new connection to the instance
-    auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
-    return ExecuteSql(connection, sql);
+    gizmosql::TrackedDuckDBConnection connection(*db_instance_);
+    return ExecuteSql(connection.Get(), sql);
   }
 
   static Status ExecuteSql(const std::shared_ptr<ClientSession>& client_session,
                            const std::string& sql) {
-    return ExecuteSql(client_session->connection, sql);
+    return ExecuteSql(client_session->connection->Get(), sql);
   }
 
   Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(
-      const std::shared_ptr<duckdb::Connection>& connection, const std::string& sql) {
-    std::unique_ptr<duckdb::MaterializedQueryResult> result = connection->Query(sql);
+      duckdb::Connection& connection, const std::string& sql) {
+    std::unique_ptr<duckdb::MaterializedQueryResult> result = connection.Query(sql);
 
     if (result->HasError()) {
       return Status::Invalid("SQL query failed: ", result->GetError());
@@ -1915,14 +1912,14 @@ class DuckDBFlightSqlServer::Impl {
   // Utility function to execute a query and return string results from the first column
   Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(const std::string& sql) {
     // We do not have a call context, so just grab a new connection to the instance
-    auto connection = std::make_shared<duckdb::Connection>(*db_instance_);
+    gizmosql::TrackedDuckDBConnection connection(*db_instance_);
 
-    return ExecuteSqlAndGetStringVector(connection, sql);
+    return ExecuteSqlAndGetStringVector(connection.Get(), sql);
   }
 
-  Status SetQueryTimeout(const std::shared_ptr<ClientSession>& client_session,
+  Status SetQueryTimeout(const ClientSession& client_session,
                          const int& seconds) {
-    if (client_session->role != "admin") {
+    if (client_session.role != "admin") {
       return Status::Invalid(
           "Only admin users can change the server query_timeout setting.");
     }
@@ -1932,14 +1929,14 @@ class DuckDBFlightSqlServer::Impl {
     return Status::OK();
   }
 
-  Result<int32_t> GetQueryTimeout(const std::shared_ptr<ClientSession>& client_session) {
+  Result<int32_t> GetQueryTimeout(const ClientSession& client_session) {
     std::shared_lock read_lock(config_mutex_);
     return query_timeout_;
   }
 
-  Status SetPrintQueries(const std::shared_ptr<ClientSession>& client_session,
+  Status SetPrintQueries(const ClientSession& client_session,
                          const bool& enabled) {
-    if (client_session->role != "admin") {
+    if (client_session.role != "admin") {
       return Status::Invalid("Only admin users can enable/disable server query logging.");
     }
     std::unique_lock write_lock(config_mutex_);
@@ -1947,14 +1944,14 @@ class DuckDBFlightSqlServer::Impl {
     return Status::OK();
   }
 
-  Result<bool> GetPrintQueries(const std::shared_ptr<ClientSession>& client_session) {
+  Result<bool> GetPrintQueries(const ClientSession& client_session) {
     std::shared_lock read_lock(config_mutex_);
     return print_queries_;
   }
 
-  Status SetQueryLogLevel(const std::shared_ptr<ClientSession>& client_session,
+  Status SetQueryLogLevel(const ClientSession& client_session,
                           const arrow::util::ArrowLogLevel& query_log_level) {
-    if (client_session->role != "admin") {
+    if (client_session.role != "admin") {
       return Status::Invalid("Only admin users can set the server Query Log Level.");
     }
     std::unique_lock write_lock(config_mutex_);
@@ -1963,7 +1960,7 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Result<arrow::util::ArrowLogLevel> GetQueryLogLevel(
-      const std::shared_ptr<ClientSession>& client_session) {
+      const ClientSession& client_session) {
     std::shared_lock read_lock(config_mutex_);
     return query_log_level_;
   }
@@ -2271,33 +2268,33 @@ Result<flight::CloseSessionResult> DuckDBFlightSqlServer::CloseSession(
 }
 
 Status DuckDBFlightSqlServer::SetQueryTimeout(
-    const std::shared_ptr<ClientSession>& client_session, const int& seconds) {
+    const ClientSession& client_session, const int& seconds) {
   return impl_->SetQueryTimeout(client_session, seconds);
 }
 
 Result<int32_t> DuckDBFlightSqlServer::GetQueryTimeout(
-    const std::shared_ptr<ClientSession>& client_session) {
+    const ClientSession& client_session) {
   return impl_->GetQueryTimeout(client_session);
 }
 
 Status DuckDBFlightSqlServer::SetPrintQueries(
-    const std::shared_ptr<ClientSession>& client_session, const bool& enabled) {
+    const ClientSession& client_session, const bool& enabled) {
   return impl_->SetPrintQueries(client_session, enabled);
 }
 
 Result<bool> DuckDBFlightSqlServer::GetPrintQueries(
-    const std::shared_ptr<ClientSession>& client_session) {
+    const ClientSession& client_session) {
   return impl_->GetPrintQueries(client_session);
 }
 
 arrow::Status DuckDBFlightSqlServer::SetQueryLogLevel(
-    const std::shared_ptr<ClientSession>& client_session,
+    const ClientSession& client_session,
     const arrow::util::ArrowLogLevel& query_log_level) {
   return impl_->SetQueryLogLevel(client_session, query_log_level);
 }
 
 arrow::Result<arrow::util::ArrowLogLevel> DuckDBFlightSqlServer::GetQueryLogLevel(
-    const std::shared_ptr<ClientSession>& client_session) {
+    const ClientSession& client_session) {
   return impl_->GetQueryLogLevel(client_session);
 }
 

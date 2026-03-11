@@ -1,8 +1,10 @@
 // src/common/include/session_context.h
 #pragma once
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <optional>
 #include <vector>
@@ -10,9 +12,11 @@
 #include <arrow/util/logging.h>
 
 #include "request_ctx.h"  // For CatalogAccessRule, CatalogAccessLevel
+#include "tracked_duckdb_connection.h"
 
 namespace gizmosql::ddb {
 class DuckDBFlightSqlServer;  // forward declare
+class DuckDBStatement;        // forward declare
 #ifdef GIZMOSQL_ENTERPRISE
 class SessionInstrumentation;  // forward declare
 #endif
@@ -22,7 +26,7 @@ namespace gizmosql {
 
 struct ClientSession {
   std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer> server;
-  std::shared_ptr<duckdb::Connection> connection;
+  std::shared_ptr<TrackedDuckDBConnection> connection;
   std::string instance_id; // server instance UUID (for multi-instance log correlation)
   std::string session_id;  // from session middleware
   std::string username;    // from bearer auth middleware (JWT sub/email/etc.)
@@ -49,6 +53,16 @@ struct ClientSession {
 
   // Flag for KILL SESSION support - when set, the session should be terminated
   std::atomic<bool> kill_requested{false};
+
+  // Prepared statements owned by this session
+  std::map<std::string, std::shared_ptr<gizmosql::ddb::DuckDBStatement>> prepared_statements;
+  mutable std::shared_mutex statements_mutex;
+
+  // Destructor handles session cleanup:
+  // 1. Interrupts any in-flight query on the DuckDB connection
+  // 2. Clears prepared statements (releasing DuckDB handles before connection closes)
+  // 3. TrackedDuckDBConnection destructor decrements the open connection counter
+  ~ClientSession();
 };
 
 // Inline utility for safe access

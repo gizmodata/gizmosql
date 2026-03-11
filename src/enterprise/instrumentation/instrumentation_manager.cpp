@@ -275,7 +275,7 @@ InstrumentationManager::InstrumentationManager(
     const std::string& schema,
     bool use_external_catalog,
     std::shared_ptr<duckdb::DuckDB> db_instance,
-    std::unique_ptr<duckdb::Connection> writer_connection)
+    std::unique_ptr<gizmosql::TrackedDuckDBConnection> writer_connection)
     : db_path_(db_path),
       catalog_(catalog),
       schema_(schema),
@@ -302,12 +302,12 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
 
   try {
     // Create a dedicated connection for instrumentation writes
-    auto writer_connection = std::make_unique<duckdb::Connection>(*db_instance);
+    auto writer_connection = std::make_unique<gizmosql::TrackedDuckDBConnection>(*db_instance);
 
     if (!use_external_catalog) {
       // File-based mode: ATTACH the instrumentation database on this connection
       // (ATTACH is connection-specific in DuckDB)
-      auto attach_result = writer_connection->Query(
+      auto attach_result = writer_connection->Get().Query(
           "ATTACH IF NOT EXISTS '" + db_path + "' AS " + catalog);
       if (attach_result->HasError()) {
         return arrow::Status::Invalid("Failed to attach instrumentation database: ",
@@ -317,12 +317,12 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
 
     // Check for schema compatibility - if the instances table exists but lacks new columns,
     // the user has an old schema and needs to rename their instrumentation database file.
-    auto schema_check = writer_connection->Query(
+    auto schema_check = writer_connection->Get().Query(
         "SELECT column_name FROM information_schema.columns "
         "WHERE table_catalog = '" + catalog + "' AND table_name = 'instances' AND column_name = 'os_platform'");
     if (!schema_check->HasError()) {
       // Check if instances table exists (by checking for any column)
-      auto table_exists = writer_connection->Query(
+      auto table_exists = writer_connection->Get().Query(
           "SELECT column_name FROM information_schema.columns "
           "WHERE table_catalog = '" + catalog + "' AND table_name = 'instances' LIMIT 1");
       if (!table_exists->HasError() && table_exists->RowCount() > 0) {
@@ -371,7 +371,7 @@ arrow::Status InstrumentationManager::InitializeSchema() {
   try {
     // Generate schema SQL with actual catalog and schema names
     std::string schema_sql = GetSchemaSQL(catalog_, schema_);
-    auto result = writer_connection_->Query(schema_sql);
+    auto result = writer_connection_->Get().Query(schema_sql);
     if (result->HasError()) {
       return arrow::Status::Invalid("Failed to initialize instrumentation schema: ",
                                     result->GetError());
@@ -397,7 +397,7 @@ arrow::Status InstrumentationManager::CleanupStaleRecords() {
     std::string prefix = GetQualifiedPrefix();
 
     // First, get the list of stale (running) instance IDs
-    auto stale_instances = writer_connection_->Query(
+    auto stale_instances = writer_connection_->Get().Query(
         "SELECT instance_id FROM " + prefix + ".instances WHERE status = 'running'");
     if (stale_instances->HasError()) {
       GIZMOSQL_LOG(WARNING) << "Failed to query stale instances: " << stale_instances->GetError();
@@ -420,7 +420,7 @@ arrow::Status InstrumentationManager::CleanupStaleRecords() {
     }
 
     // Mark any 'executing' executions from stale instances as 'error'
-    auto exec_result = writer_connection_->Query(
+    auto exec_result = writer_connection_->Get().Query(
         "UPDATE " + prefix + ".sql_executions "
         "SET execution_end_time = now(), "
         "    status = 'error', "
@@ -438,7 +438,7 @@ arrow::Status InstrumentationManager::CleanupStaleRecords() {
     // Mark any 'active' sessions from stale instances as 'closed'
     // Note: We update ALL sessions for stale instances, not just 'active' ones,
     // to ensure consistency
-    auto session_result = writer_connection_->Query(
+    auto session_result = writer_connection_->Get().Query(
         "UPDATE " + prefix + ".sessions "
         "SET stop_time = COALESCE(stop_time, now()), "
         "    status = 'closed', "
@@ -450,7 +450,7 @@ arrow::Status InstrumentationManager::CleanupStaleRecords() {
     }
 
     // Mark any 'running' instances as 'stopped'
-    auto instance_result = writer_connection_->Query(
+    auto instance_result = writer_connection_->Get().Query(
         "UPDATE " + prefix + ".instances "
         "SET stop_time = now(), "
         "    status = 'stopped', "
@@ -502,7 +502,7 @@ void InstrumentationManager::WriterThreadLoop() {
 
     if (write_fn) {
       try {
-        write_fn(*writer_connection_);
+        write_fn(writer_connection_->Get());
       } catch (const std::exception& ex) {
         GIZMOSQL_LOG(WARNING) << "Instrumentation write failed: " << ex.what();
       }
