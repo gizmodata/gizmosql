@@ -17,11 +17,14 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <duckdb.hpp>
 
-#include "gizmosql_telemetry.h"
-
 namespace gizmosql {
+namespace metrics {
+void RecordOpenDuckDBConnections(int64_t count);
+}  // namespace metrics
 
 // RAII wrapper around duckdb::Connection that tracks the open DuckDB
 // connection count via the gizmosql.duckdb.connections.open metric.
