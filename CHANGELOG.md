@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.3] - 2026-03-11
+
 ### Added
 
 - **DuckDB connection tracking metric** (`gizmosql.duckdb.connections.open`): New OpenTelemetry up/down counter that tracks open DuckDB connection objects, including session connections and internal utility/instrumentation connections. Complements the existing `gizmosql.connections.active` metric which tracks GizmoSQL sessions.
