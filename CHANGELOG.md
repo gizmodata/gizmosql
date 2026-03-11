@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DuckDB connection tracking metric** (`gizmosql.duckdb.connections.open`): New OpenTelemetry up/down counter that tracks open DuckDB connection objects, including session connections and internal utility/instrumentation connections. Complements the existing `gizmosql.connections.active` metric which tracks GizmoSQL sessions.
+
+### Changed
+
+- **RAII-based DuckDB connection lifecycle**: DuckDB connections are now wrapped in a `TrackedDuckDBConnection` class that automatically increments/decrements the open connection counter. Session cleanup (interrupt in-flight queries, release prepared statements, decrement counters) is now handled by the `ClientSession` destructor instead of being scattered across multiple removal paths.
+- **Session-owned prepared statements**: Prepared statements are now owned by their parent `ClientSession` instead of a global server-level map. This establishes a clear ownership hierarchy (Server → Sessions → Statements) with consistent `weak_ptr` back-references at each level, matching the existing `ClientSession` → `DuckDBFlightSqlServer` pattern.
+
 ## [1.19.2] - 2026-03-10
 
 ### Fixed

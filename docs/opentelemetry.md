@@ -97,6 +97,7 @@ The following metric instruments are emitted:
 - `gizmosql.bytes.transferred` (counter, By)
 - `gizmosql.rows.transferred` (counter)
 - `gizmosql.connections.active` (up/down counter)
+- `gizmosql.duckdb.connections.open` (up/down counter)
 
 Common attributes:
 
@@ -107,6 +108,7 @@ Common attributes:
 Metric semantics:
 
 - `gizmosql.connections.active` tracks active GizmoSQL sessions (incremented on session create, decremented on close/kill/shutdown).
+- `gizmosql.duckdb.connections.open` tracks open DuckDB connection objects used by GizmoSQL, including session connections and internal utility/instrumentation connections.
 - `gizmosql.query.duration` and `gizmosql.query.count` are emitted once per executed SQL statement.
 - `db.operation` is derived from the leading SQL keyword (for example `SELECT`, `INSERT`, `CALL`) and uses `ADMIN` for GizmoSQL admin commands.
 - `db.status` records execution outcome (`OK`, `TIMEOUT`, or an Arrow status code string on failure).

@@ -7,6 +7,7 @@
 #include <duckdb.hpp>
 
 #include <atomic>
+#include "detail/tracked_duckdb_connection.h"
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -67,7 +68,7 @@ class InstrumentationManager {
                          const std::string& schema,
                          bool use_external_catalog,
                          std::shared_ptr<duckdb::DuckDB> db_instance,
-                         std::unique_ptr<duckdb::Connection> writer_connection);
+                         std::unique_ptr<gizmosql::TrackedDuckDBConnection> writer_connection);
 
   arrow::Status InitializeSchema();
 
@@ -82,7 +83,7 @@ class InstrumentationManager {
   std::string schema_;
   bool use_external_catalog_;
   std::shared_ptr<duckdb::DuckDB> db_instance_;
-  std::unique_ptr<duckdb::Connection> writer_connection_;
+  std::unique_ptr<gizmosql::TrackedDuckDBConnection> writer_connection_;
 
   std::queue<std::function<void(duckdb::Connection&)>> write_queue_;
   std::mutex queue_mutex_;

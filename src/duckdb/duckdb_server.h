@@ -215,23 +215,21 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
       const flight::ServerCallContext& context,
       const flight::CloseSessionRequest& request) override;
 
-  arrow::Status SetQueryTimeout(const std::shared_ptr<ClientSession>& client_session,
+  arrow::Status SetQueryTimeout(const ClientSession& client_session,
                                 const int& seconds);
 
-  arrow::Result<int32_t> GetQueryTimeout(
-      const std::shared_ptr<ClientSession>& client_session);
+  arrow::Result<int32_t> GetQueryTimeout(const ClientSession& client_session);
 
-  arrow::Status SetPrintQueries(const std::shared_ptr<ClientSession>& client_session,
+  arrow::Status SetPrintQueries(const ClientSession& client_session,
                                 const bool& enabled);
 
-  arrow::Result<bool> GetPrintQueries(
-      const std::shared_ptr<ClientSession>& client_session);
+  arrow::Result<bool> GetPrintQueries(const ClientSession& client_session);
 
-  arrow::Status SetQueryLogLevel(const std::shared_ptr<ClientSession>& client_session,
+  arrow::Status SetQueryLogLevel(const ClientSession& client_session,
                                  const arrow::util::ArrowLogLevel& query_log_level);
 
   arrow::Result<arrow::util::ArrowLogLevel> GetQueryLogLevel(
-      const std::shared_ptr<ClientSession>& client_session);
+      const ClientSession& client_session);
 
   // Server instance ID (available in all editions)
   std::string GetInstanceId() const;

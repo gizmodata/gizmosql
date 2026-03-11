@@ -87,6 +87,8 @@ class DuckDBStatement {
 
   long GetLastExecutionDurationMs() const;
 
+  std::string GetSessionId() const;
+
   duckdb::vector<duckdb::Value> bind_parameters;
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -101,7 +103,8 @@ class DuckDBStatement {
   std::unique_ptr<StatementInstrumentation> instrumentation_;
   std::unique_ptr<ExecutionInstrumentation> execution_instrumentation_;
 #endif
-  std::shared_ptr<ClientSession> client_session_;
+  std::weak_ptr<ClientSession> client_session_;
+  std::string session_id_;  // cached for use after session expires
   std::string statement_id_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
   duckdb::unique_ptr<duckdb::QueryResult> query_result_;
@@ -148,5 +151,7 @@ class DuckDBStatement {
   arrow::Result<int32_t> GetQueryTimeout() const;
 
   arrow::Result<arrow::util::ArrowLogLevel> GetLogLevel() const;
+
+  arrow::Result<std::shared_ptr<ClientSession>> GetSession() const;
 };
 }  // namespace gizmosql::ddb

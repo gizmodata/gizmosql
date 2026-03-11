@@ -95,7 +95,7 @@ arrow::Status HandleKillSession(
 
   // Mark session for termination and interrupt its connection
   target->kill_requested = true;
-  target->connection->Interrupt();
+  target->connection->Get().Interrupt();
 
   // Update instrumentation stop reason
   if (target->instrumentation) {
