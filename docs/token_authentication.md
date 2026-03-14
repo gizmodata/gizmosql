@@ -273,6 +273,19 @@ generate-gizmosql-token \
 
 > **Note:** The `_gizmosql_instr` instrumentation database has special protection: only admin users can read it, and no one can write to it via client connections (it's system-managed). Token-based `catalog_access` rules do not override this protection.
 
+### Metadata Visibility Filtering
+
+When `catalog_access` rules are present in a token, GizmoSQL automatically filters metadata queries so that unauthorized catalogs are **hidden** — not just blocked. This means:
+
+- **`SHOW DATABASES`** / **`SHOW ALL TABLES`** — only return rows for authorized catalogs
+- **`information_schema.*` views** (`tables`, `columns`, `schemata`, etc.) — only return rows for authorized catalogs
+- **`duckdb_*()` table functions** (`duckdb_tables()`, `duckdb_databases()`, `duckdb_columns()`, etc.) — only return rows for authorized catalogs
+- **Flight SQL metadata RPCs** (`GetCatalogs`, `GetDbSchemas`, `GetTables`) — automatically filtered since they go through the same SQL path
+
+The DuckDB internal catalogs `system` and `temp` are **always visible** regardless of access rules.
+
+Tokens without `catalog_access` rules are unaffected — all catalogs remain visible (backward compatible).
+
 ## Generating Keys
 
 To generate an RSA key pair for token signing:

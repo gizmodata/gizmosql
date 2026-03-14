@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Catalog visibility filtering** *(Enterprise)*: When `catalog_access` rules are present in a JWT token, metadata queries now automatically hide unauthorized catalogs. This applies to `SHOW DATABASES`, `SHOW ALL TABLES`, `information_schema.*` views, `duckdb_*()` table functions, and all Flight SQL metadata RPCs (`GetCatalogs`, `GetDbSchemas`, `GetTables`). The `system` and `temp` catalogs are always visible. Tokens without `catalog_access` rules are unaffected (backward compatible).
+
+### Fixed
+
+- **Multi-statement fallback now preserves SQL rewrites**: The fallback path for statements that cannot be prepared (e.g., `PIVOT`) now uses the rewritten SQL instead of the original, ensuring that `GIZMOSQL_*()` pseudo-function replacements and catalog visibility filters are applied correctly.
+- **`--init-sql-commands-file` path validation skipped when passed via CLI**: When the init SQL commands file was provided via the CLI flag (not the `INIT_SQL_COMMANDS_FILE` env var), the path resolution and existence check were accidentally nested inside the env var fallback block and never executed. The file path is now always validated regardless of how it was provided.
+
 ## [1.19.3] - 2026-03-11
 
 ### Added

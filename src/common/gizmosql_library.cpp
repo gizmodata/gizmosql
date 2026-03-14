@@ -985,7 +985,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
 
   if (init_sql_commands_file.empty()) {
     init_sql_commands_file = fs::path(SafeGetEnvVarValue("INIT_SQL_COMMANDS_FILE"));
-    if (!init_sql_commands_file.empty()) {
+  }
+
+  if (!init_sql_commands_file.empty()) {
       init_sql_commands_file = fs::absolute(init_sql_commands_file);
       if (!fs::exists(init_sql_commands_file)) {
         return arrow::Status::Invalid("INIT_SQL_COMMANDS_FILE does not exist: " +
@@ -997,7 +999,6 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
         init_sql_commands += init_sql_commands_file_contents;
       }
     }
-  }
 
   if (!mtls_ca_cert_path.empty()) {
     mtls_ca_cert_path = fs::absolute(mtls_ca_cert_path);
