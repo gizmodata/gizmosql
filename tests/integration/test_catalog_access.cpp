@@ -16,6 +16,8 @@
 // under the License.
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <set>
 #include <thread>
 #include <chrono>
 #include <random>
@@ -500,3 +502,304 @@ TEST_F(CatalogAccessServerFixture, InstrumentationProtectionIgnoresTokenRules) {
   ASSERT_FALSE(write_result.ok())
       << "Should not be able to modify instrumentation even with explicit token rule";
 }
+
+// ============================================================================
+// Catalog Visibility Filtering Tests (Metadata Row Filtering)
+// These tests verify that metadata queries only show authorized catalogs.
+// ============================================================================
+
+// Helper to execute a query and return the result as a Table
+arrow::Result<std::shared_ptr<arrow::Table>> ExecuteToTable(
+    FlightSqlClient& client,
+    const arrow::flight::FlightCallOptions& call_options,
+    const std::string& query) {
+  ARROW_ASSIGN_OR_RAISE(auto info, client.Execute(call_options, query));
+  std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+  for (const auto& endpoint : info->endpoints()) {
+    ARROW_ASSIGN_OR_RAISE(auto reader, client.DoGet(call_options, endpoint.ticket));
+    ARROW_ASSIGN_OR_RAISE(auto table, reader->ToTable());
+    for (int i = 0; i < table->num_columns(); ++i) {
+      // Collect all batches
+    }
+    // Return the first endpoint's table (typically there's only one)
+    return table;
+  }
+  return arrow::Status::Invalid("No endpoints in result");
+}
+
+// Helper to get column values as strings from a table
+std::vector<std::string> GetColumnValues(const std::shared_ptr<arrow::Table>& table,
+                                          int column_index) {
+  std::vector<std::string> values;
+  auto chunked = table->column(column_index);
+  for (int chunk = 0; chunk < chunked->num_chunks(); ++chunk) {
+    auto array = std::static_pointer_cast<arrow::StringArray>(chunked->chunk(chunk));
+    for (int64_t i = 0; i < array->length(); ++i) {
+      if (!array->IsNull(i)) {
+        values.push_back(array->GetString(i));
+      }
+    }
+  }
+  return values;
+}
+
+TEST_F(CatalogAccessServerFixture, ShowDatabasesFiltersUnauthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token with access only to the default catalog
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("visibility_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // SHOW DATABASES should only return allowed catalogs + system/temp
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW DATABASES"));
+  auto db_names = GetColumnValues(table, 0);
+
+  // Should contain the default catalog
+  ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), kDefaultCatalog) != db_names.end())
+      << "Should see the authorized catalog";
+
+  // Should contain system and temp
+  ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), "system") != db_names.end())
+      << "Should always see 'system' catalog";
+  ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), "temp") != db_names.end())
+      << "Should always see 'temp' catalog";
+}
+
+TEST_F(CatalogAccessServerFixture, ShowSchemasFiltersUnauthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token with access only to the default catalog
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("show_schemas_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // SHOW SCHEMAS should only return schemas from allowed catalogs + system/temp
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW SCHEMAS"));
+  // Column 0 is database_name
+  auto db_names = GetColumnValues(table, 0);
+
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& db : db_names) {
+    ASSERT_TRUE(allowed_set.count(db) > 0)
+        << "Unexpected catalog '" << db << "' in SHOW SCHEMAS result";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, InformationSchemaTablesFiltersUnauthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // First, create a table using system credentials so there's something to see
+  {
+    arrow::flight::FlightClientOptions options;
+    ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                               arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                               arrow::flight::FlightClient::Connect(location, options));
+    arrow::flight::FlightCallOptions sys_call_options;
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+    sys_call_options.headers.push_back(bearer);
+    FlightSqlClient sql_client(std::move(client));
+    ASSERT_ARROW_OK(ExecuteAndConsume(sql_client, sys_call_options, "CREATE TABLE IF NOT EXISTS visibility_test (id INTEGER)"));
+  }
+
+  // Create a token with access only to the default catalog
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("visibility_user2", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // Query information_schema.tables — should only show tables from authorized catalogs
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table,
+      ExecuteToTable(*client, call_options, "SELECT table_catalog, table_name FROM information_schema.tables"));
+
+  // All returned rows should have table_catalog in the allowed set
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat << "' in information_schema.tables result";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, CatalogQualifiedInformationSchemaFilters) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token with access only to the default catalog
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("catalog_qualified_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // Query with catalog-qualified reference: system.information_schema.tables
+  // This should still be filtered, not break the SQL
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table,
+      ExecuteToTable(*client, call_options,
+                     "SELECT table_catalog, table_name FROM system.information_schema.tables"));
+
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat << "' in system.information_schema.tables result";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, DuckdbTablesFiltersByAuthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token with access only to the default catalog
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("visibility_user3", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // Query duckdb_tables() — should only show tables from authorized catalogs
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table,
+      ExecuteToTable(*client, call_options, "SELECT database_name, table_name FROM duckdb_tables()"));
+
+  auto db_names = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& db : db_names) {
+    ASSERT_TRUE(allowed_set.count(db) > 0)
+        << "Unexpected database '" << db << "' in duckdb_tables() result";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, WildcardNoneOnlyShowsSystemAndTemp) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token with wildcard none access — only system/temp should be visible
+  std::string catalog_access = R"([{"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("none_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // SHOW DATABASES should only return system and temp
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW DATABASES"));
+  auto db_names = GetColumnValues(table, 0);
+
+  std::set<std::string> allowed_set = {"system", "temp"};
+  for (const auto& db : db_names) {
+    ASSERT_TRUE(allowed_set.count(db) > 0)
+        << "Unexpected catalog '" << db << "' visible with wildcard none access";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, WildcardReadShowsAllCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token with wildcard read access — all catalogs should be visible
+  std::string catalog_access = R"([{"catalog": "*", "access": "read"}])";
+  std::string token = CreateTestJWT("read_all_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // SHOW DATABASES should show the default catalog (at minimum)
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW DATABASES"));
+  auto db_names = GetColumnValues(table, 0);
+
+  ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), kDefaultCatalog) != db_names.end())
+      << "Wildcard read should show the default catalog";
+  ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), "system") != db_names.end())
+      << "Wildcard read should show system catalog";
+}
+
+TEST_F(CatalogAccessServerFixture, NoCatalogAccessMeansNoFiltering) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token WITHOUT catalog_access — backward compat, no filtering
+  std::string token = CreateTestJWT("no_rules_user", "user");
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // SHOW DATABASES should show the default catalog (no filtering applied)
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW DATABASES"));
+  auto db_names = GetColumnValues(table, 0);
+
+  ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), kDefaultCatalog) != db_names.end())
+      << "Without catalog_access rules, all catalogs should be visible";
+}
+
+TEST_F(CatalogAccessServerFixture, CatalogAccessRulesIgnoredWithoutEnterpriseLicense) {
+  // NOTE: No SKIP_WITHOUT_LICENSE() — this test is important for Core edition
+  // and Enterprise builds without a license. Even if a token has catalog_access
+  // rules, they should be ignored when the enterprise feature is not licensed,
+  // so all catalogs remain visible (backward compatible behavior).
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token WITH catalog_access rules that would deny access to the default catalog
+  std::string catalog_access = R"([{"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("core_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  if (!HasEnterpriseLicense()) {
+    // Without enterprise license: catalog_access rules should be ignored entirely,
+    // so the default catalog should still be visible in SHOW DATABASES
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW DATABASES"));
+    auto db_names = GetColumnValues(table, 0);
+    ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), kDefaultCatalog) != db_names.end())
+        << "Without enterprise license, catalog_access rules should be ignored";
+  } else {
+    // With enterprise license: catalog_access rules ARE enforced, so wildcard none
+    // means only system/temp are visible — the default catalog should NOT appear
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW DATABASES"));
+    auto db_names = GetColumnValues(table, 0);
+    ASSERT_TRUE(std::find(db_names.begin(), db_names.end(), kDefaultCatalog) == db_names.end())
+        << "With enterprise license, wildcard none should hide the default catalog";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, GetCatalogsRPCRespectsFiltering) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Create a token with access only to the default catalog
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("rpc_filter_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // GetCatalogs RPC goes through DuckDBStatement::Create, so filtering applies
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info, client->GetCatalogs(call_options));
+  std::vector<std::string> catalog_names;
+  for (const auto& endpoint : info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader, client->DoGet(call_options, endpoint.ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, reader->ToTable());
+    auto names = GetColumnValues(table, 0);
+    catalog_names.insert(catalog_names.end(), names.begin(), names.end());
+  }
+
+  // Should contain the authorized catalog
+  ASSERT_TRUE(std::find(catalog_names.begin(), catalog_names.end(), kDefaultCatalog) != catalog_names.end())
+      << "GetCatalogs should include authorized catalog";
+
+  // Should contain system and temp
+  ASSERT_TRUE(std::find(catalog_names.begin(), catalog_names.end(), "system") != catalog_names.end())
+      << "GetCatalogs should always include 'system'";
+  ASSERT_TRUE(std::find(catalog_names.begin(), catalog_names.end(), "temp") != catalog_names.end())
+      << "GetCatalogs should always include 'temp'";
+}
+
+

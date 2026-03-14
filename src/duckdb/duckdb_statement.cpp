@@ -656,6 +656,39 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session->role, edition, instrumentation_enabled,
       instrumentation_catalog, instrumentation_schema);
 
+#ifdef GIZMOSQL_ENTERPRISE
+  // Catalog visibility filtering: rewrite metadata queries to hide unauthorized catalogs
+  if (!client_session->catalog_access.empty() &&
+      enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+    std::shared_ptr<InstrumentationManager> instr_mgr;
+    if (auto server = GetServer(*client_session)) {
+      instr_mgr = server->GetInstrumentationManager();
+    }
+    auto allowed = enterprise::GetAllowedCatalogs(
+        *client_session, client_session->connection->Get(), instr_mgr);
+    if (!allowed.empty()) {
+      auto filter_in = enterprise::BuildCatalogFilterIN(allowed);
+      std::string rewritten;
+      if (enterprise::RewriteShowCommand(effective_sql, filter_in, rewritten)) {
+        GIZMOSQL_LOGKV_SESSION(DEBUG, client_session,
+                               "Catalog visibility filter rewrote SHOW command",
+                               {"kind", "sql"}, {"original_sql", effective_sql},
+                               {"rewritten_sql", rewritten});
+        effective_sql = std::move(rewritten);
+      } else {
+        auto filtered = enterprise::FilterMetadataReferences(effective_sql, filter_in);
+        if (filtered != effective_sql) {
+          GIZMOSQL_LOGKV_SESSION(DEBUG, client_session,
+                                 "Catalog visibility filter rewrote metadata references",
+                                 {"kind", "sql"}, {"original_sql", effective_sql},
+                                 {"rewritten_sql", filtered});
+          effective_sql = std::move(filtered);
+        }
+      }
+    }
+  }
+#endif
+
   if (log_queries) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
         effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
@@ -834,7 +867,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       }
 
       std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-          client_session, handle, sql, log_level, log_queries, override_schema));
+          client_session, handle, effective_sql, log_level, log_queries, override_schema));
 
 #ifdef GIZMOSQL_ENTERPRISE
       // Create statement instrumentation for direct execution
