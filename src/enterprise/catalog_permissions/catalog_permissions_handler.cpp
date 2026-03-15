@@ -569,7 +569,7 @@ std::string FilterMetadataReferences(const std::string& sql, const std::string& 
     }
 
     if (!matched) {
-      result += sql[i++];
+      result += normalized_sql[i++];
     }
   }
 

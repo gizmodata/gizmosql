@@ -749,6 +749,34 @@ TEST_F(CatalogAccessServerFixture, QuotedInformationSchemaFiltersUnauthorizedCat
   }
 }
 
+TEST_F(CatalogAccessServerFixture,
+       QuotedInformationSchemaOrderByFiltersUnauthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog +
+                               R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token =
+      CreateTestJWT("quoted_visibility_order_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto table,
+      ExecuteToTable(*client, call_options,
+                     "SELECT DISTINCT table_catalog FROM "
+                     "\"information_schema\".\"tables\" ORDER BY 1"));
+
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat
+        << "' in quoted information_schema.tables ORDER BY result";
+  }
+}
+
 TEST_F(CatalogAccessServerFixture, QuotedCatalogQualifiedInformationSchemaFilters) {
   SKIP_WITHOUT_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
@@ -771,6 +799,34 @@ TEST_F(CatalogAccessServerFixture, QuotedCatalogQualifiedInformationSchemaFilter
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat
         << "' in quoted system.information_schema.tables result";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture,
+       QuotedCatalogQualifiedInformationSchemaOrderByFilters) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog +
+                               R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("quoted_catalog_visibility_order_user", "user",
+                                    catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto table,
+      ExecuteToTable(*client, call_options,
+                     "SELECT DISTINCT table_catalog FROM "
+                     "\"system\".\"information_schema\".\"tables\" ORDER BY 1"));
+
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat
+        << "' in quoted system.information_schema.tables ORDER BY result";
   }
 }
 
