@@ -94,6 +94,18 @@ arrow::Status CheckCatalogReadAccess(
     const std::string& flight_method,
     bool is_internal);
 
+/// Check read access for a single catalog name.
+/// This is used for commands like USE/SetSessionOptions where DuckDB's statement
+/// metadata does not reliably capture the target catalog before execution.
+arrow::Status EnsureCatalogReadAccess(
+    const std::shared_ptr<ClientSession>& client_session,
+    const std::string& catalog_name,
+    std::shared_ptr<gizmosql::ddb::InstrumentationManager> instrumentation_manager,
+    const std::string& statement_id = "",
+    const std::string& logged_sql = "",
+    const std::string& flight_method = "",
+    bool is_internal = false);
+
 // ============================================================================
 // Catalog Visibility Filtering (metadata row filtering)
 // ============================================================================
