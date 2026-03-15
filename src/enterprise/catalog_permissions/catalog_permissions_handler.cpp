@@ -177,6 +177,43 @@ arrow::Status CheckCatalogReadAccess(
   return arrow::Status::OK();
 }
 
+arrow::Status EnsureCatalogReadAccess(
+    const std::shared_ptr<ClientSession>& client_session,
+    const std::string& catalog_name,
+    std::shared_ptr<gizmosql::ddb::InstrumentationManager> instrumentation_manager,
+    const std::string& statement_id,
+    const std::string& logged_sql,
+    const std::string& flight_method,
+    bool is_internal) {
+  if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
+    if (client_session->role != "admin") {
+      std::string error_msg =
+          "Access denied: Only administrators can read the instrumentation catalog '" +
+          catalog_name + "'.";
+      if (instrumentation_manager) {
+        gizmosql::ddb::StatementInstrumentation(
+            instrumentation_manager, statement_id, client_session->session_id, logged_sql,
+            flight_method, is_internal, error_msg);
+      }
+      return arrow::Status::Invalid(error_msg);
+    }
+    return arrow::Status::OK();
+  }
+
+  if (!HasReadAccess(*client_session, catalog_name, instrumentation_manager)) {
+    std::string error_msg =
+        "Access denied: You do not have read access to catalog '" + catalog_name + "'.";
+    if (instrumentation_manager) {
+      gizmosql::ddb::StatementInstrumentation(
+          instrumentation_manager, statement_id, client_session->session_id, logged_sql,
+          flight_method, is_internal, error_msg);
+    }
+    return arrow::Status::Invalid(error_msg);
+  }
+
+  return arrow::Status::OK();
+}
+
 // ============================================================================
 // Catalog Visibility Filtering
 // ============================================================================
@@ -313,59 +350,148 @@ inline bool IsIdentChar(char c) {
   return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
 }
 
-}  // namespace
+size_t ParseIdentifierTokenEnd(const std::string& sql, size_t start) {
+  if (start >= sql.size()) {
+    return start;
+  }
 
-std::string FilterMetadataReferences(const std::string& sql, const std::string& filter_in) {
+  if (sql[start] == '"') {
+    size_t pos = start + 1;
+    while (pos < sql.size()) {
+      if (sql[pos] == '"') {
+        if (pos + 1 < sql.size() && sql[pos + 1] == '"') {
+          pos += 2;
+          continue;
+        }
+        return pos + 1;
+      }
+      ++pos;
+    }
+    return start;
+  }
+
+  if (!IsIdentChar(sql[start])) {
+    return start;
+  }
+
+  size_t pos = start;
+  while (pos < sql.size() && IsIdentChar(sql[pos])) {
+    ++pos;
+  }
+  return pos;
+}
+
+std::string NormalizeQuotedMetadataReferences(const std::string& sql) {
   const auto& patterns = GetMetadataPatterns();
   std::string result;
-  result.reserve(sql.size() * 2);
+  result.reserve(sql.size());
 
   size_t i = 0;
   while (i < sql.size()) {
-    // Skip single-quoted strings
     if (sql[i] == '\'') {
       result += sql[i++];
       while (i < sql.size()) {
-        if (sql[i] == '\\' && i + 1 < sql.size()) {
-          result += sql[i++];
-          result += sql[i++];
-          continue;
-        }
+        result += sql[i];
         if (sql[i] == '\'') {
-          result += sql[i++];
-          // Check for escaped quote ('')
+          ++i;
           if (i < sql.size() && sql[i] == '\'') {
             result += sql[i++];
             continue;
           }
           break;
         }
-        result += sql[i++];
+        ++i;
       }
       continue;
     }
 
-    // Skip double-quoted identifiers
-    if (sql[i] == '"') {
-      result += sql[i++];
-      while (i < sql.size()) {
-        if (sql[i] == '\\' && i + 1 < sql.size()) {
-          result += sql[i++];
-          result += sql[i++];
+    bool replaced = false;
+    for (const auto& pat : patterns) {
+      std::string quoted_pattern = pat.pattern_lower;
+      if (pat.is_function) {
+        auto open_paren = quoted_pattern.find("()");
+        std::string function_name = quoted_pattern.substr(0, open_paren);
+        quoted_pattern = "\"" + function_name + "\"()";
+      } else {
+        boost::replace_all(quoted_pattern, ".", "\".\"");
+        quoted_pattern = "\"" + quoted_pattern + "\"";
+      }
+
+      if (i + quoted_pattern.size() > sql.size()) {
+        continue;
+      }
+
+      std::string candidate = sql.substr(i, quoted_pattern.size());
+      if (!boost::iequals(candidate, quoted_pattern)) {
+        size_t prefix_end = ParseIdentifierTokenEnd(sql, i);
+        if (prefix_end == i || prefix_end >= sql.size() || sql[prefix_end] != '.') {
           continue;
         }
-        if (sql[i] == '"') {
-          result += sql[i++];
+        size_t suffix_start = prefix_end + 1;
+        if (suffix_start + quoted_pattern.size() > sql.size()) {
+          continue;
+        }
+        candidate = sql.substr(suffix_start, quoted_pattern.size());
+        if (!boost::iequals(candidate, quoted_pattern)) {
+          continue;
+        }
+        result += sql.substr(i, prefix_end - i + 1);
+        result += pat.pattern_lower;
+        i = suffix_start + quoted_pattern.size();
+        replaced = true;
+        break;
+      }
+
+      result += pat.pattern_lower;
+      i += quoted_pattern.size();
+      replaced = true;
+      break;
+    }
+
+    if (!replaced) {
+      result += sql[i++];
+    }
+  }
+
+  return result;
+}
+
+}  // namespace
+
+std::string FilterMetadataReferences(const std::string& sql, const std::string& filter_in) {
+  std::string normalized_sql = NormalizeQuotedMetadataReferences(sql);
+  const auto& patterns = GetMetadataPatterns();
+  std::string result;
+  result.reserve(normalized_sql.size() * 2);
+
+  size_t i = 0;
+  while (i < normalized_sql.size()) {
+    // Skip single-quoted strings
+    if (normalized_sql[i] == '\'') {
+      result += normalized_sql[i++];
+      while (i < normalized_sql.size()) {
+        if (normalized_sql[i] == '\\' && i + 1 < normalized_sql.size()) {
+          result += normalized_sql[i++];
+          result += normalized_sql[i++];
+          continue;
+        }
+        if (normalized_sql[i] == '\'') {
+          result += normalized_sql[i++];
+          // Check for escaped quote ('')
+          if (i < normalized_sql.size() && normalized_sql[i] == '\'') {
+            result += normalized_sql[i++];
+            continue;
+          }
           break;
         }
-        result += sql[i++];
+        result += normalized_sql[i++];
       }
       continue;
     }
 
     // Check boundary: preceding character must not be identifier char
-    if (i > 0 && IsIdentChar(sql[i - 1])) {
-      result += sql[i++];
+    if (i > 0 && IsIdentChar(normalized_sql[i - 1])) {
+      result += normalized_sql[i++];
       continue;
     }
 
@@ -373,10 +499,10 @@ std::string FilterMetadataReferences(const std::string& sql, const std::string& 
     bool matched = false;
     for (const auto& pat : patterns) {
       size_t pat_len = pat.pattern_lower.size();
-      if (i + pat_len > sql.size()) continue;
+      if (i + pat_len > normalized_sql.size()) continue;
 
       // Case-insensitive comparison
-      std::string candidate = sql.substr(i, pat_len);
+      std::string candidate = normalized_sql.substr(i, pat_len);
       std::string candidate_lower = boost::to_lower_copy(candidate);
       if (candidate_lower != pat.pattern_lower) continue;
 
@@ -385,12 +511,12 @@ std::string FilterMetadataReferences(const std::string& sql, const std::string& 
       if (pat.is_function) {
         // For function calls like duckdb_tables(), the pattern includes "()"
         // After ")" we accept: whitespace, comma, ), ;, EOF, or SQL keywords
-        if (end_pos < sql.size() && IsIdentChar(sql[end_pos])) {
+        if (end_pos < normalized_sql.size() && IsIdentChar(normalized_sql[end_pos])) {
           continue;  // Not a boundary — skip
         }
       } else {
         // For views like information_schema.tables
-        if (end_pos < sql.size() && sql[end_pos] == '.') {
+        if (end_pos < normalized_sql.size() && normalized_sql[end_pos] == '.') {
           continue;  // e.g., information_schema.tables.column_name — don't match partial
         }
       }
@@ -399,13 +525,25 @@ std::string FilterMetadataReferences(const std::string& sql, const std::string& 
       // If preceded by '.', scan backwards to capture the catalog name and remove it
       // from result (it will be included in the subquery's FROM clause instead)
       std::string catalog_prefix;
-      if (i > 0 && sql[i - 1] == '.') {
+      if (i > 0 && normalized_sql[i - 1] == '.') {
         // Walk backwards past the '.' to find the catalog identifier
         size_t dot_pos = result.size() - 1;  // position of '.' in result
         size_t ident_start = dot_pos;
-        // Walk backwards past the identifier before the dot
-        while (ident_start > 0 && IsIdentChar(result[ident_start - 1])) {
-          --ident_start;
+        if (dot_pos > 0 && result[dot_pos - 1] == '"') {
+          ident_start = dot_pos - 1;
+          while (ident_start > 0) {
+            --ident_start;
+            if (result[ident_start] == '"') {
+              break;
+            }
+          }
+          if (result[ident_start] != '"') {
+            ident_start = dot_pos;
+          }
+        } else {
+          while (ident_start > 0 && IsIdentChar(result[ident_start - 1])) {
+            --ident_start;
+          }
         }
         if (ident_start < dot_pos) {
           // Extract "catalog." from result (including the dot)
@@ -418,7 +556,7 @@ std::string FilterMetadataReferences(const std::string& sql, const std::string& 
       // Build replacement: (SELECT * FROM [catalog_prefix]pattern WHERE col <filter_in>)
       result += "(SELECT * FROM ";
       result += catalog_prefix;  // e.g. "system." or empty
-      result += sql.substr(i, pat_len);  // preserve original case
+      result += normalized_sql.substr(i, pat_len);
       result += " WHERE ";
       result += pat.filter_column;
       result += ' ';

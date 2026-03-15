@@ -25,6 +25,7 @@
 
 #include <jwt-cpp/jwt.h>
 
+#include "arrow/flight/types.h"
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/api.h"
@@ -592,6 +593,73 @@ TEST_F(CatalogAccessServerFixture, ShowSchemasFiltersUnauthorizedCatalogs) {
   }
 }
 
+TEST_F(CatalogAccessServerFixture, UseUnauthorizedCatalogIsDenied) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("use_denied_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  auto result = client->Execute(call_options, "USE _gizmosql_instr");
+  ASSERT_FALSE(result.ok());
+  ASSERT_TRUE(result.status().ToString().find("Access denied") != std::string::npos)
+      << result.status().ToString();
+}
+
+TEST_F(CatalogAccessServerFixture, UseUnauthorizedRegularCatalogIsDenied) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("use_regular_denied_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  auto result = client->Execute(call_options, "USE " + kDefaultCatalog);
+  ASSERT_FALSE(result.ok());
+  ASSERT_TRUE(result.status().ToString().find("read access to catalog") != std::string::npos)
+      << result.status().ToString();
+}
+
+TEST_F(CatalogAccessServerFixture, UseQuotedUnauthorizedCatalogIsDenied) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("use_quoted_denied_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  auto result = client->Execute(call_options, "USE \"" + kDefaultCatalog + "\"");
+  ASSERT_FALSE(result.ok());
+  ASSERT_TRUE(result.status().ToString().find("read access to catalog") != std::string::npos)
+      << result.status().ToString();
+}
+
+TEST_F(CatalogAccessServerFixture, SetSessionOptionsUnauthorizedCatalogIsDenied) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("set_catalog_denied_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+  ASSERT_ARROW_OK(ExecuteAndConsume(*client, call_options, "SELECT 1"));
+
+  arrow::flight::SetSessionOptionsRequest request(
+      {{"catalog", std::string("\"" + kDefaultCatalog + "\"")}});
+  auto result = client->SetSessionOptions(call_options, request);
+  ASSERT_FALSE(result.ok());
+  ASSERT_TRUE(result.status().ToString().find("read access to catalog") != std::string::npos)
+      << result.status().ToString();
+}
+
 TEST_F(CatalogAccessServerFixture, InformationSchemaTablesFiltersUnauthorizedCatalogs) {
   SKIP_WITHOUT_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
@@ -653,6 +721,56 @@ TEST_F(CatalogAccessServerFixture, CatalogQualifiedInformationSchemaFilters) {
   for (const auto& cat : catalogs) {
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat << "' in system.information_schema.tables result";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, QuotedInformationSchemaFiltersUnauthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("quoted_visibility_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto table,
+      ExecuteToTable(*client, call_options,
+                     "SELECT table_catalog, table_name FROM "
+                     "\"information_schema\".\"tables\""));
+
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat
+        << "' in quoted information_schema.tables result";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, QuotedCatalogQualifiedInformationSchemaFilters) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("quoted_catalog_visibility_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto table,
+      ExecuteToTable(*client, call_options,
+                     "SELECT table_catalog, table_name FROM "
+                     "\"system\".\"information_schema\".\"tables\""));
+
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat
+        << "' in quoted system.information_schema.tables result";
   }
 }
 
@@ -801,5 +919,3 @@ TEST_F(CatalogAccessServerFixture, GetCatalogsRPCRespectsFiltering) {
   ASSERT_TRUE(std::find(catalog_names.begin(), catalog_names.end(), "temp") != catalog_names.end())
       << "GetCatalogs should always include 'temp'";
 }
-
-
