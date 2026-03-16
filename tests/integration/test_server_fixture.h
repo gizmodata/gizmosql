@@ -65,6 +65,7 @@ CreateFlightSQLServer(
     std::string oauth_scopes = "",
     int oauth_port = 0,
     std::string oauth_base_url = "",
+    std::string oauth_redirect_uri = "",
     std::string oauth_instance_id = "",
     const bool& oauth_disable_tls = false,
     const bool& telemetry_enabled = false);
@@ -100,6 +101,7 @@ struct TestServerConfig {
   std::string oauth_scopes = "";                // OAuth scopes
   int oauth_port = 0;                           // OAuth HTTP server port
   std::string oauth_base_url = "";              // OAuth base URL override (derives redirect URI + discovery URL)
+  std::string oauth_redirect_uri = "";          // OAuth redirect URI override (takes precedence over derived)
   std::string oauth_instance_id = "";           // Instance ID for multi-instance OAuth proxy routing
   bool oauth_disable_tls = false;               // Disable TLS on OAuth callback server
 };
@@ -196,6 +198,7 @@ class ServerTestFixture : public ::testing::Test {
         /*oauth_scopes=*/config_.oauth_scopes,
         /*oauth_port=*/config_.oauth_port,
         /*oauth_base_url=*/config_.oauth_base_url,
+        /*oauth_redirect_uri=*/config_.oauth_redirect_uri,
         /*oauth_instance_id=*/config_.oauth_instance_id,
         /*oauth_disable_tls=*/config_.oauth_disable_tls);
 

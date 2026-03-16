@@ -149,6 +149,11 @@ int main(int argc, char** argv) {
               "Auto-constructed from scheme + localhost + oauth-port if empty. "
               "Use this when the server is behind a reverse proxy or accessed remotely. "
               "If not set, uses env var GIZMOSQL_OAUTH_BASE_URL.")
+            ("oauth-redirect-uri", po::value<std::string>()->default_value(""),
+              "[Enterprise] Override the OAuth redirect URI (e.g., 'https://my-proxy:443/oauth/callback'). "
+              "When set, takes precedence over the redirect URI derived from --oauth-base-url. "
+              "Use this when the redirect URI differs from the base URL. "
+              "If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI.")
             ("oauth-instance-id", po::value<std::string>()->default_value(""),
               "[Enterprise] Instance identifier embedded in the OAuth state parameter for multi-instance "
               "proxy routing. When set, the state sent to the IdP becomes '<instance-id>.<session-hash>', "
@@ -335,6 +340,9 @@ int main(int argc, char** argv) {
   std::string oauth_base_url =
       vm.count("oauth-base-url") ? vm["oauth-base-url"].as<std::string>() : "";
 
+  std::string oauth_redirect_uri =
+      vm.count("oauth-redirect-uri") ? vm["oauth-redirect-uri"].as<std::string>() : "";
+
   std::string oauth_instance_id =
       vm.count("oauth-instance-id") ? vm["oauth-instance-id"].as<std::string>() : "";
 
@@ -365,6 +373,6 @@ int main(int argc, char** argv) {
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
-      oauth_port, oauth_base_url, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
+      oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers);
 }
