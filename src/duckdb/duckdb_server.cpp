@@ -54,6 +54,7 @@
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
+#include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #endif
 
 using arrow::Result;
