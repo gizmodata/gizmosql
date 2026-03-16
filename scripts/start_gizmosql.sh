@@ -40,6 +40,7 @@
 #   GIZMOSQL_OAUTH_SCOPES                --oauth-scopes
 #   GIZMOSQL_OAUTH_PORT                  --oauth-port
 #   GIZMOSQL_OAUTH_BASE_URL              --oauth-base-url
+#   GIZMOSQL_OAUTH_REDIRECT_URI          --oauth-redirect-uri
 #   GIZMOSQL_OAUTH_INSTANCE_ID           --oauth-instance-id
 #   GIZMOSQL_OAUTH_DISABLE_TLS           --oauth-disable-tls (localhost only!)
 #

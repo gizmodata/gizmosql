@@ -29,6 +29,7 @@
 #include <future>
 #include <chrono>
 #include <cctype>
+#include <optional>
 #include <regex>
 
 #include <boost/algorithm/string.hpp>
@@ -163,6 +164,53 @@ bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id
   return false;
 }
 #endif
+
+// These helpers are used by both Core and Enterprise editions
+std::string UnquoteIdentifier(const std::string& identifier) {
+  if (identifier.size() >= 2 && identifier.front() == '"' && identifier.back() == '"') {
+    std::string unquoted = identifier.substr(1, identifier.size() - 2);
+    boost::replace_all(unquoted, "\"\"", "\"");
+    return unquoted;
+  }
+  return identifier;
+}
+
+std::optional<std::string> TryExtractUseCatalogName(const std::string& sql) {
+  static const std::regex use_pattern(
+      R"(^\s*USE\s+((?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_]*))(?:\s*\.\s*((?:"(?:[^"]|"")+"|[A-Za-z_][A-Za-z0-9_]*)))?\s*;?\s*$)",
+      std::regex_constants::icase);
+
+  std::smatch match;
+  if (!std::regex_match(sql, match, use_pattern)) {
+    return std::nullopt;
+  }
+
+  const std::string first_identifier = UnquoteIdentifier(match[1].str());
+  if (match[2].matched) {
+    return first_identifier;
+  }
+
+  return first_identifier;
+}
+
+bool CatalogExistsOnConnection(duckdb::Connection& connection,
+                               const std::string& catalog_name) {
+  auto stmt = connection.Prepare(
+      "SELECT 1 FROM information_schema.schemata WHERE catalog_name = ? LIMIT 1");
+  if (!stmt || !stmt->success) {
+    return false;
+  }
+
+  duckdb::vector<duckdb::Value> bind_parameters;
+  bind_parameters.emplace_back(catalog_name);
+  auto result = stmt->Execute(bind_parameters);
+  if (!result || result->HasError()) {
+    return false;
+  }
+
+  auto row = result->Fetch();
+  return row != nullptr && row->size() > 0;
+}
 
 // Replace GizmoSQL pseudo-functions with actual values:
 //   GIZMOSQL_CURRENT_SESSION() -> current session UUID
@@ -656,6 +704,50 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session->role, edition, instrumentation_enabled,
       instrumentation_catalog, instrumentation_schema);
 
+#ifdef GIZMOSQL_ENTERPRISE
+  std::shared_ptr<InstrumentationManager> instr_mgr;
+  if (auto server = GetServer(*client_session)) {
+    instr_mgr = server->GetInstrumentationManager();
+  }
+
+  if (!is_internal) {
+    if (auto use_catalog_name = TryExtractUseCatalogName(sql)) {
+      if (CatalogExistsOnConnection(client_session->connection->Get(), *use_catalog_name)) {
+        ARROW_RETURN_NOT_OK(gizmosql::enterprise::EnsureCatalogReadAccess(
+            client_session, *use_catalog_name, instr_mgr, handle, logged_sql,
+            flight_method, is_internal));
+      }
+    }
+  }
+
+  // Catalog visibility filtering: rewrite metadata queries to hide unauthorized catalogs
+  if (!client_session->catalog_access.empty() &&
+      enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+    auto allowed = enterprise::GetAllowedCatalogs(
+        *client_session, client_session->connection->Get(), instr_mgr);
+    if (!allowed.empty()) {
+      auto filter_in = enterprise::BuildCatalogFilterIN(allowed);
+      std::string rewritten;
+      if (enterprise::RewriteShowCommand(effective_sql, filter_in, rewritten)) {
+        GIZMOSQL_LOGKV_SESSION(DEBUG, client_session,
+                               "Catalog visibility filter rewrote SHOW command",
+                               {"kind", "sql"}, {"original_sql", effective_sql},
+                               {"rewritten_sql", rewritten});
+        effective_sql = std::move(rewritten);
+      } else {
+        auto filtered = enterprise::FilterMetadataReferences(effective_sql, filter_in);
+        if (filtered != effective_sql) {
+          GIZMOSQL_LOGKV_SESSION(DEBUG, client_session,
+                                 "Catalog visibility filter rewrote metadata references",
+                                 {"kind", "sql"}, {"original_sql", effective_sql},
+                                 {"rewritten_sql", filtered});
+          effective_sql = std::move(filtered);
+        }
+      }
+    }
+  }
+#endif
+
   if (log_queries) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
         effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
@@ -834,7 +926,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       }
 
       std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-          client_session, handle, sql, log_level, log_queries, override_schema));
+          client_session, handle, effective_sql, log_level, log_queries, override_schema));
 
 #ifdef GIZMOSQL_ENTERPRISE
       // Create statement instrumentation for direct execution

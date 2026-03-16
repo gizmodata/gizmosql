@@ -81,6 +81,7 @@ enum class BackendType { duckdb, sqlite };
  * @param oauth_scopes [Enterprise] OAuth scopes to request during authorization. Default is "openid profile email". If not set, uses env var GIZMOSQL_OAUTH_SCOPES.
  * @param oauth_port [Enterprise] Port for the OAuth HTTP(S) server. Default is DEFAULT_OAUTH_PORT (31339). Set to 0 to disable. If not set, uses env var GIZMOSQL_OAUTH_PORT.
  * @param oauth_base_url [Enterprise] Override the base URL for the OAuth HTTP server (e.g., "https://my-proxy:443"). When set, the redirect URI (/oauth/callback) and discovery URL advertised to clients are derived from this. Auto-constructed from scheme + localhost + oauth_port if empty. Use this when the server is behind a reverse proxy or accessed remotely. If not set, uses env var GIZMOSQL_OAUTH_BASE_URL.
+ * @param oauth_redirect_uri [Enterprise] Override the OAuth redirect URI (e.g., "https://my-proxy:443/oauth/callback"). When set, this takes precedence over the redirect URI derived from oauth_base_url. Use this when the redirect URI differs from the base URL (e.g., separate proxy endpoints). If not set, uses env var GIZMOSQL_OAUTH_REDIRECT_URI, or derives from oauth_base_url + "/oauth/callback".
  * @param oauth_disable_tls [Enterprise] Disable TLS on the OAuth HTTP callback server even when the main Flight server uses TLS. WARNING: This should ONLY be used for localhost development/testing. Default is std::nullopt (check env var GIZMOSQL_OAUTH_DISABLE_TLS, fallback to false). Pass true/false to override env var.
  * @param otel_enabled Enable OpenTelemetry instrumentation. Default is std::nullopt (check env var GIZMOSQL_OTEL_ENABLED, fallback to false). Pass true/false to override env var.
  * @param otel_exporter OTLP exporter type (http). Default is "" - if so, uses env GIZMOSQL_OTEL_EXPORTER, fallback to http.
@@ -130,6 +131,7 @@ int RunFlightSQLServer(
     std::string oauth_scopes = "",
     int oauth_port = 0,
     std::string oauth_base_url = "",
+    std::string oauth_redirect_uri = "",
     std::string oauth_instance_id = "",
     std::optional<bool> oauth_disable_tls = std::nullopt,
     std::optional<bool> otel_enabled = std::nullopt, std::string otel_exporter = "",

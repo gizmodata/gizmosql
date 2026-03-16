@@ -54,6 +54,7 @@
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
+#include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #endif
 
 using arrow::Result;
@@ -104,6 +105,27 @@ class DuckDBTransactionGuard {
   bool active_;
   bool committed_;
 };
+
+#ifdef GIZMOSQL_ENTERPRISE
+bool CatalogExistsOnConnection(duckdb::Connection& connection,
+                               const std::string& catalog_name) {
+  auto stmt = connection.Prepare(
+      "SELECT 1 FROM information_schema.schemata WHERE catalog_name = ? LIMIT 1");
+  if (!stmt || !stmt->success) {
+    return false;
+  }
+
+  duckdb::vector<duckdb::Value> bind_parameters;
+  bind_parameters.emplace_back(catalog_name);
+  auto result = stmt->Execute(bind_parameters);
+  if (!result || result->HasError()) {
+    return false;
+  }
+
+  auto row = result->Fetch();
+  return row != nullptr && row->size() > 0;
+}
+#endif
 
 int64_t GetArrayDataSize(const std::shared_ptr<arrow::ArrayData>& data) {
   if (!data) return 0;
@@ -1813,6 +1835,18 @@ class DuckDBFlightSqlServer::Impl {
       if (name == "catalog" || name == "schema") {
         std::string sanitized =
             boost::algorithm::erase_all_copy(std::get<std::string>(value), "\"");
+#ifdef GIZMOSQL_ENTERPRISE
+        if (name == "catalog" &&
+            CatalogExistsOnConnection(client_session->connection->Get(), sanitized)) {
+          std::shared_ptr<InstrumentationManager> instr_mgr;
+          if (auto server = GetServer(*client_session)) {
+            instr_mgr = server->GetInstrumentationManager();
+          }
+          ARROW_RETURN_NOT_OK(gizmosql::enterprise::EnsureCatalogReadAccess(
+              client_session, sanitized, instr_mgr, "", "USE \"" + sanitized + "\"",
+              "SetSessionOptions", false));
+        }
+#endif
         std::string quoted_identifier = "\"" + sanitized + "\"";
         ARROW_RETURN_NOT_OK(ExecuteSql(client_session, "USE " + quoted_identifier));
       } else {

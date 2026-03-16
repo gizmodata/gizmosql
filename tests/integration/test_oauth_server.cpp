@@ -397,6 +397,7 @@ class OAuthServerTest : public ::testing::Test {
         /*oauth_scopes=*/"openid profile email",
         /*oauth_port=*/kOAuthTestPort,
         /*oauth_base_url=*/"",
+        /*oauth_redirect_uri=*/"",
         /*oauth_instance_id=*/"",
         /*oauth_disable_tls=*/false);
 

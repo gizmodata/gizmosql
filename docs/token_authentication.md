@@ -273,6 +273,19 @@ generate-gizmosql-token \
 
 > **Note:** The `_gizmosql_instr` instrumentation database has special protection: only admin users can read it, and no one can write to it via client connections (it's system-managed). Token-based `catalog_access` rules do not override this protection.
 
+### Metadata Visibility Filtering
+
+When `catalog_access` rules are present in a token, GizmoSQL automatically filters metadata queries so that unauthorized catalogs are **hidden** — not just blocked. This means:
+
+- **`SHOW DATABASES`** / **`SHOW ALL TABLES`** — only return rows for authorized catalogs
+- **`information_schema.*` views** (`tables`, `columns`, `schemata`, etc.) — only return rows for authorized catalogs
+- **`duckdb_*()` table functions** (`duckdb_tables()`, `duckdb_databases()`, `duckdb_columns()`, etc.) — only return rows for authorized catalogs
+- **Flight SQL metadata RPCs** (`GetCatalogs`, `GetDbSchemas`, `GetTables`) — automatically filtered since they go through the same SQL path
+
+The DuckDB internal catalogs `system` and `temp` are **always visible** regardless of access rules.
+
+Tokens without `catalog_access` rules are unaffected — all catalogs remain visible (backward compatible).
+
 ## Generating Keys
 
 To generate an RSA key pair for token signing:
@@ -437,6 +450,7 @@ Server-side OAuth code exchange simplifies client configuration by making the Gi
 | `--oauth-scopes` | `GIZMOSQL_OAUTH_SCOPES` | `openid profile email` | OAuth scopes to request. |
 | `--oauth-port` | `GIZMOSQL_OAUTH_PORT` | `31339` | Port for the OAuth HTTP(S) server. |
 | `--oauth-base-url` | `GIZMOSQL_OAUTH_BASE_URL` | auto-constructed | Override the base URL for the OAuth server (e.g., `https://my-proxy:443`). Redirect URI and discovery URL are derived from this. |
+| `--oauth-redirect-uri` | `GIZMOSQL_OAUTH_REDIRECT_URI` | derived from base URL | Override the OAuth redirect URI (e.g., `https://my-proxy:443/oauth/callback`). Takes precedence over the URI derived from `--oauth-base-url`. Use when the redirect URI differs from the base URL. |
 | `--oauth-instance-id` | `GIZMOSQL_OAUTH_INSTANCE_ID` | *(empty)* | Instance identifier embedded in the OAuth `state` parameter for multi-instance proxy routing. When set, state becomes `<instance-id>.<session-hash>`, allowing a shared callback proxy to extract the instance ID and route to the correct server. |
 | `--oauth-disable-tls` | `GIZMOSQL_OAUTH_DISABLE_TLS` | `false` | Disable TLS on the OAuth callback server. **WARNING: localhost only.** |
 

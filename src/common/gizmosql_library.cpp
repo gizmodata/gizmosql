@@ -432,6 +432,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& oauth_scopes,
     const int& oauth_port,
     const std::string& oauth_base_url,
+    const std::string& oauth_redirect_uri,
     const std::string& oauth_instance_id,
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled) {
@@ -562,8 +563,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       effective_base_url = oauth_scheme + "://localhost:" + std::to_string(oauth_port);
     }
 
-    // Derive redirect URI from base URL
-    std::string derived_redirect_uri = effective_base_url + "/oauth/callback";
+    // Use explicit redirect URI if provided, otherwise derive from base URL
+    std::string derived_redirect_uri = oauth_redirect_uri.empty()
+        ? effective_base_url + "/oauth/callback"
+        : oauth_redirect_uri;
 
     gizmosql::enterprise::OAuthHttpServer::Config oauth_config{
         .port = oauth_port,
@@ -893,6 +896,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string oauth_scopes,
     int oauth_port,
     std::string oauth_base_url,
+    std::string oauth_redirect_uri,
     std::string oauth_instance_id,
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled) {
@@ -985,7 +989,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
 
   if (init_sql_commands_file.empty()) {
     init_sql_commands_file = fs::path(SafeGetEnvVarValue("INIT_SQL_COMMANDS_FILE"));
-    if (!init_sql_commands_file.empty()) {
+  }
+
+  if (!init_sql_commands_file.empty()) {
       init_sql_commands_file = fs::absolute(init_sql_commands_file);
       if (!fs::exists(init_sql_commands_file)) {
         return arrow::Status::Invalid("INIT_SQL_COMMANDS_FILE does not exist: " +
@@ -997,7 +1003,6 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
         init_sql_commands += init_sql_commands_file_contents;
       }
     }
-  }
 
   if (!mtls_ca_cert_path.empty()) {
     mtls_ca_cert_path = fs::absolute(mtls_ca_cert_path);
@@ -1139,6 +1144,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
   if (oauth_base_url.empty()) {
     oauth_base_url = SafeGetEnvVarValue("GIZMOSQL_OAUTH_BASE_URL");
   }
+  if (oauth_redirect_uri.empty()) {
+    oauth_redirect_uri = SafeGetEnvVarValue("GIZMOSQL_OAUTH_REDIRECT_URI");
+  }
   if (oauth_instance_id.empty()) {
     oauth_instance_id = SafeGetEnvVarValue("GIZMOSQL_OAUTH_INSTANCE_ID");
   }
@@ -1164,7 +1172,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_instance_id, oauth_disable_tls, telemetry_enabled);
+      oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1228,6 +1236,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string oauth_scopes,
                        int oauth_port,
                        std::string oauth_base_url,
+                       std::string oauth_redirect_uri,
                        std::string oauth_instance_id,
                        std::optional<bool> oauth_disable_tls,
                        std::optional<bool> otel_enabled, std::string otel_exporter,
@@ -1390,7 +1399,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       enable_instrumentation.value(), instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled);
+      oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

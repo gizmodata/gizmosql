@@ -94,4 +94,60 @@ arrow::Status CheckCatalogReadAccess(
     const std::string& flight_method,
     bool is_internal);
 
+/// Check read access for a single catalog name.
+/// This is used for commands like USE/SetSessionOptions where DuckDB's statement
+/// metadata does not reliably capture the target catalog before execution.
+arrow::Status EnsureCatalogReadAccess(
+    const std::shared_ptr<ClientSession>& client_session,
+    const std::string& catalog_name,
+    std::shared_ptr<gizmosql::ddb::InstrumentationManager> instrumentation_manager,
+    const std::string& statement_id = "",
+    const std::string& logged_sql = "",
+    const std::string& flight_method = "",
+    bool is_internal = false);
+
+// ============================================================================
+// Catalog Visibility Filtering (metadata row filtering)
+// ============================================================================
+
+/// Get the list of catalogs the session is allowed to see.
+/// Returns empty if no filtering should be applied (no rules or not licensed).
+/// Always includes "system" and "temp" (DuckDB internals).
+///
+/// @param client_session The session to check
+/// @param connection The DuckDB connection to query for actual catalogs
+/// @param instrumentation_manager Optional instrumentation manager
+/// @return Vector of allowed catalog names, or empty if no filtering needed
+std::vector<std::string> GetAllowedCatalogs(
+    const ClientSession& client_session,
+    duckdb::Connection& connection,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
+
+/// Build an SQL IN clause for allowed catalogs.
+/// Returns e.g. IN ('production','staging','system','temp')
+/// Single quotes in catalog names are escaped by doubling.
+///
+/// @param allowed_catalogs The list of allowed catalog names
+/// @return The IN clause string
+std::string BuildCatalogFilterIN(const std::vector<std::string>& allowed_catalogs);
+
+/// Rewrite SHOW DATABASES / SHOW ALL TABLES commands to filter by allowed catalogs.
+/// Returns true if the SQL was rewritten (output in `rewritten`), false otherwise.
+///
+/// @param sql The original SQL text
+/// @param filter_in The IN clause from BuildCatalogFilterIN
+/// @param rewritten Output: the rewritten SQL (only valid if returns true)
+/// @return true if sql was a SHOW command that was rewritten
+bool RewriteShowCommand(const std::string& sql, const std::string& filter_in,
+                        std::string& rewritten);
+
+/// Filter metadata references in SQL by replacing information_schema views
+/// and duckdb_*() table functions with subqueries that filter by allowed catalogs.
+/// Skips replacements inside quoted strings.
+///
+/// @param sql The original SQL text
+/// @param filter_in The IN clause from BuildCatalogFilterIN
+/// @return The filtered SQL (may be unchanged if no metadata references found)
+std::string FilterMetadataReferences(const std::string& sql, const std::string& filter_in);
+
 }  // namespace gizmosql::enterprise
