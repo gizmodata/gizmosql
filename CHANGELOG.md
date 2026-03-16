@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.4] - 2026-03-16
+
 ### Added
 
 - **`--oauth-redirect-uri` / `GIZMOSQL_OAUTH_REDIRECT_URI`** *(Enterprise)*: Override the OAuth redirect URI independently of `--oauth-base-url`. When set, takes precedence over the redirect URI derived from the base URL (`<base-url>/oauth/callback`). Useful when the redirect URI differs from the base URL, e.g., separate proxy endpoints. If not set, the redirect URI is derived from `--oauth-base-url` as before (backward compatible).
