@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.5] - 2026-03-23
+
 ### Changed
 
 - **Upgraded DuckDB from v1.5.0 to v1.5.1**
