@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgraded DuckDB from v1.5.0 to v1.5.1**
+
 ## [1.19.4] - 2026-03-16
 
 ### Added
@@ -380,7 +384,7 @@ GizmoSQL is now available in two editions:
 | Component | Version |
 |-----------|---------|
 | Apache Arrow | **23.0.1** |
-| DuckDB | v1.5.0 |
+| DuckDB | v1.5.1 |
 | SQLite | 3.52.0 |
 | jwt-cpp | v0.7.2 |
 | OpenTelemetry C++ | v1.25.0 |
