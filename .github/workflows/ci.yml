@@ -131,7 +131,7 @@ jobs:
           app-path: build/gizmosql_server
           entitlements-path: macos/entitlements.plist
 
-      - name: Sign and notarize the server release build
+      - name: Sign and notarize the client release build
         uses: toitlang/action-macos-sign-notarize@v1.2.1
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
