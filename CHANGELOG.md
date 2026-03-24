@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Internal query log level filtering**: Internal queries (e.g., `DoGetTables`, `GetFlightInfoStatement`) now correctly use the session/server `query_log_level` as the threshold and the statement's own log level as the display severity. Previously the arguments were effectively swapped, causing internal queries marked as `ARROW_DEBUG` to leak into `INFO`-level logs. With this fix, internal queries are properly suppressed at the default `INFO` threshold and only appear when `query_log_level` is set to `DEBUG`.
+
+### Added
+
+- **`is_internal` attribute in query logs**: Query log entries now include an `is_internal` field (`true`/`false`) indicating whether the SQL statement originated from an internal Flight SQL endpoint (e.g., `DoGetTables`, `GetDbSchemas`) or from a user query. This aids in log filtering and debugging.
+
 ## [1.19.5] - 2026-03-23
 
 ### Changed

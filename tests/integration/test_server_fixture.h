@@ -104,6 +104,9 @@ struct TestServerConfig {
   std::string oauth_redirect_uri = "";          // OAuth redirect URI override (takes precedence over derived)
   std::string oauth_instance_id = "";           // Instance ID for multi-instance OAuth proxy routing
   bool oauth_disable_tls = false;               // Disable TLS on OAuth callback server
+  bool print_queries = false;                    // Enable query logging
+  arrow::util::ArrowLogLevel query_log_level =
+      arrow::util::ArrowLogLevel::ARROW_INFO;    // Query log level threshold
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -174,7 +177,7 @@ class ServerTestFixture : public ::testing::Test {
         /*mtls_ca_cert_path=*/fs::path(),
         /*init_sql_commands=*/config_.init_sql_commands,
         /*init_sql_commands_file=*/fs::path(),
-        /*print_queries=*/false,
+        /*print_queries=*/config_.print_queries,
         /*read_only=*/false,
         /*token_allowed_issuer=*/config_.token_allowed_issuer,
         /*token_allowed_audience=*/config_.token_allowed_audience,
@@ -184,7 +187,7 @@ class ServerTestFixture : public ::testing::Test {
         /*token_authorized_emails=*/config_.token_authorized_emails,
         /*access_logging_enabled=*/false,
         /*query_timeout=*/0,
-        /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
+        /*query_log_level=*/config_.query_log_level,
         /*auth_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*health_port=*/config_.health_port,
         /*health_check_query=*/config_.health_check_query,
