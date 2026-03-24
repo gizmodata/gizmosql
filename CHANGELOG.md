@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.7] - 2026-03-24
+
 ### Fixed
 
 - **`query_log_level` now independent of `--log-level`**: `SET gizmosql.query_log_level = DEBUG` (or `--query-log-level debug`) now correctly emits DEBUG query logs even when the global `--log-level` is `info`. Previously, the global logger threshold acted as an additional gate that suppressed query logs below its level.
