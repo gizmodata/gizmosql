@@ -105,6 +105,46 @@ ninja gizmosql_integration_tests
 - Use `GIZMOSQL_LOGKV(level, message, ...)` for structured key-value logging
 - Levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `FATAL`
 
+### Component Log Level Architecture (CRITICAL — Do Not Regress)
+
+GizmoSQL has **three independent log level controls**. Each uses a **threshold** (minimum severity to emit) and a **display severity** (the level the message is logged at). These must remain independent:
+
+| Control | CLI flag | Env var | Scope | What it gates |
+|---------|----------|---------|-------|---------------|
+| **Global log level** | `--log-level` | `GIZMOSQL_LOG_LEVEL` | Process-wide | All non-component log messages |
+| **Query log level** | `--query-log-level` | `GIZMOSQL_QUERY_LOG_LEVEL` | Server default; overridable per-session via `SET gizmosql.query_log_level` | Query execution logs (attempt/success/failure) |
+| **Auth log level** | `--auth-log-level` | `GIZMOSQL_AUTH_LOG_LEVEL` | Server-wide | Authentication/token validation logs |
+
+#### Macro usage rules
+
+| Macro | Threshold check | Used by |
+|-------|----------------|---------|
+| `GIZMOSQL_LOGKV(SEV, ...)` | Global logger `severity_threshold()` | General logging |
+| `GIZMOSQL_LOGKV_SESSION(SEV, ...)` | Global logger `severity_threshold()` | Session-aware general logging |
+| `GIZMOSQL_LOGKV_DYNAMIC_AT(THRESHOLD, DISPLAY_SEV, ...)` | `DISPLAY_SEV >= THRESHOLD` **AND** `DISPLAY_SEV >= global severity_threshold()` | **Auth logging** (`gizmosql_security.cpp`) |
+| `GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(THRESHOLD, DISPLAY_SEV, ...)` | `DISPLAY_SEV >= THRESHOLD` **only** (bypasses global logger via `LogWithFieldsUnchecked`) | **Query logging** (`duckdb_statement.cpp`) |
+
+**Why the asymmetry?** `query_log_level` is settable per-session at runtime via `SET gizmosql.query_log_level = DEBUG`, so it must be able to independently override the global log level. Auth log level is server-wide and set at startup, so it correctly defers to the global logger threshold as an additional gate.
+
+#### Key invariants (regression tests exist for all of these):
+
+1. **`query_log_level` is independent of `--log-level`**: Setting `query_log_level = DEBUG` (via SET or CLI) must emit DEBUG query logs even when `--log-level` is `info`. This is achieved by `GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT` calling `LogWithFieldsUnchecked()` which skips the global `severity_threshold()` check.
+
+2. **`auth_log_level` respects `--log-level`**: Auth logs use `GIZMOSQL_LOGKV_DYNAMIC_AT` which checks **both** the component threshold AND the global logger threshold. A DEBUG auth message is suppressed when `--log-level` is `info`.
+
+3. **Bearer token display severity**: `GetTokenLogLevel()` in `gizmosql_security.cpp` returns the **display severity** only — `ARROW_INFO` for first-seen tokens, `ARROW_DEBUG` for repeat tokens. It must **never** return `auth_log_level_`. The threshold argument to the macro must always be `auth_log_level_`.
+
+4. **Internal query display severity**: Internal queries (DoGetTables, GetDbSchemas, etc.) pass `ARROW_DEBUG` as their display severity in `DuckDBStatement::Create()`. At the default `query_log_level = INFO`, these are suppressed (`DEBUG < INFO`). At `query_log_level = DEBUG`, they appear.
+
+5. **Session vs server fallback for `query_log_level`**: `GetSessionOrServerLogLevel()` checks `session->query_log_level` first (set via session-level SET), then falls back to the server's global value (set via `--query-log-level`, env var, or `SET GLOBAL`).
+
+#### Test coverage
+
+- `test_log_level_filtering.cpp` — Unit tests for macro threshold behavior
+- `test_internal_query_log_level.cpp` — Internal query suppression at INFO / emission at DEBUG
+- `test_set_query_log_level.cpp` — Session-level SET dynamically changes threshold
+- `test_auth_log_level.cpp` — Repeat bearer tokens suppressed at INFO, first-seen logged at INFO
+
 ### Error Handling
 - Use Arrow's `Status` and `Result<T>` types
 - Use `ARROW_RETURN_NOT_OK()` and `ARROW_ASSIGN_OR_RAISE()` macros

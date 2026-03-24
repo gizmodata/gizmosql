@@ -19,6 +19,7 @@ enable_testing()
 # ---------------------------------------------------------
 # Core integration tests (always built)
 set(GIZMOSQL_CORE_TEST_SRCS
+        integration/test_auth_log_level.cpp
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
         integration/test_catalog_access.cpp
@@ -28,6 +29,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_interactive_client.cpp
         integration/test_internal_query_log_level.cpp
         integration/test_log_level_filtering.cpp
+        integration/test_set_query_log_level.cpp
         integration/test_sqlite_backend.cpp
         integration/test_token_authorized_emails.cpp
         integration/test_tpch_benchmark.cpp

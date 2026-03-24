@@ -794,7 +794,7 @@ arrow::util::ArrowLogLevel BearerAuthServerMiddlewareFactory::GetTokenLogLevel(
       logged_token_ids_.insert(token_id);
     }
 
-    return auth_log_level_;
+    return arrow::util::ArrowLogLevel::ARROW_INFO;
   }
 }
 
@@ -866,15 +866,11 @@ BearerAuthServerMiddlewareFactory::VerifyAndDecodeToken(
       }
     }
 
-    auto token_log_threshold = GetTokenLogLevel(decoded);
     // First-seen tokens display at INFO; repeat tokens display at DEBUG
-    auto token_display_level =
-        (token_log_threshold == arrow::util::ArrowLogLevel::ARROW_DEBUG)
-            ? arrow::util::ArrowLogLevel::ARROW_DEBUG
-            : arrow::util::ArrowLogLevel::ARROW_INFO;
+    auto token_display_level = GetTokenLogLevel(decoded);
 
     GIZMOSQL_LOGKV_DYNAMIC_AT(
-        token_log_threshold, token_display_level,
+        auth_log_level_, token_display_level,
         "peer=" + context.peer() + " - Bearer Token was validated successfully" +
             " - token_claims=(id=" + SafeGetTokenId(decoded) + " sub=" + decoded.get_subject() +
             " iss=" + decoded.get_issuer() + ")",
