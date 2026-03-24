@@ -248,6 +248,23 @@ TEST_F(DuckLakeServerFixture, DuckLakeSetupAndQuery) {
   result = RunQuery(sql_client, call_options, create_pg_secret);
   ASSERT_TRUE(result.success) << "Failed to create postgres secret: " << result.error_message;
 
+  // Step 2b: Reset DuckLake metadata in Postgres to avoid snapshot ID collisions
+  // from previous test runs. Drop and recreate the public schema to clear all
+  // DuckLake metadata tables (ducklake_snapshot, ducklake_data_file, etc.).
+  std::cerr << "Resetting DuckLake metadata in PostgreSQL..." << std::endl;
+  result = RunQuery(sql_client, call_options, R"(
+    ATTACH 'dbname=ducklake_catalog host=localhost port=5432 user=postgres password=testpassword'
+      AS pg_cleanup (TYPE postgres);
+  )");
+  if (result.success) {
+    RunQuery(sql_client, call_options,
+             "DROP SCHEMA IF EXISTS pg_cleanup.public CASCADE;");
+    RunQuery(sql_client, call_options,
+             "CREATE SCHEMA pg_cleanup.public;");
+    RunQuery(sql_client, call_options, "DETACH pg_cleanup;");
+    std::cerr << "  DuckLake metadata reset complete" << std::endl;
+  }
+
   // Step 3: Create DuckLake secret
   std::cerr << "Creating DuckLake secret..." << std::endl;
   std::string create_ducklake_secret = R"(

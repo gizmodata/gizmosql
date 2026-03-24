@@ -263,17 +263,20 @@ TEST_F(SessionLogLevelFilteringTest,
 }
 
 TEST_F(SessionLogLevelFilteringTest,
-       SessionDynamic_ConvenienceWrapperSuppressesWhenOverallThresholdHigher) {
-  // Overall logger threshold is ERROR
+       SessionDynamic_ConvenienceWrapperNotSuppressedByOverallThreshold) {
+  // Overall logger threshold is ERROR, but the DYNAMIC macro uses the
+  // component threshold as the sole gate — global threshold is ignored.
   auto logger = InstallCapturingLogger(ArrowLogLevel::ARROW_ERROR);
 
   GIZMOSQL_LOGKV_SESSION_DYNAMIC(
-      ArrowLogLevel::ARROW_INFO, session_, "Should be suppressed",
+      ArrowLogLevel::ARROW_INFO, session_, "Should NOT be suppressed",
       {"kind", "test"}, {"status", "ok"});
 
   auto entries = logger->TakeEntries();
-  EXPECT_TRUE(entries.empty())
-      << "INFO message should be suppressed when overall threshold is ERROR";
+  ASSERT_EQ(entries.size(), 1u)
+      << "INFO message should pass when component threshold is INFO, "
+         "regardless of overall logger threshold";
+  EXPECT_EQ(entries[0].severity, ArrowLogLevel::ARROW_INFO);
 }
 
 // =============================================================================

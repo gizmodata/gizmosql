@@ -904,8 +904,11 @@ class DuckDBFlightSqlServer::Impl {
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
     new_session->connection = std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
-    new_session->query_timeout = query_timeout_;
-    new_session->query_log_level = query_log_level_;
+    // Note: query_timeout and query_log_level are intentionally left as nullopt
+    // so that sessions fall through to the server's current global values via
+    // GetQueryTimeout() and GetSessionOrServerLogLevel(). This ensures that
+    // SET GLOBAL takes effect immediately for all existing sessions that haven't
+    // set a session-level override.
 
 #ifdef GIZMOSQL_ENTERPRISE
     // Create session instrumentation if manager is available (Enterprise feature)

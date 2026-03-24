@@ -13,6 +13,7 @@
   * [Geometry & Spatial](geometry.md)
 
 * Features
+  * [SET Commands](set_commands.md)
   * [Session Instrumentation](session_instrumentation.md) *(Enterprise)*
   * [OpenTelemetry Integration](opentelemetry.md)
 

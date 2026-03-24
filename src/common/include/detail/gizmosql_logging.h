@@ -88,6 +88,12 @@ void InitLogging(const LogConfig& cfg);
 void SetLogLevel(arrow::util::ArrowLogLevel level);
 void LogWithFields(arrow::util::ArrowLogLevel level, const char* file, int line,
                    std::string_view msg, const FieldList& fields = {});
+// Variant that skips the global logger severity check — used by DYNAMIC_AT macros
+// where a caller-supplied threshold (e.g., query_log_level) is the sole gate.
+void LogWithFieldsUnchecked(arrow::util::Logger* logger,
+                            arrow::util::ArrowLogLevel level, const char* file,
+                            int line, std::string_view msg,
+                            const FieldList& fields = {});
 std::optional<TraceCorrelationIds> GetCurrentTraceCorrelationIds();
 
 /// Set the instance ID for log correlation. Once set, this ID will be included
@@ -245,7 +251,7 @@ ScopeGuard<F> MakeScopeGuard(F f) {
   } while (0)
 
 // Dynamic-level logging with separate threshold and display severity.
-// THRESHOLD is the component's minimum level (e.g., query_log_level).
+// THRESHOLD is the component's minimum level (e.g., auth_log_level).
 // DISPLAY_SEV is the message's natural severity (e.g., INFO for routine logs).
 // The message is emitted only when DISPLAY_SEV >= both the component THRESHOLD
 // and the overall logger severity, ensuring that setting a component threshold
@@ -289,9 +295,9 @@ ScopeGuard<F> MakeScopeGuard(F f) {
   do {                                                                               \
     auto _logger_sp = ::arrow::util::LoggerRegistry::GetDefaultLogger();             \
     auto* _logger = _logger_sp.get();                                                \
-    if (_logger && (DISPLAY_SEV >= THRESHOLD) &&                                     \
-        (DISPLAY_SEV >= _logger->severity_threshold())) {                            \
-      ::gizmosql::LogWithFields(DISPLAY_SEV, __FILE__, __LINE__, MSG,                \
+    if (_logger && (DISPLAY_SEV >= THRESHOLD)) {                                     \
+      ::gizmosql::LogWithFieldsUnchecked(_logger, DISPLAY_SEV,                       \
+          __FILE__, __LINE__, MSG,                                                   \
           ::gizmosql::FieldList{SESSION_KV_FIELDS(SESSION), __VA_ARGS__});           \
     }                                                                                \
   } while (0)

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`query_log_level` now independent of `--log-level`**: `SET gizmosql.query_log_level = DEBUG` (or `--query-log-level debug`) now correctly emits DEBUG query logs even when the global `--log-level` is `info`. Previously, the global logger threshold acted as an additional gate that suppressed query logs below its level.
+- **`SET GLOBAL` propagates immediately to existing sessions**: `SET GLOBAL gizmosql.query_log_level` and `SET GLOBAL gizmosql.query_timeout` now take effect immediately for all existing sessions that haven't set a session-level override. Previously, the server's default was baked into each session at creation time, requiring a reconnect to pick up global changes.
+- **Auth log level threshold for bearer token validation**: Bearer token validation logs now correctly use `auth_log_level` as the threshold. Previously, repeat token validations could bypass the threshold because `GetTokenLogLevel()` was used as both the threshold and display severity.
+
+### Added
+
+- **`docs/set_commands.md`**: New documentation for `SET gizmosql.*` commands covering `query_log_level` and `query_timeout` with session/global scope, valid values, and admin restrictions.
+
 ## [1.19.6] - 2026-03-24
 
 ### Fixed

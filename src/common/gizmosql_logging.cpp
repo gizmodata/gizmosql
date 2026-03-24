@@ -427,6 +427,25 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
   logger->Log(d);
 }
 
+void LogWithFieldsUnchecked(arrow::util::Logger* logger,
+                            arrow::util::ArrowLogLevel level,
+                            const char* file,
+                            int line,
+                            std::string_view msg,
+                            const FieldList& fields) {
+  // Prepend encoded KV if present
+  std::string full = EncodeFieldsForMessage(fields);
+
+  full.append(msg.data(), msg.size());
+
+  arrow::util::LogDetails d;
+  d.severity = level;
+  d.message = full;
+  d.source_location.file = file;
+  d.source_location.line = static_cast<uint32_t>(line);
+  logger->Log(d);
+}
+
 void SetInstanceId(const std::string& instance_id) {
   std::lock_guard<std::mutex> lk(G.instance_id_mu);
   G.instance_id = instance_id;
