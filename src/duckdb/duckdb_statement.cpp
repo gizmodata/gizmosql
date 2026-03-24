@@ -656,13 +656,12 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::string& flight_method, bool is_internal) {
   std::string status;
   auto logged_sql = redact_sql_for_logs(sql);
-  arrow::util::ArrowLogLevel effective_log_level;
-  if (!log_level.has_value()) {
-    ARROW_ASSIGN_OR_RAISE(effective_log_level,
-                          GetSessionOrServerLogLevel(client_session));
-  } else {
-    effective_log_level = log_level.value();
-  }
+  // Threshold: session/server log level gates whether messages are emitted
+  ARROW_ASSIGN_OR_RAISE(auto log_threshold,
+                        GetSessionOrServerLogLevel(client_session));
+  // Display severity: statement's own level, defaulting to INFO for user queries
+  auto display_severity =
+      log_level.value_or(arrow::util::ArrowLogLevel::ARROW_INFO);
 
   GIZMOSQL_LOG_SCOPE_STATUS(
       DEBUG, "DuckDBStatement::Create", status, {"peer", client_session->peer},
@@ -750,10 +749,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   if (log_queries) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
-        effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+        log_threshold, display_severity,
         client_session, "Client is attempting to run a SQL command",
         {"kind", "sql"}, {"status", "attempt"}, {"statement_id", handle},
-        {"sql", logged_sql});
+        {"sql", logged_sql}, {"is_internal", is_internal ? "true" : "false"},
+        {"flight_method", flight_method});
   }
 
   // Prevent DETACH of instrumentation database (only relevant when enterprise is enabled)
@@ -803,7 +803,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
     // Return a synthetic result for the successful KILL SESSION command
     std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-        client_session, handle, sql, effective_log_level, log_queries, override_schema));
+        client_session, handle, sql, display_severity, log_queries, override_schema,
+        is_internal, flight_method));
     result->is_gizmosql_admin_ = true;
 
     // Create statement instrumentation for successful KILL SESSION
@@ -838,7 +839,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   if (IsLikelyGizmoSQLSet(sql)) {
     std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-        client_session, handle, sql, effective_log_level, log_queries, override_schema));
+        client_session, handle, sql, display_severity, log_queries, override_schema,
+        is_internal, flight_method));
     result->is_gizmosql_admin_ = true;
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -853,10 +855,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
     if (log_queries) {
       GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
-          effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+          log_threshold, display_severity,
           client_session, "Detected GizmoSQL admin SET command",
           {"kind", "sql"}, {"status", "admin"}, {"statement_id", handle},
-          {"sql", logged_sql});
+          {"sql", logged_sql}, {"is_internal", is_internal ? "true" : "false"},
+          {"flight_method", flight_method});
     }
     return result;
   }
@@ -917,16 +920,19 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       // Fallback to direct query execution for statements like PIVOT that get rewritten to multiple statements
       if (log_queries) {
         GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
-            effective_log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+            log_threshold, display_severity,
             client_session,
             "SQL command cannot run as a prepared statement, falling back to direct "
             "query execution",
             {"kind", "sql"}, {"status", "fallback"},
-            {"statement_id", handle}, {"sql", logged_sql});
+            {"statement_id", handle}, {"sql", logged_sql},
+            {"is_internal", is_internal ? "true" : "false"},
+            {"flight_method", flight_method});
       }
 
       std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-          client_session, handle, effective_sql, log_level, log_queries, override_schema));
+          client_session, handle, effective_sql, log_level, log_queries, override_schema,
+          is_internal, flight_method));
 
 #ifdef GIZMOSQL_ENTERPRISE
       // Create statement instrumentation for direct execution
@@ -968,7 +974,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   }
 
   std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-      client_session, handle, stmt, log_level, log_queries, override_schema));
+      client_session, handle, stmt, log_level, log_queries, override_schema, is_internal,
+      flight_method));
 
 #ifdef GIZMOSQL_ENTERPRISE
   // Create statement instrumentation for prepared statement
@@ -1080,7 +1087,9 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const std::shared_ptr<duckdb::PreparedStatement>& stmt,
                                  const std::optional<arrow::util::ArrowLogLevel>& log_level,
                                  const bool& log_queries,
-                                 const std::shared_ptr<arrow::Schema>& override_schema) {
+                                 const std::shared_ptr<arrow::Schema>& override_schema,
+                                 bool is_internal,
+                                 std::string flight_method) {
   client_session_ = client_session;
   session_id_ = client_session->session_id;
   statement_id_ = handle;
@@ -1089,6 +1098,8 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
   logged_sql_ = redact_sql_for_logs(stmt->query);
   use_direct_execution_ = false;
   log_level_ = log_level;
+  is_internal_ = is_internal;
+  flight_method_ = std::move(flight_method);
   start_time_ = std::chrono::steady_clock::now();
   override_schema_ = override_schema;
   query_result_ = nullptr;
@@ -1105,7 +1116,9 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const std::string& handle, const std::string& sql,
                                  const std::optional<arrow::util::ArrowLogLevel>& log_level,
                                  const bool& log_queries,
-                                 const std::shared_ptr<arrow::Schema>& override_schema) {
+                                 const std::shared_ptr<arrow::Schema>& override_schema,
+                                 bool is_internal,
+                                 std::string flight_method) {
   client_session_ = client_session;
   session_id_ = client_session->session_id;
   statement_id_ = handle;
@@ -1115,6 +1128,8 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
   use_direct_execution_ = true;
   stmt_ = nullptr;
   log_level_ = log_level;
+  is_internal_ = is_internal;
+  flight_method_ = std::move(flight_method);
   start_time_ = std::chrono::steady_clock::now();
   override_schema_ = override_schema;
   query_result_ = nullptr;
@@ -1133,7 +1148,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
   std::string execute_status;
 
   ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
-  ARROW_ASSIGN_OR_RAISE(auto log_level, GetLogLevel());
+  // Threshold: session/server log level gates whether messages are emitted
+  ARROW_ASSIGN_OR_RAISE(auto log_threshold, GetSessionOrServerLogLevel(session));
+  // Display severity: statement's own level, defaulting to INFO for user queries
+  auto log_level =
+      log_level_.value_or(arrow::util::ArrowLogLevel::ARROW_INFO);
   start_time_ = std::chrono::steady_clock::now();
 
   const std::string metric_operation =
@@ -1231,7 +1250,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   // Launch execution in a separate thread
   auto future = std::async(
-      std::launch::async, [this, session, query_timeout, log_level
+      std::launch::async, [this, session, query_timeout, log_threshold, log_level
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
                            ,
                            telemetry_context,
@@ -1250,12 +1269,14 @@ arrow::Result<int> DuckDBStatement::Execute() {
           if (query_result_ != nullptr) {
             if (log_queries_) {
               GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
-                  log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+                  log_threshold, log_level,
                   session,
                   "Direct execution of the SQL command has already occurred, skipping "
                   "re-execution",
                   {"kind", "sql"}, {"status", "already-executed"},
-                  {"statement_id", statement_id_}, {"query_timeout", query_timeout});
+                  {"statement_id", statement_id_}, {"query_timeout", query_timeout},
+                  {"is_internal", is_internal_ ? "true" : "false"},
+                  {"flight_method", flight_method_});
             }
             return 0;  // Success
           }
@@ -1293,12 +1314,14 @@ arrow::Result<int> DuckDBStatement::Execute() {
             params_str << "]";
 
             GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
-                log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+                log_threshold, log_level,
                 session, "Executing prepared statement with bind parameters",
                 {"kind", "sql"}, {"status", "executing"},
                 {"statement_id", statement_id_}, {"bind_parameters", params_str.str()},
                 {"param_count", std::to_string(bind_parameters.size())},
-                {"query_timeout", std::to_string(query_timeout)});
+                {"query_timeout", std::to_string(query_timeout)},
+                {"is_internal", is_internal_ ? "true" : "false"},
+                {"flight_method", flight_method_});
           }
 
           query_result_ = stmt_->Execute(bind_parameters);
@@ -1393,11 +1416,13 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
   if (log_queries_ && result.ok()) {
     GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
-        log_level, arrow::util::ArrowLogLevel::ARROW_INFO,
+        log_threshold, log_level,
         session, "Client SQL command execution succeeded",
         {"kind", "sql"}, {"status", "success"}, {"statement_id", statement_id_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
-        {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_});
+        {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_},
+        {"is_internal", is_internal_ ? "true" : "false"},
+        {"flight_method", flight_method_});
   }
 
   record_query_metric(result.ok() ? "OK" : result.status().CodeAsString());

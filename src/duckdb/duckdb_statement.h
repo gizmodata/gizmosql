@@ -120,6 +120,8 @@ class DuckDBStatement {
   bool use_direct_execution_;  // Flag to indicate whether to use direct query execution
   bool is_gizmosql_admin_ =
       false;  // Flag to indicate whether the statement is a GizmoSQL administrative command
+  bool is_internal_ = false;  // Flag to indicate whether the statement is an internal query
+  std::string flight_method_;  // The Flight RPC method that created this statement
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
   std::string creation_trace_id_;
@@ -135,14 +137,18 @@ class DuckDBStatement {
                   const std::shared_ptr<duckdb::PreparedStatement>& stmt,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema);
+                  const std::shared_ptr<arrow::Schema>& override_schema,
+                  bool is_internal = false,
+                  std::string flight_method = "");
 
   // Constructor for direct execution mode
   DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle, const std::string& sql,
                   const std::optional<arrow::util::ArrowLogLevel>& log_level,
                   const bool& log_queries,
-                  const std::shared_ptr<arrow::Schema>& override_schema);
+                  const std::shared_ptr<arrow::Schema>& override_schema,
+                  bool is_internal = false,
+                  std::string flight_method = "");
 
   arrow::Status HandleGizmoSQLSet();
 
