@@ -752,7 +752,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         log_threshold, display_severity,
         client_session, "Client is attempting to run a SQL command",
         {"kind", "sql"}, {"status", "attempt"}, {"statement_id", handle},
-        {"sql", logged_sql}, {"is_internal", is_internal ? "true" : "false"});
+        {"sql", logged_sql}, {"is_internal", is_internal ? "true" : "false"},
+        {"flight_method", flight_method});
   }
 
   // Prevent DETACH of instrumentation database (only relevant when enterprise is enabled)
@@ -803,7 +804,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     // Return a synthetic result for the successful KILL SESSION command
     std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
         client_session, handle, sql, display_severity, log_queries, override_schema,
-        is_internal));
+        is_internal, flight_method));
     result->is_gizmosql_admin_ = true;
 
     // Create statement instrumentation for successful KILL SESSION
@@ -839,7 +840,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   if (IsLikelyGizmoSQLSet(sql)) {
     std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
         client_session, handle, sql, display_severity, log_queries, override_schema,
-        is_internal));
+        is_internal, flight_method));
     result->is_gizmosql_admin_ = true;
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -857,7 +858,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
           log_threshold, display_severity,
           client_session, "Detected GizmoSQL admin SET command",
           {"kind", "sql"}, {"status", "admin"}, {"statement_id", handle},
-          {"sql", logged_sql}, {"is_internal", is_internal ? "true" : "false"});
+          {"sql", logged_sql}, {"is_internal", is_internal ? "true" : "false"},
+          {"flight_method", flight_method});
     }
     return result;
   }
@@ -924,12 +926,13 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
             "query execution",
             {"kind", "sql"}, {"status", "fallback"},
             {"statement_id", handle}, {"sql", logged_sql},
-            {"is_internal", is_internal ? "true" : "false"});
+            {"is_internal", is_internal ? "true" : "false"},
+            {"flight_method", flight_method});
       }
 
       std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
           client_session, handle, effective_sql, log_level, log_queries, override_schema,
-          is_internal));
+          is_internal, flight_method));
 
 #ifdef GIZMOSQL_ENTERPRISE
       // Create statement instrumentation for direct execution
@@ -971,7 +974,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   }
 
   std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-      client_session, handle, stmt, log_level, log_queries, override_schema, is_internal));
+      client_session, handle, stmt, log_level, log_queries, override_schema, is_internal,
+      flight_method));
 
 #ifdef GIZMOSQL_ENTERPRISE
   // Create statement instrumentation for prepared statement
@@ -1084,7 +1088,8 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const std::optional<arrow::util::ArrowLogLevel>& log_level,
                                  const bool& log_queries,
                                  const std::shared_ptr<arrow::Schema>& override_schema,
-                                 bool is_internal) {
+                                 bool is_internal,
+                                 std::string flight_method) {
   client_session_ = client_session;
   session_id_ = client_session->session_id;
   statement_id_ = handle;
@@ -1094,6 +1099,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
   use_direct_execution_ = false;
   log_level_ = log_level;
   is_internal_ = is_internal;
+  flight_method_ = std::move(flight_method);
   start_time_ = std::chrono::steady_clock::now();
   override_schema_ = override_schema;
   query_result_ = nullptr;
@@ -1111,7 +1117,8 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
                                  const std::optional<arrow::util::ArrowLogLevel>& log_level,
                                  const bool& log_queries,
                                  const std::shared_ptr<arrow::Schema>& override_schema,
-                                 bool is_internal) {
+                                 bool is_internal,
+                                 std::string flight_method) {
   client_session_ = client_session;
   session_id_ = client_session->session_id;
   statement_id_ = handle;
@@ -1122,6 +1129,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
   stmt_ = nullptr;
   log_level_ = log_level;
   is_internal_ = is_internal;
+  flight_method_ = std::move(flight_method);
   start_time_ = std::chrono::steady_clock::now();
   override_schema_ = override_schema;
   query_result_ = nullptr;
@@ -1267,7 +1275,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
                   "re-execution",
                   {"kind", "sql"}, {"status", "already-executed"},
                   {"statement_id", statement_id_}, {"query_timeout", query_timeout},
-                  {"is_internal", is_internal_ ? "true" : "false"});
+                  {"is_internal", is_internal_ ? "true" : "false"},
+                  {"flight_method", flight_method_});
             }
             return 0;  // Success
           }
@@ -1311,7 +1320,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
                 {"statement_id", statement_id_}, {"bind_parameters", params_str.str()},
                 {"param_count", std::to_string(bind_parameters.size())},
                 {"query_timeout", std::to_string(query_timeout)},
-                {"is_internal", is_internal_ ? "true" : "false"});
+                {"is_internal", is_internal_ ? "true" : "false"},
+                {"flight_method", flight_method_});
           }
 
           query_result_ = stmt_->Execute(bind_parameters);
@@ -1411,7 +1421,8 @@ arrow::Result<int> DuckDBStatement::Execute() {
         {"kind", "sql"}, {"status", "success"}, {"statement_id", statement_id_},
         {"direct_execution", use_direct_execution_ ? "true" : "false"},
         {"duration_ms", GetLastExecutionDurationMs()}, {"sql", logged_sql_},
-        {"is_internal", is_internal_ ? "true" : "false"});
+        {"is_internal", is_internal_ ? "true" : "false"},
+        {"flight_method", flight_method_});
   }
 
   record_query_metric(result.ok() ? "OK" : result.status().CodeAsString());

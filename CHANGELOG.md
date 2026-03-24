@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`is_internal` attribute in query logs**: Query log entries now include an `is_internal` field (`true`/`false`) indicating whether the SQL statement originated from an internal Flight SQL endpoint (e.g., `DoGetTables`, `GetDbSchemas`) or from a user query. This aids in log filtering and debugging.
+- **`is_internal` and `flight_method` attributes in query logs**: Query log entries now include `is_internal` (`true`/`false`) indicating whether the SQL statement originated from an internal Flight SQL endpoint, and `flight_method` (e.g., `DoGetTables`, `GetFlightInfoStatement`) identifying the originating RPC. These aid in log filtering and debugging.
 
 ## [1.19.5] - 2026-03-23
 
