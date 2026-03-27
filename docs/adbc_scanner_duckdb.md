@@ -78,6 +78,30 @@ ATTACH 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337' AS gizmosql_db (
 
 This creates an encrypted and authenticated Flight SQL connection to the **GizmoSQL** service hosted by GizmoData.
 
+#### Connecting with Self-Signed Certificates (TLS Skip Verify)
+
+If your GizmoSQL server uses a self-signed certificate (common in development or internal environments), you can skip TLS certificate verification by adding `extra_options` to the secret:
+
+```sql
+CREATE SECRET gizmosql_secret (
+     TYPE adbc,
+     SCOPE 'grpc+tls://localhost:31337',
+     driver '/Users/philip/Downloads/libadbc_driver_flightsql.dylib',  /* Change this path as needed */
+     uri 'grpc+tls://localhost:31337',
+     username 'gizmosql_user',
+     password 'gizmosql_password',
+     extra_options MAP {
+          'adbc.flight.sql.client_option.tls_skip_verify': 'true'
+      }
+ );
+
+ATTACH 'grpc+tls://localhost:31337' AS gizmosql_db (
+      TYPE adbc
+  );
+```
+
+> **Note:** Only use `tls_skip_verify` for development or trusted internal environments — not in production.
+
 ---
 
 ### 4️⃣ Run a Remote Query!
