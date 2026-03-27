@@ -15,7 +15,7 @@ You can even use ADBC Scanner from a GizmoSQL server - allowing you to connect t
 - **Category:** Community Extension  
 - **Purpose:** Query remote databases over ADBC  
 - **Supported Backends:** Any database with a compatible ADBC driver  
-- **Example Driver Used:** `libadbc_driver_flightsql.dylib` (for Arrow Flight SQL)
+- **Example Driver Used:** `flightsql` (for Arrow Flight SQL)
 
 ---
 
@@ -58,14 +58,13 @@ This downloads and registers the ADBC Scanner extension for your DuckDB environm
 
 ### 3️⃣ Connect to a Remote GizmoSQL Instance
 
-You’ll need the [ADBC FlightSQL driver](https://columnar.tech/dbc/) for your platform.  
-Then, create a secret, and then a connection to the remote GizmoSQL instance:
+Create a secret and a connection to the remote GizmoSQL instance:
 
 ```sql
 CREATE SECRET gizmosql_secret (
      TYPE adbc,
      SCOPE 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337',
-     driver '/Users/philip/Downloads/libadbc_driver_flightsql.dylib',  /* Change this path as needed */
+     driver 'flightsql',
      uri 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337',
      username 'adbc-scanner',
      password 'QueryDotFarmRules!123'
@@ -86,7 +85,7 @@ If your GizmoSQL server uses a self-signed certificate (common in development or
 CREATE SECRET gizmosql_secret (
      TYPE adbc,
      SCOPE 'grpc+tls://localhost:31337',
-     driver '/Users/philip/Downloads/libadbc_driver_flightsql.dylib',  /* Change this path as needed */
+     driver 'flightsql',
      uri 'grpc+tls://localhost:31337',
      username 'gizmosql_user',
      password 'gizmosql_password',
