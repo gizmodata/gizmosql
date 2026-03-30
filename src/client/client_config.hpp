@@ -85,6 +85,16 @@ struct ClientConfig {
   int max_width = 0;
   bool auto_width = false;  // When true, re-read terminal width before each render
 
+  // Syntax highlighting
+  bool syntax_highlighting = true;
+
+  // Dynamic prompt (show catalog.schema)
+  bool dynamic_prompt = true;
+
+  // Built-in pager
+  bool pager_enabled = true;
+  int pager_threshold = 50;  // Minimum rows to trigger pager
+
   // Runtime
   bool is_interactive = false;
   std::string main_prompt = "gizmosql> ";

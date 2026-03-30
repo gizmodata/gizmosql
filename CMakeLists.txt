@@ -625,6 +625,8 @@ set(GIZMOSQL_CLIENT_SRCS
         src/client/command_processor.cpp
         src/client/output_renderer.cpp
         src/client/password_prompt.cpp
+        src/client/syntax_highlighter.cpp
+        src/client/pager.cpp
 )
 
 if(WIN32)

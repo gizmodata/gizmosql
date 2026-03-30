@@ -108,11 +108,12 @@ const std::vector<std::string>& ShellCompleter::GetSqlKeywords() {
 // Static dot commands list
 const std::vector<std::string>& ShellCompleter::GetDotCommands() {
   static const std::vector<std::string> commands = {
-      ".bail",    ".catalogs", ".cd",      ".connect",   ".echo",
-      ".exit",    ".headers",  ".help",    ".maxrows",   ".maxwidth",
-      ".mode",    ".nullvalue",".once",    ".output",    ".prompt",
-      ".quit",    ".read",     ".refresh", ".schema",    ".separator",
-      ".shell",   ".show",     ".tables",  ".timer",
+      ".bail",       ".catalogs",   ".cd",         ".connect",    ".describe",
+      ".echo",       ".exit",       ".export_last",".headers",    ".help",
+      ".highlight",  ".last",       ".maxrows",    ".maxwidth",   ".mode",
+      ".nullvalue",  ".once",       ".output",     ".pager",      ".prompt",
+      ".quit",       ".read",       ".refresh",    ".schema",     ".separator",
+      ".shell",      ".show",       ".tables",     ".timer",
   };
   return commands;
 }
@@ -181,8 +182,10 @@ std::string ShellCompleter::ExtractPrefix(const std::string& input,
     return input.substr(pos + 1);
   }
 
-  // Check for dot command prefix
-  if (pos >= 0 && input[pos] == '.') {
+  // Check for dot command prefix — require at least one char after the dot
+  // to avoid triggering completion on bare "."
+  if (pos >= 0 && input[pos] == '.' &&
+      pos + 1 < static_cast<int>(input.size())) {
     context_len = static_cast<int>(input.size()) - pos;
     return input.substr(pos);
   }
@@ -245,6 +248,8 @@ replxx::Replxx::completions_t ShellCompleter::Complete(
 
   switch (ctx) {
     case CompletionContext::DOT_COMMAND: {
+      // Don't complete on bare "." — wait for at least one more character
+      if (prefix == ".") break;
       for (const auto& cmd : GetDotCommands()) {
         if (StartsWith(cmd, prefix)) {
           completions.emplace_back(cmd,
