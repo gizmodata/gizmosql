@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.1] - 2026-03-31
+
+### Fixed
+
+- **Pager Page Down on macOS Terminal.app**: Fn+Down was intercepted by Terminal.app's own scroll buffer instead of reaching the pager. Now uses the alternate screen buffer (`ESC[?1049h`) — the same approach used by `less`, `vim`, and `top` — so all pager keys work correctly. Previous terminal content is also restored cleanly when exiting the pager.
+
 ## [1.20.0] - 2026-03-31
 
 ### Added
