@@ -4,6 +4,7 @@
 
 * Getting Started
   * [Editions](editions.md)
+  * [Security Guide](security.md)
   * [Python ADBC Driver](python_adbc.md)
   * [Client Shell](client.md)
   * [Token Authentication](token_authentication.md)
