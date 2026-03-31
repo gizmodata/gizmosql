@@ -413,7 +413,6 @@ CommandResult CommandProcessor::Process(const std::string& line) {
         // Assign boxes to the shortest column
         std::vector<int> col_heights(num_cols, 0);
         for (size_t bi = 0; bi < rendered.size(); ++bi) {
-          // If this box is wider than the column it's assigned to, skip to next row
           // Find the shortest column
           int min_col = 0;
           for (int c = 1; c < num_cols; ++c) {
@@ -422,6 +421,28 @@ CommandResult CommandProcessor::Process(const std::string& line) {
           col_slots[min_col].push_back(bi);
           // +2 for top/bottom border, +content lines
           col_heights[min_col] += static_cast<int>(rendered[bi].lines.size()) + 2;
+        }
+
+        // Normalize: all boxes in the same column must have the same width
+        // (the max width of any box in that column). Pad content lines.
+        std::vector<int> col_widths(num_cols, 0);
+        for (int c = 0; c < num_cols; ++c) {
+          for (auto bi : col_slots[c]) {
+            col_widths[c] = std::max(col_widths[c], rendered[bi].width);
+          }
+          // Expand narrower boxes to match the column width
+          for (auto bi : col_slots[c]) {
+            int old_w = rendered[bi].width;
+            int new_w = col_widths[c];
+            if (new_w > old_w) {
+              int pad = new_w - old_w;
+              for (auto& line : rendered[bi].lines) {
+                // Lines may contain ANSI codes — append padding spaces at end
+                line += std::string(pad, ' ');
+              }
+              rendered[bi].width = new_w;
+            }
+          }
         }
 
         // Render the masonry: process row by row across all columns
