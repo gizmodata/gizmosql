@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SQL syntax highlighting**: The GizmoSQL client now highlights SQL input as you type — keywords (green), strings (yellow), numbers (magenta), comments (gray), functions (cyan), and unclosed quotes/brackets (red). Toggle with `.highlight on|off`.
+- **Dynamic prompting**: The prompt now shows the current `catalog.schema> ` context, updating automatically after DDL, `USE`, `ATTACH`/`DETACH`, and `.connect` commands.
+- **`.describe TABLE` command**: Quickly inspect a table's column names and types without writing a full DESCRIBE query.
+- **Hierarchical `.tables` view**: `.tables` now displays a tree view grouped by catalog and schema using Unicode box-drawing characters. Use `.tables --flat` for the previous flat listing.
+- **Last result reference (`_`)**: Query results are cached in memory. Reference `_` as a table name in subsequent queries (e.g., `SELECT * FROM _ WHERE col > 5`) — the client uploads the cached result to the server as a temporary table via bulk ingest for full SQL support including joins and aggregations. Use `.last` to re-display and `.export_last [FILE]` to save as Arrow IPC.
+- **Built-in pager**: Large result sets (50+ rows by default) are automatically paged with keyboard navigation — Page Up/Down, j/k for line scroll, g/G for home/end, q to quit. Configure with `.pager on|off|N`.
+
 ## [1.19.7] - 2026-03-24
 
 ### Fixed

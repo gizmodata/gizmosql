@@ -443,7 +443,8 @@ arrow::Result<int64_t> FlightConnection::ExecuteUpdate(const std::string& sql) {
 arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::GetTables(
     const std::string& catalog_pattern,
     const std::string& schema_pattern,
-    const std::string& table_pattern) {
+    const std::string& table_pattern,
+    bool include_schema) {
   std::string cat = catalog_pattern.empty() ? "" : catalog_pattern;
   std::string sch = schema_pattern.empty() ? "" : schema_pattern;
   std::string tab = table_pattern.empty() ? "" : table_pattern;
@@ -454,7 +455,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::GetTables(
                          catalog_pattern.empty() ? nullptr : &cat,
                          schema_pattern.empty() ? nullptr : &sch,
                          table_pattern.empty() ? nullptr : &tab,
-                         false, nullptr));
+                         include_schema, nullptr));
   return CollectResults(info);
 }
 
@@ -481,6 +482,40 @@ arrow::Result<std::shared_ptr<arrow::Table>> FlightConnection::GetSqlInfo(
     const std::vector<int>& info) {
   ARROW_ASSIGN_OR_RAISE(auto flight_info, client_->GetSqlInfo(call_options_, info));
   return CollectResults(flight_info);
+}
+
+arrow::Status FlightConnection::UploadLastResult(
+    const std::shared_ptr<arrow::Table>& table, const std::string& table_name) {
+  if (!client_) {
+    return arrow::Status::Invalid("Not connected to a server");
+  }
+  if (!table || table->num_rows() == 0) {
+    return arrow::Status::Invalid("No result to upload");
+  }
+
+  // Drop existing temp table first — DuckDB's information_schema.tables doesn't
+  // include temp tables, so the server's TableExists check misses them and
+  // the CREATE_OR_REPLACE path in DoPutCommandStatementIngest never fires.
+  auto drop_result = client_->ExecuteUpdate(
+      call_options_, "DROP TABLE IF EXISTS \"" + table_name + "\"");
+  // Ignore errors — table might not exist
+
+  auto reader = std::make_shared<arrow::TableBatchReader>(*table);
+
+  namespace sql = arrow::flight::sql;
+  sql::TableDefinitionOptions table_def_options;
+  table_def_options.if_not_exist =
+      sql::TableDefinitionOptionsTableNotExistOption::kCreate;
+  table_def_options.if_exists =
+      sql::TableDefinitionOptionsTableExistsOption::kReplace;
+
+  ARROW_ASSIGN_OR_RAISE(
+      auto rows_written,
+      client_->ExecuteIngest(call_options_, reader, table_def_options,
+                             table_name, std::nullopt, std::nullopt,
+                             /*temporary=*/true));
+
+  return arrow::Status::OK();
 }
 
 }  // namespace gizmosql::client

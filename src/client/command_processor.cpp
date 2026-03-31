@@ -21,6 +21,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <vector>
 
@@ -32,14 +33,24 @@
 #endif
 
 #include <arrow/array.h>
+#include <arrow/buffer.h>
 #include <arrow/flight/sql/types.h>
+#include <arrow/io/file.h>
+#include <arrow/io/memory.h>
+#include <arrow/ipc/reader.h>
+#include <arrow/ipc/writer.h>
 
 #include "output_renderer.hpp"
 #include "password_prompt.hpp"
+#include "version.h"
 
 namespace gizmosql::client {
 
 namespace {
+
+// ANSI red for error messages (matching DuckDB's error styling)
+constexpr const char* kErrRed = "\033[1;31m";
+constexpr const char* kErrReset = "\033[0m";
 
 std::vector<std::string> SplitArgs(const std::string& line) {
   std::vector<std::string> args;
@@ -124,20 +135,379 @@ CommandResult CommandProcessor::Process(const std::string& line) {
     return CommandResult::OK;
   }
 
-  // .tables [PATTERN]
+  // .tables [PATTERN] [--flat]
   if (cmd == ".tables") {
     if (!conn_.IsConnected()) {
-      std::cerr << "Error: not connected to a server. Use '.connect HOST PORT "
+      std::cerr << kErrRed << "Error: not connected to a server. Use '.connect HOST PORT "
                    "USERNAME' to connect."
-                << std::endl;
+                << kErrReset << std::endl;
       return CommandResult::ERROR;
     }
-    std::string pattern = args.size() > 1 ? args[1] : "";
-    auto result = conn_.GetTables("", "", pattern.empty() ? "" : "%" + pattern + "%");
-    if (result.ok()) {
+    std::string pattern;
+    bool flat_mode = false;
+    for (size_t i = 1; i < args.size(); ++i) {
+      if (args[i] == "--flat" || args[i] == "-f") {
+        flat_mode = true;
+      } else {
+        pattern = args[i];
+      }
+    }
+
+    // Request include_schema for the rich box view
+    auto result = conn_.GetTables("", "", pattern.empty() ? "" : "%" + pattern + "%",
+                                   !flat_mode);
+    if (!result.ok()) {
+      std::cerr << kErrRed << "Error: " << result.status().ToString() << kErrReset << std::endl;
+      return CommandResult::OK;
+    }
+
+    if (flat_mode) {
       RenderTable(*result, config_);
-    } else {
-      std::cerr << "Error: " << result.status().ToString() << std::endl;
+      return CommandResult::OK;
+    }
+
+    auto& table = *result;
+    if (table->num_rows() == 0) {
+      *config_.output_stream << "No tables found." << std::endl;
+      return CommandResult::OK;
+    }
+
+    // Columns: catalog_name(0), db_schema_name(1), table_name(2),
+    //          table_type(3), table_schema(4) [binary, serialized Arrow schema]
+    bool has_schema_col = table->num_columns() >= 5;
+
+    // Struct to hold parsed table info
+    struct TableBox {
+      std::string catalog;
+      std::string schema;
+      std::string name;
+      std::vector<std::pair<std::string, std::string>> columns;  // name, type
+      int64_t row_count = -1;  // -1 = unknown
+    };
+
+    // Shorten type name for display (e.g., "decimal(15,2)" -> "decimal")
+    auto short_type = [](const std::string& type_name) -> std::string {
+      auto paren = type_name.find('(');
+      if (paren != std::string::npos) return type_name.substr(0, paren);
+      return type_name;
+    };
+
+    // Parse all tables
+    std::vector<TableBox> all_boxes;
+    for (int64_t r = 0; r < table->num_rows(); ++r) {
+      TableBox box;
+      box.catalog = GetCellValue(table->column(0), r, "");
+      box.schema = GetCellValue(table->column(1), r, "");
+      box.name = GetCellValue(table->column(2), r, "");
+
+      // Deserialize the Arrow schema from the binary column
+      if (has_schema_col) {
+        // Find the correct chunk and local index
+        int64_t offset = r;
+        for (int ci = 0; ci < table->column(4)->num_chunks(); ++ci) {
+          auto chunk = table->column(4)->chunk(ci);
+          if (offset < chunk->length()) {
+            auto bin_arr = std::static_pointer_cast<arrow::BinaryArray>(chunk);
+            if (bin_arr->IsValid(offset)) {
+              auto view = bin_arr->GetView(offset);
+              auto buf = std::make_shared<arrow::Buffer>(
+                  reinterpret_cast<const uint8_t*>(view.data()),
+                  static_cast<int64_t>(view.size()));
+              arrow::io::BufferReader reader(buf);
+              arrow::ipc::DictionaryMemo dict_memo;
+              auto schema_result = arrow::ipc::ReadSchema(&reader, &dict_memo);
+              if (schema_result.ok()) {
+                for (int f = 0; f < (*schema_result)->num_fields(); ++f) {
+                  box.columns.emplace_back(
+                      (*schema_result)->field(f)->name(),
+                      short_type(FriendlyTypeName((*schema_result)->field(f)->type())));
+                }
+              }
+            }
+            break;
+          }
+          offset -= chunk->length();
+        }
+      }
+
+      all_boxes.push_back(std::move(box));
+    }
+
+    // Fetch row counts in a single UNION ALL query
+    if (!all_boxes.empty()) {
+      std::ostringstream count_sql;
+      for (size_t i = 0; i < all_boxes.size(); ++i) {
+        if (i > 0) count_sql << " UNION ALL ";
+        // Quote table name to handle special characters
+        std::string qualified;
+        if (!all_boxes[i].schema.empty()) {
+          qualified = "\"" + all_boxes[i].schema + "\".";
+        }
+        qualified += "\"" + all_boxes[i].name + "\"";
+        count_sql << "SELECT '" << all_boxes[i].name
+                  << "' AS t, COUNT(*) AS c FROM " << qualified;
+      }
+      auto count_result = conn_.ExecuteQuery(count_sql.str());
+      if (count_result.ok() && count_result->table->num_rows() > 0) {
+        auto& ct = count_result->table;
+        for (int64_t cr = 0; cr < ct->num_rows(); ++cr) {
+          std::string tname = GetCellValue(ct->column(0), cr, "");
+          std::string cval = GetCellValue(ct->column(1), cr, "0");
+          for (auto& box : all_boxes) {
+            if (box.name == tname && box.row_count < 0) {
+              try { box.row_count = std::stoll(cval); } catch (...) {}
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Group by catalog > schema (preserving order from server)
+    std::map<std::string, std::map<std::string, std::vector<size_t>>> tree;
+    for (size_t i = 0; i < all_boxes.size(); ++i) {
+      tree[all_boxes[i].catalog][all_boxes[i].schema].push_back(i);
+    }
+
+    int term_width = GetTerminalWidth();
+    auto& out = *config_.output_stream;
+
+    // ANSI color codes matching DuckDB's shell palette
+    const char* kOrange = "\033[38;5;172m";     // DATABASE_NAME / catalog
+    const char* kBlue = "\033[38;5;39m";        // SCHEMA_NAME
+    const char* kBold = "\033[1m";              // TABLE_NAME
+    const char* kReset = "\033[0m";
+    const char* kGray = "\033[90m";             // LAYOUT, FOOTER, COLUMN_TYPE
+
+    // Render a centered catalog header:  ──── label ────  (orange)
+    auto render_catalog_header = [&](const std::string& label) {
+      std::string padded = " " + label + " ";
+      int pad = term_width - static_cast<int>(padded.size()) - 2;
+      int lp = pad / 2;
+      int rp = pad - lp;
+      if (lp < 1) lp = 1;
+      if (rp < 1) rp = 1;
+      out << kGray << " ";
+      for (int i = 0; i < lp; ++i) out << "\u2500";
+      out << kReset << kOrange << kBold << padded << kReset << kGray;
+      for (int i = 0; i < rp; ++i) out << "\u2500";
+      out << " " << kReset << "\n";
+    };
+
+    // Render a centered schema header:  ──── label ────  (blue)
+    auto render_schema_header = [&](const std::string& label) {
+      std::string padded = " " + label + " ";
+      int pad = term_width - static_cast<int>(padded.size()) - 2;
+      int lp = pad / 2;
+      int rp = pad - lp;
+      if (lp < 1) lp = 1;
+      if (rp < 1) rp = 1;
+      out << kGray << " ";
+      for (int i = 0; i < lp; ++i) out << "\u2500";
+      out << kReset << kBlue << kBold << padded << kReset << kGray;
+      for (int i = 0; i < rp; ++i) out << "\u2500";
+      out << " " << kReset << "\n";
+    };
+
+    for (auto& [catalog, schemas] : tree) {
+      render_catalog_header(catalog);
+
+      for (auto& [schema, indices] : schemas) {
+        render_schema_header(schema);
+
+        // Sort tables by column count descending (tallest first, like DuckDB)
+        std::sort(indices.begin(), indices.end(),
+                  [&](size_t a, size_t b) {
+                    return all_boxes[a].columns.size() > all_boxes[b].columns.size();
+                  });
+
+        // Pre-render each box into lines
+        struct RenderedBox {
+          int width;  // inner width (excluding │ borders)
+          std::vector<std::string> lines;
+          size_t box_idx;  // index into all_boxes for re-rendering
+        };
+
+        // Render a box at a given width
+        auto render_box = [&](size_t box_idx, int w) -> RenderedBox {
+          auto& box = all_boxes[box_idx];
+          RenderedBox rb;
+          rb.width = w;
+          rb.box_idx = box_idx;
+
+          // Helper to center text within rb.width
+          auto center = [&](const std::string& text, int visual_len) {
+            int pad = w - visual_len;
+            int lp = pad / 2;
+            int rp = pad - lp;
+            std::string line(lp, ' ');
+            line += text;
+            line += std::string(rp, ' ');
+            return line;
+          };
+
+          // Table name (centered, bold)
+          {
+            std::string styled = std::string(kBold) + box.name + kReset;
+            rb.lines.push_back(center(styled, static_cast<int>(box.name.size())));
+          }
+
+          // Blank separator
+          rb.lines.push_back(std::string(w, ' '));
+
+          // Column lines: " name     type "
+          for (auto& [cn, ct] : box.columns) {
+            std::string name_part = " " + cn;
+            int target = w - static_cast<int>(ct.size()) - 1;
+            while (static_cast<int>(name_part.size()) < target) name_part += ' ';
+            std::string line = name_part + kGray + ct + kReset + " ";
+            rb.lines.push_back(line);
+          }
+
+          // Row count footer (centered, gray)
+          std::string row_count_str;
+          if (box.row_count >= 0) {
+            row_count_str = std::to_string(box.row_count) + " row" +
+                            (box.row_count != 1 ? "s" : "");
+          }
+          if (!row_count_str.empty()) {
+            rb.lines.push_back(std::string(w, ' '));
+            std::string styled = std::string(kGray) + row_count_str + kReset;
+            rb.lines.push_back(
+                center(styled, static_cast<int>(row_count_str.size())));
+          }
+
+          return rb;
+        };
+
+        // Initial render at natural width
+        std::vector<RenderedBox> rendered;
+        for (auto box_idx : indices) {
+          auto& box = all_boxes[box_idx];
+
+          // Compute minimum width
+          int max_cname = 0, max_ctype = 0;
+          for (auto& [cn, ct] : box.columns) {
+            max_cname = std::max(max_cname, static_cast<int>(cn.size()));
+            max_ctype = std::max(max_ctype, static_cast<int>(ct.size()));
+          }
+          std::string row_count_str;
+          if (box.row_count >= 0) {
+            row_count_str = std::to_string(box.row_count) + " row" +
+                            (box.row_count != 1 ? "s" : "");
+          }
+          int col_content = max_cname + 1 + max_ctype;
+          int inner = std::max({static_cast<int>(box.name.size()),
+                                col_content,
+                                static_cast<int>(row_count_str.size())});
+          int w = inner + 2;  // 1 space padding each side
+
+          rendered.push_back(render_box(box_idx, w));
+        }
+
+        // --- Masonry layout ---
+        // Assign boxes to columns. Each column tracks its current height.
+        int num_cols = 0;
+        {
+          int used = 0;
+          for (auto& rb : rendered) {
+            int bw = rb.width + 2;  // +2 for │ borders
+            if (used + bw > term_width && num_cols > 0) break;
+            used += bw;
+            ++num_cols;
+          }
+          if (num_cols == 0) num_cols = 1;
+        }
+
+        // Each column slot holds a queue of box indices
+        std::vector<std::vector<size_t>> col_slots(num_cols);
+        // Assign boxes to the shortest column
+        std::vector<int> col_heights(num_cols, 0);
+        for (size_t bi = 0; bi < rendered.size(); ++bi) {
+          // Find the shortest column
+          int min_col = 0;
+          for (int c = 1; c < num_cols; ++c) {
+            if (col_heights[c] < col_heights[min_col]) min_col = c;
+          }
+          col_slots[min_col].push_back(bi);
+          // +2 for top/bottom border, +content lines
+          col_heights[min_col] += static_cast<int>(rendered[bi].lines.size()) + 2;
+        }
+
+        // Normalize: all boxes in the same column must have the same width.
+        // Re-render narrower boxes at the column's max width so that table
+        // names, row counts, and column lines are properly centered/aligned.
+        std::vector<int> col_widths(num_cols, 0);
+        for (int c = 0; c < num_cols; ++c) {
+          for (auto bi : col_slots[c]) {
+            col_widths[c] = std::max(col_widths[c], rendered[bi].width);
+          }
+          for (auto bi : col_slots[c]) {
+            if (rendered[bi].width < col_widths[c]) {
+              rendered[bi] = render_box(rendered[bi].box_idx, col_widths[c]);
+            }
+          }
+        }
+
+        // Render the masonry: process row by row across all columns
+        // Each column has a queue of boxes. We render one row of pixels at a time.
+        struct ColState {
+          size_t queue_idx = 0;    // which box in the queue we're currently rendering
+          int line_in_box = -1;   // -1 = top border, lines.size() = bottom border
+          bool done = false;
+        };
+        std::vector<ColState> states(num_cols);
+
+        auto all_done = [&]() {
+          for (auto& s : states)
+            if (!s.done) return false;
+          return true;
+        };
+
+        while (!all_done()) {
+          for (int c = 0; c < num_cols; ++c) {
+            auto& st = states[c];
+            if (st.done) {
+              // Fill with spaces for this column width
+              if (st.queue_idx > 0) {
+                auto last_bi = col_slots[c][st.queue_idx - 1];
+                out << std::string(rendered[last_bi].width + 2, ' ');
+              }
+              continue;
+            }
+
+            auto bi = col_slots[c][st.queue_idx];
+            auto& rb = rendered[bi];
+
+            if (st.line_in_box == -1) {
+              // Top border (gray)
+              out << kGray << "\u250C";
+              for (int i = 0; i < rb.width; ++i) out << "\u2500";
+              out << "\u2510" << kReset;
+              st.line_in_box = 0;
+            } else if (st.line_in_box < static_cast<int>(rb.lines.size())) {
+              // Content line
+              out << kGray << "\u2502" << kReset
+                  << rb.lines[st.line_in_box]
+                  << kGray << "\u2502" << kReset;
+              ++st.line_in_box;
+            } else {
+              // Bottom border (gray)
+              out << kGray << "\u2514";
+              for (int i = 0; i < rb.width; ++i) out << "\u2500";
+              out << "\u2518" << kReset;
+              // Move to next box in this column
+              ++st.queue_idx;
+              if (st.queue_idx < col_slots[c].size()) {
+                st.line_in_box = -1;
+              } else {
+                st.done = true;
+              }
+            }
+          }
+          out << "\n";
+        }
+      }
     }
     return CommandResult::OK;
   }
@@ -145,9 +515,9 @@ CommandResult CommandProcessor::Process(const std::string& line) {
   // .schema [PATTERN]
   if (cmd == ".schema") {
     if (!conn_.IsConnected()) {
-      std::cerr << "Error: not connected to a server. Use '.connect HOST PORT "
+      std::cerr << kErrRed << "Error: not connected to a server. Use '.connect HOST PORT "
                    "USERNAME' to connect."
-                << std::endl;
+                << kErrReset << std::endl;
       return CommandResult::ERROR;
     }
     std::string pattern = args.size() > 1 ? args[1] : "";
@@ -155,7 +525,7 @@ CommandResult CommandProcessor::Process(const std::string& line) {
     if (result.ok()) {
       RenderTable(*result, config_);
     } else {
-      std::cerr << "Error: " << result.status().ToString() << std::endl;
+      std::cerr << kErrRed << "Error: " << result.status().ToString() << kErrReset << std::endl;
     }
     return CommandResult::OK;
   }
@@ -163,16 +533,16 @@ CommandResult CommandProcessor::Process(const std::string& line) {
   // .catalogs
   if (cmd == ".catalogs") {
     if (!conn_.IsConnected()) {
-      std::cerr << "Error: not connected to a server. Use '.connect HOST PORT "
+      std::cerr << kErrRed << "Error: not connected to a server. Use '.connect HOST PORT "
                    "USERNAME' to connect."
-                << std::endl;
+                << kErrReset << std::endl;
       return CommandResult::ERROR;
     }
     auto result = conn_.GetCatalogs();
     if (result.ok()) {
       RenderTable(*result, config_);
     } else {
-      std::cerr << "Error: " << result.status().ToString() << std::endl;
+      std::cerr << kErrRed << "Error: " << result.status().ToString() << kErrReset << std::endl;
     }
     return CommandResult::OK;
   }
@@ -189,9 +559,9 @@ CommandResult CommandProcessor::Process(const std::string& line) {
     if (mode.has_value()) {
       config_.output_mode = *mode;
     } else {
-      std::cerr << "Error: unknown mode '" << args[1] << "'. Available modes:\n"
+      std::cerr << kErrRed << "Error: unknown mode '" << args[1] << "'. Available modes:\n"
                 << "  table box csv tabs json jsonlines markdown line list\n"
-                << "  html latex insert quote ascii trash" << std::endl;
+                << "  html latex insert quote ascii trash" << kErrReset << std::endl;
     }
     return CommandResult::OK;
   }
@@ -235,7 +605,7 @@ CommandResult CommandProcessor::Process(const std::string& line) {
       }
       output_file_ = new std::ofstream(args[1]);
       if (!output_file_->is_open()) {
-        std::cerr << "Error: cannot open file '" << args[1] << "'" << std::endl;
+        std::cerr << kErrRed << "Error: cannot open file '" << args[1] << "'" << kErrReset << std::endl;
         delete output_file_;
         output_file_ = nullptr;
       } else {
@@ -248,14 +618,14 @@ CommandResult CommandProcessor::Process(const std::string& line) {
   // .once FILE
   if (cmd == ".once") {
     if (args.size() < 2) {
-      std::cerr << "Usage: .once FILE" << std::endl;
+      std::cerr << kErrRed << "Usage: .once FILE" << kErrReset << std::endl;
     } else {
       if (output_file_) {
         delete output_file_;
       }
       output_file_ = new std::ofstream(args[1]);
       if (!output_file_->is_open()) {
-        std::cerr << "Error: cannot open file '" << args[1] << "'" << std::endl;
+        std::cerr << kErrRed << "Error: cannot open file '" << args[1] << "'" << kErrReset << std::endl;
         delete output_file_;
         output_file_ = nullptr;
       } else {
@@ -329,7 +699,7 @@ CommandResult CommandProcessor::Process(const std::string& line) {
       try {
         config_.max_rows = std::stoi(args[1]);
       } catch (...) {
-        std::cerr << "Error: invalid number '" << args[1] << "'" << std::endl;
+        std::cerr << kErrRed << "Error: invalid number '" << args[1] << "'" << kErrReset << std::endl;
       }
     }
     return CommandResult::OK;
@@ -350,7 +720,7 @@ CommandResult CommandProcessor::Process(const std::string& line) {
           config_.auto_width = false;
         }
       } catch (...) {
-        std::cerr << "Error: invalid number '" << args[1] << "'" << std::endl;
+        std::cerr << kErrRed << "Error: invalid number '" << args[1] << "'" << kErrReset << std::endl;
       }
     }
     return CommandResult::OK;
@@ -359,19 +729,19 @@ CommandResult CommandProcessor::Process(const std::string& line) {
   // .read FILE
   if (cmd == ".read") {
     if (args.size() < 2) {
-      std::cerr << "Usage: .read FILE" << std::endl;
+      std::cerr << kErrRed << "Usage: .read FILE" << kErrReset << std::endl;
       return CommandResult::OK;
     }
     // This is handled in the shell loop since it needs SQL processor context
     // For now, just print a message
-    std::cerr << "Error: .read is handled by the shell loop" << std::endl;
+    std::cerr << kErrRed << "Error: .read is handled by the shell loop" << kErrReset << std::endl;
     return CommandResult::OK;
   }
 
   // .shell CMD...
   if (cmd == ".shell") {
     if (args.size() < 2) {
-      std::cerr << "Usage: .shell CMD..." << std::endl;
+      std::cerr << kErrRed << "Usage: .shell CMD..." << kErrReset << std::endl;
     } else {
       std::string shell_cmd;
       for (size_t i = 1; i < args.size(); ++i) {
@@ -395,8 +765,8 @@ CommandResult CommandProcessor::Process(const std::string& line) {
       if (home) chdir(home);
     } else {
       if (chdir(args[1].c_str()) != 0) {
-        std::cerr << "Error: cannot change to directory '" << args[1] << "'"
-                  << std::endl;
+        std::cerr << kErrRed << "Error: cannot change to directory '" << args[1] << "'"
+                  << kErrReset << std::endl;
       }
     }
     return CommandResult::OK;
@@ -420,13 +790,158 @@ CommandResult CommandProcessor::Process(const std::string& line) {
     return CommandResult::OK;
   }
 
-  std::cerr << "Error: unknown command '" << cmd
-            << "'. Type '.help' for available commands." << std::endl;
+  // .describe TABLE
+  if (cmd == ".describe") {
+    if (!conn_.IsConnected()) {
+      std::cerr << kErrRed << "Error: not connected to a server." << kErrReset << std::endl;
+      return CommandResult::ERROR;
+    }
+    if (args.size() < 2) {
+      std::cerr << kErrRed << "Usage: .describe TABLE" << kErrReset << std::endl;
+      return CommandResult::ERROR;
+    }
+    std::string sql = "DESCRIBE " + args[1];
+    auto result = conn_.ExecuteQuery(sql);
+    if (result.ok()) {
+      RenderTable(result->table, config_);
+    } else {
+      std::cerr << kErrRed << "Error: " << result.status().ToString() << kErrReset << std::endl;
+    }
+    return CommandResult::OK;
+  }
+
+  // .highlight on|off
+  if (cmd == ".highlight") {
+    if (args.size() < 2) {
+      *config_.output_stream << "highlight: "
+                              << (config_.syntax_highlighting ? "on" : "off")
+                              << std::endl;
+    } else {
+      config_.syntax_highlighting = (ToLower(args[1]) == "on");
+    }
+    return CommandResult::OK;
+  }
+
+  // .last — re-display cached last result
+  if (cmd == ".last") {
+    if (!last_result_ || !*last_result_) {
+      std::cerr << kErrRed << "No cached result. Run a SELECT query first." << kErrReset << std::endl;
+      return CommandResult::ERROR;
+    }
+    RenderTable(*last_result_, config_);
+    return CommandResult::OK;
+  }
+
+  // .export_last [FILE]
+  if (cmd == ".export_last") {
+    if (!last_result_ || !*last_result_) {
+      std::cerr << kErrRed << "No cached result. Run a SELECT query first." << kErrReset << std::endl;
+      return CommandResult::ERROR;
+    }
+    std::string path;
+    if (args.size() >= 2) {
+      path = args[1];
+    } else {
+#ifdef _WIN32
+      const char* home = std::getenv("USERPROFILE");
+#else
+      const char* home = std::getenv("HOME");
+#endif
+      path = home ? std::string(home) + "/.gizmosql_last_result.arrow"
+                  : ".gizmosql_last_result.arrow";
+    }
+
+    auto out_file = arrow::io::FileOutputStream::Open(path);
+    if (!out_file.ok()) {
+      std::cerr << kErrRed << "Error: " << out_file.status().ToString() << kErrReset << std::endl;
+      return CommandResult::ERROR;
+    }
+    auto writer = arrow::ipc::MakeFileWriter(out_file->get(),
+                                              (*last_result_)->schema());
+    if (!writer.ok()) {
+      std::cerr << kErrRed << "Error: " << writer.status().ToString() << kErrReset << std::endl;
+      return CommandResult::ERROR;
+    }
+    auto table_reader = arrow::TableBatchReader(**last_result_);
+    std::shared_ptr<arrow::RecordBatch> batch;
+    while (true) {
+      auto status = table_reader.ReadNext(&batch);
+      if (!status.ok()) {
+        std::cerr << kErrRed << "Error: " << status.ToString() << kErrReset << std::endl;
+        break;
+      }
+      if (!batch) break;
+      auto ws = (*writer)->WriteRecordBatch(*batch);
+      if (!ws.ok()) {
+        std::cerr << kErrRed << "Error: " << ws.ToString() << kErrReset << std::endl;
+        break;
+      }
+    }
+    auto close_status = (*writer)->Close();
+    if (!close_status.ok()) {
+      std::cerr << kErrRed << "Error: " << close_status.ToString() << kErrReset << std::endl;
+      return CommandResult::ERROR;
+    }
+    *config_.output_stream << "Exported " << (*last_result_)->num_rows()
+                            << " rows to " << path << std::endl;
+    return CommandResult::OK;
+  }
+
+  // .pager on|off
+  if (cmd == ".pager") {
+    if (args.size() < 2) {
+      *config_.output_stream << "pager: "
+                              << (config_.pager_enabled ? "on" : "off")
+                              << " (threshold: " << config_.pager_threshold
+                              << " rows)" << std::endl;
+    } else if (ToLower(args[1]) == "on" || ToLower(args[1]) == "off") {
+      config_.pager_enabled = (ToLower(args[1]) == "on");
+    } else {
+      // Treat as threshold number
+      try {
+        config_.pager_threshold = std::stoi(args[1]);
+      } catch (...) {
+        std::cerr << kErrRed << "Usage: .pager on|off|N" << kErrReset << std::endl;
+      }
+    }
+    return CommandResult::OK;
+  }
+
+  // .about
+  if (cmd == ".about") {
+    auto& out = *config_.output_stream;
+    out << "GizmoSQL Client " << PROJECT_VERSION << "\n"
+        << "\n"
+        << "Copyright (c) 2024-2026 GizmoData LLC\n"
+        << "https://gizmodata.com\n"
+        << "\n"
+        << "GizmoSQL is a high-performance SQL database server built on\n"
+        << "Apache Arrow Flight SQL and DuckDB. It provides a modern,\n"
+        << "columnar wire protocol for analytical workloads.\n"
+        << "\n"
+        << "Source:  https://github.com/gizmodata/gizmosql\n"
+        << "Docker:  https://hub.docker.com/r/gizmodata/gizmosql\n"
+        << "Docs:    https://gizmodata.github.io/gizmosql\n"
+        << "\n"
+        << "Licensed under the Apache License, Version 2.0\n";
+    return CommandResult::OK;
+  }
+
+  std::cerr << kErrRed << "Error: unknown command '" << cmd
+            << "'. Type '.help' for available commands." << kErrReset << std::endl;
   return CommandResult::ERROR;
 }
 
 void CommandProcessor::SetRefreshCallback(std::function<void()> callback) {
   refresh_callback_ = std::move(callback);
+}
+
+void CommandProcessor::SetPromptRefreshCallback(std::function<void()> callback) {
+  prompt_refresh_callback_ = std::move(callback);
+}
+
+void CommandProcessor::SetLastResult(std::shared_ptr<arrow::Table>* last_result) {
+  last_result_ = last_result;
 }
 
 void CommandProcessor::ShowHelp(const std::string& pattern) {
@@ -436,21 +951,27 @@ void CommandProcessor::ShowHelp(const std::string& pattern) {
   };
 
   std::vector<HelpEntry> entries = {
+      {".about", "Show version, copyright, and project info"},
       {".bail on|off", "Stop on error. Default: off"},
       {".catalogs", "List all catalogs"},
       {".cd DIR", "Change working directory"},
       {".connect URI | HOST PORT USER",
        "Connect to a GizmoSQL server"},
+      {".describe TABLE", "Show table column names and types"},
       {".echo on|off", "Echo input commands. Default: off"},
       {".exit", "Exit this program (same as .quit)"},
+      {".export_last [FILE]", "Export last result to Arrow IPC file"},
       {".headers on|off", "Toggle column headers. Default: on"},
       {".help [PATTERN]", "Show this help or commands matching PATTERN"},
+      {".highlight on|off", "Toggle syntax highlighting. Default: on"},
+      {".last", "Re-display last query result"},
       {".maxrows [N]", "Show or set max rows displayed (0=unlimited)"},
       {".maxwidth [N]", "Show or set max width (0=auto from terminal)"},
       {".mode MODE", "Set output mode (box table csv json markdown ...)"},
       {".nullvalue STRING", "Set string for NULL values. Default: \"NULL\""},
       {".once FILE", "Redirect next query output to FILE"},
       {".output [FILE]", "Redirect output to FILE or stdout"},
+      {".pager on|off|N", "Toggle pager or set row threshold. Default: on/50"},
       {".prompt MAIN [CONT]", "Set prompt strings"},
       {".quit", "Exit this program"},
       {".read FILE", "Execute SQL from FILE"},
@@ -459,7 +980,7 @@ void CommandProcessor::ShowHelp(const std::string& pattern) {
       {".separator COL [ROW]", "Set separators for list/csv mode"},
       {".shell CMD...", "Execute CMD in system shell"},
       {".show", "Show current settings"},
-      {".tables [PATTERN]", "List tables"},
+      {".tables [PATTERN] [--flat]", "List tables (tree view, or --flat)"},
       {".timer on|off", "Show query execution time. Default: off"},
   };
 
@@ -477,6 +998,10 @@ void CommandProcessor::ShowHelp(const std::string& pattern) {
 
 void CommandProcessor::ShowSettings() {
   auto& out = *config_.output_stream;
+
+  // --- Client ---
+  out << "--- Client ---\n";
+  out << "     version: " << PROJECT_VERSION << "\n";
 
   // --- Server ---
   if (conn_.IsConnected()) {
@@ -552,12 +1077,15 @@ void CommandProcessor::ShowSettings() {
   out << "        bail: " << (config_.bail_on_error ? "on" : "off") << "\n";
   out << "     maxrows: " << config_.max_rows << "\n";
   out << "    maxwidth: " << config_.max_width << "\n";
+  out << "   highlight: " << (config_.syntax_highlighting ? "on" : "off") << "\n";
+  out << "       pager: " << (config_.pager_enabled ? "on" : "off")
+      << " (threshold: " << config_.pager_threshold << ")\n";
 }
 
 CommandResult CommandProcessor::HandleConnect(
     const std::vector<std::string>& args) {
   if (args.size() < 2) {
-    std::cerr
+    std::cerr << kErrRed
         << "Usage: .connect gizmosql://HOST:PORT[?params...]\n"
         << "       .connect HOST PORT USERNAME [PASSWORD]\n"
         << "\n"
@@ -568,7 +1096,7 @@ CommandResult CommandProcessor::HandleConnect(
         << "                             Skip TLS cert verification\n"
         << "  tlsRoots=PATH              Path to CA certificate (PEM)\n"
         << "  authType=password|external Auth type (default: password)\n"
-        << std::endl;
+        << kErrReset << std::endl;
     return CommandResult::ERROR;
   }
 
@@ -590,7 +1118,7 @@ CommandResult CommandProcessor::HandleConnect(
   } else {
     // Positional format: .connect HOST PORT USERNAME [PASSWORD]
     if (args.size() < 4) {
-      std::cerr << "Usage: .connect HOST PORT USERNAME [PASSWORD]" << std::endl;
+      std::cerr << kErrRed << "Usage: .connect HOST PORT USERNAME [PASSWORD]" << kErrReset << std::endl;
       return CommandResult::ERROR;
     }
 
@@ -598,7 +1126,7 @@ CommandResult CommandProcessor::HandleConnect(
     try {
       new_config.port = std::stoi(args[2]);
     } catch (...) {
-      std::cerr << "Error: invalid port '" << args[2] << "'" << std::endl;
+      std::cerr << kErrRed << "Error: invalid port '" << args[2] << "'" << kErrReset << std::endl;
       return CommandResult::ERROR;
     }
     new_config.username = args[3];
@@ -614,7 +1142,7 @@ CommandResult CommandProcessor::HandleConnect(
 
   auto status = conn_.Connect(new_config);
   if (!status.ok()) {
-    std::cerr << "Error: " << status.ToString() << std::endl;
+    std::cerr << kErrRed << "Error: " << status.ToString() << kErrReset << std::endl;
     return CommandResult::ERROR;
   }
 
@@ -633,6 +1161,7 @@ CommandResult CommandProcessor::HandleConnect(
             << std::endl;
 
   if (refresh_callback_) refresh_callback_();
+  if (prompt_refresh_callback_) prompt_refresh_callback_();
 
   return CommandResult::OK;
 }

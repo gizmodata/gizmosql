@@ -6,7 +6,10 @@ The GizmoSQL Client (`gizmosql_client`) is an interactive SQL shell for connecti
 
 ```bash
 # Interactive session (will prompt for password)
-gizmosql_client -h my-server.example.com -u admin
+gizmosql_client --host my-server.example.com --username admin
+
+# Same thing with short flags
+gizmosql_client --host my-server.example.com --username admin
 
 # Connect via URI
 gizmosql_client 'gizmosql://my-server.example.com:31337?username=admin'
@@ -18,13 +21,13 @@ gizmosql_client 'gizmosql://my-server.example.com:31337?useEncryption=true&authT
 gizmosql_client
 
 # Run a single query (uses env var for password)
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -c "SELECT * FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --command "SELECT * FROM employees"
 
 # Pipe SQL from stdin
-echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -q
+echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --quiet
 
 # Run SQL from a file
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -f queries.sql
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --file queries.sql
 ```
 
 ## Connection Options
@@ -38,6 +41,13 @@ Connect using individual flags or a connection URI. The `--uri` option cannot be
 | `--port` | `-p` | `GIZMOSQL_PORT` | `31337` | Server port |
 | `--username` | `-u` | `GIZMOSQL_USER` | | Username |
 | `--password` | `-W` | `GIZMOSQL_PASSWORD` | | Force password prompt |
+| `--tls` | | `GIZMOSQL_TLS` | off | Enable TLS connection |
+| `--tls-roots` | | `GIZMOSQL_TLS_ROOTS` | | Path to CA certificate file (PEM) |
+| `--tls-skip-verify` | | | off | Skip server certificate verification |
+| `--mtls-cert` | | | | Client certificate for mutual TLS (PEM) |
+| `--mtls-key` | | | | Client private key for mutual TLS (PEM) |
+| `--auth-type` | | | `password` | Auth type: `password` or `external` (OAuth/SSO) |
+| `--oauth-port` | | `GIZMOSQL_OAUTH_PORT` | `31339` | OAuth HTTP server port (fallback) |
 
 ### Connection URI
 
@@ -73,10 +83,10 @@ Like `psql`, the password **cannot** be passed directly as a command-line argume
 1. `GIZMOSQL_PASSWORD` environment variable
 2. Interactive prompt (if connected to a terminal and a username is provided)
 
-Use `-W` to force the interactive password prompt (even if `GIZMOSQL_PASSWORD` is set):
+Use `--password` (or `-W`) to force the interactive password prompt (even if `GIZMOSQL_PASSWORD` is set):
 
 ```bash
-gizmosql_client -h localhost -u admin -W
+gizmosql_client --host localhost --username admin --password
 Password:
 ```
 
@@ -93,14 +103,14 @@ Password:
 **TLS example:**
 
 ```bash
-gizmosql_client -h my-server.example.com -u admin \
+gizmosql_client --host my-server.example.com --username admin \
   --tls --tls-roots /path/to/ca.pem
 ```
 
 **Mutual TLS example:**
 
 ```bash
-gizmosql_client -h my-server.example.com -u admin \
+gizmosql_client --host my-server.example.com --username admin \
   --tls --tls-roots /path/to/ca.pem \
   --mtls-cert /path/to/client.crt --mtls-key /path/to/client.key
 ```
@@ -110,7 +120,7 @@ gizmosql_client -h my-server.example.com -u admin \
 For servers configured with [OAuth/SSO](oauth_sso_setup.md), use `--auth-type external` to authenticate via browser-based login:
 
 ```bash
-gizmosql_client -h my-server.example.com --auth-type external
+gizmosql_client --host my-server.example.com --auth-type external
 ```
 
 This opens your default browser to the identity provider's login page. After authentication, the client automatically receives the token and connects.
@@ -125,8 +135,8 @@ The client automatically discovers the OAuth endpoint URL from the server via a 
 **Non-interactive OAuth** (for scripted workflows):
 
 ```bash
-gizmosql_client -h my-server.example.com --auth-type external \
-  -c "SELECT current_user"
+gizmosql_client --host my-server.example.com --auth-type external \
+  --command "SELECT current_user"
 ```
 
 The browser login still occurs, but after authentication the query executes and the client exits.
@@ -135,12 +145,12 @@ The browser login still occurs, but after authentication the query executes and 
 
 ### Interactive Mode
 
-When launched without `-c` or `-f` and connected to a terminal, the client starts an interactive REPL with line editing and history.
+When launched without `--command` or `--file` and connected to a terminal, the client starts an interactive REPL with line editing and history.
 
 If connection parameters (`--host`, `--username`, or their env vars) are provided, the client connects immediately:
 
 ```
-GizmoSQL Client 1.18.0
+GizmoSQL Client v1.19.7
 Connected to localhost:31337
 Type '.help' for help, '.quit' to exit.
 
@@ -160,7 +170,7 @@ gizmosql> SELECT * FROM employees WHERE dept = 'Engineering';
 If **no** connection parameters are provided, the client starts in **disconnected mode**. You can then use `.connect` to establish a connection:
 
 ```
-GizmoSQL Client 1.18.0
+GizmoSQL Client v1.19.7
 Not connected. Use '.connect HOST PORT USERNAME' to connect.
 Type '.help' for help, '.quit' to exit.
 
@@ -185,6 +195,29 @@ See [Connection URI](#connection-uri) for the full list of supported URI paramet
 
 In disconnected mode, attempting to run SQL or server-dependent commands (`.tables`, `.schema`, `.catalogs`) will display an error message directing you to use `.connect`.
 
+### Dynamic Prompt
+
+When connected, the prompt dynamically shows the current catalog and schema, styled in DuckDB's orange color:
+
+```
+gizmosql.main> SELECT 1;
+```
+
+The prompt updates automatically after `USE`, `ATTACH`, `DETACH`, `.connect`, and other schema-changing statements.
+
+### Syntax Highlighting
+
+SQL input is highlighted as you type, inspired by [DuckDB v1.5's CLI improvements](https://duckdb.org/2026/03/09/announcing-duckdb-150):
+
+- **Keywords** (`SELECT`, `FROM`, `WHERE`, ...) in green
+- **Strings** (single-quoted) in yellow
+- **Numbers** in magenta
+- **Comments** (`--` and `/* */`) in gray
+- **Functions** (identifiers followed by `(`) in cyan
+- **Unclosed quotes/brackets** in red as error indicators
+
+Toggle with `.highlight on|off`.
+
 **Multi-line SQL** is supported. The prompt changes to `->` to indicate continuation:
 
 ```
@@ -205,30 +238,30 @@ gizmosql> SELECT
 - **Schema-qualified names**: Type `main.line` then press `TAB` to complete `main.lineitem`
 - **Inline hints**: When there's a single match, a gray hint appears inline (press right arrow to accept)
 
-The completion system uses FlightSQL metadata endpoints to fetch table and schema names. The cache is automatically refreshed after DDL statements (`CREATE`, `DROP`, `ALTER`, `ATTACH`, `DETACH`) and after `.connect`. Use `.refresh` to manually refresh the cache.
+The completion system uses FlightSQL metadata endpoints to fetch table and schema names. The cache is automatically refreshed after DDL statements (`CREATE`, `DROP`, `ALTER`, `ATTACH`, `DETACH`), `CALL`, `USE`, and after `.connect`. Use `.refresh` to manually refresh the cache.
 
-### Command Mode (`-c`)
+### Command Mode (`--command`)
 
 Execute a SQL statement and exit:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  -c "SELECT name, salary FROM employees ORDER BY salary DESC"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --command "SELECT name, salary FROM employees ORDER BY salary DESC"
 ```
 
 Multiple statements separated by semicolons:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  -c "CREATE TABLE t (x INT); INSERT INTO t VALUES (1); SELECT * FROM t;"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --command "CREATE TABLE t (x INT); INSERT INTO t VALUES (1); SELECT * FROM t;"
 ```
 
-### File Mode (`-f`)
+### File Mode (`--file`)
 
 Execute SQL from a file:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -f setup.sql
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --file setup.sql
 ```
 
 ### Pipe / Heredoc Mode
@@ -236,13 +269,13 @@ GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -f setup.sql
 Pipe SQL via stdin:
 
 ```bash
-echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -q
+echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --quiet
 ```
 
 Heredoc for multi-line scripts:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -q <<'EOF'
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --quiet <<'EOF'
 CREATE TABLE metrics (ts TIMESTAMP, value DOUBLE);
 INSERT INTO metrics VALUES (now(), 3.14);
 SELECT * FROM metrics;
@@ -291,15 +324,15 @@ Set via `.mode <name>` in interactive mode:
 **CSV output to a file:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --csv -o results.csv -c "SELECT * FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --csv --output results.csv --command "SELECT * FROM employees"
 ```
 
 **JSON output:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --json -c "SELECT name, salary FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --json --command "SELECT name, salary FROM employees"
 ```
 
 ```json
@@ -312,8 +345,8 @@ GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
 **Markdown for documentation:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --markdown -c "SELECT name, dept FROM employees LIMIT 3"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --markdown --command "SELECT name, dept FROM employees LIMIT 3"
 ```
 
 ```
@@ -327,8 +360,8 @@ GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
 **No headers:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --csv --no-header -c "SELECT name FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --csv --no-header --command "SELECT name FROM employees"
 ```
 
 ## Result Display
@@ -386,26 +419,87 @@ In interactive mode with `box` or `table` output, results are automatically trun
 
 Use `.maxrows` and `.maxwidth` to customize these defaults.
 
+## Built-in Pager
+
+Inspired by [DuckDB v1.5](https://duckdb.org/2026/03/09/announcing-duckdb-150), the client includes a built-in pager that activates when query results exceed 50 rows (configurable). Instead of truncating output, the pager lets you scroll through the full result set.
+
+**Navigation keys:**
+
+| Key | Action |
+|-----|--------|
+| `Page Down` / `Space` | Next page |
+| `Page Up` | Previous page |
+| `j` / `Down Arrow` | Scroll one line down |
+| `k` / `Up Arrow` | Scroll one line up |
+| `g` / `Home` | Jump to top |
+| `G` / `End` | Jump to bottom |
+| `q` / `Escape` | Exit pager |
+
+**Configuration:**
+
+```
+gizmosql.main> .pager off          -- disable pager
+gizmosql.main> .pager on           -- enable pager
+gizmosql.main> .pager 100          -- set threshold to 100 rows
+```
+
+The pager fetches a bounded buffer from the server (threshold x 20 pages) rather than downloading the entire result set, so it stays responsive even for large tables.
+
+## Last Result Reference (`_`)
+
+Inspired by [DuckDB v1.5](https://duckdb.org/2026/03/09/announcing-duckdb-150), the client caches the most recent query result and lets you reference it as `_` in subsequent queries. The cached result is uploaded to the server as a temporary table via the Flight SQL bulk ingest API, giving you full SQL capabilities — joins, filtering, aggregation, and more.
+
+```
+gizmosql.main> SELECT * FROM orders WHERE total > 1000;
+...
+
+gizmosql.main> SELECT count(*) FROM _;
+┌──────────────┐
+│ count_star() │
+│    bigint    │
+├──────────────┤
+│         4271 │
+└──────────────┘
+
+gizmosql.main> SELECT o.*, c.name FROM _ o JOIN customers c ON o.custkey = c.custkey;
+...
+```
+
+**Related commands:**
+
+| Command | Description |
+|---------|-------------|
+| `.last` | Re-display the cached result without re-querying |
+| `.export_last [FILE]` | Export the cached result to an Arrow IPC file (default: `~/.gizmosql_last_result.arrow`) |
+
+The exported IPC file can be loaded by any Arrow-compatible tool (Python/pandas, R, DuckDB, etc.).
+
 ## Dot Commands
 
 Dot commands are available in interactive mode and in piped/heredoc input. They start with a `.` and are not sent to the server.
 
 | Command | Description |
 |---------|-------------|
+| `.about` | Show version, copyright, and project info |
 | `.bail on\|off` | Stop on error (default: off) |
 | `.catalogs` | List all catalogs |
 | `.cd DIR` | Change working directory |
 | `.connect URI` or `HOST PORT USER` | Connect to a GizmoSQL server |
+| `.describe TABLE` | Show table column names and types |
 | `.echo on\|off` | Echo input commands (default: off) |
 | `.exit` | Exit (same as `.quit`) |
+| `.export_last [FILE]` | Export last query result to Arrow IPC file |
 | `.headers on\|off` | Toggle column headers (default: on) |
 | `.help [PATTERN]` | Show help or commands matching PATTERN |
+| `.highlight on\|off` | Toggle SQL syntax highlighting (default: on) |
+| `.last` | Re-display the last query result |
 | `.maxrows [N]` | Show or set max rows displayed (0=unlimited, default: 40) |
 | `.maxwidth [N]` | Show or set max display width (0=auto from terminal) |
 | `.mode MODE` | Set output mode |
 | `.nullvalue STRING` | Set display string for NULL values (default: `NULL`) |
 | `.once FILE` | Redirect next query output to FILE |
 | `.output [FILE]` | Redirect all output to FILE (no arg resets to stdout) |
+| `.pager on\|off\|N` | Toggle built-in pager or set row threshold (default: on/50) |
 | `.prompt MAIN [CONT]` | Customize prompt strings |
 | `.quit` | Exit the program |
 | `.read FILE` | Execute SQL from FILE |
@@ -414,23 +508,39 @@ Dot commands are available in interactive mode and in piped/heredoc input. They 
 | `.separator COL [ROW]` | Set column/row separators for list/CSV mode |
 | `.shell CMD...` | Execute a system shell command |
 | `.show` | Show current settings |
-| `.tables [PATTERN]` | List tables (optional pattern filter) |
+| `.tables [PATTERN] [--flat]` | List tables with schema details (or `--flat` for plain list) |
 | `.timer on\|off` | Show query execution time (default: off) |
 
 ### Dot Command Examples
 
 **Browse server metadata:**
 
+`.tables` displays a rich, DuckDB-style view with side-by-side boxes showing column names, types, and row counts — inspired by [DuckDB v1.5](https://duckdb.org/2026/03/09/announcing-duckdb-150):
+
 ```
-gizmosql> .tables
-┌──────────────┬────────────────┬────────────┬────────────┐
-│ catalog_name │ db_schema_name │ table_name │ table_type │
-│   varchar    │    varchar     │  varchar   │  varchar   │
-├──────────────┼────────────────┼────────────┼────────────┤
-│ memory       │ main           │ employees  │ BASE TABLE │
-├──────────────┴────────────────┴────────────┴────────────┤
-│ 1 row  4 columns                                        │
-└─────────────────────────────────────────────────────────┘
+gizmosql.main> .tables
+ ─────────────────────────────── gizmosql ───────────────────────────────
+ ──────────────────────────────── main ─────────────────────────────────
+┌───────────────────────┐┌─────────────────────┐┌──────────────────────┐
+│       customers       ││       orders        ││      products        │
+│                       ││                     ││                      │
+│ c_custkey      bigint ││ o_orderkey   bigint ││ p_partkey     bigint │
+│ c_name        varchar ││ o_custkey    bigint ││ p_name       varchar │
+│ c_address     varchar ││ o_totalprice decimal││ p_brand      varchar │
+│                       ││                     ││                      │
+│       1500 rows       ││      15000 rows     ││       2000 rows      │
+└───────────────────────┘└─────────────────────┘└──────────────────────┘
+```
+
+Catalog headers appear in orange and schema headers in blue, matching DuckDB's color palette. Use `.tables --flat` for the traditional tabular listing.
+
+**Describe a table:**
+
+```
+gizmosql.main> .describe customers
+┌─────────────┬─────────┬─────┬─────────┬─────────┬─────────┐
+│ column_name │ column_type │ null │ key  │ default │ extra   │
+...
 ```
 
 **Switch output mode mid-session:**
@@ -455,8 +565,10 @@ gizmosql> .output
 
 ```
 gizmosql> .show
+--- Client ---
+     version: v1.19.7
 --- Server ---
-     version: v1.17.4
+     version: v1.19.7
      edition: Core
  instance_id: a1b2c3d4-...
       engine: duckdb v1.5.1
@@ -482,6 +594,8 @@ gizmosql> .show
         bail: off
      maxrows: 40
     maxwidth: 0
+   highlight: on
+       pager: on (threshold: 50)
 ```
 
 ## Init File
@@ -498,13 +612,13 @@ On startup, the client automatically executes `~/.gizmosqlrc` if it exists. This
 Override with a custom init file:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin --init my_config.rc
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --init my_config.rc
 ```
 
 Disable init file loading:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin --no-init
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --no-init
 ```
 
 ## Display Options
@@ -541,7 +655,7 @@ export GIZMOSQL_PASSWORD=secret
 export GIZMOSQL_TLS=true
 export GIZMOSQL_TLS_ROOTS=/etc/ssl/certs/ca.pem
 
-gizmosql_client -c "SELECT version()"
+gizmosql_client --command "SELECT version()"
 ```
 
 ## Full CLI Reference
@@ -599,21 +713,21 @@ GizmoSQL Client Options:
 ### Export query results to CSV
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --csv --no-header -o export.csv \
-  -c "SELECT * FROM sales WHERE date >= '2026-01-01'"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --csv --no-header --output export.csv \
+  --command "SELECT * FROM sales WHERE date >= '2026-01-01'"
 ```
 
 ### Run a migration script
 
 ```bash
-gizmosql_client -h prod-server -u admin -W --bail -f migrations/v2.sql
+gizmosql_client --host prod-server --username admin --password --bail --file migrations/v2.sql
 ```
 
 ### Quick data exploration
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin <<'EOF'
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin <<'EOF'
 .tables
 SELECT COUNT(*) FROM employees;
 SELECT dept, AVG(salary) as avg_salary FROM employees GROUP BY dept ORDER BY avg_salary DESC;
@@ -624,7 +738,7 @@ EOF
 
 ```bash
 docker exec -it gizmosql-container /app/gizmosql_client \
-  -h localhost -u admin -c "SELECT version()"
+  --host localhost --username admin --command "SELECT version()"
 ```
 
 ### CI/CD pipeline
@@ -634,6 +748,6 @@ export GIZMOSQL_HOST=test-db.internal
 export GIZMOSQL_USER=ci_runner
 export GIZMOSQL_PASSWORD=$DB_PASSWORD
 
-gizmosql_client -q --bail -f tests/setup.sql
-gizmosql_client -q --csv -c "SELECT COUNT(*) FROM test_results WHERE status='fail'" | tail -1
+gizmosql_client --quiet --bail --file tests/setup.sql
+gizmosql_client --quiet --csv --command "SELECT COUNT(*) FROM test_results WHERE status='fail'" | tail -1
 ```

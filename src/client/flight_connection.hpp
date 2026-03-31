@@ -62,7 +62,8 @@ class FlightConnection {
   arrow::Result<std::shared_ptr<arrow::Table>> GetTables(
       const std::string& catalog_pattern = "",
       const std::string& schema_pattern = "",
-      const std::string& table_pattern = "");
+      const std::string& table_pattern = "",
+      bool include_schema = false);
   arrow::Result<std::shared_ptr<arrow::Table>> GetDbSchemas(
       const std::string& catalog_pattern = "",
       const std::string& schema_pattern = "");
@@ -70,6 +71,11 @@ class FlightConnection {
 
   arrow::Result<std::shared_ptr<arrow::Table>> GetSqlInfo(
       const std::vector<int>& info);
+
+  /// Upload an Arrow Table to the server as a temporary table via bulk ingest.
+  /// Uses CREATE_OR_REPLACE so repeated uploads overwrite the previous temp table.
+  arrow::Status UploadLastResult(const std::shared_ptr<arrow::Table>& table,
+                                  const std::string& table_name = "_last_result");
 
   void Disconnect();
 

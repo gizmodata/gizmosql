@@ -18,8 +18,11 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include <arrow/table.h>
 
 #include "client_config.hpp"
 #include "flight_connection.hpp"
@@ -53,6 +56,12 @@ class CommandProcessor {
   // (e.g., after .connect or .refresh)
   void SetRefreshCallback(std::function<void()> callback);
 
+  // Set a callback for refreshing the dynamic prompt after context changes
+  void SetPromptRefreshCallback(std::function<void()> callback);
+
+  // Set pointer to the last result cache (for .last / .export_last)
+  void SetLastResult(std::shared_ptr<arrow::Table>* last_result);
+
  private:
   void ShowHelp(const std::string& pattern);
   void ShowSettings();
@@ -63,6 +72,8 @@ class CommandProcessor {
   std::ofstream* output_file_ = nullptr;
   bool once_mode_ = false;
   std::function<void()> refresh_callback_;
+  std::function<void()> prompt_refresh_callback_;
+  std::shared_ptr<arrow::Table>* last_result_ = nullptr;
 };
 
 }  // namespace gizmosql::client

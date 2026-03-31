@@ -36,6 +36,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_ducklake.cpp
         integration/test_enterprise_gating.cpp
         integration/test_geoarrow.cpp
+        integration/test_client_cli.cpp
 )
 
 # Client library sources needed by interactive client tests
@@ -49,6 +50,8 @@ set(GIZMOSQL_CLIENT_LIB_SRCS
         ${CMAKE_SOURCE_DIR}/src/client/password_prompt.cpp
         ${CMAKE_SOURCE_DIR}/src/client/shell_loop.cpp
         ${CMAKE_SOURCE_DIR}/src/client/shell_completer.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/syntax_highlighter.cpp
+        ${CMAKE_SOURCE_DIR}/src/client/pager.cpp
 )
 
 # Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)
@@ -99,6 +102,14 @@ if(GIZMOSQL_ENTERPRISE)
             nlohmann_json::nlohmann_json
     )
 endif()
+
+# Pass the build directory so CLI tests can find the gizmosql_client binary
+target_compile_definitions(gizmosql_integration_tests PRIVATE
+        GIZMOSQL_CLIENT_BINARY="$<TARGET_FILE:gizmosql_client>"
+)
+
+# Ensure the client is built before running tests
+add_dependencies(gizmosql_integration_tests gizmosql_client)
 
 # ---------------------------------------------------------
 # Link dependencies

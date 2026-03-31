@@ -32,3 +32,21 @@ string(REPLACE
 )
 
 file(WRITE "${CXX_FLAGS_FILE}" "${CXX_FLAGS_CONTENT}")
+
+# Fix: Arrow's BuildUtils.cmake libtool detection regex fails on newer macOS
+# where libtool -V reports "cctools_ld-NNNN" instead of "cctools-NNNN".
+# Broaden the regex to accept both formats.
+set(BUILD_UTILS_FILE "${ARROW_SOURCE_DIR}/cpp/cmake_modules/BuildUtils.cmake")
+
+if(EXISTS "${BUILD_UTILS_FILE}")
+  file(READ "${BUILD_UTILS_FILE}" BUILD_UTILS_CONTENT)
+
+  string(REPLACE
+    "\".*cctools-([0-9.]+).*\""
+    "\".*cctools[_a-z]*-([0-9.]+).*\""
+    BUILD_UTILS_CONTENT
+    "${BUILD_UTILS_CONTENT}"
+  )
+
+  file(WRITE "${BUILD_UTILS_FILE}" "${BUILD_UTILS_CONTENT}")
+endif()
