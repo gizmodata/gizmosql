@@ -36,6 +36,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_ducklake.cpp
         integration/test_enterprise_gating.cpp
         integration/test_geoarrow.cpp
+        integration/test_client_cli.cpp
 )
 
 # Client library sources needed by interactive client tests

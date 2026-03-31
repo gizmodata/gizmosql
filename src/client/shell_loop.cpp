@@ -296,7 +296,8 @@ bool ExecuteStatement(FlightConnection& conn, ClientConfig& config,
 
 int ProcessLines(FlightConnection& conn, CommandProcessor& cmd_proc,
                  SqlProcessor& sql_proc, ClientConfig& config,
-                 std::istream& input) {
+                 std::istream& input,
+                 std::shared_ptr<arrow::Table>* last_result = nullptr) {
   std::string line;
   int exit_code = 0;
 
@@ -318,7 +319,7 @@ int ProcessLines(FlightConnection& conn, CommandProcessor& cmd_proc,
       sql_proc.Reset();
 
       if (!stmt.empty()) {
-        if (!ExecuteStatement(conn, config, stmt)) {
+        if (!ExecuteStatement(conn, config, stmt, last_result)) {
           exit_code = 1;
           if (config.bail_on_error) return exit_code;
         }
@@ -336,7 +337,7 @@ int ProcessLines(FlightConnection& conn, CommandProcessor& cmd_proc,
           remainder = sql_proc.GetRemainder();
           sql_proc.Reset();
           if (!stmt.empty()) {
-            if (!ExecuteStatement(conn, config, stmt)) {
+            if (!ExecuteStatement(conn, config, stmt, last_result)) {
               exit_code = 1;
               if (config.bail_on_error) return exit_code;
             }
@@ -353,7 +354,7 @@ int ProcessLines(FlightConnection& conn, CommandProcessor& cmd_proc,
     std::string stmt = sql_proc.GetStatement();
     sql_proc.Reset();
     if (!stmt.empty()) {
-      if (!ExecuteStatement(conn, config, stmt)) {
+      if (!ExecuteStatement(conn, config, stmt, last_result)) {
         exit_code = 1;
       }
     }
@@ -548,10 +549,14 @@ int RunShellLoop(FlightConnection& conn, CommandProcessor& cmd_proc,
 
 int RunNonInteractive(FlightConnection& conn, CommandProcessor& cmd_proc,
                       SqlProcessor& sql_proc, ClientConfig& config) {
+  // Last result cache — shared across statements in the same session
+  std::shared_ptr<arrow::Table> last_result;
+  cmd_proc.SetLastResult(&last_result);
+
   // -c "SQL" mode
   if (config.command.has_value()) {
     std::istringstream input(*config.command);
-    return ProcessLines(conn, cmd_proc, sql_proc, config, input);
+    return ProcessLines(conn, cmd_proc, sql_proc, config, input, &last_result);
   }
 
   // -f FILE mode
@@ -562,11 +567,11 @@ int RunNonInteractive(FlightConnection& conn, CommandProcessor& cmd_proc,
                 << std::endl;
       return 1;
     }
-    return ProcessLines(conn, cmd_proc, sql_proc, config, input);
+    return ProcessLines(conn, cmd_proc, sql_proc, config, input, &last_result);
   }
 
   // Stdin pipe/heredoc
-  return ProcessLines(conn, cmd_proc, sql_proc, config, std::cin);
+  return ProcessLines(conn, cmd_proc, sql_proc, config, std::cin, &last_result);
 }
 
 }  // namespace gizmosql::client
