@@ -6,6 +6,9 @@ The GizmoSQL Client (`gizmosql_client`) is an interactive SQL shell for connecti
 
 ```bash
 # Interactive session (will prompt for password)
+gizmosql_client --host my-server.example.com --username admin
+
+# Same thing with short flags
 gizmosql_client -h my-server.example.com -u admin
 
 # Connect via URI
