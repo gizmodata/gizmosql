@@ -52,6 +52,17 @@ gizmosql_client --host my-server.example.com --username admin \
 
 > **`--tls-roots`** tells the client which Certificate Authority (CA) to trust. If your certificate is signed by a well-known CA (like Let's Encrypt), you may not need this. If it's self-signed, you must provide the CA certificate.
 
+### Skipping Certificate Verification (Development Only)
+
+During development with self-signed certificates, you can skip certificate verification entirely:
+
+```bash
+gizmosql_client --host localhost --username admin \
+  --tls --tls-skip-verify
+```
+
+> **Warning:** `--tls-skip-verify` disables all certificate validation, making the connection vulnerable to man-in-the-middle attacks. **Never use this in production.** It exists solely for local development and testing with self-signed certificates. In production, always provide the CA certificate via `--tls-roots` instead.
+
 ### Getting a TLS Certificate
 
 **For production**, use a certificate from a trusted CA:

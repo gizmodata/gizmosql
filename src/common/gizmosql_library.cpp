@@ -93,21 +93,55 @@ static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_
 static std::unique_ptr<gizmosql::enterprise::OAuthHttpServer> g_oauth_http_server;
 #endif
 
+// Split SQL string on semicolons, respecting single-quoted strings.
+// Uses simple character scanning instead of std::regex to avoid MSVC
+// regex stack overflow issues (regex_error(error_stack)).
+inline std::vector<std::string> SplitInitSqlCommands(const std::string& sql) {
+  std::vector<std::string> commands;
+  std::string current;
+  bool in_single_quote = false;
+  for (size_t i = 0; i < sql.size(); ++i) {
+    char c = sql[i];
+    if (c == '\'' && !in_single_quote) {
+      in_single_quote = true;
+      current += c;
+    } else if (c == '\'' && in_single_quote) {
+      // Check for escaped quote ('')
+      if (i + 1 < sql.size() && sql[i + 1] == '\'') {
+        current += c;
+        current += sql[++i];
+      } else {
+        in_single_quote = false;
+        current += c;
+      }
+    } else if (c == ';' && !in_single_quote) {
+      // Trim whitespace
+      auto start = current.find_first_not_of(" \t\n\r");
+      if (start != std::string::npos) {
+        commands.push_back(current.substr(start));
+      }
+      current.clear();
+    } else {
+      current += c;
+    }
+  }
+  // Handle trailing command without semicolon
+  auto start = current.find_first_not_of(" \t\n\r");
+  if (start != std::string::npos) {
+    commands.push_back(current.substr(start));
+  }
+  return commands;
+}
+
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
   do {                                                                             \
     if (init_sql_commands != "") {                                                 \
-      std::regex regex_pattern(";(?=(?:[^']*'[^']*')*[^']*$)");                    \
-      std::sregex_token_iterator iter(init_sql_commands.begin(),                   \
-                                      init_sql_commands.end(), regex_pattern, -1); \
-      std::sregex_token_iterator end;                                              \
-      while (iter != end) {                                                        \
-        std::string init_sql_command = *iter;                                      \
-        if (init_sql_command.empty()) continue;                                    \
+      auto init_commands = SplitInitSqlCommands(init_sql_commands);                \
+      for (const auto& init_sql_command : init_commands) {                         \
         auto logged_init_sql_command = redact_sql_for_logs(init_sql_command);      \
         GIZMOSQL_LOG(INFO) << "Running Init SQL command: \n"                       \
                            << logged_init_sql_command << ";";                      \
         ARROW_RETURN_NOT_OK(serverType->ExecuteSql(init_sql_command));             \
-        ++iter;                                                                    \
       }                                                                            \
     }                                                                              \
   } while (false)
