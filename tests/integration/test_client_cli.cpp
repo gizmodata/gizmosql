@@ -27,6 +27,13 @@
 #include <sstream>
 #include <string>
 
+#ifdef _WIN32
+#include <process.h>
+#define popen _popen
+#define pclose _pclose
+#define getpid _getpid
+#endif
+
 #include "test_server_fixture.h"
 
 // ============================================================================
@@ -66,7 +73,12 @@ CliResult RunClient(const std::string& args, const std::string& env_prefix = "")
   std::string client = FindClientBinary();
 
   // Redirect stderr to a temp file so we can capture both streams
-  std::string stderr_file = "/tmp/gizmosql_test_stderr_" +
+#ifdef _WIN32
+  std::string tmp_dir = std::getenv("TEMP") ? std::getenv("TEMP") : ".";
+#else
+  std::string tmp_dir = "/tmp";
+#endif
+  std::string stderr_file = tmp_dir + "/gizmosql_test_stderr_" +
                              std::to_string(::getpid()) + ".txt";
 
   std::string cmd = env_prefix + client + " " + args +
@@ -167,7 +179,11 @@ class ClientCliFixture
 
   // Build connection args with env var for password
   std::string EnvPrefix() const {
+#ifdef _WIN32
+    return "set GIZMOSQL_PASSWORD=" + GetPassword() + " && ";
+#else
     return "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
+#endif
   }
 
   // Run a client command and return the result
@@ -321,6 +337,9 @@ TEST_F(ClientCliFixture, DocDotCommandDescribe) {
 // ============================================================================
 
 TEST_F(ClientCliFixture, DocPipeFromStdin) {
+#ifdef _WIN32
+  GTEST_SKIP() << "Pipe tests use Unix shell syntax";
+#endif
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Matches doc: echo "SELECT 42 AS answer;" | gizmosql_client ... --quiet
@@ -355,7 +374,12 @@ TEST_F(ClientCliFixture, DocFileMode) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create a temp SQL file
-  std::string sql_file = "/tmp/gizmosql_test_" +
+#ifdef _WIN32
+  std::string tmp = std::getenv("TEMP") ? std::getenv("TEMP") : ".";
+#else
+  std::string tmp = "/tmp";
+#endif
+  std::string sql_file = tmp + "/gizmosql_test_" +
                           std::to_string(::getpid()) + ".sql";
   {
     std::ofstream f(sql_file);
@@ -379,7 +403,12 @@ TEST_F(ClientCliFixture, DocFileMode) {
 TEST_F(ClientCliFixture, DocOutputToFile) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
-  std::string out_file = "/tmp/gizmosql_test_output_" +
+#ifdef _WIN32
+  std::string tmp2 = std::getenv("TEMP") ? std::getenv("TEMP") : ".";
+#else
+  std::string tmp2 = "/tmp";
+#endif
+  std::string out_file = tmp2 + "/gizmosql_test_output_" +
                           std::to_string(::getpid()) + ".csv";
 
   auto result = Run("--csv --no-header --output " + out_file +
@@ -476,6 +505,9 @@ TEST_F(ClientCliFixture, FeatureLastResultUnderscore) {
 // ============================================================================
 
 TEST_F(ClientCliFixture, DocHeredocStyle) {
+#ifdef _WIN32
+  GTEST_SKIP() << "Heredoc tests use Unix shell syntax";
+#endif
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   std::string client = FindClientBinary();
