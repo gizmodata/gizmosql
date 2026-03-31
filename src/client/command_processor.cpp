@@ -42,6 +42,7 @@
 
 #include "output_renderer.hpp"
 #include "password_prompt.hpp"
+#include "version.h"
 
 namespace gizmosql::client {
 
@@ -976,6 +977,10 @@ void CommandProcessor::ShowHelp(const std::string& pattern) {
 
 void CommandProcessor::ShowSettings() {
   auto& out = *config_.output_stream;
+
+  // --- Client ---
+  out << "--- Client ---\n";
+  out << "     version: " << PROJECT_VERSION << "\n";
 
   // --- Server ---
   if (conn_.IsConnected()) {

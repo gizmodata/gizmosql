@@ -564,6 +564,8 @@ gizmosql> .output
 
 ```
 gizmosql> .show
+--- Client ---
+     version: v1.19.7
 --- Server ---
      version: v1.19.7
      edition: Core
