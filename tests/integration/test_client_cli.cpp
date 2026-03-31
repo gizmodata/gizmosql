@@ -180,7 +180,7 @@ class ClientCliFixture
   // Build connection args with env var for password
   std::string EnvPrefix() const {
 #ifdef _WIN32
-    return "set GIZMOSQL_PASSWORD=" + GetPassword() + " && ";
+    return "set GIZMOSQL_PASSWORD=" + GetPassword() + "&& ";
 #else
     return "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
 #endif
