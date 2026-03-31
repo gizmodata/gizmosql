@@ -324,37 +324,19 @@ CommandResult CommandProcessor::Process(const std::string& line) {
         struct RenderedBox {
           int width;  // inner width (excluding │ borders)
           std::vector<std::string> lines;
+          size_t box_idx;  // index into all_boxes for re-rendering
         };
-        std::vector<RenderedBox> rendered;
 
-        for (auto box_idx : indices) {
+        // Render a box at a given width
+        auto render_box = [&](size_t box_idx, int w) -> RenderedBox {
           auto& box = all_boxes[box_idx];
           RenderedBox rb;
+          rb.width = w;
+          rb.box_idx = box_idx;
 
-          // Compute column widths
-          int max_cname = 0, max_ctype = 0;
-          for (auto& [cn, ct] : box.columns) {
-            max_cname = std::max(max_cname, static_cast<int>(cn.size()));
-            max_ctype = std::max(max_ctype, static_cast<int>(ct.size()));
-          }
-
-          // Row count string
-          std::string row_count_str;
-          if (box.row_count >= 0) {
-            row_count_str = std::to_string(box.row_count) + " row" +
-                            (box.row_count != 1 ? "s" : "");
-          }
-
-          // Inner width: 2 padding + max of (name, col_name+gap+col_type, row_count)
-          int col_content = max_cname + 1 + max_ctype;
-          int inner = std::max({static_cast<int>(box.name.size()),
-                                col_content,
-                                static_cast<int>(row_count_str.size())});
-          rb.width = inner + 2;  // 1 space padding each side
-
-          // Helper to center text within rb.width (visual width, ignoring ANSI)
+          // Helper to center text within rb.width
           auto center = [&](const std::string& text, int visual_len) {
-            int pad = rb.width - visual_len;
+            int pad = w - visual_len;
             int lp = pad / 2;
             int rp = pad - lp;
             std::string line(lp, ' ');
@@ -370,28 +352,56 @@ CommandResult CommandProcessor::Process(const std::string& line) {
           }
 
           // Blank separator
-          rb.lines.push_back(std::string(rb.width, ' '));
+          rb.lines.push_back(std::string(w, ' '));
 
-          // Column lines: " name     type " (type in gray)
+          // Column lines: " name     type "
           for (auto& [cn, ct] : box.columns) {
             std::string name_part = " " + cn;
-            int target = rb.width - static_cast<int>(ct.size()) - 1;
+            int target = w - static_cast<int>(ct.size()) - 1;
             while (static_cast<int>(name_part.size()) < target) name_part += ' ';
-            // Type in gray
             std::string line = name_part + kGray + ct + kReset + " ";
-            // Visual length (without ANSI) should be rb.width
             rb.lines.push_back(line);
           }
 
           // Row count footer (centered, gray)
+          std::string row_count_str;
+          if (box.row_count >= 0) {
+            row_count_str = std::to_string(box.row_count) + " row" +
+                            (box.row_count != 1 ? "s" : "");
+          }
           if (!row_count_str.empty()) {
-            rb.lines.push_back(std::string(rb.width, ' '));
+            rb.lines.push_back(std::string(w, ' '));
             std::string styled = std::string(kGray) + row_count_str + kReset;
             rb.lines.push_back(
                 center(styled, static_cast<int>(row_count_str.size())));
           }
 
-          rendered.push_back(std::move(rb));
+          return rb;
+        };
+
+        // Initial render at natural width
+        std::vector<RenderedBox> rendered;
+        for (auto box_idx : indices) {
+          auto& box = all_boxes[box_idx];
+
+          // Compute minimum width
+          int max_cname = 0, max_ctype = 0;
+          for (auto& [cn, ct] : box.columns) {
+            max_cname = std::max(max_cname, static_cast<int>(cn.size()));
+            max_ctype = std::max(max_ctype, static_cast<int>(ct.size()));
+          }
+          std::string row_count_str;
+          if (box.row_count >= 0) {
+            row_count_str = std::to_string(box.row_count) + " row" +
+                            (box.row_count != 1 ? "s" : "");
+          }
+          int col_content = max_cname + 1 + max_ctype;
+          int inner = std::max({static_cast<int>(box.name.size()),
+                                col_content,
+                                static_cast<int>(row_count_str.size())});
+          int w = inner + 2;  // 1 space padding each side
+
+          rendered.push_back(render_box(box_idx, w));
         }
 
         // --- Masonry layout ---
@@ -423,24 +433,17 @@ CommandResult CommandProcessor::Process(const std::string& line) {
           col_heights[min_col] += static_cast<int>(rendered[bi].lines.size()) + 2;
         }
 
-        // Normalize: all boxes in the same column must have the same width
-        // (the max width of any box in that column). Pad content lines.
+        // Normalize: all boxes in the same column must have the same width.
+        // Re-render narrower boxes at the column's max width so that table
+        // names, row counts, and column lines are properly centered/aligned.
         std::vector<int> col_widths(num_cols, 0);
         for (int c = 0; c < num_cols; ++c) {
           for (auto bi : col_slots[c]) {
             col_widths[c] = std::max(col_widths[c], rendered[bi].width);
           }
-          // Expand narrower boxes to match the column width
           for (auto bi : col_slots[c]) {
-            int old_w = rendered[bi].width;
-            int new_w = col_widths[c];
-            if (new_w > old_w) {
-              int pad = new_w - old_w;
-              for (auto& line : rendered[bi].lines) {
-                // Lines may contain ANSI codes — append padding spaces at end
-                line += std::string(pad, ' ');
-              }
-              rendered[bi].width = new_w;
+            if (rendered[bi].width < col_widths[c]) {
+              rendered[bi] = render_box(rendered[bi].box_idx, col_widths[c]);
             }
           }
         }
