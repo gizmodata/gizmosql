@@ -7,14 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-03-31
+
 ### Added
 
-- **SQL syntax highlighting**: The GizmoSQL client now highlights SQL input as you type — keywords (green), strings (yellow), numbers (magenta), comments (gray), functions (cyan), and unclosed quotes/brackets (red). Toggle with `.highlight on|off`.
-- **Dynamic prompting**: The prompt now shows the current `catalog.schema> ` context, updating automatically after DDL, `USE`, `ATTACH`/`DETACH`, and `.connect` commands.
+- **SQL syntax highlighting**: The GizmoSQL client now highlights SQL input as you type — keywords (green), strings (yellow), numbers (magenta), comments (gray), functions (cyan), and unclosed quotes/brackets (red). Toggle with `.highlight on|off`. Inspired by [DuckDB v1.5](https://duckdb.org/2026/03/09/announcing-duckdb-150).
+- **Dynamic prompting**: The prompt now shows the current `catalog.schema>` context in DuckDB's orange color, updating automatically after DDL, `USE`, `ATTACH`/`DETACH`, `CALL`, and `.connect` commands.
 - **`.describe TABLE` command**: Quickly inspect a table's column names and types without writing a full DESCRIBE query.
-- **Hierarchical `.tables` view**: `.tables` now displays a tree view grouped by catalog and schema using Unicode box-drawing characters. Use `.tables --flat` for the previous flat listing.
+- **Hierarchical `.tables` view**: `.tables` now displays DuckDB-style side-by-side boxes with column names, types, and row counts. Catalog headers in orange, schema headers in blue, box borders and types in gray — matching DuckDB's color palette. Use `.tables --flat` for the previous flat listing.
 - **Last result reference (`_`)**: Query results are cached in memory. Reference `_` as a table name in subsequent queries (e.g., `SELECT * FROM _ WHERE col > 5`) — the client uploads the cached result to the server as a temporary table via bulk ingest for full SQL support including joins and aggregations. Use `.last` to re-display and `.export_last [FILE]` to save as Arrow IPC.
 - **Built-in pager**: Large result sets (50+ rows by default) are automatically paged with keyboard navigation — Page Up/Down, j/k for line scroll, g/G for home/end, q to quit. Configure with `.pager on|off|N`.
+- **`.about` command**: Show client version, GizmoData LLC copyright, and project links.
+- **Red error messages**: All error output styled in bold red, matching DuckDB's error styling.
+- **Security Guide**: New comprehensive documentation (`docs/security.md`) covering TLS, mTLS, authentication, authorization, and audit logging — written for users unfamiliar with these concepts.
+- **CLI doc example tests**: 16 integration tests that run `gizmosql_client` as a subprocess to verify documentation examples work correctly.
+
+### Fixed
+
+- **`_` (last result) works in non-interactive mode**: The underscore table reference now works in `--command`, `--file`, and pipe modes — not just interactive mode.
+- **MSVC regex stack overflow**: Replaced `std::regex` usage in init SQL command splitter and underscore detection with simple string scanning to avoid MSVC's `regex_error(error_stack)` crash on Windows.
+- **Arrow libtool detection on newer macOS**: Patched Arrow's `BuildUtils.cmake` to handle the `cctools_ld` format reported by newer Xcode versions.
 
 ## [1.19.7] - 2026-03-24
 
