@@ -9,7 +9,7 @@ The GizmoSQL Client (`gizmosql_client`) is an interactive SQL shell for connecti
 gizmosql_client --host my-server.example.com --username admin
 
 # Same thing with short flags
-gizmosql_client -h my-server.example.com -u admin
+gizmosql_client --host my-server.example.com --username admin
 
 # Connect via URI
 gizmosql_client 'gizmosql://my-server.example.com:31337?username=admin'
@@ -21,13 +21,13 @@ gizmosql_client 'gizmosql://my-server.example.com:31337?useEncryption=true&authT
 gizmosql_client
 
 # Run a single query (uses env var for password)
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -c "SELECT * FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --command "SELECT * FROM employees"
 
 # Pipe SQL from stdin
-echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -q
+echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --quiet
 
 # Run SQL from a file
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -f queries.sql
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --file queries.sql
 ```
 
 ## Connection Options
@@ -83,10 +83,10 @@ Like `psql`, the password **cannot** be passed directly as a command-line argume
 1. `GIZMOSQL_PASSWORD` environment variable
 2. Interactive prompt (if connected to a terminal and a username is provided)
 
-Use `-W` to force the interactive password prompt (even if `GIZMOSQL_PASSWORD` is set):
+Use `--password` (or `-W`) to force the interactive password prompt (even if `GIZMOSQL_PASSWORD` is set):
 
 ```bash
-gizmosql_client -h localhost -u admin -W
+gizmosql_client --host localhost --username admin --password
 Password:
 ```
 
@@ -103,14 +103,14 @@ Password:
 **TLS example:**
 
 ```bash
-gizmosql_client -h my-server.example.com -u admin \
+gizmosql_client --host my-server.example.com --username admin \
   --tls --tls-roots /path/to/ca.pem
 ```
 
 **Mutual TLS example:**
 
 ```bash
-gizmosql_client -h my-server.example.com -u admin \
+gizmosql_client --host my-server.example.com --username admin \
   --tls --tls-roots /path/to/ca.pem \
   --mtls-cert /path/to/client.crt --mtls-key /path/to/client.key
 ```
@@ -120,7 +120,7 @@ gizmosql_client -h my-server.example.com -u admin \
 For servers configured with [OAuth/SSO](oauth_sso_setup.md), use `--auth-type external` to authenticate via browser-based login:
 
 ```bash
-gizmosql_client -h my-server.example.com --auth-type external
+gizmosql_client --host my-server.example.com --auth-type external
 ```
 
 This opens your default browser to the identity provider's login page. After authentication, the client automatically receives the token and connects.
@@ -135,8 +135,8 @@ The client automatically discovers the OAuth endpoint URL from the server via a 
 **Non-interactive OAuth** (for scripted workflows):
 
 ```bash
-gizmosql_client -h my-server.example.com --auth-type external \
-  -c "SELECT current_user"
+gizmosql_client --host my-server.example.com --auth-type external \
+  --command "SELECT current_user"
 ```
 
 The browser login still occurs, but after authentication the query executes and the client exits.
@@ -145,12 +145,12 @@ The browser login still occurs, but after authentication the query executes and 
 
 ### Interactive Mode
 
-When launched without `-c` or `-f` and connected to a terminal, the client starts an interactive REPL with line editing and history.
+When launched without `--command` or `--file` and connected to a terminal, the client starts an interactive REPL with line editing and history.
 
 If connection parameters (`--host`, `--username`, or their env vars) are provided, the client connects immediately:
 
 ```
-GizmoSQL Client 1.18.0
+GizmoSQL Client v1.19.7
 Connected to localhost:31337
 Type '.help' for help, '.quit' to exit.
 
@@ -170,7 +170,7 @@ gizmosql> SELECT * FROM employees WHERE dept = 'Engineering';
 If **no** connection parameters are provided, the client starts in **disconnected mode**. You can then use `.connect` to establish a connection:
 
 ```
-GizmoSQL Client 1.18.0
+GizmoSQL Client v1.19.7
 Not connected. Use '.connect HOST PORT USERNAME' to connect.
 Type '.help' for help, '.quit' to exit.
 
@@ -240,28 +240,28 @@ gizmosql> SELECT
 
 The completion system uses FlightSQL metadata endpoints to fetch table and schema names. The cache is automatically refreshed after DDL statements (`CREATE`, `DROP`, `ALTER`, `ATTACH`, `DETACH`), `CALL`, `USE`, and after `.connect`. Use `.refresh` to manually refresh the cache.
 
-### Command Mode (`-c`)
+### Command Mode (`--command`)
 
 Execute a SQL statement and exit:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  -c "SELECT name, salary FROM employees ORDER BY salary DESC"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --command "SELECT name, salary FROM employees ORDER BY salary DESC"
 ```
 
 Multiple statements separated by semicolons:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  -c "CREATE TABLE t (x INT); INSERT INTO t VALUES (1); SELECT * FROM t;"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --command "CREATE TABLE t (x INT); INSERT INTO t VALUES (1); SELECT * FROM t;"
 ```
 
-### File Mode (`-f`)
+### File Mode (`--file`)
 
 Execute SQL from a file:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -f setup.sql
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --file setup.sql
 ```
 
 ### Pipe / Heredoc Mode
@@ -269,13 +269,13 @@ GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -f setup.sql
 Pipe SQL via stdin:
 
 ```bash
-echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -q
+echo "SELECT 42 AS answer;" | GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --quiet
 ```
 
 Heredoc for multi-line scripts:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin -q <<'EOF'
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --quiet <<'EOF'
 CREATE TABLE metrics (ts TIMESTAMP, value DOUBLE);
 INSERT INTO metrics VALUES (now(), 3.14);
 SELECT * FROM metrics;
@@ -324,15 +324,15 @@ Set via `.mode <name>` in interactive mode:
 **CSV output to a file:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --csv -o results.csv -c "SELECT * FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --csv --output results.csv --command "SELECT * FROM employees"
 ```
 
 **JSON output:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --json -c "SELECT name, salary FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --json --command "SELECT name, salary FROM employees"
 ```
 
 ```json
@@ -345,8 +345,8 @@ GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
 **Markdown for documentation:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --markdown -c "SELECT name, dept FROM employees LIMIT 3"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --markdown --command "SELECT name, dept FROM employees LIMIT 3"
 ```
 
 ```
@@ -360,8 +360,8 @@ GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
 **No headers:**
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --csv --no-header -c "SELECT name FROM employees"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --csv --no-header --command "SELECT name FROM employees"
 ```
 
 ## Result Display
@@ -565,7 +565,7 @@ gizmosql> .output
 ```
 gizmosql> .show
 --- Server ---
-     version: v1.17.4
+     version: v1.19.7
      edition: Core
  instance_id: a1b2c3d4-...
       engine: duckdb v1.5.1
@@ -609,13 +609,13 @@ On startup, the client automatically executes `~/.gizmosqlrc` if it exists. This
 Override with a custom init file:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin --init my_config.rc
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --init my_config.rc
 ```
 
 Disable init file loading:
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin --no-init
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin --no-init
 ```
 
 ## Display Options
@@ -652,7 +652,7 @@ export GIZMOSQL_PASSWORD=secret
 export GIZMOSQL_TLS=true
 export GIZMOSQL_TLS_ROOTS=/etc/ssl/certs/ca.pem
 
-gizmosql_client -c "SELECT version()"
+gizmosql_client --command "SELECT version()"
 ```
 
 ## Full CLI Reference
@@ -710,21 +710,21 @@ GizmoSQL Client Options:
 ### Export query results to CSV
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin \
-  --csv --no-header -o export.csv \
-  -c "SELECT * FROM sales WHERE date >= '2026-01-01'"
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin \
+  --csv --no-header --output export.csv \
+  --command "SELECT * FROM sales WHERE date >= '2026-01-01'"
 ```
 
 ### Run a migration script
 
 ```bash
-gizmosql_client -h prod-server -u admin -W --bail -f migrations/v2.sql
+gizmosql_client --host prod-server --username admin --password --bail --file migrations/v2.sql
 ```
 
 ### Quick data exploration
 
 ```bash
-GIZMOSQL_PASSWORD=secret gizmosql_client -h localhost -u admin <<'EOF'
+GIZMOSQL_PASSWORD=secret gizmosql_client --host localhost --username admin <<'EOF'
 .tables
 SELECT COUNT(*) FROM employees;
 SELECT dept, AVG(salary) as avg_salary FROM employees GROUP BY dept ORDER BY avg_salary DESC;
@@ -735,7 +735,7 @@ EOF
 
 ```bash
 docker exec -it gizmosql-container /app/gizmosql_client \
-  -h localhost -u admin -c "SELECT version()"
+  --host localhost --username admin --command "SELECT version()"
 ```
 
 ### CI/CD pipeline
@@ -745,6 +745,6 @@ export GIZMOSQL_HOST=test-db.internal
 export GIZMOSQL_USER=ci_runner
 export GIZMOSQL_PASSWORD=$DB_PASSWORD
 
-gizmosql_client -q --bail -f tests/setup.sql
-gizmosql_client -q --csv -c "SELECT COUNT(*) FROM test_results WHERE status='fail'" | tail -1
+gizmosql_client --quiet --bail --file tests/setup.sql
+gizmosql_client --quiet --csv --command "SELECT COUNT(*) FROM test_results WHERE status='fail'" | tail -1
 ```
