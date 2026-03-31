@@ -41,6 +41,13 @@ Connect using individual flags or a connection URI. The `--uri` option cannot be
 | `--port` | `-p` | `GIZMOSQL_PORT` | `31337` | Server port |
 | `--username` | `-u` | `GIZMOSQL_USER` | | Username |
 | `--password` | `-W` | `GIZMOSQL_PASSWORD` | | Force password prompt |
+| `--tls` | | `GIZMOSQL_TLS` | off | Enable TLS connection |
+| `--tls-roots` | | `GIZMOSQL_TLS_ROOTS` | | Path to CA certificate file (PEM) |
+| `--tls-skip-verify` | | | off | Skip server certificate verification |
+| `--mtls-cert` | | | | Client certificate for mutual TLS (PEM) |
+| `--mtls-key` | | | | Client private key for mutual TLS (PEM) |
+| `--auth-type` | | | `password` | Auth type: `password` or `external` (OAuth/SSO) |
+| `--oauth-port` | | `GIZMOSQL_OAUTH_PORT` | `31339` | OAuth HTTP server port (fallback) |
 
 ### Connection URI
 
