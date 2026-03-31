@@ -160,7 +160,8 @@ bool SqlProcessor::IsDdlStatement(const std::string& sql) {
          prefix.find("ALTER") == 0 ||
          prefix.find("ATTACH") == 0 ||
          prefix.find("DETACH") == 0 ||
-         prefix.find("USE") == 0;
+         prefix.find("USE") == 0 ||
+         prefix.find("CALL") == 0;
 }
 
 }  // namespace gizmosql::client

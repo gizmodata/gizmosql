@@ -185,6 +185,29 @@ See [Connection URI](#connection-uri) for the full list of supported URI paramet
 
 In disconnected mode, attempting to run SQL or server-dependent commands (`.tables`, `.schema`, `.catalogs`) will display an error message directing you to use `.connect`.
 
+### Dynamic Prompt
+
+When connected, the prompt dynamically shows the current catalog and schema, styled in DuckDB's orange color:
+
+```
+gizmosql.main> SELECT 1;
+```
+
+The prompt updates automatically after `USE`, `ATTACH`, `DETACH`, `.connect`, and other schema-changing statements.
+
+### Syntax Highlighting
+
+SQL input is highlighted as you type, inspired by [DuckDB v1.5's CLI improvements](https://duckdb.org/2026/03/09/announcing-duckdb-150):
+
+- **Keywords** (`SELECT`, `FROM`, `WHERE`, ...) in green
+- **Strings** (single-quoted) in yellow
+- **Numbers** in magenta
+- **Comments** (`--` and `/* */`) in gray
+- **Functions** (identifiers followed by `(`) in cyan
+- **Unclosed quotes/brackets** in red as error indicators
+
+Toggle with `.highlight on|off`.
+
 **Multi-line SQL** is supported. The prompt changes to `->` to indicate continuation:
 
 ```
@@ -205,7 +228,7 @@ gizmosql> SELECT
 - **Schema-qualified names**: Type `main.line` then press `TAB` to complete `main.lineitem`
 - **Inline hints**: When there's a single match, a gray hint appears inline (press right arrow to accept)
 
-The completion system uses FlightSQL metadata endpoints to fetch table and schema names. The cache is automatically refreshed after DDL statements (`CREATE`, `DROP`, `ALTER`, `ATTACH`, `DETACH`) and after `.connect`. Use `.refresh` to manually refresh the cache.
+The completion system uses FlightSQL metadata endpoints to fetch table and schema names. The cache is automatically refreshed after DDL statements (`CREATE`, `DROP`, `ALTER`, `ATTACH`, `DETACH`), `CALL`, `USE`, and after `.connect`. Use `.refresh` to manually refresh the cache.
 
 ### Command Mode (`-c`)
 
@@ -386,6 +409,61 @@ In interactive mode with `box` or `table` output, results are automatically trun
 
 Use `.maxrows` and `.maxwidth` to customize these defaults.
 
+## Built-in Pager
+
+Inspired by [DuckDB v1.5](https://duckdb.org/2026/03/09/announcing-duckdb-150), the client includes a built-in pager that activates when query results exceed 50 rows (configurable). Instead of truncating output, the pager lets you scroll through the full result set.
+
+**Navigation keys:**
+
+| Key | Action |
+|-----|--------|
+| `Page Down` / `Space` | Next page |
+| `Page Up` | Previous page |
+| `j` / `Down Arrow` | Scroll one line down |
+| `k` / `Up Arrow` | Scroll one line up |
+| `g` / `Home` | Jump to top |
+| `G` / `End` | Jump to bottom |
+| `q` / `Escape` | Exit pager |
+
+**Configuration:**
+
+```
+gizmosql.main> .pager off          -- disable pager
+gizmosql.main> .pager on           -- enable pager
+gizmosql.main> .pager 100          -- set threshold to 100 rows
+```
+
+The pager fetches a bounded buffer from the server (threshold x 20 pages) rather than downloading the entire result set, so it stays responsive even for large tables.
+
+## Last Result Reference (`_`)
+
+Inspired by [DuckDB v1.5](https://duckdb.org/2026/03/09/announcing-duckdb-150), the client caches the most recent query result and lets you reference it as `_` in subsequent queries. The cached result is uploaded to the server as a temporary table via the Flight SQL bulk ingest API, giving you full SQL capabilities — joins, filtering, aggregation, and more.
+
+```
+gizmosql.main> SELECT * FROM orders WHERE total > 1000;
+...
+
+gizmosql.main> SELECT count(*) FROM _;
+┌──────────────┐
+│ count_star() │
+│    bigint    │
+├──────────────┤
+│         4271 │
+└──────────────┘
+
+gizmosql.main> SELECT o.*, c.name FROM _ o JOIN customers c ON o.custkey = c.custkey;
+...
+```
+
+**Related commands:**
+
+| Command | Description |
+|---------|-------------|
+| `.last` | Re-display the cached result without re-querying |
+| `.export_last [FILE]` | Export the cached result to an Arrow IPC file (default: `~/.gizmosql_last_result.arrow`) |
+
+The exported IPC file can be loaded by any Arrow-compatible tool (Python/pandas, R, DuckDB, etc.).
+
 ## Dot Commands
 
 Dot commands are available in interactive mode and in piped/heredoc input. They start with a `.` and are not sent to the server.
@@ -396,16 +474,21 @@ Dot commands are available in interactive mode and in piped/heredoc input. They 
 | `.catalogs` | List all catalogs |
 | `.cd DIR` | Change working directory |
 | `.connect URI` or `HOST PORT USER` | Connect to a GizmoSQL server |
+| `.describe TABLE` | Show table column names and types |
 | `.echo on\|off` | Echo input commands (default: off) |
 | `.exit` | Exit (same as `.quit`) |
+| `.export_last [FILE]` | Export last query result to Arrow IPC file |
 | `.headers on\|off` | Toggle column headers (default: on) |
 | `.help [PATTERN]` | Show help or commands matching PATTERN |
+| `.highlight on\|off` | Toggle SQL syntax highlighting (default: on) |
+| `.last` | Re-display the last query result |
 | `.maxrows [N]` | Show or set max rows displayed (0=unlimited, default: 40) |
 | `.maxwidth [N]` | Show or set max display width (0=auto from terminal) |
 | `.mode MODE` | Set output mode |
 | `.nullvalue STRING` | Set display string for NULL values (default: `NULL`) |
 | `.once FILE` | Redirect next query output to FILE |
 | `.output [FILE]` | Redirect all output to FILE (no arg resets to stdout) |
+| `.pager on\|off\|N` | Toggle built-in pager or set row threshold (default: on/50) |
 | `.prompt MAIN [CONT]` | Customize prompt strings |
 | `.quit` | Exit the program |
 | `.read FILE` | Execute SQL from FILE |
@@ -414,23 +497,39 @@ Dot commands are available in interactive mode and in piped/heredoc input. They 
 | `.separator COL [ROW]` | Set column/row separators for list/CSV mode |
 | `.shell CMD...` | Execute a system shell command |
 | `.show` | Show current settings |
-| `.tables [PATTERN]` | List tables (optional pattern filter) |
+| `.tables [PATTERN] [--flat]` | List tables with schema details (or `--flat` for plain list) |
 | `.timer on\|off` | Show query execution time (default: off) |
 
 ### Dot Command Examples
 
 **Browse server metadata:**
 
+`.tables` displays a rich, DuckDB-style view with side-by-side boxes showing column names, types, and row counts — inspired by [DuckDB v1.5](https://duckdb.org/2026/03/09/announcing-duckdb-150):
+
 ```
-gizmosql> .tables
-┌──────────────┬────────────────┬────────────┬────────────┐
-│ catalog_name │ db_schema_name │ table_name │ table_type │
-│   varchar    │    varchar     │  varchar   │  varchar   │
-├──────────────┼────────────────┼────────────┼────────────┤
-│ memory       │ main           │ employees  │ BASE TABLE │
-├──────────────┴────────────────┴────────────┴────────────┤
-│ 1 row  4 columns                                        │
-└─────────────────────────────────────────────────────────┘
+gizmosql.main> .tables
+ ─────────────────────────────── gizmosql ───────────────────────────────
+ ──────────────────────────────── main ─────────────────────────────────
+┌───────────────────────┐┌─────────────────────┐┌──────────────────────┐
+│       customers       ││       orders        ││      products        │
+│                       ││                     ││                      │
+│ c_custkey      bigint ││ o_orderkey   bigint ││ p_partkey     bigint │
+│ c_name        varchar ││ o_custkey    bigint ││ p_name       varchar │
+│ c_address     varchar ││ o_totalprice decimal││ p_brand      varchar │
+│                       ││                     ││                      │
+│       1500 rows       ││      15000 rows     ││       2000 rows      │
+└───────────────────────┘└─────────────────────┘└──────────────────────┘
+```
+
+Catalog headers appear in orange and schema headers in blue, matching DuckDB's color palette. Use `.tables --flat` for the traditional tabular listing.
+
+**Describe a table:**
+
+```
+gizmosql.main> .describe customers
+┌─────────────┬─────────┬─────┬─────────┬─────────┬─────────┐
+│ column_name │ column_type │ null │ key  │ default │ extra   │
+...
 ```
 
 **Switch output mode mid-session:**
@@ -482,6 +581,8 @@ gizmosql> .show
         bail: off
      maxrows: 40
     maxwidth: 0
+   highlight: on
+       pager: on (threshold: 50)
 ```
 
 ## Init File
