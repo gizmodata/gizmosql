@@ -46,11 +46,16 @@ gizmosql_server --tls cert.pem key.pem \
 Clients then connect with `--tls`:
 
 ```bash
+# If your server uses a certificate from a well-known CA (Let's Encrypt, DigiCert, etc.),
+# the client automatically trusts it using your system's certificate store:
+gizmosql_client --host my-server.example.com --username admin --tls
+
+# If your server uses a private/internal CA, provide the CA certificate explicitly:
 gizmosql_client --host my-server.example.com --username admin \
   --tls --tls-roots /path/to/ca.pem
 ```
 
-> **`--tls-roots`** tells the client which Certificate Authority (CA) to trust. If your certificate is signed by a well-known CA (like Let's Encrypt), you may not need this. If it's self-signed, you must provide the CA certificate.
+The client automatically loads trusted CA certificates from your operating system's certificate store (Keychain on macOS, the Windows certificate store, or `/etc/ssl/certs` on Linux). You only need `--tls-roots` when your server's certificate was signed by a CA that isn't in your system's trust store — such as a self-signed certificate or a private corporate CA.
 
 ### Skipping Certificate Verification (Development Only)
 
@@ -61,7 +66,7 @@ gizmosql_client --host localhost --username admin \
   --tls --tls-skip-verify
 ```
 
-> **Warning:** `--tls-skip-verify` disables all certificate validation, making the connection vulnerable to man-in-the-middle attacks. **Never use this in production.** It exists solely for local development and testing with self-signed certificates. In production, always provide the CA certificate via `--tls-roots` instead.
+> **Warning:** `--tls-skip-verify` disables all certificate validation, making the connection vulnerable to man-in-the-middle attacks. **Never use this in production.** It exists solely for local development and testing with self-signed certificates. In production, use a certificate from a well-known CA (automatically trusted) or provide your private CA certificate via `--tls-roots`.
 
 ### Getting a TLS Certificate
 
