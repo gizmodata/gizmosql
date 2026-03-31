@@ -195,6 +195,11 @@ void Pager::Display(const std::string& content) {
   int scroll_pos = 0;  // Index of the first visible line
   int max_scroll = std::max(0, total_lines - page_height);
 
+  // Switch to alternate screen buffer so the terminal's own scroll buffer
+  // doesn't interfere with our pager (macOS Terminal intercepts Fn+Up/Down
+  // for its scroll buffer otherwise).
+  std::cout << "\033[?1049h" << std::flush;
+
   auto render_page = [&]() {
     // Clear screen and move cursor to top
     std::cout << "\033[2J\033[H";
@@ -255,9 +260,8 @@ void Pager::Display(const std::string& content) {
     }
   }
 
-  // Clear status bar and restore cursor
-  ClearLine();
-  std::cout << "\033[2J\033[H";
+  // Leave alternate screen buffer — restores the original terminal content
+  std::cout << "\033[?1049l";
 
   // Re-print the content that was visible when user quit
   int end = std::min(scroll_pos + page_height, total_lines);
