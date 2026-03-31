@@ -21,7 +21,6 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <regex>
 #include <sstream>
 #include <string>
 
@@ -56,20 +55,42 @@ std::string GetHistoryPath() {
 }
 
 // Detect if SQL references `_` as a table name (standalone, not part of an identifier).
-// Matches `_` preceded by FROM/JOIN/, and not part of a longer identifier.
+// Uses simple string scanning instead of std::regex to avoid MSVC stack overflow issues.
 bool HasUnderscoreRef(const std::string& sql) {
-  // Match `_` that is used as a table reference
-  static const std::regex re(
-      R"((?:FROM|JOIN|,)\s+_(?:\s|$|;|,|\)))",
-      std::regex_constants::icase);
-  // Also match bare `_` as the entire statement
-  std::string trimmed = sql;
-  while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.front())))
-    trimmed.erase(trimmed.begin());
-  while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.back())))
-    trimmed.pop_back();
-  if (trimmed == "_" || trimmed == "SELECT * FROM _") return true;
-  return std::regex_search(sql, re);
+  // Trim whitespace
+  size_t start = sql.find_first_not_of(" \t\n\r");
+  size_t end = sql.find_last_not_of(" \t\n\r");
+  if (start == std::string::npos) return false;
+  std::string trimmed = sql.substr(start, end - start + 1);
+
+  // Bare `_` as entire statement
+  if (trimmed == "_") return true;
+
+  // Scan for `_` used as a table name: preceded by FROM/JOIN/comma,
+  // and not part of a longer identifier
+  std::string upper = trimmed;
+  std::transform(upper.begin(), upper.end(), upper.begin(),
+                 [](unsigned char c) { return std::toupper(c); });
+
+  auto is_ident = [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+  };
+
+  for (size_t i = 0; i < upper.size(); ++i) {
+    if (upper[i] != '_') continue;
+    // Check that `_` is not part of a longer identifier
+    bool prev_ident = (i > 0 && is_ident(upper[i - 1]));
+    bool next_ident = (i + 1 < upper.size() && is_ident(upper[i + 1]));
+    if (prev_ident || next_ident) continue;
+
+    // Check that `_` is preceded by FROM, JOIN, or comma (skipping whitespace)
+    size_t pos = i;
+    while (pos > 0 && std::isspace(static_cast<unsigned char>(upper[pos - 1]))) --pos;
+    if (pos > 0 && upper[pos - 1] == ',') return true;
+    if (pos >= 4 && upper.substr(pos - 4, 4) == "FROM") return true;
+    if (pos >= 4 && upper.substr(pos - 4, 4) == "JOIN") return true;
+  }
+  return false;
 }
 
 // Replace standalone `_` table references with the temp table name
