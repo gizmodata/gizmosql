@@ -108,7 +108,7 @@ const std::vector<std::string>& ShellCompleter::GetSqlKeywords() {
 // Static dot commands list
 const std::vector<std::string>& ShellCompleter::GetDotCommands() {
   static const std::vector<std::string> commands = {
-      ".bail",       ".catalogs",   ".cd",         ".connect",    ".describe",
+      ".about",      ".bail",       ".catalogs",   ".cd",         ".connect",    ".describe",
       ".echo",       ".exit",       ".export_last",".headers",    ".help",
       ".highlight",  ".last",       ".maxrows",    ".maxwidth",   ".mode",
       ".nullvalue",  ".once",       ".output",     ".pager",      ".prompt",

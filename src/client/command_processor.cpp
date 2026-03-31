@@ -907,6 +907,26 @@ CommandResult CommandProcessor::Process(const std::string& line) {
     return CommandResult::OK;
   }
 
+  // .about
+  if (cmd == ".about") {
+    auto& out = *config_.output_stream;
+    out << "GizmoSQL Client " << PROJECT_VERSION << "\n"
+        << "\n"
+        << "Copyright (c) 2024-2026 GizmoData LLC\n"
+        << "https://gizmodata.com\n"
+        << "\n"
+        << "GizmoSQL is a high-performance SQL database server built on\n"
+        << "Apache Arrow Flight SQL and DuckDB. It provides a modern,\n"
+        << "columnar wire protocol for analytical workloads.\n"
+        << "\n"
+        << "Source:  https://github.com/gizmodata/gizmosql\n"
+        << "Docker:  https://hub.docker.com/r/gizmodata/gizmosql\n"
+        << "Docs:    https://gizmodata.github.io/gizmosql\n"
+        << "\n"
+        << "Licensed under the Apache License, Version 2.0\n";
+    return CommandResult::OK;
+  }
+
   std::cerr << kErrRed << "Error: unknown command '" << cmd
             << "'. Type '.help' for available commands." << kErrReset << std::endl;
   return CommandResult::ERROR;
@@ -931,6 +951,7 @@ void CommandProcessor::ShowHelp(const std::string& pattern) {
   };
 
   std::vector<HelpEntry> entries = {
+      {".about", "Show version, copyright, and project info"},
       {".bail on|off", "Stop on error. Default: off"},
       {".catalogs", "List all catalogs"},
       {".cd DIR", "Change working directory"},

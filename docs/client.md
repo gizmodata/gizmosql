@@ -480,6 +480,7 @@ Dot commands are available in interactive mode and in piped/heredoc input. They 
 
 | Command | Description |
 |---------|-------------|
+| `.about` | Show version, copyright, and project info |
 | `.bail on\|off` | Stop on error (default: off) |
 | `.catalogs` | List all catalogs |
 | `.cd DIR` | Change working directory |
