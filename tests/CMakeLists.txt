@@ -103,6 +103,14 @@ if(GIZMOSQL_ENTERPRISE)
     )
 endif()
 
+# Pass the build directory so CLI tests can find the gizmosql_client binary
+target_compile_definitions(gizmosql_integration_tests PRIVATE
+        GIZMOSQL_CLIENT_BINARY="$<TARGET_FILE:gizmosql_client>"
+)
+
+# Ensure the client is built before running tests
+add_dependencies(gizmosql_integration_tests gizmosql_client)
+
 # ---------------------------------------------------------
 # Link dependencies
 # ---------------------------------------------------------

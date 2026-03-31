@@ -41,10 +41,13 @@ struct CliResult {
   int exit_code;
 };
 
-// Find the gizmosql_client binary relative to the test binary.
-// In CMake builds, both are in the same build directory.
+// Find the gizmosql_client binary. The path is injected at compile time
+// via GIZMOSQL_CLIENT_BINARY from CMake's $<TARGET_FILE:gizmosql_client>.
 std::string FindClientBinary() {
-  // Try common locations
+#ifdef GIZMOSQL_CLIENT_BINARY
+  return GIZMOSQL_CLIENT_BINARY;
+#else
+  // Fallback for manual builds
   const char* candidates[] = {
       "./gizmosql_client",
       "../gizmosql_client",
@@ -55,8 +58,8 @@ std::string FindClientBinary() {
       return path;
     }
   }
-  // Fallback: assume it's on PATH
   return "gizmosql_client";
+#endif
 }
 
 CliResult RunClient(const std::string& args, const std::string& env_prefix = "") {
