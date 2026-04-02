@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.2] - 2026-04-02
+
 ### Fixed
 
 - **ArrowSchema leak in FetchResult()**: Added RAII guard to release exported `ArrowSchema` C structs on error and null-chunk paths in `DuckDBStatement::FetchResult()`. Previously, three early-return paths leaked the schema's release callbacks, which under concurrent load caused heap corruption and double-free crashes due to stale callbacks across allocator boundaries (DuckDB jemalloc vs glibc malloc). Fixes [#150](https://github.com/gizmodata/gizmosql/issues/150).
