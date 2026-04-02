@@ -1474,6 +1474,15 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   ARROW_ASSIGN_OR_RAISE(auto schema, GetSchema());
   ARROW_RETURN_NOT_OK(arrow::ExportSchema(*schema, &res_schema));
 
+  // RAII guard: release the exported ArrowSchema if we exit before
+  // ImportRecordBatch() takes ownership (which consumes both res_schema and
+  // res_arr via the C Data Interface).
+  auto schema_guard = ::gizmosql::MakeScopeGuard([&res_schema]() {
+    if (res_schema.release) {
+      res_schema.release(&res_schema);
+    }
+  });
+
   duckdb::unique_ptr<duckdb::DataChunk> data_chunk;
   duckdb::ErrorData fetch_error;
   auto fetch_success = query_result_->TryFetch(data_chunk, fetch_error);
@@ -1487,6 +1496,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
     duckdb::ArrowConverter::ToArrowArray(*data_chunk, &res_arr, res_options,
                                          extension_type_cast);
     ARROW_ASSIGN_OR_RAISE(record_batch, arrow::ImportRecordBatch(&res_arr, &res_schema));
+    schema_guard.Dismiss();  // ownership transferred to record_batch
 
     GIZMOSQL_LOGKV_SESSION(DEBUG, session, "Client RecordBatch Fetch",
                    {"kind", "fetch"}, {"status", "success"},
