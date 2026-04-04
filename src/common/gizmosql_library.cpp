@@ -1491,7 +1491,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     return EXIT_SUCCESS;
   } else {
     // Handle the error
-    std::cerr << "Error: " << create_server_result.status().ToString();
+    std::cerr << "Error: " << create_server_result.status().ToString() << std::endl;
     return EXIT_FAILURE;
   }
 }
