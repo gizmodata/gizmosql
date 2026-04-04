@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Client: verify connection before reporting success**: The client now performs a lightweight Flight SQL call (`GetSqlInfo`) after connecting to confirm authentication is valid. Previously, connecting without credentials (e.g., omitting `--username`) would report "Connected" but fail on the first query with a cryptic auth error.
+
 ## [1.20.2] - 2026-04-02
 
 ### Fixed

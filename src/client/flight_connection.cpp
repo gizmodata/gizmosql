@@ -255,6 +255,21 @@ arrow::Status FlightConnection::Connect(const ClientConfig& config) {
                          arrow::flight::FlightClient::Connect(location, options));
   cancel_call_options_ = call_options_;  // Same bearer token / headers
 
+  // Verify the connection is actually usable by making a lightweight Flight SQL
+  // call. This catches cases where the gRPC channel opened successfully but
+  // authentication is missing or invalid (e.g. no username provided).
+  auto verify_result = client_->GetSqlInfo(call_options_, {});
+  if (!verify_result.ok()) {
+    Disconnect();
+    bool auth_was_attempted =
+        config.auth_type_external || !config.username.empty();
+    std::string hint = auth_was_attempted
+        ? " — check your credentials"
+        : " — authentication required. Provide --username or set GIZMOSQL_USER";
+    return arrow::Status::IOError(
+        "Connection to " + server_addr + " failed" + hint);
+  }
+
   return arrow::Status::OK();
 }
 

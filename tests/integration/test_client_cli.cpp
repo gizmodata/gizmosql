@@ -532,3 +532,31 @@ TEST_F(ClientCliFixture, DocHeredocStyle) {
   EXPECT_NE(StripAnsi(output).find("ASIA"), std::string::npos)
       << "Should find ASIA. Output:\n" << output;
 }
+
+// ============================================================================
+// Connection verification: missing username should fail at connect, not at query
+// ============================================================================
+
+TEST_F(ClientCliFixture, ConnectWithoutUsernameFails) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Connect to the server without --username. The client should fail immediately
+  // rather than reporting "Connected" and then failing on the first query.
+  auto result = RunClient(
+      "--host localhost --port " + std::to_string(GetPort()) +
+      " --command \"SELECT 1\"",
+      "");
+
+  EXPECT_NE(result.exit_code, 0)
+      << "Should fail when no username is provided. stdout:\n"
+      << result.stdout_output;
+
+  auto stderr_clean = StripAnsi(result.stderr_output);
+  EXPECT_NE(stderr_clean.find("authentication required"), std::string::npos)
+      << "Error should mention authentication. stderr:\n" << stderr_clean;
+
+  // Must NOT print the "Connected to" banner
+  auto stdout_clean = StripAnsi(result.stdout_output);
+  EXPECT_EQ(stdout_clean.find("Connected to"), std::string::npos)
+      << "Should not say 'Connected' without auth. stdout:\n" << stdout_clean;
+}
