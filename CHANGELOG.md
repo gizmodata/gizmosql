@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-04-06
+
 ### Added
 
 - **[Enterprise] Instance, session, and query tagging for instrumentation**: Users can attach arbitrary JSON metadata to instrumentation records for cost attribution, multi-tenant identification, and observability. Instance tags are set at startup via `--instance-tag` CLI flag or `GIZMOSQL_INSTANCE_TAG` env var. Session tags are set dynamically via `SET gizmosql.session_tag = '<json>'`. Query tags are set via `SET gizmosql.query_tag = '<json>'` and apply to all subsequent SQL statements until changed. All tags are validated as JSON and stored in the instrumentation schema (`instances.instance_tag`, `sessions.session_tag`, `sql_statements.query_tag`). Existing instrumentation databases are automatically migrated with the new columns. Fixes [#152](https://github.com/gizmodata/gizmosql/issues/152).
+- **Client tag support**: `gizmosql_client` now supports `--session-tag` and `--query-tag` CLI flags (and `GIZMOSQL_SESSION_TAG` / `GIZMOSQL_QUERY_TAG` env vars) to automatically set tags after connecting. Tags can be overridden during the session via `SET gizmosql.*` commands.
 
 ## [1.20.3] - 2026-04-04
 
