@@ -31,18 +31,28 @@ using arrow::flight::sql::FlightSqlClient;
 // Test fixture with instance_tag set
 // ============================================================================
 
+// Returns true if a valid enterprise license key file is available
+static bool HasEnterpriseLicense() {
+  const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  return lf && lf[0] != '\0';
+}
+
 class TagServerFixture
     : public gizmosql::testing::ServerTestFixture<TagServerFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
-    return {
+    auto config = gizmosql::testing::TestServerConfig{
         .database_filename = "tag_test.db",
         .port = 31440,
         .health_port = 31441,
         .username = "tester",
         .password = "tester",
-        .instance_tag = R"({"env":"test","region":"us-east-1"})",
     };
+    // Only set instance_tag when licensed — server rejects it without license
+    if (HasEnterpriseLicense()) {
+      config.instance_tag = R"({"env":"test","region":"us-east-1"})";
+    }
+    return config;
   }
 };
 
@@ -77,6 +87,7 @@ static arrow::Result<std::shared_ptr<arrow::Table>> ExecuteAndFetch(
 // ============================================================================
 
 TEST_F(TagServerFixture, InstanceTagRecordedInInstrumentationTable) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -116,6 +127,7 @@ TEST_F(TagServerFixture, InstanceTagRecordedInInstrumentationTable) {
 // ============================================================================
 
 TEST_F(TagServerFixture, SetSessionTagUpdatesSessionsTable) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -160,6 +172,7 @@ TEST_F(TagServerFixture, SetSessionTagUpdatesSessionsTable) {
 }
 
 TEST_F(TagServerFixture, SetSessionTagRejectsInvalidJSON) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -206,6 +219,7 @@ TEST_F(TagServerFixture, SetSessionTagRejectsInvalidJSON) {
 // ============================================================================
 
 TEST_F(TagServerFixture, SetQueryTagRecordedInStatementsTable) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -260,6 +274,7 @@ TEST_F(TagServerFixture, SetQueryTagRecordedInStatementsTable) {
 }
 
 TEST_F(TagServerFixture, QueryTagPersistsAcrossQueries) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -322,6 +337,7 @@ TEST_F(TagServerFixture, QueryTagPersistsAcrossQueries) {
 }
 
 TEST_F(TagServerFixture, ClearQueryTagWithEmptyString) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -384,6 +400,7 @@ TEST_F(TagServerFixture, ClearQueryTagWithEmptyString) {
 }
 
 TEST_F(TagServerFixture, SetQueryTagRejectsInvalidJSON) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -430,6 +447,7 @@ TEST_F(TagServerFixture, SetQueryTagRejectsInvalidJSON) {
 // ============================================================================
 
 TEST_F(TagServerFixture, DocExampleFilterSessionsByTag) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -472,6 +490,7 @@ TEST_F(TagServerFixture, DocExampleFilterSessionsByTag) {
 }
 
 TEST_F(TagServerFixture, DocExampleFilterQueriesByRequestId) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -523,6 +542,7 @@ TEST_F(TagServerFixture, DocExampleFilterQueriesByRequestId) {
 }
 
 TEST_F(TagServerFixture, DocExampleAggregateByInstanceTag) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -565,6 +585,7 @@ TEST_F(TagServerFixture, DocExampleAggregateByInstanceTag) {
 }
 
 TEST_F(TagServerFixture, TagsVisibleInInstrumentationViews) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -695,15 +716,11 @@ CliResult RunClientCmd(const std::string& args, const std::string& env_prefix = 
 }  // namespace
 
 TEST_F(TagServerFixture, ClientSessionTagFlag) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
-  {
-    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
-    if (!lf || std::string(lf).empty())
-      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
-  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();
@@ -730,15 +747,11 @@ TEST_F(TagServerFixture, ClientSessionTagFlag) {
 }
 
 TEST_F(TagServerFixture, ClientQueryTagFlag) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
-  {
-    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
-    if (!lf || std::string(lf).empty())
-      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
-  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();
@@ -773,15 +786,11 @@ TEST_F(TagServerFixture, ClientQueryTagFlag) {
 }
 
 TEST_F(TagServerFixture, ClientSessionTagEnvVar) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
-  {
-    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
-    if (!lf || std::string(lf).empty())
-      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
-  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();
@@ -808,15 +817,11 @@ TEST_F(TagServerFixture, ClientSessionTagEnvVar) {
 }
 
 TEST_F(TagServerFixture, ClientQueryTagEnvVar) {
+  if (!HasEnterpriseLicense()) GTEST_SKIP() << "Requires enterprise license";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
-  {
-    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
-    if (!lf || std::string(lf).empty())
-      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
-  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();

@@ -1391,6 +1391,12 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     std::cerr << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError("Instrumentation") << std::endl;
     return EXIT_FAILURE;
   }
+
+  // Check if instance_tag is specified but instrumentation is not available
+  if (!instance_tag.empty() && !enterprise.IsInstrumentationAvailable()) {
+    std::cerr << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError("--instance-tag") << std::endl;
+    return EXIT_FAILURE;
+  }
 #else
   // Core edition banner (no enterprise features compiled)
   (void)license_key_file;  // Suppress unused variable warning
@@ -1403,6 +1409,18 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   // In core edition, instrumentation is not available
   if (enable_instrumentation.value()) {
     std::cerr << "Error: Instrumentation is a commercially licensed enterprise feature.\n"
+              << "       Please provide a valid license key file via --license-key-file\n"
+              << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
+    return EXIT_FAILURE;
+  }
+  if (!instance_tag.empty()) {
+    std::cerr << "Error: --instance-tag is a commercially licensed enterprise feature.\n"
+              << "       Please provide a valid license key file via --license-key-file\n"
+              << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
+    return EXIT_FAILURE;
+  }
+  if (!instance_tag.empty()) {
+    std::cerr << "Error: --instance-tag is a commercially licensed enterprise feature.\n"
               << "       Please provide a valid license key file via --license-key-file\n"
               << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
     return EXIT_FAILURE;
