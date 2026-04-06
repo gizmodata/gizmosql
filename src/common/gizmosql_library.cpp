@@ -1419,12 +1419,6 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
               << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
     return EXIT_FAILURE;
   }
-  if (!instance_tag.empty()) {
-    std::cerr << "Error: --instance-tag is a commercially licensed enterprise feature.\n"
-              << "       Please provide a valid license key file via --license-key-file\n"
-              << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
-    return EXIT_FAILURE;
-  }
 #endif
 
   GIZMOSQL_LOG(INFO) << "Overall Log Level is set to: " << lvl_s;
