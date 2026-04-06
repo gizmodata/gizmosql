@@ -709,17 +709,24 @@ TEST_F(TagServerFixture, ClientSessionTagFlag) {
                           " --username " + GetUsername();
   std::string env = "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
 
-  // Use --session-tag flag, then query to verify the tag was applied
-  auto result = RunClientCmd(
-      conn_args +
-      R"( --session-tag '{"client_flag":"test"}' )"
-      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE status = 'active' AND session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
-      env);
+  // Run a client with --session-tag (the -c query is a no-op; it just establishes the session)
+  auto run1 = RunClientCmd(
+      conn_args + R"( --session-tag '{"client_flag":"test"}' -c "SELECT 1")", env);
+  ASSERT_EQ(run1.exit_code, 0)
+      << "Client exited with error. stderr: " << run1.stderr_output;
 
-  ASSERT_EQ(result.exit_code, 0)
-      << "Client exited with error. stderr: " << result.stderr_output;
-  ASSERT_NE(result.stdout_output.find("client_flag"), std::string::npos)
-      << "Output should contain session_tag with 'client_flag', got: " << result.stdout_output;
+  // Allow async instrumentation queue to flush
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  // Query instrumentation from a separate session to verify the tag was recorded
+  auto run2 = RunClientCmd(
+      conn_args +
+      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
+      env);
+  ASSERT_EQ(run2.exit_code, 0)
+      << "Lookup failed. stderr: " << run2.stderr_output;
+  ASSERT_NE(run2.stdout_output.find("client_flag"), std::string::npos)
+      << "Output should contain session_tag with 'client_flag', got: " << run2.stdout_output;
 }
 
 TEST_F(TagServerFixture, ClientQueryTagFlag) {
@@ -781,15 +788,23 @@ TEST_F(TagServerFixture, ClientSessionTagEnvVar) {
   std::string env = "GIZMOSQL_PASSWORD=" + GetPassword() +
                     R"( GIZMOSQL_SESSION_TAG='{"env_var":"session_test"}' )";
 
-  auto result = RunClientCmd(
-      conn_args +
-      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE status = 'active' AND session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
-      env);
+  // Run a client with the env var set
+  auto run1 = RunClientCmd(conn_args + R"( -c "SELECT 1")", env);
+  ASSERT_EQ(run1.exit_code, 0)
+      << "Client exited with error. stderr: " << run1.stderr_output;
 
-  ASSERT_EQ(result.exit_code, 0)
-      << "Client exited with error. stderr: " << result.stderr_output;
-  ASSERT_NE(result.stdout_output.find("env_var"), std::string::npos)
-      << "Output should contain session_tag from env var, got: " << result.stdout_output;
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  // Lookup from a clean session
+  std::string lookup_env = "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
+  auto run2 = RunClientCmd(
+      conn_args +
+      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
+      lookup_env);
+  ASSERT_EQ(run2.exit_code, 0)
+      << "Lookup failed. stderr: " << run2.stderr_output;
+  ASSERT_NE(run2.stdout_output.find("env_var"), std::string::npos)
+      << "Output should contain session_tag from env var, got: " << run2.stdout_output;
 }
 
 TEST_F(TagServerFixture, ClientQueryTagEnvVar) {
