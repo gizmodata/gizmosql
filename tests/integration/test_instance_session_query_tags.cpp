@@ -696,12 +696,14 @@ CliResult RunClientCmd(const std::string& args, const std::string& env_prefix = 
 
 TEST_F(TagServerFixture, ClientSessionTagFlag) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-#ifndef GIZMOSQL_ENTERPRISE
-  GTEST_SKIP() << "Tagging requires Enterprise edition";
-#endif
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
+  {
+    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+    if (!lf || std::string(lf).empty())
+      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
+  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();
@@ -722,12 +724,14 @@ TEST_F(TagServerFixture, ClientSessionTagFlag) {
 
 TEST_F(TagServerFixture, ClientQueryTagFlag) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-#ifndef GIZMOSQL_ENTERPRISE
-  GTEST_SKIP() << "Tagging requires Enterprise edition";
-#endif
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
+  {
+    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+    if (!lf || std::string(lf).empty())
+      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
+  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();
@@ -763,12 +767,14 @@ TEST_F(TagServerFixture, ClientQueryTagFlag) {
 
 TEST_F(TagServerFixture, ClientSessionTagEnvVar) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-#ifndef GIZMOSQL_ENTERPRISE
-  GTEST_SKIP() << "Tagging requires Enterprise edition";
-#endif
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
+  {
+    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+    if (!lf || std::string(lf).empty())
+      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
+  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();
@@ -788,12 +794,14 @@ TEST_F(TagServerFixture, ClientSessionTagEnvVar) {
 
 TEST_F(TagServerFixture, ClientQueryTagEnvVar) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-#ifndef GIZMOSQL_ENTERPRISE
-  GTEST_SKIP() << "Tagging requires Enterprise edition";
-#endif
 #ifdef _WIN32
   GTEST_SKIP() << "Client subprocess tests use POSIX env var syntax";
 #endif
+  {
+    const char* lf = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+    if (!lf || std::string(lf).empty())
+      GTEST_SKIP() << "Tagging requires enterprise license (set GIZMOSQL_LICENSE_KEY_FILE)";
+  }
 
   std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
                           " --username " + GetUsername();
