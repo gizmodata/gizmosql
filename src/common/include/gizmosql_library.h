@@ -124,6 +124,7 @@ int RunFlightSQLServer(
     std::string instrumentation_db_path = "",
     std::string instrumentation_catalog = "",
     std::string instrumentation_schema = "",
+    std::string instance_tag = "",
     std::string license_key_file = "",
     std::optional<bool> allow_cross_instance_tokens = std::nullopt,
     std::string oauth_client_id = "",

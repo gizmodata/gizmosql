@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS instances (
     start_time TIMESTAMP NOT NULL,
     stop_time TIMESTAMP,
     status VARCHAR NOT NULL,  -- CHECK (status IN ('running', 'stopped')) not supported in DuckLake
-    stop_reason VARCHAR
+    stop_reason VARCHAR,
+    instance_tag JSON
 );
 
 -- Client session lifecycle
@@ -95,7 +96,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     start_time TIMESTAMP NOT NULL,
     stop_time TIMESTAMP,
     status VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
-    stop_reason VARCHAR
+    stop_reason VARCHAR,
+    session_tag JSON
 );
 
 -- SQL statement definitions (prepared statements)
@@ -107,7 +109,8 @@ CREATE TABLE IF NOT EXISTS sql_statements (
     is_internal BOOLEAN NOT NULL,
     prepare_success BOOLEAN NOT NULL,
     prepare_error VARCHAR,
-    created_time TIMESTAMP NOT NULL
+    created_time TIMESTAMP NOT NULL,
+    query_tag JSON
 );
 
 -- SQL statement executions (each execution of a statement)
@@ -122,6 +125,11 @@ CREATE TABLE IF NOT EXISTS sql_executions (
     error_message VARCHAR,
     duration_ms BIGINT
 );
+
+-- Schema migration: add tag columns to existing tables (safe to re-run)
+ALTER TABLE instances ADD COLUMN IF NOT EXISTS instance_tag JSON;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS session_tag JSON;
+ALTER TABLE sql_statements ADD COLUMN IF NOT EXISTS query_tag JSON;
 
 -- Indexes not supported in DuckLake, but would be useful for file-based mode:
 -- CREATE INDEX IF NOT EXISTS idx_sessions_instance_id ON sessions(instance_id);
@@ -150,6 +158,7 @@ SELECT
     i.stop_time AS instance_stop_time,
     i.status AS instance_status,
     i.stop_reason AS instance_stop_reason,
+    i.instance_tag,
     s.session_id,
     s.username,
     s.role,
@@ -159,6 +168,7 @@ SELECT
     s.stop_time AS session_stop_time,
     s.status AS session_status,
     s.stop_reason AS session_stop_reason,
+    s.session_tag,
     st.statement_id,
     st.sql_text,
     st.created_time AS statement_created_time,
@@ -169,7 +179,8 @@ SELECT
     e.rows_fetched,
     e.status AS execution_status,
     e.error_message,
-    e.duration_ms
+    e.duration_ms,
+    st.query_tag
 FROM instances i
 LEFT JOIN sessions s ON i.instance_id = s.instance_id
 LEFT JOIN sql_statements st ON s.session_id = st.session_id
@@ -194,6 +205,8 @@ SELECT
     i.server_ip,
     i.port,
     i.database_path,
+    s.session_tag,
+    i.instance_tag,
     EPOCH(now()) - EPOCH(s.start_time) AS session_duration_seconds
 FROM sessions s
 JOIN instances i ON s.instance_id = i.instance_id
@@ -243,7 +256,9 @@ SELECT
     e.duration_ms,
     s.username,
     s.auth_method,
-    s.peer
+    s.peer,
+    st.query_tag,
+    s.session_tag
 FROM sql_executions e
 JOIN sql_statements st ON e.statement_id = st.statement_id
 JOIN sessions s ON st.session_id = s.session_id;
@@ -369,6 +384,13 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
 
 arrow::Status InstrumentationManager::InitializeSchema() {
   try {
+    // Ensure the json extension is loaded (required for JSON column type)
+    auto json_result = writer_connection_->Get().Query("INSTALL json; LOAD json;");
+    if (json_result->HasError()) {
+      return arrow::Status::Invalid("Failed to load json extension: ",
+                                    json_result->GetError());
+    }
+
     // Generate schema SQL with actual catalog and schema names
     std::string schema_sql = GetSchemaSQL(catalog_, schema_);
     auto result = writer_connection_->Get().Query(schema_sql);

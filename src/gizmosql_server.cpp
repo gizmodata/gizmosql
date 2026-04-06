@@ -120,6 +120,10 @@ int main(int argc, char** argv) {
             ("instrumentation-schema", po::value<std::string>()->default_value(""),
               "[Enterprise] Schema within the instrumentation catalog. If not set, uses env var GIZMOSQL_INSTRUMENTATION_SCHEMA, "
               "or defaults to 'main'.")
+            ("instance-tag", po::value<std::string>()->default_value(""),
+              "[Enterprise] JSON-formatted tag to attach to this server instance in the instrumentation database. "
+              "Must be valid JSON (e.g., '{\"env\":\"prod\",\"region\":\"us-east-1\"}'). "
+              "If not set, uses env var GIZMOSQL_INSTANCE_TAG.")
             ("license-key-file,L", po::value<std::string>()->default_value(""),
               "Path to the GizmoSQL Enterprise license key file (JWT format). "
               "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
@@ -319,6 +323,9 @@ int main(int argc, char** argv) {
   std::string instrumentation_schema =
       vm.count("instrumentation-schema") ? vm["instrumentation-schema"].as<std::string>() : "";
 
+  std::string instance_tag =
+      vm.count("instance-tag") ? vm["instance-tag"].as<std::string>() : "";
+
   std::string license_key_file =
       vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
 
@@ -371,7 +378,7 @@ int main(int argc, char** argv) {
       token_default_role, token_authorized_emails, log_level, log_format,
       access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, license_key_file,
+      instrumentation_catalog, instrumentation_schema, instance_tag, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers);

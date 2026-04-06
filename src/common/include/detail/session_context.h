@@ -39,6 +39,8 @@ struct ClientSession {
   std::optional<std::string> active_sql_handle;
   std::optional<int32_t> query_timeout = std::nullopt;
   std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;
+  std::string session_tag;  // JSON-formatted session tag (Enterprise feature, set via SET gizmosql.session_tag)
+  std::string query_tag;    // JSON-formatted query tag (Enterprise feature, set via SET gizmosql.query_tag)
 
   // Catalog-level access controls from JWT token claims (Enterprise feature)
   // If empty, full access is granted (backward compatible)

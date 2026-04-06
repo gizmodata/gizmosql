@@ -48,6 +48,7 @@
 #include <sys/sysctl.h>
 #include <mach/mach.h>
 #endif
+#include <nlohmann/json.hpp>
 #include <arrow/flight/client.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/util/config.h>
@@ -460,6 +461,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& instrumentation_db_path,
     const std::string& instrumentation_catalog,
     const std::string& instrumentation_schema,
+    const std::string& instance_tag,
     const bool& allow_cross_instance_tokens,
     const std::string& oauth_client_id,
     const std::string& oauth_client_secret,
@@ -800,6 +802,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             .cpu_model = sys_info.cpu_model,
             .cpu_count = sys_info.cpu_count,
             .memory_total_bytes = sys_info.memory_total_bytes,
+            .instance_tag = instance_tag,
         };
         auto instance_instr = std::make_unique<gizmosql::ddb::InstanceInstrumentation>(
             g_instrumentation_manager, instance_config);
@@ -924,6 +927,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string instrumentation_db_path,
     std::string instrumentation_catalog,
     std::string instrumentation_schema,
+    std::string instance_tag,
     const bool& allow_cross_instance_tokens,
     std::string oauth_client_id,
     std::string oauth_client_secret,
@@ -1151,6 +1155,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     }
   }
 
+  // Resolve instance tag: CLI arg > env var
+  if (instance_tag.empty()) {
+    instance_tag = SafeGetEnvVarValue("GIZMOSQL_INSTANCE_TAG");
+  }
+  if (!instance_tag.empty()) {
+    auto parsed = nlohmann::json::parse(instance_tag, nullptr, false);
+    if (parsed.is_discarded()) {
+      return arrow::Status::Invalid("Invalid JSON for --instance-tag: " + instance_tag);
+    }
+  }
+
   // Resolve OAuth params: CLI arg > env var > defaults
   if (oauth_client_id.empty()) {
     oauth_client_id = SafeGetEnvVarValue("GIZMOSQL_OAUTH_CLIENT_ID");
@@ -1204,7 +1219,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       token_authorized_emails, access_logging_enabled, query_timeout,
       query_log_level, auth_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens,
+      instrumentation_catalog, instrumentation_schema, instance_tag,
+      allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled);
 }
@@ -1263,6 +1279,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string instrumentation_db_path,
                        std::string instrumentation_catalog,
                        std::string instrumentation_schema,
+                       std::string instance_tag,
                        std::string license_key_file,
                        std::optional<bool> allow_cross_instance_tokens,
                        std::string oauth_client_id,
@@ -1431,7 +1448,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       token_default_role, token_authorized_emails, access_logging_enabled,
       query_timeout, query_level, auth_level, health_port, health_check_query,
       enable_instrumentation.value(), instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, allow_cross_instance_tokens.value(),
+      instrumentation_catalog, instrumentation_schema, instance_tag,
+      allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled);
 

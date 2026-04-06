@@ -33,6 +33,7 @@
 #   GIZMOSQL_INSTRUMENTATION_DB_PATH --instrumentation-db-path
 #   GIZMOSQL_INSTRUMENTATION_CATALOG --instrumentation-catalog
 #   GIZMOSQL_INSTRUMENTATION_SCHEMA  --instrumentation-schema
+#   GIZMOSQL_INSTANCE_TAG            --instance-tag
 #   GIZMOSQL_LICENSE_KEY_FILE        --license-key-file
 #   GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS --allow-cross-instance-tokens
 #   GIZMOSQL_TOKEN_JWKS_URI              --token-jwks-uri
