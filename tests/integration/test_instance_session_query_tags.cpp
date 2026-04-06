@@ -5,7 +5,16 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <chrono>
+#include <array>
+#include <cstdio>
+#include <fstream>
 #include <filesystem>
+#include <sstream>
+
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
 
 #include <duckdb.hpp>
 
@@ -623,4 +632,166 @@ TEST_F(TagServerFixture, TagsVisibleInInstrumentationViews) {
                       "FROM _gizmosql_instr.execution_details "
                       "WHERE query_tag IS NOT NULL LIMIT 1"));
   ASSERT_GT(exec_table->num_rows(), 0);
+}
+
+// ============================================================================
+// Client CLI Tag Tests — verify --session-tag, --query-tag, and env vars
+// ============================================================================
+
+namespace {
+
+struct CliResult {
+  std::string stdout_output;
+  std::string stderr_output;
+  int exit_code;
+};
+
+std::string FindClientBinary() {
+#ifdef GIZMOSQL_CLIENT_BINARY
+  return GIZMOSQL_CLIENT_BINARY;
+#else
+  const char* candidates[] = {"./gizmosql_client", "../gizmosql_client", "gizmosql_client"};
+  for (const auto* path : candidates) {
+    if (std::ifstream(path).good()) return path;
+  }
+  return "gizmosql_client";
+#endif
+}
+
+CliResult RunClientCmd(const std::string& args, const std::string& env_prefix = "") {
+  std::string client = FindClientBinary();
+  std::string stderr_file = "/tmp/gizmosql_tag_test_stderr_" +
+                             std::to_string(::getpid()) + ".txt";
+  std::string cmd = env_prefix + client + " " + args + " 2>" + stderr_file;
+
+  CliResult result;
+  FILE* pipe = popen(cmd.c_str(), "r");
+  if (!pipe) {
+    result.exit_code = -1;
+    result.stderr_output = "popen() failed";
+    return result;
+  }
+
+  std::array<char, 4096> buf;
+  while (fgets(buf.data(), buf.size(), pipe) != nullptr) {
+    result.stdout_output += buf.data();
+  }
+
+  result.exit_code = pclose(pipe);
+#ifndef _WIN32
+  result.exit_code = WEXITSTATUS(result.exit_code);
+#endif
+
+  std::ifstream stderr_stream(stderr_file);
+  if (stderr_stream.is_open()) {
+    std::ostringstream ss;
+    ss << stderr_stream.rdbuf();
+    result.stderr_output = ss.str();
+  }
+  std::remove(stderr_file.c_str());
+  return result;
+}
+
+}  // namespace
+
+TEST_F(TagServerFixture, ClientSessionTagFlag) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
+                          " --username " + GetUsername();
+  std::string env = "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
+
+  // Use --session-tag flag, then query to verify the tag was applied
+  auto result = RunClientCmd(
+      conn_args +
+      R"( --session-tag '{"client_flag":"test"}' )"
+      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE status = 'active' AND session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
+      env);
+
+  ASSERT_EQ(result.exit_code, 0)
+      << "Client exited with error. stderr: " << result.stderr_output;
+  ASSERT_NE(result.stdout_output.find("client_flag"), std::string::npos)
+      << "Output should contain session_tag with 'client_flag', got: " << result.stdout_output;
+}
+
+TEST_F(TagServerFixture, ClientQueryTagFlag) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
+                          " --username " + GetUsername();
+  std::string env = "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
+
+  // Use --query-tag flag, run a query, then check sql_statements for the tag.
+  // The -c flag runs the command and exits, so we need to run two queries:
+  // first a tagged query, then a lookup. We can use a semicolon-separated batch.
+  // However, -c only runs a single statement. So we'll run two separate invocations.
+
+  // First: run a tagged query
+  auto run1 = RunClientCmd(
+      conn_args +
+      R"( --query-tag '{"pipeline":"client-test"}' )"
+      R"( -c "SELECT 1 AS client_tag_probe")",
+      env);
+  ASSERT_EQ(run1.exit_code, 0)
+      << "First client run failed. stderr: " << run1.stderr_output;
+
+  // Allow async instrumentation queue to flush
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  // Second: query the instrumentation table (no tag needed for the lookup)
+  auto run2 = RunClientCmd(
+      conn_args +
+      R"( -c "SELECT query_tag FROM _gizmosql_instr.sql_statements WHERE sql_text LIKE '%client_tag_probe%' AND sql_text NOT LIKE '%sql_statements%' ORDER BY created_time DESC LIMIT 1")",
+      env);
+  ASSERT_EQ(run2.exit_code, 0)
+      << "Second client run failed. stderr: " << run2.stderr_output;
+  ASSERT_NE(run2.stdout_output.find("client-test"), std::string::npos)
+      << "query_tag should contain 'client-test', got: " << run2.stdout_output;
+}
+
+TEST_F(TagServerFixture, ClientSessionTagEnvVar) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
+                          " --username " + GetUsername();
+  std::string env = "GIZMOSQL_PASSWORD=" + GetPassword() +
+                    R"( GIZMOSQL_SESSION_TAG='{"env_var":"session_test"}' )";
+
+  auto result = RunClientCmd(
+      conn_args +
+      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE status = 'active' AND session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
+      env);
+
+  ASSERT_EQ(result.exit_code, 0)
+      << "Client exited with error. stderr: " << result.stderr_output;
+  ASSERT_NE(result.stdout_output.find("env_var"), std::string::npos)
+      << "Output should contain session_tag from env var, got: " << result.stdout_output;
+}
+
+TEST_F(TagServerFixture, ClientQueryTagEnvVar) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string conn_args = "--host localhost --port " + std::to_string(GetPort()) +
+                          " --username " + GetUsername();
+  std::string env = "GIZMOSQL_PASSWORD=" + GetPassword() +
+                    R"( GIZMOSQL_QUERY_TAG='{"env_var":"query_test"}' )";
+
+  // Run a tagged query
+  auto run1 = RunClientCmd(
+      conn_args + R"( -c "SELECT 1 AS env_query_tag_probe")", env);
+  ASSERT_EQ(run1.exit_code, 0)
+      << "First client run failed. stderr: " << run1.stderr_output;
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  // Check the instrumentation table
+  std::string lookup_env = "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
+  auto run2 = RunClientCmd(
+      conn_args +
+      R"( -c "SELECT query_tag FROM _gizmosql_instr.sql_statements WHERE sql_text LIKE '%env_query_tag_probe%' AND sql_text NOT LIKE '%sql_statements%' ORDER BY created_time DESC LIMIT 1")",
+      lookup_env);
+  ASSERT_EQ(run2.exit_code, 0)
+      << "Second client run failed. stderr: " << run2.stderr_output;
+  ASSERT_NE(run2.stdout_output.find("query_test"), std::string::npos)
+      << "query_tag should contain 'query_test', got: " << run2.stdout_output;
 }
