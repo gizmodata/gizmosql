@@ -43,6 +43,7 @@ For enterprise deployments, you can store instrumentation data in a DuckLake cat
 |-----------|----------|---------|---------|-------------|
 | `instrumentation_catalog` | `--instrumentation-catalog` | `GIZMOSQL_INSTRUMENTATION_CATALOG` | (empty) | Catalog name for instrumentation. If set, uses pre-attached catalog instead of file. |
 | `instrumentation_schema` | `--instrumentation-schema` | `GIZMOSQL_INSTRUMENTATION_SCHEMA` | `main` | Schema within the catalog |
+| `instance_tag` | `--instance-tag` | `GIZMOSQL_INSTANCE_TAG` | (empty) | JSON-formatted tag attached to the instance record |
 
 When `instrumentation_catalog` is set:
 - The catalog must be pre-attached via `--init-sql-commands`
@@ -210,6 +211,7 @@ Tracks server instance lifecycle.
 | `stop_time` | TIMESTAMP | When server stopped (NULL if running) |
 | `status` | VARCHAR | 'running' or 'stopped' |
 | `stop_reason` | VARCHAR | Reason for shutdown |
+| `instance_tag` | JSON | User-defined JSON tag set via `--instance-tag` CLI flag (NULL if not set) |
 
 #### `sessions`
 
@@ -230,6 +232,7 @@ Tracks client session lifecycle.
 | `stop_time` | TIMESTAMP | When session ended (NULL if active) |
 | `status` | VARCHAR | 'active', 'closed', 'killed', 'timeout', 'error' |
 | `stop_reason` | VARCHAR | Reason session ended |
+| `session_tag` | JSON | User-defined JSON tag set via `SET gizmosql.session_tag` (NULL if not set) |
 
 #### `sql_statements`
 
@@ -245,6 +248,7 @@ Tracks prepared statement definitions (one per prepared statement).
 | `prepare_success` | BOOLEAN | Whether statement preparation succeeded |
 | `prepare_error` | VARCHAR | Error message if statement preparation failed (NULL if successful) |
 | `created_time` | TIMESTAMP | When statement was created |
+| `query_tag` | JSON | User-defined JSON tag set via `SET gizmosql.query_tag` (NULL if not set) |
 
 **Internal vs Client Statements:**
 - `is_internal = true`: Statements created by GizmoSQL for metadata queries (DoGetTables, DoGetCatalogs, DoGetPrimaryKeys, etc.)
@@ -507,6 +511,86 @@ When a session is killed:
 1. Any executing queries are cancelled
 2. The session's status is set to 'killed'
 3. The client receives an error on their next operation
+
+---
+
+## Tagging
+
+GizmoSQL supports attaching user-defined JSON metadata tags to instances, sessions, and queries. Tags are stored in the instrumentation schema and are useful for cost attribution, multi-tenant identification, environment tracking, and correlating instrumentation data with external systems.
+
+All tag values must be valid JSON. Invalid JSON is rejected with an error.
+
+### Instance Tags
+
+Set at server startup via CLI flag or environment variable. The tag is recorded once in the `instances` table and cannot be changed at runtime.
+
+```bash
+gizmosql_server \
+  --enable-instrumentation=true \
+  --instance-tag='{"env":"production","region":"us-east-1","cluster":"main"}'
+```
+
+Or via environment variable:
+```bash
+export GIZMOSQL_INSTANCE_TAG='{"env":"staging"}'
+```
+
+### Session Tags
+
+Set by a connected client using the `SET gizmosql.session_tag` command. The tag is stored in the `sessions` table and can be updated during the session. Each SET overwrites the previous value.
+
+```sql
+SET gizmosql.session_tag = '{"team":"data-eng","cost_center":"CC-123"}';
+```
+
+To clear a session tag:
+```sql
+SET gizmosql.session_tag = '';
+```
+
+### Query Tags
+
+Set by a connected client using the `SET gizmosql.query_tag` command. Once set, the tag is recorded with every subsequent SQL statement in the `sql_statements` table until changed or cleared.
+
+```sql
+-- Tag all subsequent queries
+SET gizmosql.query_tag = '{"request_id":"req-abc-123","pipeline":"daily-etl"}';
+
+-- These queries will be tagged with the above JSON
+SELECT * FROM orders WHERE date = '2026-04-06';
+SELECT count(*) FROM customers;
+
+-- Change the tag for the next batch
+SET gizmosql.query_tag = '{"request_id":"req-def-456","pipeline":"hourly-sync"}';
+
+-- Clear the tag (subsequent queries will have NULL query_tag)
+SET gizmosql.query_tag = '';
+```
+
+### Querying Tags
+
+Tags are stored as `JSON` columns and can be queried using DuckDB's JSON functions:
+
+```sql
+-- Find all sessions for a specific team
+SELECT * FROM _gizmosql_instr.sessions
+WHERE session_tag->>'team' = 'data-eng';
+
+-- Find queries by request ID
+SELECT sql_text, query_tag, created_time
+FROM _gizmosql_instr.sql_statements
+WHERE query_tag->>'request_id' = 'req-abc-123';
+
+-- Aggregate execution stats by instance environment
+SELECT i.instance_tag->>'env' AS environment,
+       COUNT(*) AS total_executions,
+       AVG(e.duration_ms) AS avg_duration_ms
+FROM _gizmosql_instr.execution_details e
+JOIN _gizmosql_instr.instances i ON e.instance_id = i.instance_id
+GROUP BY 1;
+```
+
+> **Note:** Tagging is an Enterprise feature. Attempting to use `SET gizmosql.session_tag` or `SET gizmosql.query_tag` without a valid enterprise license will return an error.
 
 ---
 

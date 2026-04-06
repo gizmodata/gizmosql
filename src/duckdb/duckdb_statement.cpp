@@ -53,6 +53,7 @@
 #include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #include "enterprise/enterprise_features.h"
 #endif
+#include <nlohmann/json.hpp>
 #include "version.h"
 
 using arrow::Status;
@@ -63,6 +64,12 @@ namespace context_api = opentelemetry::context;
 #endif
 
 namespace {
+
+/// Returns true if the string is valid JSON (object, array, or primitive).
+bool IsValidJSON(const std::string& s) {
+  auto parsed = nlohmann::json::parse(s, nullptr, false);
+  return !parsed.is_discarded();
+}
 
 bool IsLikelyGizmoSQLSet(const std::string& sql) {
   std::string trimmed = sql;
@@ -810,7 +817,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     // Create statement instrumentation for successful KILL SESSION
     if (instr_mgr) {
       result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-          instr_mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
+          instr_mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
+          "", client_session->query_tag);
     }
 
     // Create a synthetic result batch with success message
@@ -848,7 +856,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     if (auto server = GetServer(*client_session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
         result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-            mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
+            mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
+            "", client_session->query_tag);
       }
     }
 #endif
@@ -939,7 +948,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {
           result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-              mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
+              mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
+              "", client_session->query_tag);
         }
       }
 #endif
@@ -982,7 +992,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   if (auto server = GetServer(*client_session)) {
     if (auto mgr = server->GetInstrumentationManager()) {
       result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-          mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal);
+          mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
+          "", client_session->query_tag);
     }
   }
 #endif
@@ -1062,6 +1073,37 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
         ARROW_RETURN_NOT_OK(server->SetQueryLogLevel(*session, query_log_level));
       }
     }
+  } else if (name == "gizmosql.session_tag") {
+#ifdef GIZMOSQL_ENTERPRISE
+    if (!val.empty() && !IsValidJSON(val)) {
+      return arrow::Status::Invalid("Invalid JSON for session_tag: " + val);
+    }
+
+    session->session_tag = val;
+    if (session->instrumentation) {
+      session->instrumentation->UpdateSessionTag(val);
+    }
+#else
+    return arrow::Status::Invalid(
+        "SET gizmosql.session_tag is a commercially licensed enterprise feature. "
+        "Please provide a valid license key file via --license-key-file "
+        "or contact GizmoData sales at sales@gizmodata.com to obtain a license.");
+#endif
+
+  } else if (name == "gizmosql.query_tag") {
+#ifdef GIZMOSQL_ENTERPRISE
+    if (!val.empty() && !IsValidJSON(val)) {
+      return arrow::Status::Invalid("Invalid JSON for query_tag: " + val);
+    }
+
+    session->query_tag = val;
+#else
+    return arrow::Status::Invalid(
+        "SET gizmosql.query_tag is a commercially licensed enterprise feature. "
+        "Please provide a valid license key file via --license-key-file "
+        "or contact GizmoData sales at sales@gizmodata.com to obtain a license.");
+#endif
+
   } else {
     return arrow::Status::Invalid("Unknown GizmoSQL configuration parameter: " + name);
   }

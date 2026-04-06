@@ -39,6 +39,7 @@ struct InstanceConfig {
   std::string cpu_model;        // "Apple M1 Pro", "Intel(R) Xeon(R)...", etc.
   int cpu_count;                // Number of logical CPUs
   int64_t memory_total_bytes;   // Total physical memory in bytes
+  std::string instance_tag;     // JSON-formatted instance tag (empty if not set)
 };
 
 class InstanceInstrumentation {
@@ -75,6 +76,9 @@ class SessionInstrumentation {
 
   void SetStopReason(const std::string& reason);
 
+  /// Updates the session tag in the instrumentation database.
+  void UpdateSessionTag(const std::string& tag);
+
  private:
   std::shared_ptr<InstrumentationManager> manager_;
   std::string instance_id_;
@@ -99,7 +103,8 @@ class StatementInstrumentation {
                            const std::string& sql_text,
                            const std::string& flight_method,
                            bool is_internal = false,
-                           const std::string& prepare_error = "");
+                           const std::string& prepare_error = "",
+                           const std::string& query_tag = "");
 
   std::string GetStatementId() const { return statement_id_; }
 

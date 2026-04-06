@@ -59,6 +59,7 @@ CreateFlightSQLServer(
     std::string instrumentation_db_path = "",
     std::string instrumentation_catalog = "",
     std::string instrumentation_schema = "",
+    std::string instance_tag = "",
     const bool& allow_cross_instance_tokens = false,
     std::string oauth_client_id = "",
     std::string oauth_client_secret = "",
@@ -89,6 +90,7 @@ struct TestServerConfig {
   std::string init_sql_commands = "";           // SQL commands to run on startup
   std::string instrumentation_catalog = "";     // Catalog for instrumentation (if using DuckLake)
   std::string instrumentation_schema = "";      // Schema within instrumentation catalog
+  std::string instance_tag = "";               // JSON instance tag for instrumentation
   bool allow_cross_instance_tokens = false;     // Allow tokens from other server instances
   std::string token_jwks_uri = "";              // JWKS endpoint URL for token verification
   std::string token_default_role = "";          // Default role when token lacks 'role' claim
@@ -195,6 +197,7 @@ class ServerTestFixture : public ::testing::Test {
         /*instrumentation_db_path=*/"",
         /*instrumentation_catalog=*/config_.instrumentation_catalog,
         /*instrumentation_schema=*/config_.instrumentation_schema,
+        /*instance_tag=*/config_.instance_tag,
         /*allow_cross_instance_tokens=*/config_.allow_cross_instance_tokens,
         /*oauth_client_id=*/config_.oauth_client_id,
         /*oauth_client_secret=*/config_.oauth_client_secret,

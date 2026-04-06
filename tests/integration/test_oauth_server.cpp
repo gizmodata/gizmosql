@@ -391,6 +391,7 @@ class OAuthServerTest : public ::testing::Test {
         /*instrumentation_db_path=*/"",
         /*instrumentation_catalog=*/"",
         /*instrumentation_schema=*/"",
+        /*instance_tag=*/"",
         /*allow_cross_instance_tokens=*/false,
         /*oauth_client_id=*/kTestClientId,
         /*oauth_client_secret=*/kTestClientSecret,

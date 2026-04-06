@@ -37,9 +37,9 @@ InstanceInstrumentation::InstanceInstrumentation(
         "duckdb_version, arrow_version, hostname, hostname_arg, server_ip, port, database_path, "
         "tls_enabled, tls_cert_path, tls_key_path, mtls_required, mtls_ca_cert_path, readonly, "
         "os_platform, os_name, os_version, cpu_arch, cpu_model, cpu_count, memory_total_bytes, "
-        "start_time, status) "
+        "start_time, status, instance_tag) "
         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, "
-        "$17, $18, $19, $20, $21, $22, $23, now(), 'running')");
+        "$17, $18, $19, $20, $21, $22, $23, now(), 'running', $24)");
     stmt->Execute(
         duckdb::Value::UUID(config.instance_id),
         duckdb::Value(config.gizmosql_version),
@@ -63,7 +63,8 @@ InstanceInstrumentation::InstanceInstrumentation(
         config.cpu_arch.empty() ? duckdb::Value() : duckdb::Value(config.cpu_arch),
         config.cpu_model.empty() ? duckdb::Value() : duckdb::Value(config.cpu_model),
         duckdb::Value(config.cpu_count),
-        duckdb::Value::BIGINT(config.memory_total_bytes));
+        duckdb::Value::BIGINT(config.memory_total_bytes),
+        config.instance_tag.empty() ? duckdb::Value() : duckdb::Value(config.instance_tag));
   });
 }
 
@@ -138,6 +139,19 @@ void SessionInstrumentation::SetStopReason(const std::string& reason) {
   stop_reason_ = reason;
 }
 
+void SessionInstrumentation::UpdateSessionTag(const std::string& tag) {
+  if (!manager_ || !manager_->IsEnabled()) {
+    return;
+  }
+
+  manager_->QueueWrite([id = session_id_, tag](duckdb::Connection& conn) {
+    auto stmt = conn.Prepare(
+        "UPDATE sessions SET session_tag = $2 WHERE session_id = $1");
+    stmt->Execute(duckdb::Value::UUID(id),
+                  tag.empty() ? duckdb::Value() : duckdb::Value(tag));
+  });
+}
+
 // ============================================================================
 // StatementInstrumentation
 // ============================================================================
@@ -145,7 +159,8 @@ void SessionInstrumentation::SetStopReason(const std::string& reason) {
 StatementInstrumentation::StatementInstrumentation(
     std::shared_ptr<InstrumentationManager> manager, const std::string& statement_id,
     const std::string& session_id, const std::string& sql_text,
-    const std::string& flight_method, bool is_internal, const std::string& prepare_error)
+    const std::string& flight_method, bool is_internal, const std::string& prepare_error,
+    const std::string& query_tag)
     : manager_(std::move(manager)), statement_id_(statement_id) {
   if (!manager_ || !manager_->IsEnabled()) {
     return;
@@ -153,17 +168,19 @@ StatementInstrumentation::StatementInstrumentation(
 
   bool prepare_success = prepare_error.empty();
   manager_->QueueWrite([statement_id, session_id, sql_text, flight_method,
-                        is_internal, prepare_success, prepare_error](duckdb::Connection& conn) {
+                        is_internal, prepare_success, prepare_error,
+                        query_tag](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
         "INSERT INTO sql_statements (statement_id, session_id, sql_text, "
-        "flight_method, is_internal, prepare_success, prepare_error, created_time) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, now())");
+        "flight_method, is_internal, prepare_success, prepare_error, created_time, query_tag) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)");
     stmt->Execute(duckdb::Value::UUID(statement_id), duckdb::Value::UUID(session_id),
                   duckdb::Value(sql_text),
                   flight_method.empty() ? duckdb::Value() : duckdb::Value(flight_method),
                   duckdb::Value::BOOLEAN(is_internal),
                   duckdb::Value::BOOLEAN(prepare_success),
-                  prepare_error.empty() ? duckdb::Value() : duckdb::Value(prepare_error));
+                  prepare_error.empty() ? duckdb::Value() : duckdb::Value(prepare_error),
+                  query_tag.empty() ? duckdb::Value() : duckdb::Value(query_tag));
   });
 }
 
