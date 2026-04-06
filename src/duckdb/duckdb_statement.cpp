@@ -1075,6 +1075,12 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
     }
   } else if (name == "gizmosql.session_tag") {
 #ifdef GIZMOSQL_ENTERPRISE
+    if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsInstrumentationAvailable()) {
+      return arrow::Status::Invalid(
+          gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
+              "SET gizmosql.session_tag"));
+    }
+
     if (!val.empty() && !IsValidJSON(val)) {
       return arrow::Status::Invalid("Invalid JSON for session_tag: " + val);
     }
@@ -1092,6 +1098,12 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
 
   } else if (name == "gizmosql.query_tag") {
 #ifdef GIZMOSQL_ENTERPRISE
+    if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsInstrumentationAvailable()) {
+      return arrow::Status::Invalid(
+          gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
+              "SET gizmosql.query_tag"));
+    }
+
     if (!val.empty() && !IsValidJSON(val)) {
       return arrow::Status::Invalid("Invalid JSON for query_tag: " + val);
     }

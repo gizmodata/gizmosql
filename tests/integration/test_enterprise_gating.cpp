@@ -182,3 +182,100 @@ TEST_F(EnterpriseGatingTestFixture, EditionReturnsCoreWithoutLicense) {
   ASSERT_NE(edition_array, nullptr);
   EXPECT_EQ(edition_array->GetString(0), "Core");
 }
+
+// Test that SET gizmosql.session_tag is rejected without enterprise license
+TEST_F(EnterpriseGatingTestFixture, SetSessionTagRejectedWithoutLicense) {
+  SKIP_IF_LICENSE_PRESENT();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             flight::FlightClient::Connect(location, options));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+
+  flight::FlightCallOptions call_options;
+  call_options.headers.emplace_back(bearer.first, bearer.second);
+
+  flightsql::FlightSqlClient sql_client(std::move(client));
+
+  // Execute returns FlightInfo OK; error surfaces during DoGet
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info,
+      sql_client.Execute(call_options,
+                         R"(SET gizmosql.session_tag = '{"test":"gating"}')"));
+
+  bool got_error = false;
+  std::string error_msg;
+  for (const auto& endpoint : info->endpoints()) {
+    auto reader_result = sql_client.DoGet(call_options, endpoint.ticket);
+    if (!reader_result.ok()) {
+      got_error = true;
+      error_msg = reader_result.status().ToString();
+      break;
+    }
+    auto table_result = reader_result.ValueOrDie()->ToTable();
+    if (!table_result.ok()) {
+      got_error = true;
+      error_msg = table_result.status().ToString();
+      break;
+    }
+  }
+
+  ASSERT_TRUE(got_error) << "SET gizmosql.session_tag should be rejected without license";
+  EXPECT_TRUE(error_msg.find("enterprise") != std::string::npos ||
+              error_msg.find("Enterprise") != std::string::npos ||
+              error_msg.find("license") != std::string::npos)
+      << "Expected enterprise/license error, got: " << error_msg;
+}
+
+// Test that SET gizmosql.query_tag is rejected without enterprise license
+TEST_F(EnterpriseGatingTestFixture, SetQueryTagRejectedWithoutLicense) {
+  SKIP_IF_LICENSE_PRESENT();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             flight::FlightClient::Connect(location, options));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+
+  flight::FlightCallOptions call_options;
+  call_options.headers.emplace_back(bearer.first, bearer.second);
+
+  flightsql::FlightSqlClient sql_client(std::move(client));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info,
+      sql_client.Execute(call_options,
+                         R"(SET gizmosql.query_tag = '{"test":"gating"}')"));
+
+  bool got_error = false;
+  std::string error_msg;
+  for (const auto& endpoint : info->endpoints()) {
+    auto reader_result = sql_client.DoGet(call_options, endpoint.ticket);
+    if (!reader_result.ok()) {
+      got_error = true;
+      error_msg = reader_result.status().ToString();
+      break;
+    }
+    auto table_result = reader_result.ValueOrDie()->ToTable();
+    if (!table_result.ok()) {
+      got_error = true;
+      error_msg = table_result.status().ToString();
+      break;
+    }
+  }
+
+  ASSERT_TRUE(got_error) << "SET gizmosql.query_tag should be rejected without license";
+  EXPECT_TRUE(error_msg.find("enterprise") != std::string::npos ||
+              error_msg.find("Enterprise") != std::string::npos ||
+              error_msg.find("license") != std::string::npos)
+      << "Expected enterprise/license error, got: " << error_msg;
+}
