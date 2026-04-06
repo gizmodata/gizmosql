@@ -88,6 +88,10 @@ struct ClientConfig {
   // Syntax highlighting
   bool syntax_highlighting = true;
 
+  // Tags (sent as SET gizmosql.* after connecting)
+  std::string session_tag;
+  std::string query_tag;
+
   // Dynamic prompt (show catalog.schema)
   bool dynamic_prompt = true;
 

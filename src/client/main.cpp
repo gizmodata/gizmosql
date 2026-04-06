@@ -107,6 +107,12 @@ int main(int argc, char** argv) {
       ("no-init", po::bool_switch(&config.no_init),
        "Do not execute init file")
 
+      // Tags
+      ("session-tag", po::value<std::string>(&config.session_tag),
+       "Session tag JSON sent after connecting (env: GIZMOSQL_SESSION_TAG)")
+      ("query-tag", po::value<std::string>(&config.query_tag),
+       "Query tag JSON sent after connecting (env: GIZMOSQL_QUERY_TAG)")
+
       // Output mode shortcuts
       ("csv", "Set output mode to CSV")
       ("json", "Set output mode to JSON")
@@ -327,6 +333,24 @@ int main(int argc, char** argv) {
     if (!connect_status.ok()) {
       std::cerr << "Error: " << connect_status.ToString() << std::endl;
       return 1;
+    }
+
+    // Set tags if configured (can be overridden later via SET gizmosql.*)
+    if (!config.session_tag.empty()) {
+      auto tag_result = conn.ExecuteUpdate(
+          "SET gizmosql.session_tag = '" + config.session_tag + "'");
+      if (!tag_result.ok()) {
+        std::cerr << "Warning: failed to set session_tag: "
+                  << tag_result.status().ToString() << std::endl;
+      }
+    }
+    if (!config.query_tag.empty()) {
+      auto tag_result = conn.ExecuteUpdate(
+          "SET gizmosql.query_tag = '" + config.query_tag + "'");
+      if (!tag_result.ok()) {
+        std::cerr << "Warning: failed to set query_tag: "
+                  << tag_result.status().ToString() << std::endl;
+      }
     }
   }
   // else: start in disconnected state — user can use .connect later

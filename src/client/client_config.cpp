@@ -133,6 +133,18 @@ void ResolveEnvironmentVariables(ClientConfig& config) {
       }
     }
   }
+
+  if (config.session_tag.empty()) {
+    if (const char* val = get_env("GIZMOSQL_SESSION_TAG")) {
+      config.session_tag = val;
+    }
+  }
+
+  if (config.query_tag.empty()) {
+    if (const char* val = get_env("GIZMOSQL_QUERY_TAG")) {
+      config.query_tag = val;
+    }
+  }
 }
 
 namespace {
