@@ -152,13 +152,19 @@ find "${IOS_LIB_BUILD_DIR}" -name "libgizmosqlserver.a" -exec cp {} "${OUTPUT_DI
 # DuckDB extensions (ducklake, icu, tpch, parquet, etc.), and all
 # transitive deps. We exclude host-tools and FetchContent subbuild dirs
 # to avoid pulling in test/demo libs.
+#
+# IMPORTANT: We delete any pre-existing .a files in the output dir
+# first, then copy fresh ones. Without this, stale files from previous
+# builds (with different extension lists, etc.) will be linked into
+# liball.a, causing subtle "extension not loaded" runtime bugs.
 echo "Collecting all static libraries for liball.a..."
+rm -f "${OUTPUT_DIR}"/*.a
 find "${IOS_LIB_BUILD_DIR}" -name "*.a" \
     ! -path "*/host-tools/*" \
     ! -path "*-subbuild/*" \
     ! -name "*test*" \
     ! -name "*demo*" \
-    -exec cp -n {} "${OUTPUT_DIR}/" \; 2>/dev/null || true
+    -exec cp {} "${OUTPUT_DIR}/" \; 2>/dev/null || true
 
 # Combine everything into a single fat archive (liball.a) for the iOS app.
 # The Xcode project links against this single archive.
