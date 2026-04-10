@@ -80,6 +80,10 @@ class BrowserViewModel: ObservableObject {
         guard let client, client.isConnected else { return }
         isLoading = true
         errorMessage = nil
+        // Clear stale data from a previously-viewed catalog
+        schemas = []
+        tables = []
+        columns = []
         let sql = """
             SELECT DISTINCT table_catalog, table_schema
             FROM information_schema.tables
@@ -105,6 +109,9 @@ class BrowserViewModel: ObservableObject {
         guard let client, client.isConnected else { return }
         isLoading = true
         errorMessage = nil
+        // Clear stale data from a previously-viewed schema
+        tables = []
+        columns = []
         let escapedCatalog = catalog.replacingOccurrences(of: "'", with: "''")
         let escapedSchema = schema.replacingOccurrences(of: "'", with: "''")
         let sql = """
@@ -134,6 +141,8 @@ class BrowserViewModel: ObservableObject {
         guard let client, client.isConnected else { return }
         isLoading = true
         errorMessage = nil
+        // Clear stale data from a previously-viewed table
+        columns = []
         let escapedSchema = schema.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedTable = table.replacingOccurrences(of: "\"", with: "\"\"")
         let sql = "DESCRIBE \"\(escapedSchema)\".\"\(escapedTable)\""
