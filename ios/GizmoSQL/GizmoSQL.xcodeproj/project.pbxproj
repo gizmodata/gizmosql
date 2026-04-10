@@ -283,7 +283,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../build/libs",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.1.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-no_warn_duplicate_libraries",
@@ -400,7 +400,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../build/libs",
 				);
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.1.1;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-no_warn_duplicate_libraries",
