@@ -716,18 +716,22 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Run DuckDB init commands first
 #if TARGET_OS_IOS
     // iOS: extensions can't be dynamically loaded (dlopen forbidden for downloaded code).
-    // ICU, TPCH, httpfs, and ducklake are statically linked — they are
-    // loaded automatically by DuckDB at startup via LoadAllExtensions().
-    // We only explicitly LOAD a few here as a sanity check (these are
-    // no-ops since the extensions are already loaded). httpfs is
-    // intentionally NOT explicitly LOADed because the SQL LOAD command
-    // goes through a disk-load path that doesn't recognize statically-
-    // linked extensions whose registration didn't fully complete via
-    // FinishLoad — but the extension's runtime functionality is still
-    // available because LoadInternal() registered the file systems.
+    // All statically-linked extensions are loaded automatically by DuckDB
+    // at startup via LoadAllExtensions(). We only explicitly LOAD the
+    // in-tree extensions (icu, tpch) here as a sanity check — these are
+    // no-ops since they're already loaded.
+    //
+    // Out-of-tree extensions (ducklake, httpfs) are intentionally NOT
+    // explicitly LOADed: they use the newer DUCKDB_CPP_EXTENSION_ENTRY
+    // C API, and the SQL `LOAD` command always goes through a disk-load
+    // path (PhysicalLoad → LoadExternalExtension → InitialLoad) that
+    // doesn't recognize them as already-loaded. Their runtime
+    // functionality (file systems for httpfs, catalog type for ducklake)
+    // is registered during static initialization at DuckDB startup, so
+    // they're fully usable without the explicit LOAD.
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = false; SET autoload_known_extensions = false;"
-        "LOAD icu; LOAD tpch; LOAD ducklake;";
+        "LOAD icu; LOAD tpch;";
 #else
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;"
