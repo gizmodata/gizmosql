@@ -29,3 +29,10 @@ duckdb_extension_load(httpfs
     GIT_URL https://github.com/duckdb/duckdb-httpfs
     GIT_TAG 7e86e7a5e5a1f01f458361bebdfa9b0a9a73a619
 )
+
+# NOTE: azure extension is NOT included because it requires the Azure
+# SDK for C++ (azure-identity-cpp, azure-storage-blobs-cpp,
+# azure-storage-files-datalake-cpp). DuckDB normally fetches these via
+# vcpkg, which we don't have set up. Cross-compiling the Azure SDK for
+# iOS (and its transitive deps: libxml2, libcurl, etc.) is a multi-day
+# effort that we're deferring to a future release.
