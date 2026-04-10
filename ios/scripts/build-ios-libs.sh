@@ -144,27 +144,58 @@ cp "${IOS_LIB_BUILD_DIR}/src/common/include/version.h" "${OUTPUT_DIR}/include/" 
 # Some DuckDB extensions (e.g. postgres_scanner) only build as loadable
 # extensions (.duckdb_extension files) — they have no static target.
 # To use them on iOS, we bundle them into the app and load them at
-# runtime via LOAD '<full path>;'. iOS allows dlopen() of code-signed
+# runtime via LOAD '<full path>';. iOS allows dlopen() of code-signed
 # dylibs that ship inside the app bundle.
 #
-# DuckDB builds these for the host platform (macOS arm64). We retag the
-# Mach-O LC_BUILD_VERSION metadata from macOS → iOS using vtool so dyld
-# accepts the file on iOS. The Xcode build phase will then code-sign
-# it as part of the app build.
+# This requires three transformations on the .duckdb_extension file:
+#
+#  1. Retag Mach-O platform from macOS → iOS via vtool. DuckDB
+#     ExternalProject builds for the host (macOS arm64) so the
+#     LC_BUILD_VERSION says platform 1 (macOS); iOS dyld requires
+#     platform 2 (iOS).
+#
+#  2. Strip the trailing 512-byte DuckDB footer (signature/metadata).
+#     The footer comes after the Mach-O __LINKEDIT segment, which
+#     causes Xcode's bitcode_strip and codesign to reject the file
+#     ("__LINKEDIT segment does not cover the end of the file" /
+#     "main executable failed strict validation"). DuckDB's runtime
+#     loader can be told to skip the footer check via
+#     `SET allow_unsigned_extensions = true;` and
+#     `SET allow_extensions_metadata_mismatch = true;` (done in the
+#     iOS init SQL in ServerManager.swift).
+#
+#  3. Code-signing happens later, in Xcode's "Embed Extensions" build
+#     phase, with CodeSignOnCopy enabled.
 echo "Bundling out-of-tree extensions for iOS..."
 mkdir -p "${OUTPUT_DIR}/extensions"
 for ext_name in postgres_scanner; do
     EXT_SRC=$(find "${IOS_LIB_BUILD_DIR}" \
         -path "*${ext_name}/${ext_name}.duckdb_extension" \
         ! -path "*/repository/*" 2>/dev/null | head -1)
-    if [ -n "${EXT_SRC}" ] && [ -f "${EXT_SRC}" ]; then
-        EXT_DST="${OUTPUT_DIR}/extensions/${ext_name}.duckdb_extension"
-        echo "  Retagging ${ext_name} for iOS..."
-        vtool -set-build-version ios 17.0 26.4 -replace \
-            -output "${EXT_DST}" "${EXT_SRC}"
-    else
+    if [ -z "${EXT_SRC}" ] || [ ! -f "${EXT_SRC}" ]; then
         echo "  WARNING: ${ext_name}.duckdb_extension not found"
+        continue
     fi
+    EXT_DST="${OUTPUT_DIR}/extensions/${ext_name}.duckdb_extension"
+    EXT_TMP="${OUTPUT_DIR}/extensions/${ext_name}.tmp"
+
+    # Step 1: retag for iOS
+    echo "  Retagging ${ext_name} for iOS..."
+    vtool -set-build-version ios 17.0 26.4 -replace \
+        -output "${EXT_TMP}" "${EXT_SRC}"
+
+    # Step 2: strip trailing bytes after __LINKEDIT segment
+    # otool prints fileoff/filesize for the __LINKEDIT segment in decimal
+    LINKEDIT_INFO=$(otool -l "${EXT_TMP}" 2>/dev/null | \
+        awk '/__LINKEDIT/{found=1} found && /fileoff/{fo=$2} found && /filesize/{fs=$2; print fo+fs; exit}')
+    if [ -z "${LINKEDIT_INFO}" ]; then
+        echo "  ERROR: Could not find __LINKEDIT segment in ${ext_name}"
+        rm -f "${EXT_TMP}"
+        continue
+    fi
+    echo "  Truncating ${ext_name} to ${LINKEDIT_INFO} bytes (end of __LINKEDIT)..."
+    dd if="${EXT_TMP}" of="${EXT_DST}" bs=1 count="${LINKEDIT_INFO}" status=none
+    rm -f "${EXT_TMP}"
 done
 
 echo ""
