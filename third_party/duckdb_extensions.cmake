@@ -15,10 +15,6 @@ duckdb_extension_load(tpch)
 # <duckdb_repo>/.github/patches/extensions/<name>/, but we don't ship
 # those patches. The pinned commits work correctly without them in
 # practice.
-duckdb_extension_load(postgres_scanner
-    GIT_URL https://github.com/duckdb/duckdb-postgres
-    GIT_TAG a42c490df0019406658073c003b7d89dd4338466
-)
 
 duckdb_extension_load(ducklake
     GIT_URL https://github.com/duckdb/ducklake
@@ -29,6 +25,18 @@ duckdb_extension_load(httpfs
     GIT_URL https://github.com/duckdb/duckdb-httpfs
     GIT_TAG 7e86e7a5e5a1f01f458361bebdfa9b0a9a73a619
 )
+
+# postgres_scanner: only statically linked on iOS. It has no upstream
+# static target (build_loadable_extension only), so ios/scripts/
+# build-ios-libs.sh patches its CMakeLists to add one. On other
+# platforms, users can INSTALL postgres / LOAD postgres at runtime
+# via DuckDB's normal extension mechanism.
+if(GIZMOSQL_IOS)
+    duckdb_extension_load(postgres_scanner
+        GIT_URL https://github.com/duckdb/duckdb-postgres
+        GIT_TAG a42c490df0019406658073c003b7d89dd4338466
+    )
+endif()
 
 # NOTE: azure extension is NOT included because it requires the Azure
 # SDK for C++ (azure-identity-cpp, azure-storage-blobs-cpp,

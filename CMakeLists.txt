@@ -287,9 +287,18 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}tpch_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}ducklake_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}httpfs_extension${LIB_SUFFIX}"
-        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}postgres_scanner_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
 )
+
+# Only link postgres_scanner_extension on iOS. The static target is
+# produced by the patch in ios/scripts/build-ios-libs.sh; other
+# platforms use the loadable .duckdb_extension via INSTALL/LOAD.
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_link_libraries(duckdb
+            INTERFACE
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}postgres_scanner_extension${LIB_SUFFIX}"
+    )
+endif()
 
 # Only link jemalloc_extension on Linux
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
