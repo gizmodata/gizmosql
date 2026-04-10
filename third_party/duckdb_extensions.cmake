@@ -25,3 +25,8 @@ duckdb_extension_load(ducklake
     GIT_URL https://github.com/duckdb/ducklake
     GIT_TAG 7ea15644fd5f5ff42b86b8a703c14172acc7b8bd
 )
+
+duckdb_extension_load(httpfs
+    GIT_URL https://github.com/duckdb/duckdb-httpfs
+    GIT_TAG 7e86e7a5e5a1f01f458361bebdfa9b0a9a73a619
+)
