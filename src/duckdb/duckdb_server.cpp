@@ -2041,10 +2041,15 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   // the app bundle's Frameworks/ folder. The bundling process strips
   // the trailing 512-byte DuckDB footer (signature/metadata) from each
   // .duckdb_extension file so that codesign accepts it as a valid
-  // Mach-O dylib. Without the footer, DuckDB can't validate the
-  // signature, so allow unsigned extensions at the database config
-  // level (this setting cannot be changed via SQL after startup).
+  // Mach-O dylib. Without the footer, DuckDB cannot validate either
+  // the signature OR the metadata block, so we need to allow BOTH:
+  //   - allow_unsigned_extensions: skip signature check
+  //   - allow_extensions_metadata_mismatch: skip metadata format check
+  // Both are GLOBAL_ONLY scope and cannot be changed via SQL after the
+  // database is running, so we set them in DBConfig before opening.
   config.SetOptionByName("allow_unsigned_extensions", duckdb::Value::BOOLEAN(true));
+  config.SetOptionByName("allow_extensions_metadata_mismatch",
+                          duckdb::Value::BOOLEAN(true));
 #endif
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
