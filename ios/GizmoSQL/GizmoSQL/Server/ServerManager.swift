@@ -83,15 +83,13 @@ class ServerManager: ObservableObject {
         // dylibs (.duckdb_extension). iOS allows dlopen() of dylibs
         // that live inside the signed app bundle.
         //
-        // The bundled .duckdb_extension files have their trailing
-        // DuckDB footer stripped (so codesign accepts them as valid
-        // Mach-O), so we tell DuckDB to skip the footer/signature
-        // checks via allow_unsigned_extensions and
-        // allow_extensions_metadata_mismatch.
+        // Note: `allow_unsigned_extensions` is set in C++ DBConfig
+        // before the database is opened (see duckdb_server.cpp); it's
+        // a GLOBAL_ONLY setting that can't be changed via SQL once
+        // the database is running.
         var bundledLoads = ""
         let frameworksURL = Bundle.main.bundleURL
             .appendingPathComponent("Frameworks", isDirectory: true)
-        var foundAnyBundled = false
         for ext in ["postgres_scanner"] {
             let path = frameworksURL
                 .appendingPathComponent("\(ext).duckdb_extension")
@@ -99,13 +97,7 @@ class ServerManager: ObservableObject {
             if FileManager.default.fileExists(atPath: path) {
                 let escaped = path.replacingOccurrences(of: "'", with: "''")
                 bundledLoads += "LOAD '\(escaped)';"
-                foundAnyBundled = true
             }
-        }
-        if foundAnyBundled {
-            bundledLoads = "SET allow_unsigned_extensions = true;" +
-                           "SET allow_extensions_metadata_mismatch = true;" +
-                           bundledLoads
         }
         let initSql = bundledLoads + config.initSqlCommands
 
