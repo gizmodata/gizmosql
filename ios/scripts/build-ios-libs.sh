@@ -166,6 +166,49 @@ find "${IOS_LIB_BUILD_DIR}" -name "*.a" \
     ! -name "*demo*" \
     -exec cp {} "${OUTPUT_DIR}/" \; 2>/dev/null || true
 
+# -------------------------------------------------------
+# Retag macOS-built objects to iOS platform
+# -------------------------------------------------------
+# Arrow/gRPC/DuckDB/OpenSSL ExternalProjects build for the host
+# (macOS arm64) because cross-compiling them to iOS is too complex
+# (gRPC's proto tool generation, OpenSSL's perl scripts, etc).
+# The resulting object files are binary-compatible with iOS arm64
+# (same instruction set), but the Mach-O LC_BUILD_VERSION says
+# platform 1 (macOS). When the iOS app linker tries to link them, it
+# refuses with: "Building for 'iOS', but linking in object file ...
+# built for 'macOS'".
+#
+# vtool can't retag .o files in place because they don't have padding
+# to grow load commands. Instead we use a Python script that patches
+# the LC_BUILD_VERSION command's platform field in-place (cmd size
+# unchanged). This is fast and works on every .o we throw at it.
+#
+# We skip libgizmosqlserver.a since it's compiled directly with the
+# iOS toolchain and is already iOS-tagged.
+echo "Retagging macOS objects in static libraries to iOS..."
+RETAG_PY="${REPO_ROOT}/ios/scripts/retag_objects_to_ios.py"
+RETAG_TMP=$(mktemp -d)
+for archive in "${OUTPUT_DIR}"/*.a; do
+    name=$(basename "${archive}")
+    case "${name}" in
+        libgizmosqlserver.a) continue ;;
+    esac
+    archive_tmp="${RETAG_TMP}/$(basename "${archive}" .a)"
+    mkdir -p "${archive_tmp}"
+    (
+        cd "${archive_tmp}"
+        ar -x "${archive}" 2>/dev/null
+        # Patch the LC_BUILD_VERSION platform field in every .o file
+        # in this archive. Pass them all as args to one Python invocation.
+        python3 "${RETAG_PY}" *.o 2>/dev/null || true
+        # Repack the archive
+        rm -f "${archive}"
+        ar -rcs "${archive}" *.o 2>/dev/null || true
+    )
+    rm -rf "${archive_tmp}"
+done
+rm -rf "${RETAG_TMP}"
+
 # Combine everything into a single fat archive (liball.a) for the iOS app.
 # The Xcode project links against this single archive.
 echo "Building liball.a..."
