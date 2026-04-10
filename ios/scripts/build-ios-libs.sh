@@ -94,6 +94,42 @@ cmake "${REPO_ROOT}" \
     -DARROW_SIMD_LEVEL=NONE \
     -DARROW_RUNTIME_SIMD_LEVEL=NONE
 
+# -------------------------------------------------------
+# Phase 2.5: Patch postgres_scanner extension to add static target
+# -------------------------------------------------------
+# DuckDB's postgres_scanner extension only ships with a
+# build_loadable_extension() call (no static target). On iOS we cannot
+# load .duckdb_extension files dynamically, so we patch the fetched
+# source to also call build_static_extension(). This produces
+# libpostgres_scanner_extension.a which we link into liball.a.
+PSCAN_SRC="${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/_deps/postgres_scanner_extension_fc-src/CMakeLists.txt"
+if [ -f "${PSCAN_SRC}" ] && ! grep -q "Patch added by GizmoSQL" "${PSCAN_SRC}"; then
+    echo "Patching postgres_scanner CMakeLists to add static extension target..."
+    cat >> "${PSCAN_SRC}" << 'PATCH_EOF'
+
+# Patch added by GizmoSQL: also build static extension target
+build_static_extension(${TARGET_NAME} ${ALL_OBJECT_FILES} ${LIBPG_SOURCES_FULLPATH})
+target_include_directories(
+  ${TARGET_NAME}_extension
+  PRIVATE include postgres/src/include postgres/src/backend
+          postgres/src/interfaces/libpq ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(${TARGET_NAME}_extension ${OPENSSL_LIBRARIES})
+set_property(TARGET ${TARGET_NAME}_extension PROPERTY C_STANDARD 99)
+PATCH_EOF
+    # Re-run cmake so it picks up the patched CMakeLists. We delete the
+    # cache so the duckdb ExternalProject re-configures with the patch.
+    rm -rf "${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/CMakeCache.txt" \
+           "${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/CMakeFiles"
+    cmake "${REPO_ROOT}" \
+        -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DGIZMOSQL_ENTERPRISE=OFF \
+        -DWITH_OPENTELEMETRY=OFF \
+        -DARROW_SIMD_LEVEL=NONE \
+        -DARROW_RUNTIME_SIMD_LEVEL=NONE
+fi
+
 echo "Building gizmosqlserver static library for iOS..."
 ninja gizmosqlserver
 
@@ -138,65 +174,6 @@ cd "${REPO_ROOT}"
 cp "${REPO_ROOT}/src/common/include/gizmosql_library.h" "${OUTPUT_DIR}/include/"
 cp "${IOS_LIB_BUILD_DIR}/src/common/include/version.h" "${OUTPUT_DIR}/include/" 2>/dev/null || true
 
-# -------------------------------------------------------
-# Bundle out-of-tree DuckDB extensions for iOS
-# -------------------------------------------------------
-# Some DuckDB extensions (e.g. postgres_scanner) only build as loadable
-# extensions (.duckdb_extension files) — they have no static target.
-# To use them on iOS, we bundle them into the app and load them at
-# runtime via LOAD '<full path>';. iOS allows dlopen() of code-signed
-# dylibs that ship inside the app bundle.
-#
-# This requires three transformations on the .duckdb_extension file:
-#
-#  1. Retag Mach-O platform from macOS → iOS via vtool. DuckDB
-#     ExternalProject builds for the host (macOS arm64) so the
-#     LC_BUILD_VERSION says platform 1 (macOS); iOS dyld requires
-#     platform 2 (iOS).
-#
-#  2. Strip the trailing 512-byte DuckDB footer (signature/metadata).
-#     The footer comes after the Mach-O __LINKEDIT segment, which
-#     causes Xcode's bitcode_strip and codesign to reject the file
-#     ("__LINKEDIT segment does not cover the end of the file" /
-#     "main executable failed strict validation"). DuckDB's runtime
-#     loader can be told to skip the footer check via
-#     `SET allow_unsigned_extensions = true;` and
-#     `SET allow_extensions_metadata_mismatch = true;` (done in the
-#     iOS init SQL in ServerManager.swift).
-#
-#  3. Code-signing happens later, in Xcode's "Embed Extensions" build
-#     phase, with CodeSignOnCopy enabled.
-echo "Bundling out-of-tree extensions for iOS..."
-mkdir -p "${OUTPUT_DIR}/extensions"
-for ext_name in postgres_scanner; do
-    EXT_SRC=$(find "${IOS_LIB_BUILD_DIR}" \
-        -path "*${ext_name}/${ext_name}.duckdb_extension" \
-        ! -path "*/repository/*" 2>/dev/null | head -1)
-    if [ -z "${EXT_SRC}" ] || [ ! -f "${EXT_SRC}" ]; then
-        echo "  WARNING: ${ext_name}.duckdb_extension not found"
-        continue
-    fi
-    EXT_DST="${OUTPUT_DIR}/extensions/${ext_name}.duckdb_extension"
-    EXT_TMP="${OUTPUT_DIR}/extensions/${ext_name}.tmp"
-
-    # Step 1: retag for iOS
-    echo "  Retagging ${ext_name} for iOS..."
-    vtool -set-build-version ios 17.0 26.4 -replace \
-        -output "${EXT_TMP}" "${EXT_SRC}"
-
-    # Step 2: strip trailing bytes after __LINKEDIT segment
-    # otool prints fileoff/filesize for the __LINKEDIT segment in decimal
-    LINKEDIT_INFO=$(otool -l "${EXT_TMP}" 2>/dev/null | \
-        awk '/__LINKEDIT/{found=1} found && /fileoff/{fo=$2} found && /filesize/{fs=$2; print fo+fs; exit}')
-    if [ -z "${LINKEDIT_INFO}" ]; then
-        echo "  ERROR: Could not find __LINKEDIT segment in ${ext_name}"
-        rm -f "${EXT_TMP}"
-        continue
-    fi
-    echo "  Truncating ${ext_name} to ${LINKEDIT_INFO} bytes (end of __LINKEDIT)..."
-    dd if="${EXT_TMP}" of="${EXT_DST}" bs=1 count="${LINKEDIT_INFO}" status=none
-    rm -f "${EXT_TMP}"
-done
 
 echo ""
 echo "=== Build complete ==="

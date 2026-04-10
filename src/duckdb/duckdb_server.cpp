@@ -17,10 +17,6 @@
 
 #include "duckdb_server.h"
 
-#ifdef __APPLE__
-#include <TargetConditionals.h>
-#endif
-
 #include <duckdb.hpp>
 
 #include <boost/algorithm/string.hpp>
@@ -2036,21 +2032,6 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     config.options.access_mode = duckdb::AccessMode::READ_ONLY;
   }
 
-#if defined(__APPLE__) && TARGET_OS_IOS
-  // iOS bundles out-of-tree DuckDB extensions (postgres_scanner) inside
-  // the app bundle's Frameworks/ folder. The bundling process strips
-  // the trailing 512-byte DuckDB footer (signature/metadata) from each
-  // .duckdb_extension file so that codesign accepts it as a valid
-  // Mach-O dylib. Without the footer, DuckDB cannot validate either
-  // the signature OR the metadata block, so we need to allow BOTH:
-  //   - allow_unsigned_extensions: skip signature check
-  //   - allow_extensions_metadata_mismatch: skip metadata format check
-  // Both are GLOBAL_ONLY scope and cannot be changed via SQL after the
-  // database is running, so we set them in DBConfig before opening.
-  config.SetOptionByName("allow_unsigned_extensions", duckdb::Value::BOOLEAN(true));
-  config.SetOptionByName("allow_extensions_metadata_mismatch",
-                          duckdb::Value::BOOLEAN(true));
-#endif
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 

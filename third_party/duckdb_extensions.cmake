@@ -16,7 +16,6 @@ duckdb_extension_load(tpch)
 # those patches. The pinned commits work correctly without them in
 # practice.
 duckdb_extension_load(postgres_scanner
-    DONT_LINK
     GIT_URL https://github.com/duckdb/duckdb-postgres
     GIT_TAG a42c490df0019406658073c003b7d89dd4338466
 )

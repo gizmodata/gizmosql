@@ -25,7 +25,6 @@
 		EA64FA3D654A590F4D97C628 /* ServerStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DDC81C77AA0E9247ABA162B /* ServerStatusView.swift */; };
 		F4499987A98975899CC3BDAB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C023A253E50DEDC785277407 /* Assets.xcassets */; };
 		F7A2B3C4D5E6F80192A3B4C5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A3B4C5D6E7F8091A2B3C4D5E /* PrivacyInfo.xcprivacy */; };
-		E2F1A3B4C5D6789012345678 /* postgres_scanner.duckdb_extension in Embed Extensions */ = {isa = PBXBuildFile; fileRef = E1F2A3B4C5D6789012345678 /* postgres_scanner.duckdb_extension */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,7 +41,6 @@
 		9F592D4437BFE6D352E0FA3E /* CertificateGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CertificateGenerator.swift; sourceTree = "<group>"; };
 		A1D3F8B2E47C9A0165B82E3F /* QueryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueryView.swift; sourceTree = "<group>"; };
 		A3B4C5D6E7F8091A2B3C4D5E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		E1F2A3B4C5D6789012345678 /* postgres_scanner.duckdb_extension */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = "postgres_scanner.duckdb_extension"; path = "../build/libs/extensions/postgres_scanner.duckdb_extension"; sourceTree = "<group>"; };
 		A75F535B1C151EE64C20619D /* GizmoSQLApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GizmoSQLApp.swift; sourceTree = "<group>"; };
 		A99652C0A61314B691F7834F /* GizmoSQL.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GizmoSQL.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C023A253E50DEDC785277407 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -81,7 +79,6 @@
 				30C672BAAD512C4C6ED670C1 /* CoreFoundation.framework */,
 				7F90BA9339AFA6F80BF3EB14 /* Network.framework */,
 				E9F10D842C1C27E2F9F33049 /* Security.framework */,
-				E1F2A3B4C5D6789012345678 /* postgres_scanner.duckdb_extension */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -171,7 +168,6 @@
 				50CAF34704503A8FBACCCFCA /* Sources */,
 				106B15CE20C960BE08A84055 /* Resources */,
 				8FB34276FD9D941F01EC5F8C /* Frameworks */,
-				E3F2A4B5C6D7890123456789 /* Embed Extensions */,
 			);
 			buildRules = (
 			);
@@ -216,20 +212,6 @@
 			);
 		};
 /* End PBXProject section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		E3F2A4B5C6D7890123456789 /* Embed Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				E2F1A3B4C5D6789012345678 /* postgres_scanner.duckdb_extension in Embed Extensions */,
-			);
-			name = "Embed Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
 		106B15CE20C960BE08A84055 /* Resources */ = {

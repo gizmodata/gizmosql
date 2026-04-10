@@ -77,29 +77,7 @@ class ServerManager: ObservableObject {
         let logFormat = config.logFormat
         let dbFilename = config.databaseFilename
 
-        // Build init SQL: prepend LOAD statements for any bundled
-        // out-of-tree DuckDB extensions before the user's init SQL.
-        // These extensions ship inside the app bundle as code-signed
-        // dylibs (.duckdb_extension). iOS allows dlopen() of dylibs
-        // that live inside the signed app bundle.
-        //
-        // Note: `allow_unsigned_extensions` is set in C++ DBConfig
-        // before the database is opened (see duckdb_server.cpp); it's
-        // a GLOBAL_ONLY setting that can't be changed via SQL once
-        // the database is running.
-        var bundledLoads = ""
-        let frameworksURL = Bundle.main.bundleURL
-            .appendingPathComponent("Frameworks", isDirectory: true)
-        for ext in ["postgres_scanner"] {
-            let path = frameworksURL
-                .appendingPathComponent("\(ext).duckdb_extension")
-                .path
-            if FileManager.default.fileExists(atPath: path) {
-                let escaped = path.replacingOccurrences(of: "'", with: "''")
-                bundledLoads += "LOAD '\(escaped)';"
-            }
-        }
-        let initSql = bundledLoads + config.initSqlCommands
+        let initSql = config.initSqlCommands
 
         serverThread = Thread {
             // DuckDB creates ~/.duckdb for extension storage. On iOS, HOME points
