@@ -716,13 +716,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Run DuckDB init commands first
 #if TARGET_OS_IOS
     // iOS: extensions can't be dynamically loaded (dlopen forbidden for downloaded code).
-    // ICU, TPCH, ducklake, and httpfs are statically linked — just LOAD
-    // them (no INSTALL needed). Postgres extension is not available on
-    // iOS because it cannot be statically linked (build_loadable_extension
-    // only). httpfs is required by ducklake for accessing remote storage.
+    // ICU, TPCH, httpfs, and ducklake are statically linked — they are
+    // loaded automatically by DuckDB at startup via LoadAllExtensions().
+    // We only explicitly LOAD a few here as a sanity check (these are
+    // no-ops since the extensions are already loaded). httpfs is
+    // intentionally NOT explicitly LOADed because the SQL LOAD command
+    // goes through a disk-load path that doesn't recognize statically-
+    // linked extensions whose registration didn't fully complete via
+    // FinishLoad — but the extension's runtime functionality is still
+    // available because LoadInternal() registered the file systems.
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = false; SET autoload_known_extensions = false;"
-        "LOAD icu; LOAD tpch; LOAD httpfs; LOAD ducklake;";
+        "LOAD icu; LOAD tpch; LOAD ducklake;";
 #else
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;"
