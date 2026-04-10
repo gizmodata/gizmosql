@@ -95,13 +95,20 @@ cmake "${REPO_ROOT}" \
     -DARROW_RUNTIME_SIMD_LEVEL=NONE
 
 # -------------------------------------------------------
-# Phase 2.5: Patch postgres_scanner extension to add static target
+# Phase 2.5: Patch out-of-tree extensions for iOS
 # -------------------------------------------------------
-# DuckDB's postgres_scanner extension only ships with a
-# build_loadable_extension() call (no static target). On iOS we cannot
-# load .duckdb_extension files dynamically, so we patch the fetched
-# source to also call build_static_extension(). This produces
-# libpostgres_scanner_extension.a which we link into liball.a.
+# Two patches needed:
+#
+# 1. postgres_scanner: only ships with build_loadable_extension() (no
+#    static target). iOS can't dlopen, so we patch in a static target.
+#
+# 2. httpfs: uses libcurl by default for HTTP, but libcurl is not
+#    available on iOS. httpfs has an httplib-based fallback (used in
+#    EMSCRIPTEN builds). We patch the source list to exclude
+#    httpfs_curl_client.cpp and patch httpfs_extension.cpp to use
+#    HTTPFSUtil (httplib) instead of HTTPFSCurlUtil.
+NEED_RECONFIGURE=0
+
 PSCAN_SRC="${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/_deps/postgres_scanner_extension_fc-src/CMakeLists.txt"
 if [ -f "${PSCAN_SRC}" ] && ! grep -q "Patch added by GizmoSQL" "${PSCAN_SRC}"; then
     echo "Patching postgres_scanner CMakeLists to add static extension target..."
@@ -116,8 +123,49 @@ target_include_directories(
 target_link_libraries(${TARGET_NAME}_extension ${OPENSSL_LIBRARIES})
 set_property(TARGET ${TARGET_NAME}_extension PROPERTY C_STANDARD 99)
 PATCH_EOF
-    # Re-run cmake so it picks up the patched CMakeLists. We delete the
-    # cache so the duckdb ExternalProject re-configures with the patch.
+    NEED_RECONFIGURE=1
+fi
+
+# Patch httpfs to drop the curl dependency
+HTTPFS_DIR="${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/_deps/httpfs_extension_fc-src"
+HTTPFS_TOPLEVEL="${HTTPFS_DIR}/CMakeLists.txt"
+HTTPFS_SRC_CMAKE="${HTTPFS_DIR}/src/CMakeLists.txt"
+HTTPFS_EXT_CPP="${HTTPFS_DIR}/src/httpfs_extension.cpp"
+if [ -f "${HTTPFS_SRC_CMAKE}" ] && ! grep -q "Patch added by GizmoSQL" "${HTTPFS_SRC_CMAKE}"; then
+    echo "Patching httpfs to drop libcurl dependency on iOS..."
+    # Remove httpfs_curl_client.cpp from the source list
+    python3 - << PYEOF
+import re
+p = "${HTTPFS_SRC_CMAKE}"
+with open(p) as f: s = f.read()
+s = s.replace("httpfs_curl_client.cpp", "")
+s = "# Patch added by GizmoSQL\n" + s
+with open(p, "w") as f: f.write(s)
+PYEOF
+    # Drop the find_package(CURL) and target_link_libraries lines
+    python3 - << PYEOF
+p = "${HTTPFS_TOPLEVEL}"
+with open(p) as f: s = f.read()
+s = s.replace("find_package(CURL REQUIRED)", "# Patched out by GizmoSQL: find_package(CURL REQUIRED)")
+s = s.replace("\${CURL_LIBRARIES}", "")
+with open(p, "w") as f: f.write(s)
+PYEOF
+    # Patch httpfs_extension.cpp to use HTTPFSUtil instead of HTTPFSCurlUtil
+    python3 - << PYEOF
+p = "${HTTPFS_EXT_CPP}"
+with open(p) as f: s = f.read()
+s = s.replace(
+    'config.SetHTTPUtil(make_shared_ptr<HTTPFSCurlUtil>());',
+    'config.SetHTTPUtil(make_shared_ptr<HTTPFSUtil>());  // Patched by GizmoSQL: use httplib instead of curl on iOS')
+# Also remove the #include of httpfs_curl_client.hpp
+s = s.replace('#include "httpfs_curl_client.hpp"', '// #include "httpfs_curl_client.hpp"  // Patched by GizmoSQL')
+with open(p, "w") as f: f.write(s)
+PYEOF
+    NEED_RECONFIGURE=1
+fi
+
+if [ "${NEED_RECONFIGURE}" = "1" ]; then
+    # Re-run cmake so it picks up patched CMakeLists.
     rm -rf "${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/CMakeCache.txt" \
            "${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/CMakeFiles"
     cmake "${REPO_ROOT}" \
@@ -166,6 +214,13 @@ find "${IOS_LIB_BUILD_DIR}" -name "*.a" \
     ! -name "*demo*" \
     -exec cp {} "${OUTPUT_DIR}/" \; 2>/dev/null || true
 
+# Also copy iOS-cross-compiled OpenSSL (already iOS-tagged, no retag needed).
+# These live outside ios-arm64/ in their own openssl-ios/ install dir.
+if [ -d "${IOS_BUILD_DIR}/openssl-ios/lib" ]; then
+    echo "Copying iOS OpenSSL libraries..."
+    cp "${IOS_BUILD_DIR}/openssl-ios/lib/"*.a "${OUTPUT_DIR}/" 2>/dev/null || true
+fi
+
 # -------------------------------------------------------
 # Retag macOS-built objects to iOS platform
 # -------------------------------------------------------
@@ -174,40 +229,28 @@ find "${IOS_LIB_BUILD_DIR}" -name "*.a" \
 # (gRPC's proto tool generation, OpenSSL's perl scripts, etc).
 # The resulting object files are binary-compatible with iOS arm64
 # (same instruction set), but the Mach-O LC_BUILD_VERSION says
-# platform 1 (macOS). When the iOS app linker tries to link them, it
-# refuses with: "Building for 'iOS', but linking in object file ...
-# built for 'macOS'".
+# platform 1 (macOS). The iOS linker rejects them with:
+#   "Building for 'iOS', but linking in object file ... built for
+#    'macOS'".
 #
-# vtool can't retag .o files in place because they don't have padding
-# to grow load commands. Instead we use a Python script that patches
-# the LC_BUILD_VERSION command's platform field in-place (cmd size
-# unchanged). This is fast and works on every .o we throw at it.
+# We patch each .a archive IN PLACE: read the file, walk the BSD ar
+# format, find each member's Mach-O header, patch the LC_BUILD_VERSION
+# platform/minos/sdk fields, and write back. The file size and member
+# offsets are unchanged. This avoids ar -x / ar -r which would lose
+# duplicate-named members (libgrpc.a has e.g. 3 copies of
+# `status.upb.c.o` from different source dirs).
 #
-# We skip libgizmosqlserver.a since it's compiled directly with the
-# iOS toolchain and is already iOS-tagged.
+# We skip libgizmosqlserver.a (built directly with iOS toolchain) and
+# libssl/libcrypto (cross-compiled separately for iOS).
 echo "Retagging macOS objects in static libraries to iOS..."
 RETAG_PY="${REPO_ROOT}/ios/scripts/retag_objects_to_ios.py"
-RETAG_TMP=$(mktemp -d)
 for archive in "${OUTPUT_DIR}"/*.a; do
     name=$(basename "${archive}")
     case "${name}" in
-        libgizmosqlserver.a) continue ;;
+        libgizmosqlserver.a|libssl.a|libcrypto.a) continue ;;
     esac
-    archive_tmp="${RETAG_TMP}/$(basename "${archive}" .a)"
-    mkdir -p "${archive_tmp}"
-    (
-        cd "${archive_tmp}"
-        ar -x "${archive}" 2>/dev/null
-        # Patch the LC_BUILD_VERSION platform field in every .o file
-        # in this archive. Pass them all as args to one Python invocation.
-        python3 "${RETAG_PY}" *.o 2>/dev/null || true
-        # Repack the archive
-        rm -f "${archive}"
-        ar -rcs "${archive}" *.o 2>/dev/null || true
-    )
-    rm -rf "${archive_tmp}"
+    python3 "${RETAG_PY}" "${archive}" 2>/dev/null || true
 done
-rm -rf "${RETAG_TMP}"
 
 # Combine everything into a single fat archive (liball.a) for the iOS app.
 # The Xcode project links against this single archive.
