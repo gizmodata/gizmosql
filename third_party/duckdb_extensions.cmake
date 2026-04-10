@@ -9,14 +9,19 @@ duckdb_extension_load(tpch)
 # Required for the "lakehouse in your pocket" iOS experience.
 # Pinned commits match DuckDB's own extension config to ensure
 # compatibility with the bundled DuckDB version.
+#
+# Note: APPLY_PATCHES is intentionally omitted. DuckDB's official build
+# uses APPLY_PATCHES which expects patches at
+# <duckdb_repo>/.github/patches/extensions/<name>/, but we don't ship
+# those patches. The pinned commits work correctly without them in
+# practice.
 duckdb_extension_load(postgres_scanner
+    DONT_LINK
     GIT_URL https://github.com/duckdb/duckdb-postgres
     GIT_TAG a42c490df0019406658073c003b7d89dd4338466
-    APPLY_PATCHES
 )
 
 duckdb_extension_load(ducklake
     GIT_URL https://github.com/duckdb/ducklake
     GIT_TAG 7ea15644fd5f5ff42b86b8a703c14172acc7b8bd
-    APPLY_PATCHES
 )

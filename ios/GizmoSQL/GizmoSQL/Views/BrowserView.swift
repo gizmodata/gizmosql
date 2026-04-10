@@ -8,6 +8,7 @@ import SwiftUI
 struct CatalogItem: Identifiable, Hashable {
     let id = UUID()
     let name: String
+    let type: String  // duckdb, postgres, sqlite, ducklake, etc.
 }
 
 struct SchemaItem: Identifiable, Hashable {
@@ -55,8 +56,12 @@ class BrowserViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         Task.detached {
+            // duckdb_databases() returns: database_name, database_oid, path,
+            // comment, tags, type, readonly, internal, ...
+            // Hide internal catalogs (system_catalog, temp, etc.).
             let result = await client.execute(
-                "SELECT DISTINCT catalog_name FROM information_schema.schemata ORDER BY 1",
+                "SELECT database_name, type FROM duckdb_databases() " +
+                "WHERE internal = false ORDER BY database_name",
                 maxRows: 1000)
             await MainActor.run {
                 self.isLoading = false
@@ -64,7 +69,9 @@ class BrowserViewModel: ObservableObject {
                     self.errorMessage = error
                     return
                 }
-                self.catalogs = result.rows.map { CatalogItem(name: $0[0]) }
+                self.catalogs = result.rows.map {
+                    CatalogItem(name: $0[0], type: $0[1])
+                }
             }
         }
     }
@@ -283,12 +290,45 @@ struct BrowserView: View {
     private var catalogList: some View {
         List(viewModel.catalogs) { catalog in
             NavigationLink(value: catalog) {
-                Label(catalog.name, systemImage: "cylinder")
+                HStack {
+                    Image(systemName: catalogIcon(for: catalog.type))
+                        .foregroundStyle(catalogIconColor(for: catalog.type))
+                        .frame(width: 24)
+                    Text(catalog.name)
+                    Spacer()
+                    Text(catalog.type)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
             }
         }
         .refreshable { viewModel.loadCatalogs() }
         .navigationDestination(for: CatalogItem.self) { catalog in
             SchemaListView(catalog: catalog, client: client, viewModel: viewModel)
+        }
+    }
+
+    private func catalogIcon(for type: String) -> String {
+        switch type.lowercased() {
+        case "ducklake": return "drop.fill"
+        case "postgres": return "leaf.fill"
+        case "sqlite": return "tray.full"
+        case "duckdb": return "cylinder"
+        default: return "cylinder"
+        }
+    }
+
+    private func catalogIconColor(for type: String) -> Color {
+        switch type.lowercased() {
+        case "ducklake": return .blue
+        case "postgres": return .indigo
+        case "sqlite": return .orange
+        case "duckdb": return .yellow
+        default: return .secondary
         }
     }
 

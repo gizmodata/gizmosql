@@ -106,13 +106,33 @@ echo "=== Collecting build artifacts ==="
 
 mkdir -p "${OUTPUT_DIR}/lib" "${OUTPUT_DIR}/include"
 
-# Copy the gizmosqlserver static library
+# Copy the gizmosqlserver static library to both lib/ and the top-level
+# libs/ directory (the latter is what liball.a is built from).
 find "${IOS_LIB_BUILD_DIR}" -name "libgizmosqlserver.a" -exec cp {} "${OUTPUT_DIR}/lib/" \;
+find "${IOS_LIB_BUILD_DIR}" -name "libgizmosqlserver.a" -exec cp {} "${OUTPUT_DIR}/" \;
 
-# Copy dependency libraries
-for lib in arrow arrow_flight arrow_flight_sql grpc grpc++ protobuf absl duckdb sqlite; do
-    find "${IOS_LIB_BUILD_DIR}" -name "lib${lib}*.a" -exec cp {} "${OUTPUT_DIR}/lib/" \; 2>/dev/null || true
-done
+# Copy ALL static libraries from the iOS build dir into the top-level
+# libs/ directory. This includes Arrow, gRPC, DuckDB, OpenSSL, ICU,
+# DuckDB extensions (ducklake, icu, tpch, parquet, etc.), and all
+# transitive deps. We exclude host-tools and FetchContent subbuild dirs
+# to avoid pulling in test/demo libs.
+echo "Collecting all static libraries for liball.a..."
+find "${IOS_LIB_BUILD_DIR}" -name "*.a" \
+    ! -path "*/host-tools/*" \
+    ! -path "*-subbuild/*" \
+    ! -name "*test*" \
+    ! -name "*demo*" \
+    -exec cp -n {} "${OUTPUT_DIR}/" \; 2>/dev/null || true
+
+# Combine everything into a single fat archive (liball.a) for the iOS app.
+# The Xcode project links against this single archive.
+echo "Building liball.a..."
+cd "${OUTPUT_DIR}"
+rm -f liball.a
+# shellcheck disable=SC2046
+libtool -static -o liball.a $(ls *.a 2>/dev/null | grep -v "^liball.a$") 2>&1 \
+    | grep -v "has no symbols" || true
+cd "${REPO_ROOT}"
 
 # Copy public header
 cp "${REPO_ROOT}/src/common/include/gizmosql_library.h" "${OUTPUT_DIR}/include/"
@@ -120,8 +140,11 @@ cp "${IOS_LIB_BUILD_DIR}/src/common/include/version.h" "${OUTPUT_DIR}/include/" 
 
 echo ""
 echo "=== Build complete ==="
-echo "Libraries:"
-ls -lh "${OUTPUT_DIR}/lib/"*.a 2>/dev/null || echo "  (none found — check build output above)"
+echo "Combined archive:"
+ls -lh "${OUTPUT_DIR}/liball.a" 2>/dev/null || echo "  (liball.a not found)"
+echo ""
+echo "Individual libraries in lib/:"
+ls -lh "${OUTPUT_DIR}/lib/"*.a 2>/dev/null || echo "  (none found)"
 echo ""
 echo "Headers:"
 ls "${OUTPUT_DIR}/include/"
