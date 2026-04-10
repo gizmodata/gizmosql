@@ -138,6 +138,35 @@ cd "${REPO_ROOT}"
 cp "${REPO_ROOT}/src/common/include/gizmosql_library.h" "${OUTPUT_DIR}/include/"
 cp "${IOS_LIB_BUILD_DIR}/src/common/include/version.h" "${OUTPUT_DIR}/include/" 2>/dev/null || true
 
+# -------------------------------------------------------
+# Bundle out-of-tree DuckDB extensions for iOS
+# -------------------------------------------------------
+# Some DuckDB extensions (e.g. postgres_scanner) only build as loadable
+# extensions (.duckdb_extension files) — they have no static target.
+# To use them on iOS, we bundle them into the app and load them at
+# runtime via LOAD '<full path>;'. iOS allows dlopen() of code-signed
+# dylibs that ship inside the app bundle.
+#
+# DuckDB builds these for the host platform (macOS arm64). We retag the
+# Mach-O LC_BUILD_VERSION metadata from macOS → iOS using vtool so dyld
+# accepts the file on iOS. The Xcode build phase will then code-sign
+# it as part of the app build.
+echo "Bundling out-of-tree extensions for iOS..."
+mkdir -p "${OUTPUT_DIR}/extensions"
+for ext_name in postgres_scanner; do
+    EXT_SRC=$(find "${IOS_LIB_BUILD_DIR}" \
+        -path "*${ext_name}/${ext_name}.duckdb_extension" \
+        ! -path "*/repository/*" 2>/dev/null | head -1)
+    if [ -n "${EXT_SRC}" ] && [ -f "${EXT_SRC}" ]; then
+        EXT_DST="${OUTPUT_DIR}/extensions/${ext_name}.duckdb_extension"
+        echo "  Retagging ${ext_name} for iOS..."
+        vtool -set-build-version ios 17.0 26.4 -replace \
+            -output "${EXT_DST}" "${EXT_SRC}"
+    else
+        echo "  WARNING: ${ext_name}.duckdb_extension not found"
+    fi
+done
+
 echo ""
 echo "=== Build complete ==="
 echo "Combined archive:"
