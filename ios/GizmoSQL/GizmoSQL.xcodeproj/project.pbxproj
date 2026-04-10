@@ -253,13 +253,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				STRIP_BITCODE_FROM_COPIED_FILES = NO;
-				ENABLE_BITCODE = NO;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XYB42X6NFX;
 				DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC = YES;
+				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited)";
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -284,7 +283,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../build/libs",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-no_warn_duplicate_libraries",
@@ -297,6 +296,7 @@
 				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
 				PRODUCT_BUNDLE_IDENTIFIER = com.gizmodata.gizmosql.ios;
 				SDKROOT = iphoneos;
+				STRIP_BITCODE_FROM_COPIED_FILES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "GizmoSQL/Bridging/GizmoSQL-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = NO;
@@ -370,13 +370,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				STRIP_BITCODE_FROM_COPIED_FILES = NO;
-				ENABLE_BITCODE = NO;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XYB42X6NFX;
 				DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC = YES;
+				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited)";
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -401,7 +400,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../build/libs",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.1.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-no_warn_duplicate_libraries",
@@ -414,6 +413,7 @@
 				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
 				PRODUCT_BUNDLE_IDENTIFIER = com.gizmodata.gizmosql.ios;
 				SDKROOT = iphoneos;
+				STRIP_BITCODE_FROM_COPIED_FILES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "GizmoSQL/Bridging/GizmoSQL-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = NO;
