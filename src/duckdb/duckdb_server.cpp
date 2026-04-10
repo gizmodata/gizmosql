@@ -825,7 +825,7 @@ class DuckDBFlightSqlServer::Impl {
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
   std::default_random_engine gen_;
-  std::shared_mutex sessions_mutex_;
+  mutable std::shared_mutex sessions_mutex_;
   std::shared_mutex transactions_mutex_;
   std::shared_mutex config_mutex_;
 
@@ -1044,6 +1044,11 @@ class DuckDBFlightSqlServer::Impl {
 
   std::string GetInstanceId() const {
     return instance_id_;
+  }
+
+  size_t GetActiveSessionCount() const {
+    std::shared_lock read_lock(sessions_mutex_);
+    return client_sessions_.size();
   }
 
   std::shared_ptr<duckdb::DuckDB> GetDuckDBInstance() const {
@@ -2337,6 +2342,10 @@ arrow::Result<arrow::util::ArrowLogLevel> DuckDBFlightSqlServer::GetQueryLogLeve
 
 std::string DuckDBFlightSqlServer::GetInstanceId() const {
   return impl_->GetInstanceId();
+}
+
+size_t DuckDBFlightSqlServer::GetActiveSessionCount() const {
+  return impl_->GetActiveSessionCount();
 }
 
 void DuckDBFlightSqlServer::ReleaseAllSessions() {

@@ -99,6 +99,25 @@ void CleanupServerResources();
 }  // namespace gizmosql
 
 extern "C" {
+
+/**
+ * @brief Get the number of currently active client sessions.
+ *
+ * Returns 0 if the server is not running or has no active sessions.
+ * Thread-safe: can be called from any thread while the server is running.
+ *
+ * @return The number of active client sessions.
+ */
+/**
+ * @brief Request graceful server shutdown.
+ *
+ * Calls Shutdown() on the running Flight server, causing RunFlightSQLServer()
+ * to return. Thread-safe: can be called from any thread.
+ */
+void ShutdownFlightServer();
+
+size_t GetActiveSessionCount();
+
 int RunFlightSQLServer(
     const BackendType backend,
     std::filesystem::path database_filename = std::filesystem::path(),

@@ -19,6 +19,7 @@ enable_testing()
 # ---------------------------------------------------------
 # Core integration tests (always built)
 set(GIZMOSQL_CORE_TEST_SRCS
+        integration/test_active_session_count.cpp
         integration/test_auth_log_level.cpp
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
@@ -77,6 +78,8 @@ add_executable(gizmosql_integration_tests
 target_include_directories(gizmosql_integration_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/common/include
+        ${CMAKE_SOURCE_DIR}/src/common/include/detail
+        ${CMAKE_SOURCE_DIR}/src/duckdb
         ${CMAKE_SOURCE_DIR}/src/client
         ${DUCKDB_INCLUDE_DIR}
         ${SQLITE_INCLUDE_DIR}

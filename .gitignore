@@ -28,3 +28,11 @@ data
 
 license_keys
 license_keys/
+
+# iOS build artifacts
+ios/build/
+ios/GizmoSQL/build/
+
+# Xcode per-user state
+xcuserdata/
+*.xcuserstate

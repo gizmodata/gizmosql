@@ -47,6 +47,7 @@
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #include <mach/mach.h>
+#include <TargetConditionals.h>
 #endif
 #include <nlohmann/json.hpp>
 #include <arrow/flight/client.h>
@@ -86,6 +87,9 @@ int port = 31337;
 // This is safe because only one GizmoSQL server runs per process
 static std::shared_ptr<GizmoSQLHealthServiceImpl> g_health_service;
 static std::unique_ptr<PlaintextHealthServer> g_plaintext_health_server;
+
+// Static storage for server reference (for querying active session count, etc.)
+static std::shared_ptr<flight::sql::FlightSqlServerBase> g_flight_server;
 
 #ifdef GIZMOSQL_ENTERPRISE
 // Static storage for instrumentation (Enterprise feature)
@@ -710,12 +714,20 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     GIZMOSQL_LOG(INFO) << "Server instance created";
 
     // Run DuckDB init commands first
+#if TARGET_OS_IOS
+    // iOS: extensions can't be dynamically loaded (dlopen forbidden for downloaded code).
+    // ICU and TPCH are statically linked — just LOAD them (no INSTALL needed).
+    std::string duckdb_init_sql_commands =
+        "SET autoinstall_known_extensions = false; SET autoload_known_extensions = false;"
+        "LOAD icu; LOAD tpch;";
+#else
     std::string duckdb_init_sql_commands =
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;"
         // Install and load ICU extension for timezone support (TIMESTAMPTZ)
         "INSTALL icu; LOAD icu;"
         // Install and load spatial extension
         "INSTALL spatial; LOAD spatial;";
+#endif
 
 #ifdef GIZMOSQL_ENTERPRISE
     // Instrumentation setup (Enterprise feature, conditional)
@@ -1231,6 +1243,9 @@ arrow::Status StartFlightSQLServer(
 }
 
 void CleanupServerResources() {
+  // Reset server reference
+  g_flight_server.reset();
+
   // Shutdown and reset health services
   if (g_plaintext_health_server) {
     g_plaintext_health_server->Shutdown();
@@ -1258,6 +1273,20 @@ void CleanupServerResources() {
 }  // namespace gizmosql
 
 extern "C" {
+
+void ShutdownFlightServer() {
+  if (gizmosql::g_flight_server) {
+    (void)gizmosql::g_flight_server->Shutdown();
+  }
+}
+
+size_t GetActiveSessionCount() {
+  if (auto duckdb_server = std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(
+          gizmosql::g_flight_server)) {
+    return duckdb_server->GetActiveSessionCount();
+  }
+  return 0;
+}
 int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string hostname, const int& port, std::string username,
                        std::string password, std::string secret_key,
@@ -1467,6 +1496,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
+    gizmosql::g_flight_server = server_ptr;
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - started";
     ARROW_CHECK_OK(server_ptr->Serve());
 
@@ -1515,6 +1545,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
 
     // Now safe to destroy the server
     gizmosql::ShutdownTelemetry();
+    gizmosql::g_flight_server.reset();
     server_ptr.reset();
 
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - shutdown complete";

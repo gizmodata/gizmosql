@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Active session count API**: New `GetActiveSessionCount()` function in the C library API returns the number of currently active client sessions. Thread-safe and callable while the server is running. Useful for monitoring and embedding (e.g., iOS app).
+- **iOS/iPadOS app scaffold**: Initial project structure for a GizmoSQL iOS edition under `ios/`. Includes SwiftUI app with server start/stop controls, log viewer, settings UI, self-signed TLS certificate generation, and WiFi network status display. Cross-compilation support via CMake iOS toolchain.
+
+### Changed
+
+- **Decoupled Boost program_options from library target**: The `gizmosqlserver` static library no longer links `Boost::program_options` (only the CLI executables do). The library uses only header-only Boost components (uuid, algorithm/string). This enables embedding the library in environments where Boost compiled libraries are unavailable (e.g., iOS).
+
 ## [1.21.0] - 2026-04-06
 
 ### Added
