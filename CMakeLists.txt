@@ -285,17 +285,20 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}icu_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}tpch_extension${LIB_SUFFIX}"
-        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}ducklake_extension${LIB_SUFFIX}"
-        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}httpfs_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
 )
 
-# Only link postgres_scanner_extension on iOS. The static target is
-# produced by the patch in ios/scripts/build-ios-libs.sh; other
-# platforms use the loadable .duckdb_extension via INSTALL/LOAD.
+# Out-of-tree DuckDB extensions are only statically linked on iOS
+# (which is compiled with DISABLE_EXTENSION_LOAD for App Store
+# compliance). On Linux/macOS/Windows, these remain runtime-loadable
+# via INSTALL/LOAD — avoids pulling in new build-time deps like
+# libcurl, libpq, etc. See third_party/duckdb_extensions.cmake for
+# the parallel iOS guard on the DuckDB build side.
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(duckdb
             INTERFACE
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}ducklake_extension${LIB_SUFFIX}"
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}httpfs_extension${LIB_SUFFIX}"
             "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}postgres_scanner_extension${LIB_SUFFIX}"
     )
 endif()

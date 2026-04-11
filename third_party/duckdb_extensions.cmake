@@ -10,28 +10,32 @@ duckdb_extension_load(tpch)
 # Pinned commits match DuckDB's own extension config to ensure
 # compatibility with the bundled DuckDB version.
 #
+# iOS-only: iOS is compiled with DISABLE_EXTENSION_LOAD (for App Store
+# compliance with Guideline 2.5.2 — no runtime code loading), so these
+# extensions MUST be statically linked to be usable at all. On other
+# platforms we leave them as normal runtime-loadable extensions, which
+# avoids pulling in new build-time dependencies (libcurl, libpq,
+# Azure SDK, etc.) and keeps the CI green on Linux/macOS/Windows.
+#
 # Note: APPLY_PATCHES is intentionally omitted. DuckDB's official build
 # uses APPLY_PATCHES which expects patches at
 # <duckdb_repo>/.github/patches/extensions/<name>/, but we don't ship
-# those patches. The pinned commits work correctly without them in
-# practice.
-
-duckdb_extension_load(ducklake
-    GIT_URL https://github.com/duckdb/ducklake
-    GIT_TAG 7ea15644fd5f5ff42b86b8a703c14172acc7b8bd
-)
-
-duckdb_extension_load(httpfs
-    GIT_URL https://github.com/duckdb/duckdb-httpfs
-    GIT_TAG 7e86e7a5e5a1f01f458361bebdfa9b0a9a73a619
-)
-
-# postgres_scanner: only statically linked on iOS. It has no upstream
-# static target (build_loadable_extension only), so ios/scripts/
-# build-ios-libs.sh patches its CMakeLists to add one. On other
-# platforms, users can INSTALL postgres / LOAD postgres at runtime
-# via DuckDB's normal extension mechanism.
+# those patches. The pinned commits work correctly without them.
+#
+# postgres_scanner also has no upstream static target
+# (build_loadable_extension only), so ios/scripts/build-ios-libs.sh
+# patches its CMakeLists to add one.
 if(GIZMOSQL_IOS)
+    duckdb_extension_load(ducklake
+        GIT_URL https://github.com/duckdb/ducklake
+        GIT_TAG 7ea15644fd5f5ff42b86b8a703c14172acc7b8bd
+    )
+
+    duckdb_extension_load(httpfs
+        GIT_URL https://github.com/duckdb/duckdb-httpfs
+        GIT_TAG 7e86e7a5e5a1f01f458361bebdfa9b0a9a73a619
+    )
+
     duckdb_extension_load(postgres_scanner
         GIT_URL https://github.com/duckdb/duckdb-postgres
         GIT_TAG a42c490df0019406658073c003b7d89dd4338466
