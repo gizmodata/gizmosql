@@ -285,14 +285,19 @@ class ServerManager: ObservableObject {
         guard state == .running else { return }
 
         // Close the app's own in-app clients first so their sessions don't
-        // show up as "dropped external sessions" in the notification. Each
-        // hook returns the number of sessions it closed (0 or 1).
-        let inAppClosed = runInAppClientHooks()
+        // show up as "dropped external sessions" in the notification. The
+        // hooks call Arrow Flight SQL's CloseSession (a synchronous unary
+        // RPC) so by the time this returns the server has already removed
+        // those sessions from its map.
+        _ = runInAppClientHooks()
 
-        // Report only external (non-in-app) sessions to the user. iOS will
+        // Read the session count *directly* from the library, not the 2s
+        // polled @Published value — that one may be stale by up to one tick
+        // and can still count the in-app sessions we just closed. Whatever
+        // remains after the hooks finish is strictly external. iOS will
         // suspend the gRPC server regardless — a local notification is the
         // only way to reach a user whose phone is no longer in the foreground.
-        let externalDropped = max(0, activeSessionCount - inAppClosed)
+        let externalDropped = Int(gizmosql_server_active_sessions())
         if externalDropped > 0 {
             postDisconnectNotification(sessionCount: externalDropped)
         }
