@@ -215,6 +215,7 @@ struct BrowserView: View {
     @EnvironmentObject var serverManager: ServerManager
     @StateObject private var client = FlightSQLClient()
     @StateObject private var viewModel = BrowserViewModel()
+    @State private var clientHookID: UUID? = nil
 
     private var isRunning: Bool { serverManager.state == .running }
 
@@ -255,6 +256,19 @@ struct BrowserView: View {
         .onAppear {
             if isRunning && !client.isConnected {
                 connectAndLoad()
+            }
+            if clientHookID == nil {
+                clientHookID = serverManager.registerInAppClientHook { [client] in
+                    guard client.isConnected else { return 0 }
+                    client.disconnect()
+                    return 1
+                }
+            }
+        }
+        .onDisappear {
+            if let id = clientHookID {
+                serverManager.unregisterInAppClientHook(id)
+                clientHookID = nil
             }
         }
     }

@@ -68,6 +68,9 @@ When adding a new configuration parameter, update these locations in order:
    - `RunFlightSQLServer()` call to `CreateFlightSQLServer()`
 4. `tests/integration/test_server_fixture.h` - Add to `TestServerConfig` and forward declaration
 
+### Bumping DuckDB (iOS extension sync)
+When upgrading DuckDB in `third_party/DuckDB_CMakeLists.txt.in`, the out-of-tree extensions pinned in `third_party/duckdb_extensions.cmake` for the iOS build (inside the `if(GIZMOSQL_IOS)` block) **must** be re-synced to DuckDB's own pins for the new version. DuckDB ships those pins in `<duckdb_repo>/.github/config/extensions/<name>.cmake`. Cross-check **every** extension we pin (ducklake, httpfs, postgres_scanner, and any added later) — not just the one that motivated the bump — and carry over any new clauses like `SUBMODULES`, since the extension's own build may now depend on them. Mismatched pins fail to link at build time (`ld: library 'X_extension' not found`) or, worse, produce a silently broken binary. After bumping, delete `ios/build/ios-arm64/third_party/src/duckdb_project*` and `ios/build/ios-arm64/duckdb/` and re-run `ios/scripts/build-ios-libs.sh` so the ExternalProject re-clones at the new tag (git-shallow clones can't simply `git fetch` new tags). Also re-validate the Phase 2.5 patches in `ios/scripts/build-ios-libs.sh`: if upstream has subsumed something we used to patch in (e.g. postgres_scanner now ships its own `build_static_extension` call), our patch will collide with `add_library cannot create target ... already exists` — drop it from Phase 2.5.
+
 ### Build Commands
 ```bash
 # Configure (from repo root)

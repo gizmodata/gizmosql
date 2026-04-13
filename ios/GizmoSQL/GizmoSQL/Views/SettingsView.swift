@@ -31,6 +31,7 @@ struct SettingsView: View {
                 loggingSection
                 advancedSection
                 tlsSection
+                aboutSection
             }
             .navigationTitle("Settings")
             .scrollDismissesKeyboard(.interactively)
@@ -185,5 +186,56 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var aboutSection: some View {
+        Section {
+            HStack {
+                Text("Version")
+                Spacer()
+                Text(AppInfo.version)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("Build")
+                Spacer()
+                Text(AppInfo.build)
+                    .foregroundStyle(.secondary)
+            }
+            Link(destination: URL(string: "https://github.com/gizmodata/gizmosql")!) {
+                HStack {
+                    Text("Project")
+                    Spacer()
+                    Text("github.com/gizmodata/gizmosql")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "arrow.up.right.square")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("About")
+        } footer: {
+            Text("© 2025 GizmoData LLC · Apache License 2.0")
+        }
+    }
+}
+
+// MARK: - App Info
+
+/// Lightweight accessor for bundle version metadata. Used by `SettingsView`'s
+/// About section and the `.about` dot command in `DotCommandProcessor`.
+enum AppInfo {
+    static var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+    }
+
+    static var build: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+    }
+
+    static var versionDisplay: String {
+        "v\(version) (build \(build))"
     }
 }

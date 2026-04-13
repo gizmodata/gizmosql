@@ -26,19 +26,24 @@ duckdb_extension_load(tpch)
 # (build_loadable_extension only), so ios/scripts/build-ios-libs.sh
 # patches its CMakeLists to add one.
 if(GIZMOSQL_IOS)
+    # Commits below must match DuckDB's own out-of-tree extension pins
+    # for the bundled DuckDB version — see
+    # <duckdb_repo>/.github/config/extensions/*.cmake. When bumping DuckDB
+    # in third_party/DuckDB_CMakeLists.txt.in, sync these commits too.
     duckdb_extension_load(ducklake
         GIT_URL https://github.com/duckdb/ducklake
-        GIT_TAG 7ea15644fd5f5ff42b86b8a703c14172acc7b8bd
+        GIT_TAG 415a9ebdbd73db50a8c6ba703eb733ed16bcf33a
     )
 
     duckdb_extension_load(httpfs
         GIT_URL https://github.com/duckdb/duckdb-httpfs
-        GIT_TAG 7e86e7a5e5a1f01f458361bebdfa9b0a9a73a619
+        GIT_TAG 13e18b3c9f3810334f5972b76a3acc247b28e537
     )
 
     duckdb_extension_load(postgres_scanner
         GIT_URL https://github.com/duckdb/duckdb-postgres
-        GIT_TAG a42c490df0019406658073c003b7d89dd4338466
+        GIT_TAG c89234f0b1985f4ee0f52f16e742a1ab2d4ae4f0
+        SUBMODULES database-connector
     )
 endif()
 

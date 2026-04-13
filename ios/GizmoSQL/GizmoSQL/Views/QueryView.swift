@@ -436,6 +436,7 @@ struct RawTextField: UIViewRepresentable {
 struct QueryView: View {
     @EnvironmentObject var serverManager: ServerManager
     @StateObject private var client = FlightSQLClient()
+    @StateObject private var settings = ClientSettings()
 
     @State private var inputText = ""
     @State private var outputLines: [OutputLine] = []
@@ -444,6 +445,7 @@ struct QueryView: View {
     @State private var isExecuting = false
 
     @State private var inputFocusTrigger: Int = 0
+    @State private var clientHookID: UUID? = nil
 
     private var isRunning: Bool { serverManager.state == .running }
 
@@ -536,6 +538,19 @@ struct QueryView: View {
             if isRunning && !client.isConnected {
                 connectToServer()
             }
+            if clientHookID == nil {
+                clientHookID = serverManager.registerInAppClientHook { [client] in
+                    guard client.isConnected else { return 0 }
+                    client.disconnect()
+                    return 1
+                }
+            }
+        }
+        .onDisappear {
+            if let id = clientHookID {
+                serverManager.unregisterInAppClientHook(id)
+                clientHookID = nil
+            }
         }
     }
 
@@ -560,26 +575,37 @@ struct QueryView: View {
     }
 
     private func executeCurrentInput() {
-        let sql = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sql.isEmpty else { return }
+        let input = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
 
         // Add to history
-        if history.last != sql {
-            history.append(sql)
+        if history.last != input {
+            history.append(input)
         }
         historyIndex = -1
 
-        // Echo the input with syntax highlighting
+        // Echo the input — dot commands in orange, SQL with syntax highlighting
         var echoSegments: [StyledSegment] = [
             StyledSegment(text: "gizmosql> ", color: TermColor.prompt)
         ]
-        echoSegments.append(contentsOf: SQLHighlighter.highlight(sql))
+        if DotCommandProcessor.isDotCommand(input) {
+            echoSegments.append(StyledSegment(text: input, color: TermColor.prompt))
+        } else {
+            echoSegments.append(contentsOf: SQLHighlighter.highlight(input))
+        }
         outputLines.append(OutputLine(segments: echoSegments))
 
         inputText = ""
         isExecuting = true
 
-        // Execute on background to keep UI responsive
+        if DotCommandProcessor.isDotCommand(input) {
+            runDotCommand(input)
+        } else {
+            runSqlQuery(input)
+        }
+    }
+
+    private func runSqlQuery(_ sql: String) {
         let client = self.client
         Task.detached {
             let result = await client.execute(sql)
@@ -591,6 +617,23 @@ struct QueryView: View {
         }
     }
 
+    private func runDotCommand(_ input: String) {
+        let client = self.client
+        let settings = self.settings
+        let serverManager = self.serverManager
+        Task { @MainActor in
+            let lines = await DotCommandProcessor.execute(
+                input,
+                client: client,
+                settings: settings,
+                serverManager: serverManager
+            )
+            outputLines.append(contentsOf: lines)
+            isExecuting = false
+            inputFocusTrigger += 1
+        }
+    }
+
     private func handleResult(_ result: QueryResult) {
         if let error = result.error {
             appendError(error)
@@ -598,26 +641,38 @@ struct QueryView: View {
         }
 
         if result.rowsAffected >= 0 {
-            let elapsed = String(format: "%.3f", result.elapsed)
-            appendSuccess("\(result.rowsAffected) rows affected (\(elapsed)s)")
+            if settings.timerEnabled {
+                let elapsed = String(format: "%.3f", result.elapsed)
+                appendSuccess("\(result.rowsAffected) rows affected (\(elapsed)s)")
+            } else {
+                appendSuccess("\(result.rowsAffected) rows affected")
+            }
             return
         }
 
         if result.columns.isEmpty {
-            let elapsed = String(format: "%.3f", result.elapsed)
-            appendSuccess("OK (\(elapsed)s)")
+            if settings.timerEnabled {
+                let elapsed = String(format: "%.3f", result.elapsed)
+                appendSuccess("OK (\(elapsed)s)")
+            } else {
+                appendSuccess("OK")
+            }
             return
         }
 
-        // Render box table
-        let tableLines = BoxRenderer.render(result)
+        // Cache for `.last` and render in the current mode
+        settings.lastResult = result
+        let tableLines = ResultRenderer.render(result,
+                                               mode: settings.outputMode,
+                                               showHeaders: settings.headersEnabled)
         outputLines.append(contentsOf: tableLines)
 
-        // Timing line
-        let elapsed = String(format: "%.3f", result.elapsed)
-        outputLines.append(OutputLine(segments: [
-            StyledSegment(text: "(\(elapsed)s)", color: TermColor.info)
-        ]))
+        if settings.timerEnabled {
+            let elapsed = String(format: "%.3f", result.elapsed)
+            outputLines.append(OutputLine(segments: [
+                StyledSegment(text: "(\(elapsed)s)", color: TermColor.info)
+            ]))
+        }
     }
 
     private func appendError(_ text: String) {

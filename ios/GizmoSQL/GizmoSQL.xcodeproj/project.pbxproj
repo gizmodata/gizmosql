@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		02C598A2A5C9459A4C5DEDC9 /* DotCommandProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 827027B094C76717E6EEE02B /* DotCommandProcessor.swift */; };
 		0F3787A5DCB357E140AEDD83 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7966693F715CDE8729452129 /* SettingsView.swift */; };
 		3C0F309B40996B513DBDE3C0 /* gizmosql_ios_bridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5FB73B10EEB213CA3E8D6B2D /* gizmosql_ios_bridge.cpp */; settings = {COMPILER_FLAGS = "-std=c++20"; }; };
 		415C0586A7B7CE9658938565 /* ServerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBE241512251464DB33D5DDE /* ServerManager.swift */; };
@@ -16,15 +17,14 @@
 		5FD76DE4DF84597BE2F7B48E /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F90BA9339AFA6F80BF3EB14 /* Network.framework */; };
 		932BBB06E3D58425EFC0D21B /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 30C672BAAD512C4C6ED670C1 /* CoreFoundation.framework */; };
 		9FF4774887AD60F87E5E40F7 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E9F10D842C1C27E2F9F33049 /* Security.framework */; };
-		B2C4D7E3A8F1520E6D93A4B1 /* BrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E8A1F4C39B7D0254F61C83 /* BrowserView.swift */; };
+		B13F4FE3324739265FA1DBA2 /* QueryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B718BC5D407078EB83AC2820 /* QueryView.swift */; };
 		C33ABF8698EF82742721D6D5 /* ServerConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8872B5783BD0883678F8D033 /* ServerConfiguration.swift */; };
 		CA4F89DDA451583AC4A3630C /* GizmoSQLApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A75F535B1C151EE64C20619D /* GizmoSQLApp.swift */; };
 		D2BAB2AA44671BEA3477C181 /* CertificateGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F592D4437BFE6D352E0FA3E /* CertificateGenerator.swift */; };
 		E3AAEFEC821371CF8E844C14 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21091A8A8B6BFFA815FD23BA /* LogView.swift */; };
-		E4B7C2A1F93D6E0A82C15D47 /* QueryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D3F8B2E47C9A0165B82E3F /* QueryView.swift */; };
 		EA64FA3D654A590F4D97C628 /* ServerStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DDC81C77AA0E9247ABA162B /* ServerStatusView.swift */; };
 		F4499987A98975899CC3BDAB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C023A253E50DEDC785277407 /* Assets.xcassets */; };
-		F7A2B3C4D5E6F80192A3B4C5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A3B4C5D6E7F8091A2B3C4D5E /* PrivacyInfo.xcprivacy */; };
+		FD0D54634579D29A2BB156AA /* BrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7C2D75169F3881D35D863F2 /* BrowserView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,16 +37,16 @@
 		60645B16A61917BE04703D6D /* grpc_tracer_stub.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = grpc_tracer_stub.cpp; sourceTree = "<group>"; };
 		7966693F715CDE8729452129 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		7F90BA9339AFA6F80BF3EB14 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		827027B094C76717E6EEE02B /* DotCommandProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DotCommandProcessor.swift; sourceTree = "<group>"; };
 		8872B5783BD0883678F8D033 /* ServerConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfiguration.swift; sourceTree = "<group>"; };
 		9F592D4437BFE6D352E0FA3E /* CertificateGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CertificateGenerator.swift; sourceTree = "<group>"; };
-		A1D3F8B2E47C9A0165B82E3F /* QueryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueryView.swift; sourceTree = "<group>"; };
-		A3B4C5D6E7F8091A2B3C4D5E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A75F535B1C151EE64C20619D /* GizmoSQLApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GizmoSQLApp.swift; sourceTree = "<group>"; };
 		A99652C0A61314B691F7834F /* GizmoSQL.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GizmoSQL.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B718BC5D407078EB83AC2820 /* QueryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueryView.swift; sourceTree = "<group>"; };
 		C023A253E50DEDC785277407 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		D5E8A1F4C39B7D0254F61C83 /* BrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserView.swift; sourceTree = "<group>"; };
 		E9F10D842C1C27E2F9F33049 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		EBE241512251464DB33D5DDE /* ServerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerManager.swift; sourceTree = "<group>"; };
+		F7C2D75169F3881D35D863F2 /* BrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -119,9 +119,10 @@
 		9A106DEC802E8653B19C3700 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				D5E8A1F4C39B7D0254F61C83 /* BrowserView.swift */,
+				F7C2D75169F3881D35D863F2 /* BrowserView.swift */,
+				827027B094C76717E6EEE02B /* DotCommandProcessor.swift */,
 				21091A8A8B6BFFA815FD23BA /* LogView.swift */,
-				A1D3F8B2E47C9A0165B82E3F /* QueryView.swift */,
+				B718BC5D407078EB83AC2820 /* QueryView.swift */,
 				0DDC81C77AA0E9247ABA162B /* ServerStatusView.swift */,
 				7966693F715CDE8729452129 /* SettingsView.swift */,
 			);
@@ -133,7 +134,6 @@
 			isa = PBXGroup;
 			children = (
 				C023A253E50DEDC785277407 /* Assets.xcassets */,
-				A3B4C5D6E7F8091A2B3C4D5E /* PrivacyInfo.xcprivacy */,
 			);
 			name = Resources;
 			path = GizmoSQL/Resources;
@@ -219,7 +219,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				F4499987A98975899CC3BDAB /* Assets.xcassets in Resources */,
-				F7A2B3C4D5E6F80192A3B4C5 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -230,12 +229,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B2C4D7E3A8F1520E6D93A4B1 /* BrowserView.swift in Sources */,
+				FD0D54634579D29A2BB156AA /* BrowserView.swift in Sources */,
 				D2BAB2AA44671BEA3477C181 /* CertificateGenerator.swift in Sources */,
 				577E223FE197A7998AFE3D39 /* ContentView.swift in Sources */,
+				02C598A2A5C9459A4C5DEDC9 /* DotCommandProcessor.swift in Sources */,
 				CA4F89DDA451583AC4A3630C /* GizmoSQLApp.swift in Sources */,
 				E3AAEFEC821371CF8E844C14 /* LogView.swift in Sources */,
-				E4B7C2A1F93D6E0A82C15D47 /* QueryView.swift in Sources */,
+				B13F4FE3324739265FA1DBA2 /* QueryView.swift in Sources */,
 				C33ABF8698EF82742721D6D5 /* ServerConfiguration.swift in Sources */,
 				415C0586A7B7CE9658938565 /* ServerManager.swift in Sources */,
 				EA64FA3D654A590F4D97C628 /* ServerStatusView.swift in Sources */,
@@ -258,7 +258,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XYB42X6NFX;
 				DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC = YES;
-				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited)";
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -296,7 +295,6 @@
 				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
 				PRODUCT_BUNDLE_IDENTIFIER = com.gizmodata.gizmosql.ios;
 				SDKROOT = iphoneos;
-				STRIP_BITCODE_FROM_COPIED_FILES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "GizmoSQL/Bridging/GizmoSQL-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = NO;
@@ -375,7 +373,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XYB42X6NFX;
 				DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC = YES;
-				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited)";
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -413,7 +410,6 @@
 				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
 				PRODUCT_BUNDLE_IDENTIFIER = com.gizmodata.gizmosql.ios;
 				SDKROOT = iphoneos;
-				STRIP_BITCODE_FROM_COPIED_FILES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "GizmoSQL/Bridging/GizmoSQL-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = NO;

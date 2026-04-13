@@ -18,6 +18,32 @@ ExternalProject_Add(
           "-DDUCKDB_EXTENSION_CONFIGS=${DUCKDB_EXTENSION_CONFIGS}"
           $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DDISABLE_EXTENSION_LOAD=ON>
           $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DGIZMOSQL_IOS=ON>
+          # iOS: forward the cross-compile toolchain so DuckDB compiles
+          # against the iPhoneOS SDK (not the host macOS SDK). Without
+          # this, libduckdb_static.a was built with host libc++ headers
+          # and a different std= setting than duckdb_server.cpp, and
+          # DBConfig (which contains many libc++ templated members) had
+          # a different sizeof() between the two compilation contexts —
+          # which trips a stack canary on Create() at runtime when
+          # DuckDB's ctor writes past the caller's stack-allocated copy.
+          $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}>
+          $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DCMAKE_BUILD_TYPE=Release>
+          # iOS: skip DuckDB's executables — they link as host (macOS)
+          # binaries and can't pull in iOS-tagged transitive deps. We
+          # only consume libduckdb_static.a downstream.
+          $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DBUILD_UNITTESTS=OFF>
+          $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DBUILD_SHELL=OFF>
+          # iOS: provide the platform string explicitly so DuckDB skips
+          # building duckdb_platform_binary (a host tool it normally
+          # runs at build time to detect the platform). With the iOS
+          # toolchain the binary links as iOS and can't run on the
+          # macOS build host — the generate step fails with SIGKILL.
+          # DuckDB's CMake gates this on DUCKDB_EXPLICIT_PLATFORM.
+          $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DDUCKDB_EXPLICIT_PLATFORM=ios_arm64>
+          # iOS: tell DuckLake's find_package(roaring CONFIG REQUIRED)
+          # where to find the iOS-cross-compiled CRoaring installed by
+          # ios/scripts/build-ios-libs.sh in Phase 1.5.
+          $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DCMAKE_PREFIX_PATH=${CMAKE_BINARY_DIR}/third_party/croaring-ios>
           $<$<BOOL:${WIN32}>:-DCMAKE_POLICY_DEFAULT_CMP0091=NEW>
           $<$<BOOL:${WIN32}>:-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>>
           $<$<BOOL:${WIN32}>:-DFORCE_STATIC_VCRT=ON>

@@ -266,6 +266,15 @@ set(DUCKDB_INCLUDE_DIR "${DUCKDB_INSTALL_DIR}/include")
 add_library(duckdb STATIC IMPORTED)
 set_property(TARGET duckdb PROPERTY IMPORTED_LOCATION ${DUCKDB_LIBRARY_PATH})
 set_property(TARGET duckdb APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${DUCKDB_INCLUDE_DIR})
+# Don't mark duckdb's include dirs as SYSTEM (-isystem). With -isystem, any
+# -I path that comes earlier on the command line wins — and Boost_INCLUDE_DIRS
+# on a homebrew mac resolves to /opt/homebrew/include, which may contain a
+# stale (shadowed) `duckdb/main/config.hpp` from whatever DuckDB version brew
+# has installed. That header has a different sizeof(DBConfig) than our
+# vendored DuckDB and corrupts the stack when libduckdb's ctor writes past
+# the caller's buffer. Forcing -I keeps dedup honest and lets the explicit
+# BEFORE PRIVATE below win ordering.
+set_property(TARGET duckdb PROPERTY IMPORTED_NO_SYSTEM TRUE)
 
 target_link_libraries(duckdb
         INTERFACE
@@ -522,6 +531,14 @@ target_include_directories(gizmosqlserver
         ${GRPC_INCLUDE_DIR}
         ${ABSL_INCLUDE_DIR}
 )
+
+# Prepend our vendored DuckDB include dir so it wins over anything reachable
+# via Boost_INCLUDE_DIRS (e.g. /opt/homebrew/include/duckdb from a brew
+# install of DuckDB). Without this, duckdb_server.cpp silently compiles
+# against a shadowed header whose sizeof(DBConfig) may disagree with the
+# libduckdb_static.a we actually link — a stack-canary trip on the very
+# first call to DuckDBFlightSqlServer::Create.
+target_include_directories(gizmosqlserver BEFORE PRIVATE ${DUCKDB_INCLUDE_DIR})
 
 # Add enterprise-specific include directories and compile definition
 if(GIZMOSQL_ENTERPRISE)

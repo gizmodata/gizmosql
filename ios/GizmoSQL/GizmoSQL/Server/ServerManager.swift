@@ -5,6 +5,7 @@ import Foundation
 import Network
 import Combine
 import UIKit
+import UserNotifications
 
 enum ServerState: String {
     case stopped = "Stopped"
@@ -29,6 +30,19 @@ class ServerManager: ObservableObject {
     private var sessionTimer: Timer?
     private var pathMonitor: NWPathMonitor?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var shouldRestartOnForeground: Bool = false
+
+    /// Disconnect hooks registered by views that own their own in-app
+    /// Flight SQL client (QueryView, BrowserView). Called on background
+    /// transition BEFORE the server is stopped and BEFORE we read the
+    /// session count for the disconnect notification. Each hook closes
+    /// its client and returns the number of sessions it closed (0 or 1),
+    /// which is subtracted from the total so the app's own clients never
+    /// show up as "dropped external sessions" to the user.
+    private var inAppClientHooks: [UUID: () -> Int] = [:]
+
+    // UserDefaults key for one-shot notification-permission request
+    private static let notifPermissionRequestedKey = "gizmosql.notifPermissionRequested"
 
     private let maxLogLines = 10_000
 
@@ -134,6 +148,7 @@ class ServerManager: ObservableObject {
             if self?.state == .starting {
                 self?.state = .running
                 self?.startSessionPolling()
+                self?.requestNotificationPermissionIfNeeded()
             }
         }
     }
@@ -228,29 +243,140 @@ class ServerManager: ObservableObject {
         wifiIPAddress = Self.getWiFiAddress()
     }
 
+    // MARK: - In-App Client Disconnect Hooks
+
+    /// Register a hook that disconnects a view's in-app Flight SQL client.
+    /// The hook is invoked on background transition BEFORE the server is
+    /// stopped and BEFORE we read the session count for the disconnect
+    /// notification. It should return the number of sessions it closed
+    /// (0 if the client wasn't connected, 1 if it was).
+    ///
+    /// Returns a token the view can use to unregister on disappear.
+    @discardableResult
+    func registerInAppClientHook(_ hook: @escaping () -> Int) -> UUID {
+        let id = UUID()
+        inAppClientHooks[id] = hook
+        return id
+    }
+
+    func unregisterInAppClientHook(_ id: UUID) {
+        inAppClientHooks.removeValue(forKey: id)
+    }
+
+    private func runInAppClientHooks() -> Int {
+        var closed = 0
+        for hook in inAppClientHooks.values {
+            closed += hook()
+        }
+        return closed
+    }
+
     // MARK: - Background Handling
 
     func didEnterBackground() {
-        guard state == .running else { return }
-
-        // Request extra time so iOS doesn't immediately suspend the server thread.
-        // This gives connected clients a window to finish in-flight queries.
+        // Request a background-task window so the server's shutdown handshake
+        // has time to run before iOS suspends us.
         backgroundTaskID = UIApplication.shared.beginBackgroundTask(
             withName: "GizmoSQL-Server"
         ) { [weak self] in
-            // Expiration handler — iOS is about to suspend us.
             self?.endBackgroundTask()
         }
+
+        guard state == .running else { return }
+
+        // Close the app's own in-app clients first so their sessions don't
+        // show up as "dropped external sessions" in the notification. Each
+        // hook returns the number of sessions it closed (0 or 1).
+        let inAppClosed = runInAppClientHooks()
+
+        // Report only external (non-in-app) sessions to the user. iOS will
+        // suspend the gRPC server regardless — a local notification is the
+        // only way to reach a user whose phone is no longer in the foreground.
+        let externalDropped = max(0, activeSessionCount - inAppClosed)
+        if externalDropped > 0 {
+            postDisconnectNotification(sessionCount: externalDropped)
+        }
+
+        // Remember the running state so we can bring the server back up
+        // automatically on return. The in-app views will auto-reconnect
+        // via their existing `.onChange(of: serverManager.state)` handlers
+        // when state transitions back to `.running`.
+        shouldRestartOnForeground = true
+        stopServer()
     }
 
     func didBecomeActive() {
         endBackgroundTask()
+
+        guard shouldRestartOnForeground else { return }
+        shouldRestartOnForeground = false
+
+        if state == .stopped {
+            startServer()
+        } else {
+            // The server may still be shutting down from the background transition.
+            // Poll briefly until it settles, then start it back up.
+            restartWhenStopped()
+        }
+    }
+
+    private func restartWhenStopped(attempt: Int = 0) {
+        let maxAttempts = 50  // 50 × 100ms = 5 seconds
+        if state == .stopped {
+            startServer()
+            return
+        }
+        if attempt >= maxAttempts { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.restartWhenStopped(attempt: attempt + 1)
+        }
     }
 
     private func endBackgroundTask() {
         guard backgroundTaskID != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundTaskID)
         backgroundTaskID = .invalid
+    }
+
+    // MARK: - Local Notifications
+
+    /// Request notification permission once per install. Called on first
+    /// successful server start — the first moment the feature becomes relevant.
+    /// Denial is silently respected; notifications simply won't fire later.
+    private func requestNotificationPermissionIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.notifPermissionRequestedKey) else { return }
+        defaults.set(true, forKey: Self.notifPermissionRequestedKey)
+
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound]
+        ) { _, _ in
+            // Result isn't persisted — we always check current settings at fire time.
+        }
+    }
+
+    private func postDisconnectNotification(sessionCount: Int) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized ||
+                  settings.authorizationStatus == .provisional else { return }
+
+            let content = UNMutableNotificationContent()
+            content.title = "GizmoSQL server stopped"
+            let plural = sessionCount == 1 ? "client was" : "clients were"
+            content.body = "\(sessionCount) \(plural) disconnected when the app was backgrounded. Reopen GizmoSQL to restart the server."
+            content.sound = .default
+
+            // Fire after 1s — gives iOS a moment to acknowledge the background
+            // transition before the notification surfaces.
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            let request = UNNotificationRequest(
+                identifier: "gizmosql.disconnect",
+                content: content,
+                trigger: trigger
+            )
+            center.add(request, withCompletionHandler: nil)
+        }
     }
 
     // MARK: - Helpers
