@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Decoupled Boost program_options from library target**: The `gizmosqlserver` static library no longer links `Boost::program_options` (only the CLI executables do). The library uses only header-only Boost components (uuid, algorithm/string). This enables embedding the library in environments where Boost compiled libraries are unavailable (e.g., iOS).
 
+## [1.21.1] - 2026-04-13
+
+### Changed
+
+- **Upgraded DuckDB from v1.5.1 to v1.5.2**
+
 ## [1.21.0] - 2026-04-06
 
 ### Added
