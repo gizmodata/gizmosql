@@ -36,7 +36,7 @@ duckdb
 You should see:
 
 ```
-DuckDB v1.5.1
+DuckDB v1.5.2
 Connected to a transient in-memory database.
 ```
 
