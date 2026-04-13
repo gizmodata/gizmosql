@@ -65,8 +65,21 @@ int gizmosql_server_start(const GizmoSQLServerConfig* config) {
         "",                       // query_log_level (use default)
         "",                       // auth_log_level (use default)
         0,                        // health_port — disabled on iOS
-        ""                        // health_check_query
-        // Remaining enterprise/OAuth/OTel params use defaults (disabled)
+        "",                       // health_check_query
+        std::nullopt,             // enable_instrumentation (enterprise — disabled)
+        "",                       // instrumentation_db_path
+        "",                       // instrumentation_catalog
+        "",                       // instrumentation_schema
+        "",                       // instance_tag
+        "",                       // license_key_file
+        // Accept tokens signed by previous server instances. iOS starts a
+        // fresh instance_id on every launch / background-resume, but the
+        // secret_key is Keychain-backed and stable across launches — so
+        // tokens issued by a prior instance still verify cryptographically.
+        // This lets external clients keep their cached Bearer token across
+        // an app backgrounding without a full re-Handshake.
+        std::optional<bool>(true)  // allow_cross_instance_tokens
+        // Remaining OAuth/OTel params use defaults (disabled)
     );
 }
 
