@@ -234,6 +234,9 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   // Server instance ID (available in all editions)
   std::string GetInstanceId() const;
 
+  // Number of currently active client sessions
+  size_t GetActiveSessionCount() const;
+
   /// Release all active sessions (must be called BEFORE manager shutdown to close session records)
   void ReleaseAllSessions();
 

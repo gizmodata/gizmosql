@@ -20,8 +20,8 @@
 
 #include "gizmosql_security.h"
 #include "request_ctx.h"
-#include "enterprise/enterprise_features.h"
 #ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/enterprise_features.h"
 #include "enterprise/jwks/jwks_manager.h"
 #endif
 
@@ -659,6 +659,7 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
       }
     }
 
+#ifdef GIZMOSQL_ENTERPRISE
     // Check if token has catalog_access claim - this requires enterprise license
     if (decoded.has_payload_claim("catalog_access")) {
       if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
@@ -675,6 +676,7 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
             "Please obtain an Enterprise license or remove the catalog_access claim from your token.");
       }
     }
+#endif
 
     // Determine the role: from token claim or default
     std::string role = decoded.has_payload_claim("role")

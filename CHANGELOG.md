@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Active session count API**: New `GetActiveSessionCount()` function in the C library API returns the number of currently active client sessions. Thread-safe and callable while the server is running. Useful for monitoring and embedding (e.g., iOS app).
+- **iOS/iPadOS app scaffold**: Initial project structure for a GizmoSQL iOS edition under `ios/`. Includes SwiftUI app with server start/stop controls, log viewer, settings UI, self-signed TLS certificate generation, and WiFi network status display. Cross-compilation support via CMake iOS toolchain.
+- **iOS app: SQL client and data browser**: Added Query tab with terminal-style SQL client (syntax highlighting, box-drawing table output, query history, automatic 500-row limit) and Browser tab for navigating catalogs/schemas/tables/columns with data preview and drop-table confirmation. Both connect to the local server via embedded Arrow Flight SQL client over loopback. Includes splash screen with logo, privacy manifest, file sharing for database export, background task handling, and iPad layout support.
+- **GizmoSQL on the Apple App Store**: The iOS edition is now available for download on the [Apple App Store](https://apps.apple.com/us/app/gizmosql/id6761951280). README and documentation updated with App Store badges and a new "iOS App" installation option.
+- **DuckDB postgres extension**: Statically linked into the binary on all platforms. Enables querying remote PostgreSQL databases via `ATTACH 'postgresql://...' AS pg; SELECT * FROM pg.public.my_table;`.
+- **DuckDB ducklake extension**: Statically linked into the binary on all platforms. Enables DuckLake — a lightweight transactional lakehouse format on top of Parquet files. Combined with the iOS app, this enables a "lakehouse in your pocket" experience.
+
+### Changed
+
+- **Decoupled Boost program_options from library target**: The `gizmosqlserver` static library no longer links `Boost::program_options` (only the CLI executables do). The library uses only header-only Boost components (uuid, algorithm/string). This enables embedding the library in environments where Boost compiled libraries are unavailable (e.g., iOS).
+
 ## [1.21.1] - 2026-04-13
 
 ### Changed

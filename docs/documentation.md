@@ -30,6 +30,10 @@ It was forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) and has
 [<img src="https://img.shields.io/badge/PyPI-GizmoSQL%20ADBC%20Driver-blue?logo=PyPI">](https://pypi.org/project/adbc-driver-gizmosql/)
 [<img src="https://img.shields.io/badge/PyPI-GizmoSQL%20SQLAlchemy%20Dialect-blue?logo=PyPI">](https://pypi.org/project/sqlalchemy-gizmosql-adbc-dialect/)
 
+📱 **GizmoSQL for iOS is now available on the App Store!** *(for development & prototyping — not production workloads)*
+
+[<img src="app-store-badge.png" alt="Download GizmoSQL on the App Store" height="60">](https://apps.apple.com/us/app/gizmosql/id6761951280)
+
 ## Description
 
 This is the GizmoSQL core repo - used to build an Apache Arrow Flight SQL server implementation using DuckDB or SQLite as a backend database.
@@ -395,6 +399,18 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data/T
 ```
 
 
+
+---
+
+### Option 5 - Install the iOS App (iPhone & iPad) 📱
+
+GizmoSQL is available as a native iOS application on the Apple App Store, so you can run a full GizmoSQL server right on your iPhone or iPad.
+
+[<img src="app-store-badge.png" alt="Download GizmoSQL on the App Store" height="60">](https://apps.apple.com/us/app/gizmosql/id6761951280)
+
+The iOS edition bundles the DuckDB engine and the Arrow Flight SQL server, so any GizmoSQL client (JDBC, ADBC, CLI, UI, etc.) on your local network can connect to it just like a Linux, macOS, or Windows install. Configure the server and manage sessions directly from the app's UI — no terminal required.
+
+> **⚠️ Intended for development, not production.** The iOS edition is designed for developers, learners, demos, and local prototyping. iOS enforces aggressive background execution limits, memory caps, and network/thermal throttling that make a phone or tablet unsuitable for hosting production SQL traffic. For production workloads, use Docker, Kubernetes, Homebrew, or the native Linux/macOS/Windows builds documented above.
 
 ---
 

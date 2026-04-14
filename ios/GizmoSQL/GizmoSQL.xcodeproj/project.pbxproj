@@ -1,0 +1,499 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02C598A2A5C9459A4C5DEDC9 /* DotCommandProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 827027B094C76717E6EEE02B /* DotCommandProcessor.swift */; };
+		0F3787A5DCB357E140AEDD83 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7966693F715CDE8729452129 /* SettingsView.swift */; };
+		3C0F309B40996B513DBDE3C0 /* gizmosql_ios_bridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5FB73B10EEB213CA3E8D6B2D /* gizmosql_ios_bridge.cpp */; settings = {COMPILER_FLAGS = "-std=c++20"; }; };
+		415C0586A7B7CE9658938565 /* ServerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBE241512251464DB33D5DDE /* ServerManager.swift */; };
+		47312DAFDBD3AF0513C1913D /* grpc_xds_stubs.c in Sources */ = {isa = PBXBuildFile; fileRef = 1B4B3DF8508E52297A36090B /* grpc_xds_stubs.c */; };
+		577E223FE197A7998AFE3D39 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC5D2E3C11EF4749A8DC8A5 /* ContentView.swift */; };
+		5D26544CCF869520FDCFC423 /* grpc_tracer_stub.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 60645B16A61917BE04703D6D /* grpc_tracer_stub.cpp */; settings = {COMPILER_FLAGS = "-std=c++20"; }; };
+		5FD76DE4DF84597BE2F7B48E /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7F90BA9339AFA6F80BF3EB14 /* Network.framework */; };
+		932BBB06E3D58425EFC0D21B /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 30C672BAAD512C4C6ED670C1 /* CoreFoundation.framework */; };
+		9FF4774887AD60F87E5E40F7 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E9F10D842C1C27E2F9F33049 /* Security.framework */; };
+		B13F4FE3324739265FA1DBA2 /* QueryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B718BC5D407078EB83AC2820 /* QueryView.swift */; };
+		C33ABF8698EF82742721D6D5 /* ServerConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8872B5783BD0883678F8D033 /* ServerConfiguration.swift */; };
+		CA4F89DDA451583AC4A3630C /* GizmoSQLApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A75F535B1C151EE64C20619D /* GizmoSQLApp.swift */; };
+		D2BAB2AA44671BEA3477C181 /* CertificateGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F592D4437BFE6D352E0FA3E /* CertificateGenerator.swift */; };
+		E3AAEFEC821371CF8E844C14 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21091A8A8B6BFFA815FD23BA /* LogView.swift */; };
+		EA64FA3D654A590F4D97C628 /* ServerStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DDC81C77AA0E9247ABA162B /* ServerStatusView.swift */; };
+		F4499987A98975899CC3BDAB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C023A253E50DEDC785277407 /* Assets.xcassets */; };
+		FD0D54634579D29A2BB156AA /* BrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7C2D75169F3881D35D863F2 /* BrowserView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0DDC81C77AA0E9247ABA162B /* ServerStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerStatusView.swift; sourceTree = "<group>"; };
+		1B4B3DF8508E52297A36090B /* grpc_xds_stubs.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = grpc_xds_stubs.c; sourceTree = "<group>"; };
+		21091A8A8B6BFFA815FD23BA /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		30C672BAAD512C4C6ED670C1 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
+		3AC5D2E3C11EF4749A8DC8A5 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		5FB73B10EEB213CA3E8D6B2D /* gizmosql_ios_bridge.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = gizmosql_ios_bridge.cpp; sourceTree = "<group>"; };
+		60645B16A61917BE04703D6D /* grpc_tracer_stub.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = grpc_tracer_stub.cpp; sourceTree = "<group>"; };
+		7966693F715CDE8729452129 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		7F90BA9339AFA6F80BF3EB14 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		827027B094C76717E6EEE02B /* DotCommandProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DotCommandProcessor.swift; sourceTree = "<group>"; };
+		8872B5783BD0883678F8D033 /* ServerConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfiguration.swift; sourceTree = "<group>"; };
+		9F592D4437BFE6D352E0FA3E /* CertificateGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CertificateGenerator.swift; sourceTree = "<group>"; };
+		A75F535B1C151EE64C20619D /* GizmoSQLApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GizmoSQLApp.swift; sourceTree = "<group>"; };
+		A99652C0A61314B691F7834F /* GizmoSQL.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GizmoSQL.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B718BC5D407078EB83AC2820 /* QueryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueryView.swift; sourceTree = "<group>"; };
+		C023A253E50DEDC785277407 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E9F10D842C1C27E2F9F33049 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		EBE241512251464DB33D5DDE /* ServerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerManager.swift; sourceTree = "<group>"; };
+		F7C2D75169F3881D35D863F2 /* BrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8FB34276FD9D941F01EC5F8C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				932BBB06E3D58425EFC0D21B /* CoreFoundation.framework in Frameworks */,
+				9FF4774887AD60F87E5E40F7 /* Security.framework in Frameworks */,
+				5FD76DE4DF84597BE2F7B48E /* Network.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2BF206E868E7C09399152258 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				3AC5D2E3C11EF4749A8DC8A5 /* ContentView.swift */,
+				A75F535B1C151EE64C20619D /* GizmoSQLApp.swift */,
+			);
+			name = App;
+			path = GizmoSQL/App;
+			sourceTree = "<group>";
+		};
+		6A49D626948B5C7C0F3C8156 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				30C672BAAD512C4C6ED670C1 /* CoreFoundation.framework */,
+				7F90BA9339AFA6F80BF3EB14 /* Network.framework */,
+				E9F10D842C1C27E2F9F33049 /* Security.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		6E1BB8850118BAFC60F35505 /* Bridging */ = {
+			isa = PBXGroup;
+			children = (
+				5FB73B10EEB213CA3E8D6B2D /* gizmosql_ios_bridge.cpp */,
+				60645B16A61917BE04703D6D /* grpc_tracer_stub.cpp */,
+				1B4B3DF8508E52297A36090B /* grpc_xds_stubs.c */,
+			);
+			name = Bridging;
+			path = GizmoSQL/Bridging;
+			sourceTree = "<group>";
+		};
+		73E2585997903C8E43602CCA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A99652C0A61314B691F7834F /* GizmoSQL.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		840CBE78D7A3617476FD961E = {
+			isa = PBXGroup;
+			children = (
+				2BF206E868E7C09399152258 /* App */,
+				6E1BB8850118BAFC60F35505 /* Bridging */,
+				9EF27BBAFD2E74DA41CD27EB /* Resources */,
+				CA354D5544E26070ABCB5D09 /* Server */,
+				DFB8AE53EEE8D029AE661E0A /* TLS */,
+				9A106DEC802E8653B19C3700 /* Views */,
+				6A49D626948B5C7C0F3C8156 /* Frameworks */,
+				73E2585997903C8E43602CCA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9A106DEC802E8653B19C3700 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F7C2D75169F3881D35D863F2 /* BrowserView.swift */,
+				827027B094C76717E6EEE02B /* DotCommandProcessor.swift */,
+				21091A8A8B6BFFA815FD23BA /* LogView.swift */,
+				B718BC5D407078EB83AC2820 /* QueryView.swift */,
+				0DDC81C77AA0E9247ABA162B /* ServerStatusView.swift */,
+				7966693F715CDE8729452129 /* SettingsView.swift */,
+			);
+			name = Views;
+			path = GizmoSQL/Views;
+			sourceTree = "<group>";
+		};
+		9EF27BBAFD2E74DA41CD27EB /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				C023A253E50DEDC785277407 /* Assets.xcassets */,
+			);
+			name = Resources;
+			path = GizmoSQL/Resources;
+			sourceTree = "<group>";
+		};
+		CA354D5544E26070ABCB5D09 /* Server */ = {
+			isa = PBXGroup;
+			children = (
+				8872B5783BD0883678F8D033 /* ServerConfiguration.swift */,
+				EBE241512251464DB33D5DDE /* ServerManager.swift */,
+			);
+			name = Server;
+			path = GizmoSQL/Server;
+			sourceTree = "<group>";
+		};
+		DFB8AE53EEE8D029AE661E0A /* TLS */ = {
+			isa = PBXGroup;
+			children = (
+				9F592D4437BFE6D352E0FA3E /* CertificateGenerator.swift */,
+			);
+			name = TLS;
+			path = GizmoSQL/TLS;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B5C1C030A99D132E58F05615 /* GizmoSQL */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1B0F560402B7491E1B6FE45B /* Build configuration list for PBXNativeTarget "GizmoSQL" */;
+			buildPhases = (
+				50CAF34704503A8FBACCCFCA /* Sources */,
+				106B15CE20C960BE08A84055 /* Resources */,
+				8FB34276FD9D941F01EC5F8C /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GizmoSQL;
+			packageProductDependencies = (
+			);
+			productName = GizmoSQL;
+			productReference = A99652C0A61314B691F7834F /* GizmoSQL.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A3B63F8118A26FF1E9170CFE /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					B5C1C030A99D132E58F05615 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = ECE74FDD9349D8CBB6E3E7A0 /* Build configuration list for PBXProject "GizmoSQL" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 840CBE78D7A3617476FD961E;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 73E2585997903C8E43602CCA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B5C1C030A99D132E58F05615 /* GizmoSQL */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		106B15CE20C960BE08A84055 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F4499987A98975899CC3BDAB /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		50CAF34704503A8FBACCCFCA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FD0D54634579D29A2BB156AA /* BrowserView.swift in Sources */,
+				D2BAB2AA44671BEA3477C181 /* CertificateGenerator.swift in Sources */,
+				577E223FE197A7998AFE3D39 /* ContentView.swift in Sources */,
+				02C598A2A5C9459A4C5DEDC9 /* DotCommandProcessor.swift in Sources */,
+				CA4F89DDA451583AC4A3630C /* GizmoSQLApp.swift in Sources */,
+				E3AAEFEC821371CF8E844C14 /* LogView.swift in Sources */,
+				B13F4FE3324739265FA1DBA2 /* QueryView.swift in Sources */,
+				C33ABF8698EF82742721D6D5 /* ServerConfiguration.swift in Sources */,
+				415C0586A7B7CE9658938565 /* ServerManager.swift in Sources */,
+				EA64FA3D654A590F4D97C628 /* ServerStatusView.swift in Sources */,
+				0F3787A5DCB357E140AEDD83 /* SettingsView.swift in Sources */,
+				3C0F309B40996B513DBDE3C0 /* gizmosql_ios_bridge.cpp in Sources */,
+				5D26544CCF869520FDCFC423 /* grpc_tracer_stub.cpp in Sources */,
+				47312DAFDBD3AF0513C1913D /* grpc_xds_stubs.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		7021830B9A1E10D9F4B721F2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XYB42X6NFX;
+				DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited)";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/GizmoSQL/Bridging",
+					"$(PROJECT_DIR)/../../src/common/include",
+					"$(PROJECT_DIR)/../../src/common/include/detail",
+					"$(PROJECT_DIR)/../../src/duckdb",
+					"$(PROJECT_DIR)/../../src/sqlite",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/arrow/include",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/duckdb/include",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/grpc-src/include",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/protobuf-src/src",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/absl-src",
+					"$(PROJECT_DIR)/../../third_party/jwt-cpp/include",
+				);
+				INFOPLIST_FILE = GizmoSQL/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../build/libs",
+				);
+				MARKETING_VERSION = 1.1.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-Wl,-no_warn_duplicate_libraries",
+					"-lstdc++",
+					"-lresolv",
+					"$(PROJECT_DIR)/../build/libs/liball.a",
+					"$(PROJECT_DIR)/../build/libs/liball.a",
+					"$(PROJECT_DIR)/../build/libs/liball.a",
+				);
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				PRODUCT_BUNDLE_IDENTIFIER = com.gizmodata.gizmosql.ios;
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "GizmoSQL/Bridging/GizmoSQL-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = NO;
+			};
+			name = Debug;
+		};
+		79E486A037106176053E7439 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+		B6BB2AA1A7FB5DE7EB153498 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = XYB42X6NFX;
+				DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited)";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/GizmoSQL/Bridging",
+					"$(PROJECT_DIR)/../../src/common/include",
+					"$(PROJECT_DIR)/../../src/common/include/detail",
+					"$(PROJECT_DIR)/../../src/duckdb",
+					"$(PROJECT_DIR)/../../src/sqlite",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/arrow/include",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/duckdb/include",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/grpc-src/include",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/protobuf-src/src",
+					"$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/absl-src",
+					"$(PROJECT_DIR)/../../third_party/jwt-cpp/include",
+				);
+				INFOPLIST_FILE = GizmoSQL/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../build/libs",
+				);
+				MARKETING_VERSION = 1.1.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-Wl,-no_warn_duplicate_libraries",
+					"-lstdc++",
+					"-lresolv",
+					"$(PROJECT_DIR)/../build/libs/liball.a",
+					"$(PROJECT_DIR)/../build/libs/liball.a",
+					"$(PROJECT_DIR)/../build/libs/liball.a",
+				);
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				PRODUCT_BUNDLE_IDENTIFIER = com.gizmodata.gizmosql.ios;
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "GizmoSQL/Bridging/GizmoSQL-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = NO;
+			};
+			name = Release;
+		};
+		C5677B8BC8D6B307FCB3557D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1B0F560402B7491E1B6FE45B /* Build configuration list for PBXNativeTarget "GizmoSQL" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7021830B9A1E10D9F4B721F2 /* Debug */,
+				B6BB2AA1A7FB5DE7EB153498 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		ECE74FDD9349D8CBB6E3E7A0 /* Build configuration list for PBXProject "GizmoSQL" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				79E486A037106176053E7439 /* Debug */,
+				C5677B8BC8D6B307FCB3557D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A3B63F8118A26FF1E9170CFE /* Project object */;
+}

@@ -29,6 +29,13 @@ endif()
 # --------------------- Enterprise Edition Option ---------------------
 option(GIZMOSQL_ENTERPRISE "Build with enterprise features (instrumentation, kill session)" ON)
 
+# --------------------- iOS: force Core edition, no OTel ---------------------
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(GIZMOSQL_ENTERPRISE OFF CACHE BOOL "Enterprise disabled on iOS" FORCE)
+    set(WITH_OPENTELEMETRY OFF CACHE BOOL "OTel disabled on iOS" FORCE)
+    message(STATUS "Building GizmoSQL iOS Edition (Core only)")
+endif()
+
 if(GIZMOSQL_ENTERPRISE)
     message(STATUS "Building GizmoSQL Enterprise Edition")
 else()
@@ -158,6 +165,18 @@ if(WIN32 AND VCPKG_TARGET_TRIPLET)
     endif()
 endif()
 
+# Forward iOS cross-compilation settings to Arrow ExternalProject
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(ARROW_SIMD_LEVEL "NONE")
+    set(ARROW_RUNTIME_SIMD_LEVEL "NONE")
+    # Arrow/gRPC/DuckDB ExternalProjects are built for the host (macOS arm64),
+    # not cross-compiled for iOS. The resulting static libraries are binary-
+    # compatible (same arm64 instructions) — we retag the platform metadata
+    # from macOS to iOS using vtool after the build. This avoids the deep
+    # cross-compilation issues with gRPC's proto tool generation.
+    set(ARROW_IOS_ARGS "")
+endif()
+
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
 )
@@ -226,6 +245,8 @@ set_property(TARGET sqlite PROPERTY IMPORTED_LOCATION ${SQLITE_LIBRARY_PATH})
 set_property(TARGET sqlite PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${SQLITE_INCLUDE_DIR})
 
 # --------------------- DuckDB ---------------------
+# Extensions to statically link into DuckDB (core_functions and parquet are always included)
+set(DUCKDB_EXTENSION_CONFIGS "${CMAKE_SOURCE_DIR}/third_party/duckdb_extensions.cmake")
 
 configure_file(third_party/DuckDB_CMakeLists.txt.in duckdb/CMakeLists.txt)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
@@ -245,6 +266,15 @@ set(DUCKDB_INCLUDE_DIR "${DUCKDB_INSTALL_DIR}/include")
 add_library(duckdb STATIC IMPORTED)
 set_property(TARGET duckdb PROPERTY IMPORTED_LOCATION ${DUCKDB_LIBRARY_PATH})
 set_property(TARGET duckdb APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${DUCKDB_INCLUDE_DIR})
+# Don't mark duckdb's include dirs as SYSTEM (-isystem). With -isystem, any
+# -I path that comes earlier on the command line wins — and Boost_INCLUDE_DIRS
+# on a homebrew mac resolves to /opt/homebrew/include, which may contain a
+# stale (shadowed) `duckdb/main/config.hpp` from whatever DuckDB version brew
+# has installed. That header has a different sizeof(DBConfig) than our
+# vendored DuckDB and corrupts the stack when libduckdb's ctor writes past
+# the caller's buffer. Forcing -I keeps dedup honest and lets the explicit
+# BEFORE PRIVATE below win ordering.
+set_property(TARGET duckdb PROPERTY IMPORTED_NO_SYSTEM TRUE)
 
 target_link_libraries(duckdb
         INTERFACE
@@ -262,8 +292,25 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}icu_extension${LIB_SUFFIX}"
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}tpch_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
 )
+
+# Out-of-tree DuckDB extensions are only statically linked on iOS
+# (which is compiled with DISABLE_EXTENSION_LOAD for App Store
+# compliance). On Linux/macOS/Windows, these remain runtime-loadable
+# via INSTALL/LOAD — avoids pulling in new build-time deps like
+# libcurl, libpq, etc. See third_party/duckdb_extensions.cmake for
+# the parallel iOS guard on the DuckDB build side.
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_link_libraries(duckdb
+            INTERFACE
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}ducklake_extension${LIB_SUFFIX}"
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}httpfs_extension${LIB_SUFFIX}"
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}postgres_scanner_extension${LIB_SUFFIX}"
+    )
+endif()
 
 # Only link jemalloc_extension on Linux
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -355,7 +402,12 @@ FetchContent_MakeAvailable(json)
 find_package(Threads REQUIRED)
 
 set(Boost_USE_STATIC_LIBS ON)
-find_package(Boost COMPONENTS program_options REQUIRED)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    find_package(Boost COMPONENTS program_options REQUIRED)
+else()
+    # iOS only needs Boost headers (uuid, algorithm/string) — no compiled libraries
+    find_package(Boost REQUIRED)
+endif()
 
 # --------------------- gRPC Health Proto Generation ---------------------
 # Use Arrow's bundled protobuf and gRPC for proto generation
@@ -470,6 +522,7 @@ target_include_directories(gizmosqlserver
         src/sqlite
         src/duckdb
         src/common/include/detail
+        ${Boost_INCLUDE_DIRS}
         ${SQLITE_INCLUDE_DIR}
         ${DUCKDB_INCLUDE_DIR}
         ${JWT_CPP_INCLUDE_DIR}
@@ -478,6 +531,14 @@ target_include_directories(gizmosqlserver
         ${GRPC_INCLUDE_DIR}
         ${ABSL_INCLUDE_DIR}
 )
+
+# Prepend our vendored DuckDB include dir so it wins over anything reachable
+# via Boost_INCLUDE_DIRS (e.g. /opt/homebrew/include/duckdb from a brew
+# install of DuckDB). Without this, duckdb_server.cpp silently compiles
+# against a shadowed header whose sizeof(DBConfig) may disagree with the
+# libduckdb_static.a we actually link — a stack-canary trip on the very
+# first call to DuckDBFlightSqlServer::Create.
+target_include_directories(gizmosqlserver BEFORE PRIVATE ${DUCKDB_INCLUDE_DIR})
 
 # Add enterprise-specific include directories and compile definition
 if(GIZMOSQL_ENTERPRISE)
@@ -506,7 +567,6 @@ target_link_libraries(gizmosqlserver
         ArrowFlightSql::arrow_flight_sql_static
         sqlite
         duckdb
-        ${Boost_LIBRARIES}
         nlohmann_json::nlohmann_json
         ${GRPC_REFLECTION_LIBRARY}
 )
@@ -551,6 +611,9 @@ install(TARGETS gizmosqlserver
         LIBRARY DESTINATION lib
         PUBLIC_HEADER DESTINATION include
 )
+
+# ------------ Executables and tests (skip for iOS) ------------
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
 # ------------ Server Executable section ------------
 add_executable(gizmosql_server
@@ -674,3 +737,5 @@ install(TARGETS gizmosql_client
 # =========================================================
 enable_testing()
 add_subdirectory(tests)
+
+endif() # NOT iOS

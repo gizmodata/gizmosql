@@ -1,0 +1,95 @@
+name: GizmoSQL
+options:
+  bundleIdPrefix: com.gizmodata
+  deploymentTarget:
+    iOS: "17.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    CLANG_CXX_LANGUAGE_STANDARD: c++20
+
+targets:
+  GizmoSQL:
+    type: application
+    platform: iOS
+    sources:
+      - path: GizmoSQL/App
+      - path: GizmoSQL/Server
+      - path: GizmoSQL/Views
+      - path: GizmoSQL/TLS
+      - path: GizmoSQL/Resources/Assets.xcassets
+      - path: GizmoSQL/Bridging/gizmosql_ios_bridge.cpp
+        compilerFlags:
+          - "-std=c++20"
+      - path: GizmoSQL/Bridging/grpc_xds_stubs.c
+      - path: GizmoSQL/Bridging/grpc_tracer_stub.cpp
+        compilerFlags:
+          - "-std=c++20"
+    settings:
+      base:
+        INFOPLIST_FILE: GizmoSQL/Resources/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: GizmoSQL/Bridging/GizmoSQL-Bridging-Header.h
+        PRODUCT_BUNDLE_IDENTIFIER: com.gizmodata.gizmosql.ios
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.1.1"
+        CURRENT_PROJECT_VERSION: "1"
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/GizmoSQL/Bridging"
+          - "$(PROJECT_DIR)/../../src/common/include"
+          - "$(PROJECT_DIR)/../../src/common/include/detail"
+          - "$(PROJECT_DIR)/../../src/duckdb"
+          - "$(PROJECT_DIR)/../../src/sqlite"
+          - "$(PROJECT_DIR)/../build/ios-arm64/third_party/arrow/include"
+          - "$(PROJECT_DIR)/../build/ios-arm64/third_party/duckdb/include"
+          - "$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/grpc-src/include"
+          - "$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/protobuf-src/src"
+          - "$(PROJECT_DIR)/../build/ios-arm64/third_party/src/arrow_project-build/_deps/absl-src"
+          - "$(PROJECT_DIR)/../../third_party/jwt-cpp/include"
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/../build/libs"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-Wl,-no_warn_duplicate_libraries"
+          # System libraries
+          - "-lstdc++"
+          - "-lresolv"
+          # Mega archive repeated 3x to resolve circular deps (Apple ld has no --start-group)
+          - "$(PROJECT_DIR)/../build/libs/liball.a"
+          - "$(PROJECT_DIR)/../build/libs/liball.a"
+          - "$(PROJECT_DIR)/../build/libs/liball.a"
+        # Allow linking macOS arm64 static libs into iOS (same ISA, different platform tag)
+        DISABLE_DIAMOND_PROBLEM_DIAGNOSTIC: "YES"
+        OTHER_LIBTOOLFLAGS: "-no_warning_for_no_symbols"
+        VALIDATE_PRODUCT: "NO"
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+    info:
+      path: GizmoSQL/Resources/Info.plist
+      properties:
+        NSLocalNetworkUsageDescription: "GizmoSQL serves a database over your local Wi-Fi network so that Arrow Flight SQL clients on the same network can connect."
+        UILaunchScreen: {}
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    dependencies:
+      - sdk: CoreFoundation.framework
+      - sdk: Security.framework
+      - sdk: Network.framework
+
+schemes:
+  GizmoSQL:
+    build:
+      targets:
+        GizmoSQL: all
+    run:
+      config: Debug
