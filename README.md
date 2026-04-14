@@ -8,6 +8,7 @@
 [![ADBC PyPI](https://img.shields.io/badge/PyPI-GizmoSQL%20ADBC%20Driver-blue?logo=PyPI)](https://pypi.org/project/adbc-driver-gizmosql/)
 [![SQLAlchemy Dialect](https://img.shields.io/badge/PyPI-GizmoSQL%20SQLAlchemy%20Dialect-blue?logo=PyPI)](https://pypi.org/project/sqlalchemy-gizmosql-adbc-dialect/)
 [![Ibis Backend](https://img.shields.io/badge/PyPI-GizmoSQL%20Ibis%20Backend-blue?logo=PyPI)](https://pypi.org/project/ibis-gizmosql/)
+[![App Store](https://img.shields.io/badge/App%20Store-GizmoSQL%20for%20iOS-black?logo=apple)](https://apps.apple.com/us/app/gizmosql/id6761951280)
 
 ---
 
@@ -148,6 +149,17 @@ Then run the server from PowerShell or Command Prompt:
 $env:GIZMOSQL_PASSWORD="gizmosql_password"
 gizmosql_server --database-filename your.duckdb --print-queries
 ```
+
+### Option 5: iOS App (iPhone & iPad) 📱
+
+GizmoSQL is available as a native iOS app on the Apple App Store — run a full GizmoSQL server right on your iPhone or iPad.
+
+[<img src="docs/app-store-badge.png" alt="Download GizmoSQL on the App Store" height="60">](https://apps.apple.com/us/app/gizmosql/id6761951280)
+
+The iOS edition bundles the DuckDB engine and the Arrow Flight SQL server, so any GizmoSQL client (JDBC, ADBC, CLI, UI, etc.) can connect to it over your local network.
+
+> [!IMPORTANT]
+> **The iOS app is intended for development, learning, demos, and local prototyping — not production workloads.** iOS enforces aggressive background execution limits, memory caps, and network/thermal throttling that make a phone or tablet unsuitable for hosting production SQL traffic. For production, run GizmoSQL via Docker, Kubernetes, Homebrew, or the native Linux/macOS/Windows binaries.
 
 ---
 
