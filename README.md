@@ -4,7 +4,7 @@
 [![GitHub Container](https://img.shields.io/badge/github--package-container--image-green.svg?logo=Docker)](https://github.com/gizmodata/gizmosql/pkgs/container/gizmosql)
 [![Documentation](https://img.shields.io/badge/Documentation-dev-yellow.svg)](https://arrow.apache.org/docs/format/FlightSql.html)
 [![GitHub](https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github)](https://github.com/gizmodata/gizmosql)
-[![JDBC Driver](https://img.shields.io/badge/GizmoSQL%20JDBC%20Driver-download%20artifact-red?logo=Apache%20Maven)](https://downloads.gizmodata.com/gizmosql-jdbc-driver/latest/gizmosql-jdbc-driver.jar)
+[![JDBC Driver](https://img.shields.io/badge/GizmoSQL%20JDBC%20Driver-download%20artifact-red?logo=Apache%20Maven)](https://github.com/gizmodata/gizmosql-jdbc-driver/releases/latest/download/gizmosql-jdbc-driver.jar)
 [![ADBC PyPI](https://img.shields.io/badge/PyPI-GizmoSQL%20ADBC%20Driver-blue?logo=PyPI)](https://pypi.org/project/adbc-driver-gizmosql/)
 [![SQLAlchemy Dialect](https://img.shields.io/badge/PyPI-GizmoSQL%20SQLAlchemy%20Dialect-blue?logo=PyPI)](https://pypi.org/project/sqlalchemy-gizmosql-adbc-dialect/)
 [![Ibis Backend](https://img.shields.io/badge/PyPI-GizmoSQL%20Ibis%20Backend-blue?logo=PyPI)](https://pypi.org/project/ibis-gizmosql/)
@@ -307,7 +307,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 📺 [GizmoSQLLine JDBC CLI Client](https://github.com/gizmodata/gizmosqlline) **NEW!**
 - 🔥 [Grafana Plugin](https://grafana.com/grafana/plugins/gizmodata-gizmosql-datasource/) **NEW!**
 - 🕸️ [JavaScript/TypeScript Client](https://github.com/gizmodata/gizmosql-client-js) **NEW!**
-- ☕️ [JDBC Driver](https://downloads.gizmodata.com/gizmosql-jdbc-driver/latest/gizmosql-jdbc-driver.jar) **NEW!**
+- ☕️ [JDBC Driver](https://github.com/gizmodata/gizmosql-jdbc-driver/releases/latest/download/gizmosql-jdbc-driver.jar) **NEW!**
 - 🐍 [Python ADBC Driver (with OAuth/SSO)](https://github.com/gizmodata/adbc-driver-gizmosql) **NEW!**
 - 🔌 [ODBC Driver](https://github.com/gizmodata/gizmosql-odbc-driver) **NEW!**
 - 📊 [Power BI Connector](https://github.com/gizmodata/gizmosql-powerbi-connector) **NEW!**

@@ -22,7 +22,7 @@ GizmoSQL provides seamless integration with:
 - 📺 [GizmoSQLLine JDBC CLI Client](https://github.com/gizmodata/gizmosqlline) **NEW!**
 - 🔥 [Grafana Plugin](https://github.com/gizmodata/grafana-gizmosql-datasource) **NEW!**
 - 🕸️ [JavaScript/TypeScript Client](https://github.com/gizmodata/gizmosql-client-js) **NEW!**
-- ☕️ [JDBC Driver](https://downloads.gizmodata.com/gizmosql-jdbc-driver/latest/gizmosql-jdbc-driver.jar) **NEW!**
+- ☕️ [JDBC Driver](https://github.com/gizmodata/gizmosql-jdbc-driver/releases/latest/download/gizmosql-jdbc-driver.jar) **NEW!**
 - 🐍 [Python ADBC Driver (with OAuth/SSO)](https://github.com/gizmodata/adbc-driver-gizmosql) **NEW!**
 
 ---
