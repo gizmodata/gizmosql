@@ -18,7 +18,11 @@ ExternalProject_Add(
       # runner's default search path doesn't include Homebrew's openssl@3).
       # The nested ExternalProject's CMake doesn't always inherit env vars
       # reliably through the ninja → cmake --build → cmake chain, so we
-      # forward it explicitly.
+      # forward it explicitly. Also force static on macOS: Homebrew's
+      # openssl@3 formula installs only static libs by default (libcrypto.a
+      # / libssl.a) with no dylib symlinks, so FindOpenSSL's shared-lib
+      # search fails unless we force static mode.
       -DOPENSSL_ROOT_DIR=$ENV{OPENSSL_ROOT_DIR}
+      -DOPENSSL_USE_STATIC_LIBS=$ENV{OPENSSL_USE_STATIC_LIBS}
     BUILD_COMMAND ""  # This is a header only library
 )

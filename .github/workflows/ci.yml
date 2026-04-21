@@ -42,9 +42,15 @@ jobs:
           brew install automake boost gflags openssl@3
           # Expose OpenSSL 3 to CMake's find_package(OpenSSL) for cpp-httplib.
           # The macOS runner image no longer puts openssl@3 on the default
-          # CMake search path. Setting OPENSSL_ROOT_DIR is enough — CMake's
-          # FindOpenSSL locates libcrypto/libssl (dylib or .a) under it.
-          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          # CMake search path, AND Homebrew's openssl@3 formula now installs
+          # only static libs (libcrypto.a/libssl.a) without .dylib symlinks
+          # — so we must also set OPENSSL_USE_STATIC_LIBS=TRUE or
+          # find_package(OpenSSL) fails with "missing: Crypto SSL".
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "OPENSSL_USE_STATIC_LIBS=TRUE" >> "$GITHUB_ENV"
+          echo "---- Contents of ${OPENSSL_PREFIX}/lib ----"
+          ls -la "${OPENSSL_PREFIX}/lib" || true
 
       - name: Restore Arrow cache
         id: arrow-cache
