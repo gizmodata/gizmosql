@@ -39,7 +39,15 @@ jobs:
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
         run: |
-          brew install automake boost gflags
+          brew install automake boost gflags openssl@3
+          # Expose OpenSSL 3 to CMake's find_package(OpenSSL) for cpp-httplib
+          # (the macOS runner image no longer puts openssl@3 on the default
+          # CMake search path).
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "OPENSSL_INCLUDE_DIR=${OPENSSL_PREFIX}/include" >> "$GITHUB_ENV"
+          echo "OPENSSL_CRYPTO_LIBRARY=${OPENSSL_PREFIX}/lib/libcrypto.dylib" >> "$GITHUB_ENV"
+          echo "OPENSSL_SSL_LIBRARY=${OPENSSL_PREFIX}/lib/libssl.dylib" >> "$GITHUB_ENV"
 
       - name: Restore Arrow cache
         id: arrow-cache
