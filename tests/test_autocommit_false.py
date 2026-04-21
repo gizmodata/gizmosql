@@ -122,14 +122,19 @@ def test_rollback_path() -> bool:
             conn.rollback()
             print("  conn.rollback() succeeded")
 
-        # After rollback the table should not exist.
-        from adbc_driver_manager import OperationalError
+        # After rollback the table should not exist. DuckDB surfaces this
+        # via the driver as either ProgrammingError (Prepare-time catalog
+        # lookup failure) or OperationalError depending on version; either
+        # one confirms the rollback succeeded.
+        from adbc_driver_manager import OperationalError, ProgrammingError
 
         try:
             observed = _count_rows(table)
-        except OperationalError:
-            print("  table does not exist post-rollback (expected)")
-            return True
+        except (OperationalError, ProgrammingError) as e:
+            if "does not exist" in str(e):
+                print("  table does not exist post-rollback (expected)")
+                return True
+            raise
 
         raise AssertionError(
             f"expected table {table} to be rolled back, but it has {observed} rows"
