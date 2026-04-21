@@ -5,19 +5,13 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
-# Forward OpenSSL hints from the outer environment into the nested
-# ExternalProject CMake — but *only* when they are actually set. Passing
-# them as empty strings (e.g. -DOPENSSL_ROOT_DIR=) clobbers the inner
-# CMake's default search, which broke Linux (where none of these env
-# vars are set). These are primarily set by the macOS CI step where
-# Homebrew's openssl@3 is not on the default CMake search path.
-set(_httplib_openssl_args "")
-foreach(_var OPENSSL_ROOT_DIR OPENSSL_USE_STATIC_LIBS OPENSSL_INCLUDE_DIR
-             OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
-    if(DEFINED ENV{${_var}} AND NOT "$ENV{${_var}}" STREQUAL "")
-        list(APPEND _httplib_openssl_args "-D${_var}=$ENV{${_var}}")
-    endif()
-endforeach()
+# Forward OpenSSL hints from the outer CMake. The outer CMakeLists.txt
+# computes @GIZMOSQL_HTTPLIB_OPENSSL_ARGS@ (a semicolon-separated list of
+# -DFOO=bar pairs) based on its own cache variables. We pass them through
+# as individual CMAKE_ARGS entries — configure_file() substitutes the
+# outer value at generation time, so nothing depends on env-var
+# inheritance surviving the nested ninja → cmake invocation chain.
+set(_httplib_openssl_args "@GIZMOSQL_HTTPLIB_OPENSSL_ARGS@")
 
 ExternalProject_Add(
     httplib_project

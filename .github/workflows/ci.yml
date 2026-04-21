@@ -79,6 +79,11 @@ jobs:
             WITH_OPENTELEMETRY=ON
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
+            OPENSSL_ROOT_DIR=${{ env.OPENSSL_ROOT_DIR }}
+            OPENSSL_USE_STATIC_LIBS=${{ env.OPENSSL_USE_STATIC_LIBS }}
+            OPENSSL_INCLUDE_DIR=${{ env.OPENSSL_INCLUDE_DIR }}
+            OPENSSL_CRYPTO_LIBRARY=${{ env.OPENSSL_CRYPTO_LIBRARY }}
+            OPENSSL_SSL_LIBRARY=${{ env.OPENSSL_SSL_LIBRARY }}
 
       - name: Save Arrow cache
         if: steps.arrow-cache.outputs.cache-hit != 'true'

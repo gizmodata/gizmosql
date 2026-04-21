@@ -378,7 +378,24 @@ set(JWT_CPP_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include")
 
 # --------------------- cpp-httplib (header-only HTTP client) ---------------------
 
-configure_file(third_party/httplib_CMakeLists.txt.in cpp-httplib/CMakeLists.txt)
+# Compose OpenSSL hint args to forward into the nested cpp-httplib
+# ExternalProject. On systems where the outer CMake was invoked with
+# -DOPENSSL_ROOT_DIR=... (e.g. macOS CI where Homebrew's openssl@3 is
+# not on the default CMake search path), forward those hints verbatim.
+# Empty values are skipped so we don't clobber defaults on Linux.
+set(GIZMOSQL_HTTPLIB_OPENSSL_ARGS "")
+foreach(_var OPENSSL_ROOT_DIR OPENSSL_USE_STATIC_LIBS OPENSSL_INCLUDE_DIR
+             OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
+    if(DEFINED ${_var} AND NOT "${${_var}}" STREQUAL "")
+        list(APPEND GIZMOSQL_HTTPLIB_OPENSSL_ARGS "-D${_var}=${${_var}}")
+    endif()
+endforeach()
+# Keep as a CMake list (semicolon-separated); configure_file with @ONLY
+# preserves it, and the inner CMake will expand ${_httplib_openssl_args}
+# into separate CMAKE_ARGS entries at ExternalProject_Add time.
+message(STATUS "cpp-httplib OpenSSL args: ${GIZMOSQL_HTTPLIB_OPENSSL_ARGS}")
+
+configure_file(third_party/httplib_CMakeLists.txt.in cpp-httplib/CMakeLists.txt @ONLY)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
         RESULT_VARIABLE _httplib_configure_rc
