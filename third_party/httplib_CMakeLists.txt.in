@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
+# Forward OpenSSL hints from the outer CMake. The outer CMakeLists.txt
+# computes @GIZMOSQL_HTTPLIB_OPENSSL_ARGS@ (a semicolon-separated list of
+# -DFOO=bar pairs) based on its own cache variables. We pass them through
+# as individual CMAKE_ARGS entries — configure_file() substitutes the
+# outer value at generation time, so nothing depends on env-var
+# inheritance surviving the nested ninja → cmake invocation chain.
+set(_httplib_openssl_args "@GIZMOSQL_HTTPLIB_OPENSSL_ARGS@")
+
 ExternalProject_Add(
     httplib_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
@@ -14,5 +22,6 @@ ExternalProject_Add(
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/cpp-httplib
       -DHTTPLIB_REQUIRE_OPENSSL=ON
+      ${_httplib_openssl_args}
     BUILD_COMMAND ""  # This is a header only library
 )

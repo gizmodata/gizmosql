@@ -39,7 +39,23 @@ jobs:
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
         run: |
-          brew install automake boost gflags
+          brew install automake boost gflags openssl@3
+          # Expose OpenSSL 3 to CMake's find_package(OpenSSL) for cpp-httplib.
+          # The macOS runner image no longer puts openssl@3 on the default
+          # CMake search path, AND Homebrew's openssl@3 formula now installs
+          # only static libs (libcrypto.a/libssl.a) without .dylib symlinks
+          # — so we must also set OPENSSL_USE_STATIC_LIBS=TRUE or
+          # find_package(OpenSSL) fails with "missing: Crypto SSL".
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
+          echo "OPENSSL_USE_STATIC_LIBS=TRUE" >> "$GITHUB_ENV"
+          # Belt-and-braces: explicitly pin the library/include paths so the
+          # cpp-httplib nested CMake's find_package(OpenSSL) short-circuits
+          # its search instead of (mysteriously) failing to locate libraries
+          # that are clearly present under OPENSSL_ROOT_DIR/lib.
+          echo "OPENSSL_INCLUDE_DIR=${OPENSSL_PREFIX}/include" >> "$GITHUB_ENV"
+          echo "OPENSSL_CRYPTO_LIBRARY=${OPENSSL_PREFIX}/lib/libcrypto.a" >> "$GITHUB_ENV"
+          echo "OPENSSL_SSL_LIBRARY=${OPENSSL_PREFIX}/lib/libssl.a" >> "$GITHUB_ENV"
 
       - name: Restore Arrow cache
         id: arrow-cache
@@ -63,6 +79,11 @@ jobs:
             WITH_OPENTELEMETRY=ON
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
+            OPENSSL_ROOT_DIR=${{ env.OPENSSL_ROOT_DIR }}
+            OPENSSL_USE_STATIC_LIBS=${{ env.OPENSSL_USE_STATIC_LIBS }}
+            OPENSSL_INCLUDE_DIR=${{ env.OPENSSL_INCLUDE_DIR }}
+            OPENSSL_CRYPTO_LIBRARY=${{ env.OPENSSL_CRYPTO_LIBRARY }}
+            OPENSSL_SSL_LIBRARY=${{ env.OPENSSL_SSL_LIBRARY }}
 
       - name: Save Arrow cache
         if: steps.arrow-cache.outputs.cache-hit != 'true'
@@ -110,10 +131,16 @@ jobs:
           SERVER_PID=$!
           sleep 5
 
-          # Run Python tests
-          python tests/test_geoarrow.py
-          python tests/test_bulk_ingest.py
-          TEST_EXIT_CODE=$?
+          # Run Python tests — stop on first failure so we don't silently
+          # mask earlier failures with a later test's exit code.
+          TEST_EXIT_CODE=0
+          python tests/test_geoarrow.py || TEST_EXIT_CODE=$?
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_bulk_ingest.py || TEST_EXIT_CODE=$?
+          fi
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_autocommit_false.py || TEST_EXIT_CODE=$?
+          fi
 
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
@@ -315,10 +342,16 @@ jobs:
           SERVER_PID=$!
           sleep 5
 
-          # Run Python tests
-          python tests/test_geoarrow.py
-          python tests/test_bulk_ingest.py
-          TEST_EXIT_CODE=$?
+          # Run Python tests — stop on first failure so we don't silently
+          # mask earlier failures with a later test's exit code.
+          TEST_EXIT_CODE=0
+          python tests/test_geoarrow.py || TEST_EXIT_CODE=$?
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_bulk_ingest.py || TEST_EXIT_CODE=$?
+          fi
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_autocommit_false.py || TEST_EXIT_CODE=$?
+          fi
 
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
