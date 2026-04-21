@@ -126,10 +126,16 @@ jobs:
           SERVER_PID=$!
           sleep 5
 
-          # Run Python tests
-          python tests/test_geoarrow.py
-          python tests/test_bulk_ingest.py
-          TEST_EXIT_CODE=$?
+          # Run Python tests — stop on first failure so we don't silently
+          # mask earlier failures with a later test's exit code.
+          TEST_EXIT_CODE=0
+          python tests/test_geoarrow.py || TEST_EXIT_CODE=$?
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_bulk_ingest.py || TEST_EXIT_CODE=$?
+          fi
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_autocommit_false.py || TEST_EXIT_CODE=$?
+          fi
 
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
@@ -331,10 +337,16 @@ jobs:
           SERVER_PID=$!
           sleep 5
 
-          # Run Python tests
-          python tests/test_geoarrow.py
-          python tests/test_bulk_ingest.py
-          TEST_EXIT_CODE=$?
+          # Run Python tests — stop on first failure so we don't silently
+          # mask earlier failures with a later test's exit code.
+          TEST_EXIT_CODE=0
+          python tests/test_geoarrow.py || TEST_EXIT_CODE=$?
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_bulk_ingest.py || TEST_EXIT_CODE=$?
+          fi
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_autocommit_false.py || TEST_EXIT_CODE=$?
+          fi
 
           # Stop server
           kill $SERVER_PID 2>/dev/null || true

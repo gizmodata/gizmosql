@@ -5,6 +5,20 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
+# Forward OpenSSL hints from the outer environment into the nested
+# ExternalProject CMake — but *only* when they are actually set. Passing
+# them as empty strings (e.g. -DOPENSSL_ROOT_DIR=) clobbers the inner
+# CMake's default search, which broke Linux (where none of these env
+# vars are set). These are primarily set by the macOS CI step where
+# Homebrew's openssl@3 is not on the default CMake search path.
+set(_httplib_openssl_args "")
+foreach(_var OPENSSL_ROOT_DIR OPENSSL_USE_STATIC_LIBS OPENSSL_INCLUDE_DIR
+             OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
+    if(DEFINED ENV{${_var}} AND NOT "$ENV{${_var}}" STREQUAL "")
+        list(APPEND _httplib_openssl_args "-D${_var}=$ENV{${_var}}")
+    endif()
+endforeach()
+
 ExternalProject_Add(
     httplib_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
@@ -14,18 +28,6 @@ ExternalProject_Add(
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/cpp-httplib
       -DHTTPLIB_REQUIRE_OPENSSL=ON
-      # Propagate OPENSSL_ROOT_DIR from the outer CMake (set by CI when the
-      # runner's default search path doesn't include Homebrew's openssl@3).
-      # The nested ExternalProject's CMake doesn't always inherit env vars
-      # reliably through the ninja → cmake --build → cmake chain, so we
-      # forward it explicitly. Also force static on macOS: Homebrew's
-      # openssl@3 formula installs only static libs by default (libcrypto.a
-      # / libssl.a) with no dylib symlinks, so FindOpenSSL's shared-lib
-      # search fails unless we force static mode.
-      -DOPENSSL_ROOT_DIR=$ENV{OPENSSL_ROOT_DIR}
-      -DOPENSSL_USE_STATIC_LIBS=$ENV{OPENSSL_USE_STATIC_LIBS}
-      -DOPENSSL_INCLUDE_DIR=$ENV{OPENSSL_INCLUDE_DIR}
-      -DOPENSSL_CRYPTO_LIBRARY=$ENV{OPENSSL_CRYPTO_LIBRARY}
-      -DOPENSSL_SSL_LIBRARY=$ENV{OPENSSL_SSL_LIBRARY}
+      ${_httplib_openssl_args}
     BUILD_COMMAND ""  # This is a header only library
 )
