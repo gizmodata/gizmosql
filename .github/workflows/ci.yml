@@ -739,9 +739,33 @@ jobs:
         with:
           subject-path: artifacts/GizmoSQL-amd64.msi
 
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        run: |
+          # Strip the leading 'v' from the tag (refs/tags/v1.2.3 -> 1.2.3)
+          # and pull the matching "## [VERSION] - DATE" section out of
+          # CHANGELOG.md (stop at the next "## [" heading). Save to
+          # release_notes.md; fall back to an empty file if the section
+          # isn't present so the release still gets created.
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Extracting release notes for version: ${VERSION}"
+          awk -v ver="${VERSION}" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+
+          if [ -s release_notes.md ]; then
+            echo "---- release_notes.md ----"
+            cat release_notes.md
+          else
+            echo "WARNING: no matching CHANGELOG section for ${VERSION}; release will use auto-generated notes."
+          fi
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release_notes.md
           files: |
             artifacts/gizmosql_cli_*.zip
             artifacts/GizmoSQL-*.msi
