@@ -49,8 +49,13 @@ jobs:
           OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           echo "OPENSSL_ROOT_DIR=${OPENSSL_PREFIX}" >> "$GITHUB_ENV"
           echo "OPENSSL_USE_STATIC_LIBS=TRUE" >> "$GITHUB_ENV"
-          echo "---- Contents of ${OPENSSL_PREFIX}/lib ----"
-          ls -la "${OPENSSL_PREFIX}/lib" || true
+          # Belt-and-braces: explicitly pin the library/include paths so the
+          # cpp-httplib nested CMake's find_package(OpenSSL) short-circuits
+          # its search instead of (mysteriously) failing to locate libraries
+          # that are clearly present under OPENSSL_ROOT_DIR/lib.
+          echo "OPENSSL_INCLUDE_DIR=${OPENSSL_PREFIX}/include" >> "$GITHUB_ENV"
+          echo "OPENSSL_CRYPTO_LIBRARY=${OPENSSL_PREFIX}/lib/libcrypto.a" >> "$GITHUB_ENV"
+          echo "OPENSSL_SSL_LIBRARY=${OPENSSL_PREFIX}/lib/libssl.a" >> "$GITHUB_ENV"
 
       - name: Restore Arrow cache
         id: arrow-cache
