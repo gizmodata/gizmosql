@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bulk ingest inside an open transaction (issue [#155](https://github.com/gizmodata/gizmosql/issues/155))**: `adbc_ingest()` (and any Flight SQL `CommandStatementIngest`) now works when the client has an open transaction (e.g. `autocommit=False`). Previously the server unconditionally opened a nested transaction, which DuckDB rejects, surfacing as `Unexpected error in RPC handling (Unknown; ExecuteIngest)`. The server now honors `CommandStatementIngest.transaction_id` when present, and falls back to detecting `HasActiveTransaction()` on the session's connection to handle clients (e.g. the Go ADBC FlightSQL driver) that don't populate that field. Thanks to @fromm1990 for the detailed report and reproducer.
+
 ### Added
 
 - **Active session count API**: New `GetActiveSessionCount()` function in the C library API returns the number of currently active client sessions. Thread-safe and callable while the server is running. Useful for monitoring and embedding (e.g., iOS app).

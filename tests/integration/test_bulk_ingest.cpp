@@ -133,3 +133,59 @@ TEST_F(BulkIngestServerFixture, ExecuteIngestEndToEnd) {
 
   ASSERT_EQ(updated_rows, 3) << "Expected 3 ingested rows";
 }
+
+// Regression test for https://github.com/gizmodata/gizmosql/issues/155
+// Ingest must succeed when the client already has an open transaction
+// (e.g. ADBC clients with autocommit=False). Previously, the server
+// unconditionally opened a nested transaction which DuckDB rejects.
+TEST_F(BulkIngestServerFixture, ExecuteIngestInsideOpenTransaction) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  arrow::flight::sql::FlightSqlClient sql_client(std::move(client));
+
+  // Open a client-side transaction — mimics autocommit=False.
+  ASSERT_ARROW_OK_AND_ASSIGN(auto transaction, sql_client.BeginTransaction(call_options));
+
+  TableDefinitionOptions table_opts;
+  table_opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kCreate;
+  table_opts.if_exists = TableDefinitionOptionsTableExistsOption::kAppend;
+
+  // Case 1: client sends the transaction_id on the ingest message.
+  {
+    auto reader = MakeTestBatches();
+    auto maybe_rows = sql_client.ExecuteIngest(
+        call_options, reader, table_opts, "ingest_in_txn_with_id", std::nullopt,
+        std::nullopt, false /* temporary */, transaction, {});
+    ASSERT_TRUE(maybe_rows.ok())
+        << "ExecuteIngest with transaction_id failed: " << maybe_rows.status().ToString();
+    ASSERT_EQ(*maybe_rows, 3);
+  }
+
+  // Case 2: client omits transaction_id on the ingest (Go ADBC driver
+  // behavior). Server must still detect the outer transaction and not
+  // attempt to open a nested one.
+  {
+    auto reader = MakeTestBatches();
+    auto maybe_rows = sql_client.ExecuteIngest(
+        call_options, reader, table_opts, "ingest_in_txn_no_id", std::nullopt,
+        std::nullopt, false /* temporary */, arrow::flight::sql::no_transaction(), {});
+    ASSERT_TRUE(maybe_rows.ok())
+        << "ExecuteIngest without transaction_id inside open txn failed: "
+        << maybe_rows.status().ToString();
+    ASSERT_EQ(*maybe_rows, 3);
+  }
+
+  // Commit the outer transaction — rows should now be visible.
+  ASSERT_ARROW_OK(sql_client.Commit(call_options, transaction));
+}

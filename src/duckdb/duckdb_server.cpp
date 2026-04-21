@@ -72,9 +72,16 @@ inline std::shared_ptr<::gizmosql::TelemetrySpanScope> ActivateTelemetryScope(
 
 class DuckDBTransactionGuard {
  public:
-  explicit DuckDBTransactionGuard(duckdb::Connection& conn)
-      : conn_(conn), active_(true), committed_(false) {
-    conn_.BeginTransaction();
+  // When `owns_transaction` is false, the caller is already inside an outer
+  // transaction (e.g. the client opened one via ActionBeginTransaction, or
+  // sent a transaction_id on CommandStatementIngest). In that case the guard
+  // is a no-op: we neither BEGIN nor COMMIT/ROLLBACK — the outer
+  // EndTransaction owns the lifecycle.
+  DuckDBTransactionGuard(duckdb::Connection& conn, bool owns_transaction)
+      : conn_(conn), active_(owns_transaction), committed_(false) {
+    if (active_) {
+      conn_.BeginTransaction();
+    }
   }
 
   ~DuckDBTransactionGuard() {
@@ -89,7 +96,8 @@ class DuckDBTransactionGuard {
 
   arrow::Status Commit() {
     if (!active_) {
-      return arrow::Status::Invalid("Transaction already finished");
+      // No-op: outer transaction owns the commit.
+      return arrow::Status::OK();
     }
     if (committed_) {
       return arrow::Status::Invalid("Transaction already committed");
@@ -1657,8 +1665,24 @@ class DuckDBFlightSqlServer::Impl {
       }
     }
 
-    // 3. Start transaction (RAII guard)
-    DuckDBTransactionGuard txn(client_session->connection->Get());
+    // 3. Start transaction (RAII guard).
+    //
+    // If the client already has an open transaction we must NOT start a nested
+    // one — DuckDB rejects nested transactions. This covers two cases:
+    //   a) Client sent a transaction_id on CommandStatementIngest (correct
+    //      Flight SQL behavior — the ingest should join that transaction).
+    //   b) Client opened a transaction via ActionBeginTransaction but the
+    //      driver omitted transaction_id on the ingest message (a known bug
+    //      in the Go ADBC FlightSQL driver as of this writing). We detect this
+    //      via HasActiveTransaction() on the session's connection.
+    // In both cases the guard is a no-op and the client's outer
+    // EndTransaction owns the commit/rollback.
+    const bool client_has_outer_txn =
+        (command.transaction_id.has_value() &&
+         !command.transaction_id->empty()) ||
+        client_session->connection->Get().HasActiveTransaction();
+    DuckDBTransactionGuard txn(client_session->connection->Get(),
+                               /*owns_transaction=*/!client_has_outer_txn);
 
     // 4. Handle existence options inside the transaction
     if (target_table_exists) {
