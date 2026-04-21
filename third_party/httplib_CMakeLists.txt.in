@@ -14,5 +14,11 @@ ExternalProject_Add(
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/cpp-httplib
       -DHTTPLIB_REQUIRE_OPENSSL=ON
+      # Propagate OPENSSL_ROOT_DIR from the outer CMake (set by CI when the
+      # runner's default search path doesn't include Homebrew's openssl@3).
+      # The nested ExternalProject's CMake doesn't always inherit env vars
+      # reliably through the ninja → cmake --build → cmake chain, so we
+      # forward it explicitly.
+      -DOPENSSL_ROOT_DIR=$ENV{OPENSSL_ROOT_DIR}
     BUILD_COMMAND ""  # This is a header only library
 )

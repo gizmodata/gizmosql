@@ -381,12 +381,22 @@ set(JWT_CPP_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include")
 configure_file(third_party/httplib_CMakeLists.txt.in cpp-httplib/CMakeLists.txt)
 execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
-        COMMAND_ERROR_IS_FATAL ANY
+        RESULT_VARIABLE _httplib_configure_rc
+        OUTPUT_VARIABLE _httplib_configure_output
+        ERROR_VARIABLE _httplib_configure_output
 )
+if(NOT _httplib_configure_rc EQUAL 0)
+    message(FATAL_ERROR "cpp-httplib configure failed (rc=${_httplib_configure_rc}):\n${_httplib_configure_output}")
+endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" --build .
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
-        COMMAND_ERROR_IS_FATAL ANY
+        RESULT_VARIABLE _httplib_build_rc
+        OUTPUT_VARIABLE _httplib_build_output
+        ERROR_VARIABLE _httplib_build_output
 )
+if(NOT _httplib_build_rc EQUAL 0)
+    message(FATAL_ERROR "cpp-httplib build failed (rc=${_httplib_build_rc}):\n${_httplib_build_output}")
+endif()
 
 set(HTTPLIB_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/cpp-httplib/include")
 
