@@ -296,7 +296,7 @@ std::string QuoteIdent(const std::string& name) {
 Result<bool> TableExists(duckdb::Connection& conn,
                          const std::optional<std::string>& catalog_name,
                          const std::optional<std::string>& schema_name,
-                         const std::string& table_name) {
+                         const std::string& table_name, bool is_temp = false) {
   duckdb::vector<duckdb::Value> bind_parameters;
 
   std::string sql =
@@ -304,18 +304,25 @@ Result<bool> TableExists(duckdb::Connection& conn,
       "FROM information_schema.tables "
       "WHERE 1 = 1 ";
 
-  if (catalog_name.has_value()) {
-    sql += "AND table_catalog = ? ";
-    bind_parameters.emplace_back(catalog_name.value());
+  // Temporary tables live in the implicit `temp.main` catalog/schema in DuckDB,
+  // not in CURRENT_DATABASE()/CURRENT_SCHEMA(). When the caller indicates the
+  // target is temporary, scope the lookup there explicitly.
+  if (is_temp) {
+    sql += "AND table_catalog = 'temp' AND table_schema = 'main' ";
   } else {
-    sql += "AND table_catalog = CURRENT_DATABASE() ";
-  }
+    if (catalog_name.has_value()) {
+      sql += "AND table_catalog = ? ";
+      bind_parameters.emplace_back(catalog_name.value());
+    } else {
+      sql += "AND table_catalog = CURRENT_DATABASE() ";
+    }
 
-  if (schema_name.has_value()) {
-    sql += "AND table_schema = ? ";
-    bind_parameters.emplace_back(schema_name.value());
-  } else {
-    sql += "AND table_schema = CURRENT_SCHEMA() ";
+    if (schema_name.has_value()) {
+      sql += "AND table_schema = ? ";
+      bind_parameters.emplace_back(schema_name.value());
+    } else {
+      sql += "AND table_schema = CURRENT_SCHEMA() ";
+    }
   }
 
   sql +=
@@ -1647,7 +1654,8 @@ class DuckDBFlightSqlServer::Impl {
     {
       ARROW_ASSIGN_OR_RAISE(target_table_exists,
                             TableExists(client_session->connection->Get(), command.catalog,
-                                        command.schema, command.table));
+                                        command.schema, command.table,
+                                        command.temporary));
     }
 
     using ExistsOpt = sql::TableDefinitionOptionsTableExistsOption;

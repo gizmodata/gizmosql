@@ -189,3 +189,87 @@ TEST_F(BulkIngestServerFixture, ExecuteIngestInsideOpenTransaction) {
   // Commit the outer transaction — rows should now be visible.
   ASSERT_ARROW_OK(sql_client.Commit(call_options, transaction));
 }
+
+// Regression test for https://github.com/gizmodata/gizmosql/issues/158
+// Repeated ingests with temporary=true must not fail with "already exists".
+// Previously, TableExists() only consulted CURRENT_DATABASE(), missing tables
+// in DuckDB's implicit `temp` catalog, so the server treated the temp table
+// as non-existent on subsequent calls and tried to CREATE it again.
+TEST_F(BulkIngestServerFixture, ExecuteIngestTemporaryRepeatable) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  arrow::flight::sql::FlightSqlClient sql_client(std::move(client));
+
+  // Case 1: create_append twice (kCreate + kAppend)
+  {
+    TableDefinitionOptions opts;
+    opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kCreate;
+    opts.if_exists = TableDefinitionOptionsTableExistsOption::kAppend;
+
+    for (int i = 0; i < 2; ++i) {
+      auto reader = MakeTestBatches();
+      auto maybe_rows = sql_client.ExecuteIngest(
+          call_options, reader, opts, "temp_create_append", std::nullopt,
+          std::nullopt, true /* temporary */, arrow::flight::sql::no_transaction(), {});
+      ASSERT_TRUE(maybe_rows.ok())
+          << "temp create_append iter " << i << ": " << maybe_rows.status().ToString();
+      ASSERT_EQ(*maybe_rows, 3);
+    }
+  }
+
+  // Case 2: replace twice (kCreate + kReplace)
+  {
+    TableDefinitionOptions opts;
+    opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kCreate;
+    opts.if_exists = TableDefinitionOptionsTableExistsOption::kReplace;
+
+    for (int i = 0; i < 2; ++i) {
+      auto reader = MakeTestBatches();
+      auto maybe_rows = sql_client.ExecuteIngest(
+          call_options, reader, opts, "temp_replace", std::nullopt, std::nullopt,
+          true /* temporary */, arrow::flight::sql::no_transaction(), {});
+      ASSERT_TRUE(maybe_rows.ok())
+          << "temp replace iter " << i << ": " << maybe_rows.status().ToString();
+      ASSERT_EQ(*maybe_rows, 3);
+    }
+  }
+
+  // Case 3: create then append (kCreate+kFail, then kFail+kAppend)
+  {
+    {
+      TableDefinitionOptions create_opts;
+      create_opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kCreate;
+      create_opts.if_exists = TableDefinitionOptionsTableExistsOption::kFail;
+      auto reader = MakeTestBatches();
+      auto maybe_rows = sql_client.ExecuteIngest(
+          call_options, reader, create_opts, "temp_then_append", std::nullopt,
+          std::nullopt, true /* temporary */, arrow::flight::sql::no_transaction(), {});
+      ASSERT_TRUE(maybe_rows.ok())
+          << "temp create: " << maybe_rows.status().ToString();
+      ASSERT_EQ(*maybe_rows, 3);
+    }
+    {
+      TableDefinitionOptions append_opts;
+      append_opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kFail;
+      append_opts.if_exists = TableDefinitionOptionsTableExistsOption::kAppend;
+      auto reader = MakeTestBatches();
+      auto maybe_rows = sql_client.ExecuteIngest(
+          call_options, reader, append_opts, "temp_then_append", std::nullopt,
+          std::nullopt, true /* temporary */, arrow::flight::sql::no_transaction(), {});
+      ASSERT_TRUE(maybe_rows.ok())
+          << "temp append to existing: " << maybe_rows.status().ToString();
+      ASSERT_EQ(*maybe_rows, 3);
+    }
+  }
+}
