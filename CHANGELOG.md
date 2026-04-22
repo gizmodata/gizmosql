@@ -5,6 +5,12 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Bulk ingest with `temporary=True` (issue [#158](https://github.com/gizmodata/gizmosql/issues/158))**: Repeated `adbc_ingest(..., temporary=True)` calls (or any Flight SQL `CommandStatementIngest` with `temporary=true`) no longer fail with `Catalog Error: Table with name "..." already exists!` (for `create_append`/`replace`) or `Table: "..." does not exist` (for `create` then `append`). The server's table-existence check previously only consulted the current database catalog, so temporary tables — which DuckDB stores in the implicit `temp.main` catalog — were invisible to the lookup. `TableExists()` now scopes to `temp.main` when the ingest is temporary. Thanks again to @fromm1990 for the report and reproducer.
+
 ## [1.21.2] - 2026-04-21
 
 ### Fixed
