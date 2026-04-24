@@ -741,6 +741,48 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         "INSTALL spatial; LOAD spatial;";
 #endif
 
+    // Attach a per-process in-memory catalog to host GizmoSQL metadata helpers
+    // (views that expose JDBC-shaped index/view-definition info to clients).
+    // Clients query these with plain SQL — no protocol extensions needed, which
+    // keeps us on the stock Flight SQL happy path where DoAction/GetFlightInfo
+    // are marked `final` in the Arrow base class.
+    duckdb_init_sql_commands +=
+        "ATTACH ':memory:' AS _gizmosql_system;"
+
+        // JDBC DatabaseMetaData.getIndexInfo() — one row per (index, column)
+        // with the exact column names/types defined by the JDBC contract.
+        // expressions from duckdb_indexes() is a VARCHAR rendering of a list
+        // (e.g. "[a, b]"), so we strip the brackets and split on ", ".
+        "CREATE OR REPLACE VIEW _gizmosql_system.main.gizmosql_index_info AS "
+        "WITH parsed AS ("
+        "  SELECT di.database_name, di.schema_name, di.table_name, "
+        "         di.is_unique, di.index_name,"
+        "         str_split(trim(BOTH '[]' FROM di.expressions), ', ') AS cols"
+        "  FROM duckdb_indexes() di"
+        ") "
+        "SELECT database_name           AS \"TABLE_CAT\","
+        "       schema_name             AS \"TABLE_SCHEM\","
+        "       table_name              AS \"TABLE_NAME\","
+        "       NOT is_unique           AS \"NON_UNIQUE\","
+        "       CAST(NULL AS VARCHAR)   AS \"INDEX_QUALIFIER\","
+        "       index_name              AS \"INDEX_NAME\","
+        "       CAST(3 AS SMALLINT)     AS \"TYPE\","       // tableIndexOther
+        "       idx::SMALLINT           AS \"ORDINAL_POSITION\","
+        "       cols[idx]               AS \"COLUMN_NAME\","
+        "       CAST('A' AS VARCHAR)    AS \"ASC_OR_DESC\","
+        "       CAST(NULL AS BIGINT)    AS \"CARDINALITY\","
+        "       CAST(NULL AS BIGINT)    AS \"PAGES\","
+        "       CAST(NULL AS VARCHAR)   AS \"FILTER_CONDITION\" "
+        "FROM parsed, generate_series(1, len(cols)) AS t(idx);"
+
+        // View DDL, keyed by (catalog, schema, view name).
+        "CREATE OR REPLACE VIEW _gizmosql_system.main.gizmosql_view_definition AS "
+        "SELECT database_name AS \"TABLE_CAT\","
+        "       schema_name   AS \"TABLE_SCHEM\","
+        "       view_name     AS \"TABLE_NAME\","
+        "       sql           AS \"VIEW_DEFINITION\" "
+        "FROM duckdb_views();";
+
 #ifdef GIZMOSQL_ENTERPRISE
     // Instrumentation setup (Enterprise feature, conditional)
     std::string instr_db_path;

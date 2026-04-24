@@ -5,6 +5,19 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2026-04-24
+
+### Added
+
+- **`_gizmosql_system` system catalog (DuckDB backend).** Server init SQL now `ATTACH ':memory:' AS _gizmosql_system` and creates two JDBC-shaped metadata helper views inside it, so Flight SQL clients can recover metadata that the Flight SQL protocol itself does not expose:
+  - `_gizmosql_system.main.gizmosql_index_info` — one row per `(index, column)`, columns exactly match JDBC `DatabaseMetaData.getIndexInfo()` (`TABLE_CAT`, `TABLE_SCHEM`, `TABLE_NAME`, `NON_UNIQUE`, `INDEX_QUALIFIER`, `INDEX_NAME`, `TYPE`, `ORDINAL_POSITION`, `COLUMN_NAME`, `ASC_OR_DESC`, `CARDINALITY`, `PAGES`, `FILTER_CONDITION`). Wraps DuckDB's `duckdb_indexes()` and unrolls the `expressions` list into one row per column.
+  - `_gizmosql_system.main.gizmosql_view_definition` — `(TABLE_CAT, TABLE_SCHEM, TABLE_NAME, VIEW_DEFINITION)` keyed view over `duckdb_views()` for retrieving CREATE VIEW DDL text.
+  Works for stock Flight SQL clients (plain SQL over either view), and is the backend for the matching overrides shipped in the GizmoSQL JDBC driver v1.6.0 (`DatabaseMetaData.getIndexInfo()`, `ArrowFlightConnection.getViewDefinition(...)`) and for DBeaver's GizmoSQL MetaModel. SQLite backend is currently unaffected — the views are DuckDB-specific.
+
+### Fixed
+
+- **DECIMAL prepared-statement parameter binding aborts the server process.** Prior to v1.22.0, executing a prepared `INSERT` / `UPDATE` bound to a DuckDB `DECIMAL` column could trigger Arrow's `ValidateDecimalPrecision` check and SIGABRT the `gizmosql_server` process (exit 134). Surface symptom on the client was a raw `UNAVAILABLE: Network closed for unknown reason` / gRPC channel termination — the server process just disappeared mid-query. Three distinct bugs in `duckdb_statement.cpp::GetDataTypeFromDuckDbType` were fixed together: the DECIMAL arm never populated `width`/`scale` from the DuckDB type (hardcoded 0), the `arrow::smallest_decimal(...)` call had its arguments flipped (`(scale, width)` instead of `(width, scale)`), and returning a `Decimal32`/`Decimal64` type is not accepted by the Arrow Java JDBC client (which only supports `Decimal128` / `Decimal256`). The server now emits `Decimal128(width, scale)` for precisions 1–38, `Decimal256(width, scale)` for precision > 38, and falls back to `Decimal256(38, scale)` when DuckDB reports `width == 0` (unresolved parameter placeholders in statements like `INSERT INTO t(decimal_col) VALUES (?)`). Regression coverage lives in the GizmoSQL JDBC driver repo's `GizmoSqlIntegrationIT.testDecimalParameterRoundTrip`, exercised against `gizmodata/gizmosql:latest` on every JDBC CI run.
+
 ## [1.21.3] - 2026-04-22
 
 ### Fixed

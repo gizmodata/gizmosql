@@ -141,6 +141,9 @@ jobs:
           if [ $TEST_EXIT_CODE -eq 0 ]; then
             python tests/test_autocommit_false.py || TEST_EXIT_CODE=$?
           fi
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_v1_22_features.py || TEST_EXIT_CODE=$?
+          fi
 
           # Stop server
           kill $SERVER_PID 2>/dev/null || true
@@ -351,6 +354,9 @@ jobs:
           fi
           if [ $TEST_EXIT_CODE -eq 0 ]; then
             python tests/test_autocommit_false.py || TEST_EXIT_CODE=$?
+          fi
+          if [ $TEST_EXIT_CODE -eq 0 ]; then
+            python tests/test_v1_22_features.py || TEST_EXIT_CODE=$?
           fi
 
           # Stop server

@@ -549,9 +549,18 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     case duckdb::LogicalTypeId::INTEGER:
       return arrow::int32();
     case duckdb::LogicalTypeId::DECIMAL: {
-      uint8_t width = 0;
-      uint8_t scale = 0;
-      return arrow::smallest_decimal(scale, width);
+      uint8_t width = duckdb::DecimalType::GetWidth(duckdb_type);
+      uint8_t scale = duckdb::DecimalType::GetScale(duckdb_type);
+      // Always emit Decimal128 (or Decimal256 when the precision exceeds 38).
+      // DuckDB reports width=0 for parameters whose precision wasn't resolved
+      // during parse (e.g. `?` in `INSERT INTO t(dec) VALUES (?)`) — use the
+      // widest decimal in that case. Also, the Arrow Java JDBC client only
+      // supports Decimal128/Decimal256, so we must not hand it a Decimal32/64
+      // (which is what arrow::smallest_decimal would pick for width<=18).
+      if (width == 0 || width > 38) {
+        return arrow::decimal256(width == 0 ? 38 : width, scale);
+      }
+      return arrow::decimal128(width, scale);
     }
     case duckdb::LogicalTypeId::FLOAT:
       return arrow::float32();
