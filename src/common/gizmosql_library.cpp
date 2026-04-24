@@ -751,14 +751,31 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
         // JDBC DatabaseMetaData.getIndexInfo() — one row per (index, column)
         // with the exact column names/types defined by the JDBC contract.
-        // expressions from duckdb_indexes() is a VARCHAR rendering of a list
-        // (e.g. "[a, b]"), so we strip the brackets and split on ", ".
+        //
+        // Sources:
+        //   * duckdb_indexes()     — user-defined CREATE INDEX indexes. Its
+        //     `expressions` column is a VARCHAR rendering of a list (e.g. "[a, b]"),
+        //     so we strip the brackets and split on ", ".
+        //   * duckdb_constraints() — PRIMARY KEY + UNIQUE constraints. DuckDB
+        //     backs these with unique indexes internally, but does NOT list them
+        //     in duckdb_indexes(). UNION ALL so they show up in getIndexInfo
+        //     (DBeaver's Data Editor needs a unique index to enable row-level
+        //     editing). `constraint_column_names` is already VARCHAR[] here.
         "CREATE OR REPLACE VIEW _gizmosql_system.main.gizmosql_index_info AS "
-        "WITH parsed AS ("
-        "  SELECT di.database_name, di.schema_name, di.table_name, "
+        "WITH idx_src AS ("
+        "  SELECT di.database_name, di.schema_name, di.table_name,"
         "         di.is_unique, di.index_name,"
         "         str_split(trim(BOTH '[]' FROM di.expressions), ', ') AS cols"
         "  FROM duckdb_indexes() di"
+        "), constraint_src AS ("
+        "  SELECT dc.database_name, dc.schema_name, dc.table_name,"
+        "         TRUE AS is_unique,"
+        "         dc.constraint_name AS index_name,"
+        "         dc.constraint_column_names AS cols"
+        "  FROM duckdb_constraints() dc"
+        "  WHERE dc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')"
+        "), all_src AS ("
+        "  SELECT * FROM idx_src UNION ALL SELECT * FROM constraint_src"
         ") "
         "SELECT database_name           AS \"TABLE_CAT\","
         "       schema_name             AS \"TABLE_SCHEM\","
@@ -773,7 +790,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         "       CAST(NULL AS BIGINT)    AS \"CARDINALITY\","
         "       CAST(NULL AS BIGINT)    AS \"PAGES\","
         "       CAST(NULL AS VARCHAR)   AS \"FILTER_CONDITION\" "
-        "FROM parsed, generate_series(1, len(cols)) AS t(idx);"
+        "FROM all_src, generate_series(1, len(cols)) AS t(idx);"
 
         // View DDL, keyed by (catalog, schema, view name).
         "CREATE OR REPLACE VIEW _gizmosql_system.main.gizmosql_view_definition AS "

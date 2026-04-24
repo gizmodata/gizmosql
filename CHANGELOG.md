@@ -5,6 +5,24 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.1] - 2026-04-24
+
+### Added
+
+- **`gizmosql_index_info` catalog view now unions `PRIMARY KEY` + `UNIQUE` constraints.** DuckDB stores PK/UNIQUE constraints in `duckdb_constraints()` but not `duckdb_indexes()`, so the previous version of the view only exposed user-created `CREATE INDEX` indexes. This broke DBeaver's Data Editor — it needs a visible unique index to enable row-level editing — and hid unique constraints from the Indexes folder. The view now `UNION ALL`s both sources with `NON_UNIQUE=false` for PK-backed and UNIQUE-backed indexes.
+- **`GetTables` schema now carries real per-column metadata.** The Arrow schema returned via Flight SQL `GetTables` with `include_schema=true` previously came straight from `SELECT * FROM t LIMIT 0`, which marks every field nullable and carries no DDL metadata. `DuckDBTablesWithSchemaBatchReader` now also queries `duckdb_columns()` per table (with proper `?` parameter binding) and applies:
+  - `Field.nullable` ← real NOT NULL constraint (fixes DBeaver's column-browser Nullable checkbox).
+  - Metadata `ARROW:FLIGHT:SQL:REMARKS` ← column comment (populates JDBC `REMARKS`).
+  - Metadata `ARROW:FLIGHT:SQL:IS_AUTO_INCREMENT` ← `"1"` when the default starts with `nextval(`, else `"0"` (populates JDBC `IS_AUTOINCREMENT`).
+  - Metadata `GIZMOSQL:COLUMN_DEFAULT` ← the column's default expression, exposed through the GizmoSQL JDBC driver v1.6.1+ as JDBC `COLUMN_DEF`.
+  Fully backward-compatible: all three metadata keys are ignored by old clients; the standard Flight SQL JDBC driver picks up `REMARKS` + `IS_AUTO_INCREMENT` for free (they are upstream Apache Arrow Flight SQL spec keys).
+- **README: QGIS Plugin (qgizmosql) listed in Extensions & Integrations.**
+
+### Testing
+
+- New `tests/test_v1_22_1_features.py` (wired into CI alongside the existing Python integration suite) covers the two server-level changes end-to-end via the ADBC driver: `gizmosql_index_info` now contains PK + UNIQUE rows; the Flight SQL table schema carries the new nullable/remarks/auto-increment/default metadata.
+- JDBC-side regression coverage lives in the gizmosql-jdbc-driver repo (`GizmoSqlIntegrationIT.testGetColumnsEnrichment` and `testDecimalBindWithNonBigDecimalInput`), exercised against `gizmodata/gizmosql:latest` on every JDBC CI run.
+
 ## [1.22.0] - 2026-04-24
 
 ### Added

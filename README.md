@@ -311,6 +311,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 🐍 [Python ADBC Driver (with OAuth/SSO)](https://github.com/gizmodata/adbc-driver-gizmosql) **NEW!**
 - 🔌 [ODBC Driver](https://github.com/gizmodata/gizmosql-odbc-driver) **NEW!**
 - 📊 [Power BI Connector](https://github.com/gizmodata/gizmosql-powerbi-connector) **NEW!**
+- 🗺️ [QGIS Plugin (qgizmosql)](https://github.com/gizmodata/qgizmosql) 🚀 **NEW!**
 ---
 
 ## 📊 Performance
