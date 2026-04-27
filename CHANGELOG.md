@@ -5,6 +5,16 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **iOS builds now report `os_platform="ios"` and `os_name="iOS X.Y"` in instrumentation/logs.** `uname()` returns `Darwin` as `sysname` on both macOS and iOS (same XNU kernel), so iOS builds were previously identifying themselves as `darwin` / `macOS`. `GetSystemInfo()` now branches on `TARGET_OS_IOS` from `<TargetConditionals.h>` to emit the correct platform string.
+
+### Added
+
+- **CI: iOS build & sign workflow (`.github/workflows/ios.yml`).** Cross-compiles iOS dependencies via `ios/scripts/build-ios-libs.sh` (with caching keyed on the DuckDB pin, extension pins, and build script), generates the Xcode project with `xcodegen`, signs with an imported Apple Distribution certificate + provisioning profile, and exports an app-store IPA. TestFlight upload via `xcrun altool` is gated on `refs/tags/v*` pushes.
+
 ## [1.22.1] - 2026-04-24
 
 ### Added

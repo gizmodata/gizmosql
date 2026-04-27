@@ -257,8 +257,8 @@ static std::string GetPrimaryIPAddress() {
 
 // Get system information for instrumentation and logging
 struct SystemInfo {
-  std::string os_platform;      // "linux" or "darwin"
-  std::string os_name;          // "Ubuntu 22.04 LTS", "macOS Sonoma", etc.
+  std::string os_platform;      // "linux", "darwin", "ios", or "windows"
+  std::string os_name;          // "Ubuntu 22.04 LTS", "macOS Sonoma", "iOS 17.0", etc.
   std::string os_version;       // "22.04", "14.0", etc.
   std::string cpu_arch;         // "x86_64", "arm64", etc.
   std::string cpu_model;        // "Apple M1 Pro", "Intel(R) Xeon(R)...", etc.
@@ -345,15 +345,22 @@ static SystemInfo GetSystemInfo() {
 #endif
 
 #ifdef __APPLE__
-  // macOS: Get OS name and version using sysctlbyname
+  // Apple: Get OS version using sysctlbyname (works on both macOS and iOS;
+  // on iOS this returns the iOS version, e.g. "17.4").
   char os_version[256] = {0};
   size_t size = sizeof(os_version);
   if (sysctlbyname("kern.osproductversion", os_version, &size, nullptr, 0) == 0) {
     info.os_version = os_version;
   }
 
-  // Get macOS marketing name (e.g., "macOS 14.0")
+  // uname() returns "Darwin" as sysname on both macOS and iOS (same XNU
+  // kernel), so we override os_platform / os_name based on the build target.
+#if TARGET_OS_IOS
+  info.os_platform = "ios";
+  info.os_name = "iOS " + info.os_version;
+#else
   info.os_name = "macOS " + info.os_version;
+#endif
 
   // Get CPU model
   char cpu_model[256] = {0};
