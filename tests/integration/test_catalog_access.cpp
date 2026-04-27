@@ -27,6 +27,7 @@
 
 #include "arrow/flight/types.h"
 #include "arrow/flight/sql/types.h"
+#include "system_catalog.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/api.h"
 #include "arrow/testing/gtest_util.h"
@@ -586,7 +587,12 @@ TEST_F(CatalogAccessServerFixture, ShowSchemasFiltersUnauthorizedCatalogs) {
   // Column 0 is database_name
   auto db_names = GetColumnValues(table, 0);
 
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& db : db_names) {
     ASSERT_TRUE(allowed_set.count(db) > 0)
         << "Unexpected catalog '" << db << "' in SHOW SCHEMAS result";
@@ -692,7 +698,12 @@ TEST_F(CatalogAccessServerFixture, InformationSchemaTablesFiltersUnauthorizedCat
 
   // All returned rows should have table_catalog in the allowed set
   auto catalogs = GetColumnValues(table, 0);
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& cat : catalogs) {
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat << "' in information_schema.tables result";
@@ -717,7 +728,12 @@ TEST_F(CatalogAccessServerFixture, CatalogQualifiedInformationSchemaFilters) {
                      "SELECT table_catalog, table_name FROM system.information_schema.tables"));
 
   auto catalogs = GetColumnValues(table, 0);
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& cat : catalogs) {
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat << "' in system.information_schema.tables result";
@@ -741,7 +757,12 @@ TEST_F(CatalogAccessServerFixture, QuotedInformationSchemaFiltersUnauthorizedCat
                      "\"information_schema\".\"tables\""));
 
   auto catalogs = GetColumnValues(table, 0);
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& cat : catalogs) {
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat
@@ -769,7 +790,12 @@ TEST_F(CatalogAccessServerFixture,
                      "\"information_schema\".\"tables\" ORDER BY 1"));
 
   auto catalogs = GetColumnValues(table, 0);
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& cat : catalogs) {
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat
@@ -794,7 +820,12 @@ TEST_F(CatalogAccessServerFixture, QuotedCatalogQualifiedInformationSchemaFilter
                      "\"system\".\"information_schema\".\"tables\""));
 
   auto catalogs = GetColumnValues(table, 0);
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& cat : catalogs) {
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat
@@ -822,7 +853,12 @@ TEST_F(CatalogAccessServerFixture,
                      "\"system\".\"information_schema\".\"tables\" ORDER BY 1"));
 
   auto catalogs = GetColumnValues(table, 0);
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& cat : catalogs) {
     ASSERT_TRUE(allowed_set.count(cat) > 0)
         << "Unexpected catalog '" << cat
@@ -846,7 +882,12 @@ TEST_F(CatalogAccessServerFixture, DuckdbTablesFiltersByAuthorizedCatalogs) {
       ExecuteToTable(*client, call_options, "SELECT database_name, table_name FROM duckdb_tables()"));
 
   auto db_names = GetColumnValues(table, 0);
-  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp"};
+  // _gizmosql_system is always readable for every authenticated user — it's
+  // a server-managed in-memory catalog with metadata helper views, so it
+  // legitimately appears in catalog/schema listings even when token rules
+  // would otherwise filter it out.
+  std::set<std::string> allowed_set = {
+      kDefaultCatalog, "system", "temp", gizmosql::kSystemCatalogName};
   for (const auto& db : db_names) {
     ASSERT_TRUE(allowed_set.count(db) > 0)
         << "Unexpected database '" << db << "' in duckdb_tables() result";
@@ -868,7 +909,11 @@ TEST_F(CatalogAccessServerFixture, WildcardNoneOnlyShowsSystemAndTemp) {
   ASSERT_ARROW_OK_AND_ASSIGN(auto table, ExecuteToTable(*client, call_options, "SHOW DATABASES"));
   auto db_names = GetColumnValues(table, 0);
 
-  std::set<std::string> allowed_set = {"system", "temp"};
+  // _gizmosql_system is always readable (server-managed metadata catalog),
+  // so it's expected to appear alongside system/temp even under a wildcard
+  // none rule.
+  std::set<std::string> allowed_set = {"system", "temp",
+                                       gizmosql::kSystemCatalogName};
   for (const auto& db : db_names) {
     ASSERT_TRUE(allowed_set.count(db) > 0)
         << "Unexpected catalog '" << db << "' visible with wildcard none access";
