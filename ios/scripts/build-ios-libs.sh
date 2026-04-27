@@ -43,14 +43,29 @@ mkdir -p "${HOST_BUILD_DIR}"
 cd "${HOST_BUILD_DIR}"
 
 if [ ! -f "${HOST_BUILD_DIR}/protoc" ] || [ ! -f "${HOST_BUILD_DIR}/grpc_cpp_plugin" ]; then
+    # Phase 1 host tools must build for macOS, NOT iOS. Some CI environments
+    # (notably GitHub Actions macos runners) have SDKROOT/IPHONEOS_*
+    # exported globally, which causes clang to default to the iPhone target
+    # even when no iOS toolchain is in play — the resulting host protoc
+    # then fails to link against the macOS libz with "ld: building for
+    # 'iOS', but linking in dylib built for 'macOS'". Scrub those vars and
+    # pin sysroot/arch explicitly.
+    HOST_SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+    env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \
+        -u WATCHOS_DEPLOYMENT_TARGET -u XROS_DEPLOYMENT_TARGET \
     cmake "${REPO_ROOT}" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_OSX_SYSROOT="${HOST_SDKROOT}" \
+        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_SYSTEM_NAME=Darwin \
         -DGIZMOSQL_ENTERPRISE=OFF \
         -DWITH_OPENTELEMETRY=OFF
 
     # Build just the proto tools (they are host-architecture binaries)
-    ninja health_proto_gen 2>/dev/null || true
+    env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \
+        -u WATCHOS_DEPLOYMENT_TARGET -u XROS_DEPLOYMENT_TARGET \
+        ninja health_proto_gen 2>/dev/null || true
 
     # Find and copy the host tools (protoc may be a symlink)
     PROTOC=$(find "${HOST_BUILD_DIR}" -name "protoc" \( -type f -o -type l \) ! -name "*.py" ! -name "*.cmake" ! -name "*.patch" | head -1)

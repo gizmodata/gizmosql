@@ -61,12 +61,21 @@ jobs:
             ios/build/openssl-src
             ios/build/croaring-build-ios
             ios/build/croaring-src
-          key: ios-deps-${{ runner.os }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'ios/scripts/build-ios-libs.sh', 'ios/cmake/**', 'ios/CMakeLists.txt') }}
+          # Bump the v<N> prefix to invalidate the cache after script/toolchain fixes.
+          key: ios-deps-v2-${{ runner.os }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'ios/scripts/build-ios-libs.sh', 'ios/cmake/**', 'ios/CMakeLists.txt') }}
           restore-keys: |
-            ios-deps-${{ runner.os }}-
+            ios-deps-v2-${{ runner.os }}-
 
       - name: Build iOS static libraries
-        run: bash ios/scripts/build-ios-libs.sh
+        run: |
+          # Some macOS runner images export SDKROOT/iOS deployment target
+          # vars globally, which leaks into the Phase 1 host-tools build
+          # and makes clang default to the iPhone target. Scrub them so the
+          # script's own toolchain selection (macOS for Phase 1, iOS for
+          # Phase 2+) is authoritative.
+          unset SDKROOT IPHONEOS_DEPLOYMENT_TARGET TVOS_DEPLOYMENT_TARGET \
+                WATCHOS_DEPLOYMENT_TARGET XROS_DEPLOYMENT_TARGET
+          bash ios/scripts/build-ios-libs.sh
 
       - name: Derive marketing version from tag
         id: version
