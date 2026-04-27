@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.3] - 2026-04-27
+
+### Fixed
+
+- **iOS CI now builds against the iOS 26 SDK.** The v1.22.2 TestFlight upload triggered Apple warning ITMS-90725 because it was compiled with Xcode 16.2 / iOS 18.2 SDK; Apple requires the iOS 26 SDK for all App Store Connect uploads starting 2026-04-28. The `build-ios` job now runs on `macos-26` with `xcode-version: latest-stable` (resolves to Xcode 26.x), and the deps cache is bumped to v5 so existing iOS 18.2-compiled artifacts aren't reused. iOS deployment target stays at 17.0 — that's min-supported OS, not SDK version.
+
+### Added
+
+- **`create-release` now also depends on `build-ios`.** A failing iOS build now blocks the GitHub release from being cut, just like the existing macOS / Linux / Windows / MSI gates.
+
 ## [1.22.2] - 2026-04-27
 
 ### Security
