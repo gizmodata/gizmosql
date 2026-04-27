@@ -62,9 +62,9 @@ jobs:
             ios/build/croaring-build-ios
             ios/build/croaring-src
           # Bump the v<N> prefix to invalidate the cache after script/toolchain fixes.
-          key: ios-deps-v2-${{ runner.os }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'ios/scripts/build-ios-libs.sh', 'ios/cmake/**', 'ios/CMakeLists.txt') }}
+          key: ios-deps-v3-${{ runner.os }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'ios/scripts/build-ios-libs.sh', 'ios/cmake/**', 'ios/CMakeLists.txt') }}
           restore-keys: |
-            ios-deps-v2-${{ runner.os }}-
+            ios-deps-v3-${{ runner.os }}-
 
       - name: Build iOS static libraries
         run: |
