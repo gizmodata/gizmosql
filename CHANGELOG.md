@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.2] - 2026-04-27
+
 ### Security
 
 - **`_gizmosql_system` views now respect per-catalog read permissions (Enterprise).** When a token's `catalog_access` rules deny a catalog, queries against `_gizmosql_system.main.gizmosql_index_info` and `_gizmosql_system.main.gizmosql_view_definition` no longer leak rows for that catalog. The visibility filter that already rewrites `information_schema.*` and `duckdb_*()` references now also wraps the system-catalog views with a `WHERE "TABLE_CAT" IN (...)` filter, mirroring the existing JDBC-shaped column name. Users with no `catalog_access` rules (or a wildcard read) are unaffected.
