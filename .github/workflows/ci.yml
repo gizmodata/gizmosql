@@ -702,7 +702,7 @@ jobs:
   create-release:
     name: Create a release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-project-macos, build-project-linux, build-project-windows, build-msi]
+    needs: [build-project-macos, build-project-linux, build-project-windows, build-msi, build-ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
