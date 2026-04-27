@@ -1,0 +1,196 @@
+name: ios-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    # TEMPORARY: Run on every push for testing the signing pipeline.
+    # Once verified, uncomment the tag filter below and remove `branches`
+    # to limit signed/TestFlight builds to tagged releases only.
+    # tags:
+    #   - 'v*'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+# Avoid wasting runner minutes if a newer commit lands on the same branch
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build & Sign iOS App
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      SCHEME: GizmoSQL
+      CONFIGURATION: Release
+      ARCHIVE_PATH: ios/GizmoSQL/build/GizmoSQL.xcarchive
+      EXPORT_PATH: ios/GizmoSQL/build/export
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install host build tools
+        env:
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          brew install automake boost xcodegen ninja cmake
+
+      # Cache the heavy iOS deps build (DuckDB + arrow + extensions cross-compile).
+      # Key on the inputs that materially change the output.
+      - name: Cache iOS dependency build
+        id: ios-deps-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/build/libs
+            ios/build/ios-arm64
+            ios/build/host-tools
+            ios/build/openssl-ios
+            ios/build/openssl-src
+            ios/build/croaring-build-ios
+            ios/build/croaring-src
+          key: ios-deps-${{ runner.os }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'ios/scripts/build-ios-libs.sh', 'ios/cmake/**', 'ios/CMakeLists.txt') }}
+          restore-keys: |
+            ios-deps-${{ runner.os }}-
+
+      - name: Build iOS static libraries
+        run: bash ios/scripts/build-ios-libs.sh
+
+      - name: Derive marketing version from tag
+        id: version
+        run: |
+          # If this build is for a tag like 'v1.22.1', strip the leading 'v'
+          # and use it as MARKETING_VERSION. Otherwise leave the project.yml
+          # default in place (no override).
+          REF="${GITHUB_REF#refs/tags/}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${REF#v}"
+            echo "MARKETING_VERSION=$VERSION" >> "$GITHUB_ENV"
+            echo "Using tag-derived MARKETING_VERSION=$VERSION"
+          else
+            echo "Not a tag build; using project.yml MARKETING_VERSION default"
+          fi
+          # Always bump the build number so TestFlight accepts re-uploads.
+          # github.run_number is monotonically increasing per workflow.
+          echo "CURRENT_PROJECT_VERSION=${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Generate Xcode project
+        working-directory: ios/GizmoSQL
+        run: xcodegen generate
+
+      # ---- Code signing ----
+      - name: Import Apple distribution certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DIST_CERT_B64 }}
+          p12-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+
+      - name: Install provisioning profile
+        env:
+          PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 }}
+        run: |
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          echo -n "$PROFILE_B64" | base64 --decode > "$PROFILE_DIR/dist.mobileprovision"
+
+          # Extract metadata so we can build with explicit identifiers.
+          PLIST=$(security cms -D -i "$PROFILE_DIR/dist.mobileprovision")
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin <<<"$PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<<"$PLIST")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /dev/stdin <<<"$PLIST")
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "TEAM_ID=$TEAM_ID"           >> "$GITHUB_ENV"
+
+      - name: Archive (xcodebuild)
+        working-directory: ios/GizmoSQL
+        run: |
+          # Pass MARKETING_VERSION through only when set (tag builds);
+          # otherwise the project.yml default is used.
+          MV_ARG=()
+          if [[ -n "${MARKETING_VERSION:-}" ]]; then
+            MV_ARG=(MARKETING_VERSION="$MARKETING_VERSION")
+          fi
+          xcodebuild \
+            -project GizmoSQL.xcodeproj \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/GizmoSQL.xcarchive \
+            archive \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            CURRENT_PROJECT_VERSION="$CURRENT_PROJECT_VERSION" \
+            "${MV_ARG[@]}" \
+            -allowProvisioningUpdates=NO
+
+      - name: Write ExportOptions.plist
+        run: |
+          cat > ios/GizmoSQL/build/ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.gizmodata.gizmosql.ios</key>
+              <string>${PROFILE_NAME}</string>
+            </dict>
+            <key>uploadBitcode</key><false/>
+            <key>uploadSymbols</key><true/>
+            <key>compileBitcode</key><false/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Export IPA
+        working-directory: ios/GizmoSQL
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/GizmoSQL.xcarchive \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates=NO
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GizmoSQL-iOS-ipa
+          path: ios/GizmoSQL/build/export/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      # ---- TestFlight upload (only for tag pushes; harmless to keep gated even
+      # while the rest of the pipeline runs on every push for testing) ----
+      - name: Upload to TestFlight
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          API_KEY_B64: ${{ secrets.APP_STORE_CONNECT_API_KEY_B64 }}
+        run: |
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          echo -n "$API_KEY_B64" | base64 --decode \
+            > "$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8"
+          IPA=$(ls ios/GizmoSQL/build/export/*.ipa | head -1)
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID"
