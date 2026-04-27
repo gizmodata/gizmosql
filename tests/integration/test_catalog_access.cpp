@@ -894,6 +894,65 @@ TEST_F(CatalogAccessServerFixture, DuckdbTablesFiltersByAuthorizedCatalogs) {
   }
 }
 
+TEST_F(CatalogAccessServerFixture, GizmosqlIndexInfoFiltersByAuthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // Token grants access only to the default catalog. The user must NOT see
+  // index rows for catalogs they cannot read — even though the
+  // _gizmosql_system catalog itself is always readable.
+  std::string catalog_access =
+      R"([{"catalog": ")" + kDefaultCatalog +
+      R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("idx_visibility_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto table,
+      ExecuteToTable(*client, call_options,
+                     "SELECT \"TABLE_CAT\" FROM "
+                     "_gizmosql_system.main.gizmosql_index_info"));
+
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp",
+                                       gizmosql::kSystemCatalogName};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat
+        << "' leaked through gizmosql_index_info";
+  }
+}
+
+TEST_F(CatalogAccessServerFixture, GizmosqlViewDefinitionFiltersByAuthorizedCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access =
+      R"([{"catalog": ")" + kDefaultCatalog +
+      R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("view_visibility_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto table,
+      ExecuteToTable(*client, call_options,
+                     "SELECT \"TABLE_CAT\" FROM "
+                     "_gizmosql_system.main.gizmosql_view_definition"));
+
+  auto catalogs = GetColumnValues(table, 0);
+  std::set<std::string> allowed_set = {kDefaultCatalog, "system", "temp",
+                                       gizmosql::kSystemCatalogName};
+  for (const auto& cat : catalogs) {
+    ASSERT_TRUE(allowed_set.count(cat) > 0)
+        << "Unexpected catalog '" << cat
+        << "' leaked through gizmosql_view_definition";
+  }
+}
+
 TEST_F(CatalogAccessServerFixture, WildcardNoneOnlyShowsSystemAndTemp) {
   SKIP_WITHOUT_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";

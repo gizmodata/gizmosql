@@ -340,6 +340,13 @@ const std::vector<MetadataPattern>& GetMetadataPatterns() {
       {"information_schema.key_column_usage", "table_catalog", false},
       {"information_schema.referential_constraints", "constraint_catalog", false},
       {"information_schema.table_constraints", "table_catalog", false},
+      // GizmoSQL system-catalog metadata views. The columns are JDBC-shaped
+      // (e.g. "TABLE_CAT"), created via 'AS "TABLE_CAT"' in the view DDL,
+      // so the filter column name must be double-quoted to preserve case.
+      // The matcher's one-level catalog-prefix back-scan handles the
+      // _gizmosql_system. qualifier when present in the user's SQL.
+      {"main.gizmosql_index_info", "\"TABLE_CAT\"", false},
+      {"main.gizmosql_view_definition", "\"TABLE_CAT\"", false},
       // duckdb_*() function calls
       {"duckdb_databases()", "database_name", true},
       {"duckdb_tables()", "database_name", true},

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`_gizmosql_system` views now respect per-catalog read permissions (Enterprise).** When a token's `catalog_access` rules deny a catalog, queries against `_gizmosql_system.main.gizmosql_index_info` and `_gizmosql_system.main.gizmosql_view_definition` no longer leak rows for that catalog. The visibility filter that already rewrites `information_schema.*` and `duckdb_*()` references now also wraps the system-catalog views with a `WHERE "TABLE_CAT" IN (...)` filter, mirroring the existing JDBC-shaped column name. Users with no `catalog_access` rules (or a wildcard read) are unaffected.
 - **`_gizmosql_system` catalog is now write-protected.** The system catalog hosts server-managed metadata helper views (`gizmosql_index_info`, `gizmosql_view_definition`); previously a client could `CREATE`/`DROP`/`ALTER` inside it. A new check in `DuckDBStatement` rejects any statement that would modify `_gizmosql_system` with `Access denied: The GizmoSQL system catalog '_gizmosql_system' is read-only.` Enforced in both Core and Enterprise builds, regardless of role or `catalog_access` token claims. Read access is unchanged — every authenticated user can still query the helper views. Mirrors the existing `_gizmosql_instr` pattern.
 
 ### Changed
