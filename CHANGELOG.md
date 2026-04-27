@@ -7,13 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`_gizmosql_system` catalog is now write-protected.** The system catalog hosts server-managed metadata helper views (`gizmosql_index_info`, `gizmosql_view_definition`); previously a client could `CREATE`/`DROP`/`ALTER` inside it. A new check in `DuckDBStatement` rejects any statement that would modify `_gizmosql_system` with `Access denied: The GizmoSQL system catalog '_gizmosql_system' is read-only.` Enforced in both Core and Enterprise builds, regardless of role or `catalog_access` token claims. Read access is unchanged — every authenticated user can still query the helper views. Mirrors the existing `_gizmosql_instr` pattern.
+
+### Changed
+
+- **`_gizmosql_system` init SQL extracted to `src/common/system_catalog.cpp`** so it can grow over time without bloating `gizmosql_library.cpp`. Public catalog name and `IsSystemCatalog()` helper now live in `src/common/include/system_catalog.h`.
+
 ### Fixed
 
 - **iOS builds now report `os_platform="ios"` and `os_name="iOS X.Y"` in instrumentation/logs.** `uname()` returns `Darwin` as `sysname` on both macOS and iOS (same XNU kernel), so iOS builds were previously identifying themselves as `darwin` / `macOS`. `GetSystemInfo()` now branches on `TARGET_OS_IOS` from `<TargetConditionals.h>` to emit the correct platform string.
 
 ### Added
 
-- **CI: iOS build & sign workflow (`.github/workflows/ios.yml`).** Cross-compiles iOS dependencies via `ios/scripts/build-ios-libs.sh` (with caching keyed on the DuckDB pin, extension pins, and build script), generates the Xcode project with `xcodegen`, signs with an imported Apple Distribution certificate + provisioning profile, and exports an app-store IPA. TestFlight upload via `xcrun altool` is gated on `refs/tags/v*` pushes.
+- **CI: iOS build & sign job in `.github/workflows/ci.yml`.** Cross-compiles iOS dependencies via `ios/scripts/build-ios-libs.sh` (with caching keyed on the DuckDB pin, extension pins, and build script), generates the Xcode project with `xcodegen`, signs with an imported Apple Distribution certificate + provisioning profile, and exports an app-store IPA. TestFlight upload via `xcrun altool` is gated on `refs/tags/v*` pushes; the rest of the pipeline currently runs on every push so the signing setup can be exercised between releases.
 
 ## [1.22.1] - 2026-04-24
 

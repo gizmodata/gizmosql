@@ -522,6 +522,7 @@ endif()
 add_library(gizmosqlserver STATIC
         src/common/gizmosql_logging.cpp
         src/common/gizmosql_library.cpp
+        src/common/system_catalog.cpp
         src/common/session_context.cpp
         src/common/gizmosql_security.cpp
         src/common/gizmosql_telemetry.cpp

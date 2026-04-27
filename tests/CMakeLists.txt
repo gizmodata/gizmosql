@@ -32,6 +32,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_log_level_filtering.cpp
         integration/test_set_query_log_level.cpp
         integration/test_sqlite_backend.cpp
+        integration/test_system_catalog.cpp
         integration/test_token_authorized_emails.cpp
         integration/test_tpch_benchmark.cpp
         integration/test_ducklake.cpp

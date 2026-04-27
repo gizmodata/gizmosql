@@ -11,6 +11,7 @@
 
 #include "gizmosql_logging.h"
 #include "session_context.h"
+#include "system_catalog.h"
 #include "enterprise/enterprise_features.h"
 #include "instrumentation/instrumentation_manager.h"
 #include "instrumentation/instrumentation_records.h"
@@ -22,6 +23,15 @@ CatalogAccessLevel GetCatalogAccess(
     const std::string& role,
     const std::vector<CatalogAccessRule>& catalog_access,
     const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+  // The system catalog is read-only for everyone, always. Bypass all
+  // role/license/rule logic — clients (regardless of role) need to be able
+  // to read its metadata helper views, and writes are denied separately at
+  // the SQL execution layer (duckdb_statement.cpp) for both Core and
+  // Enterprise builds.
+  if (gizmosql::IsSystemCatalog(catalog_name)) {
+    return CatalogAccessLevel::kRead;
+  }
+
   // The instrumentation catalog is special: system-managed, read-only for admins.
   // This protection ALWAYS applies, regardless of licensing or token rules.
   // The catalog name is configurable (e.g., DuckLake catalogs), so we check dynamically.
