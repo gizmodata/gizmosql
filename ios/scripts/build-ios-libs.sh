@@ -43,14 +43,29 @@ mkdir -p "${HOST_BUILD_DIR}"
 cd "${HOST_BUILD_DIR}"
 
 if [ ! -f "${HOST_BUILD_DIR}/protoc" ] || [ ! -f "${HOST_BUILD_DIR}/grpc_cpp_plugin" ]; then
+    # Phase 1 host tools must build for macOS, NOT iOS. Some CI environments
+    # (notably GitHub Actions macos runners) have SDKROOT/IPHONEOS_*
+    # exported globally, which causes clang to default to the iPhone target
+    # even when no iOS toolchain is in play — the resulting host protoc
+    # then fails to link against the macOS libz with "ld: building for
+    # 'iOS', but linking in dylib built for 'macOS'". Scrub those vars and
+    # pin sysroot/arch explicitly.
+    HOST_SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+    env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \
+        -u WATCHOS_DEPLOYMENT_TARGET -u XROS_DEPLOYMENT_TARGET \
     cmake "${REPO_ROOT}" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_OSX_SYSROOT="${HOST_SDKROOT}" \
+        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_SYSTEM_NAME=Darwin \
         -DGIZMOSQL_ENTERPRISE=OFF \
         -DWITH_OPENTELEMETRY=OFF
 
     # Build just the proto tools (they are host-architecture binaries)
-    ninja health_proto_gen 2>/dev/null || true
+    env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \
+        -u WATCHOS_DEPLOYMENT_TARGET -u XROS_DEPLOYMENT_TARGET \
+        ninja health_proto_gen 2>/dev/null || true
 
     # Find and copy the host tools (protoc may be a symlink)
     PROTOC=$(find "${HOST_BUILD_DIR}" -name "protoc" \( -type f -o -type l \) ! -name "*.py" ! -name "*.cmake" ! -name "*.patch" | head -1)
@@ -168,17 +183,24 @@ if [ ! -f "${OPENSSL_INSTALL}/lib/libssl.a" ] || [ ! -f "${OPENSSL_INSTALL}/lib/
     rm -rf "${OPENSSL_BUILD_DIR}"
     tar -C "${OPENSSL_SRC_DIR}" -xf "${OPENSSL_TARBALL}"
 
-    pushd "${OPENSSL_BUILD_DIR}" >/dev/null
-    # ios64-xcrun target sets the iPhoneOS SDK and arm64 arch. We disable
-    # shared libs (we only ever link statically), tests, asm, and dso
-    # (loadable modules — App Store forbids dynamic code loading anyway).
-    export IPHONEOS_DEPLOYMENT_TARGET=17.0
-    ./Configure ios64-xcrun \
-        no-shared no-tests no-asm no-dso \
-        --prefix="${OPENSSL_INSTALL}"
-    make -j"$(sysctl -n hw.ncpu)" build_libs
-    make install_dev
-    popd >/dev/null
+    # Wrap OpenSSL build in a subshell so the IPHONEOS_DEPLOYMENT_TARGET
+    # export does NOT leak into Phase 2. If it does, Arrow's ExternalProject
+    # sub-cmake inherits it, configures bundled protobuf with an iOS target,
+    # and the host protoc fails to link against the macOS libz.tbd with:
+    #   ld: building for 'iOS', but linking in dylib (libz.1.tbd)
+    #       built for 'macOS macCatalyst zippered'
+    (
+        cd "${OPENSSL_BUILD_DIR}"
+        # ios64-xcrun target sets the iPhoneOS SDK and arm64 arch. We disable
+        # shared libs (we only ever link statically), tests, asm, and dso
+        # (loadable modules — App Store forbids dynamic code loading anyway).
+        export IPHONEOS_DEPLOYMENT_TARGET=17.0
+        ./Configure ios64-xcrun \
+            no-shared no-tests no-asm no-dso \
+            --prefix="${OPENSSL_INSTALL}"
+        make -j"$(sysctl -n hw.ncpu)" build_libs
+        make install_dev
+    )
 
     echo "OpenSSL installed at ${OPENSSL_INSTALL}"
 else

@@ -16,6 +16,7 @@
 // under the License.
 
 #include "duckdb_statement.h"
+#include "system_catalog.h"
 
 #include <duckdb.h>
 #include <duckdb/main/client_context.hpp>
@@ -886,6 +887,38 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session->connection->Get().Prepare(effective_sql);
 
   if (stmt->success) {
+    // Block writes to the GizmoSQL system catalog regardless of role or
+    // licensing — it is a process-local in-memory catalog that hosts
+    // server-managed metadata views, and clients must not be able to
+    // mutate them. Enforced in both Core and Enterprise builds. The
+    // analogous protection for the instrumentation catalog
+    // (_gizmosql_instr) lives in CheckCatalogWriteAccess and only runs
+    // in Enterprise builds because that catalog only exists there.
+    for (const auto& [catalog_name, _ignored] :
+         stmt->data->properties.modified_databases) {
+      if (gizmosql::IsSystemCatalog(catalog_name)) {
+        std::string error_msg =
+            "Access denied: The GizmoSQL system catalog '" + catalog_name +
+            "' is read-only.";
+        GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                               "Access denied: system catalog is read-only",
+                               {"kind", "sql"}, {"status", "rejected"},
+                               {"catalog", catalog_name},
+                               {"statement_id", handle},
+                               {"sql", logged_sql});
+#ifdef GIZMOSQL_ENTERPRISE
+        if (auto server = GetServer(*client_session)) {
+          if (auto mgr = server->GetInstrumentationManager()) {
+            StatementInstrumentation(mgr, handle, client_session->session_id,
+                                     logged_sql, flight_method, is_internal,
+                                     error_msg);
+          }
+        }
+#endif
+        return arrow::Status::Invalid(error_msg);
+      }
+    }
+
 #ifdef GIZMOSQL_ENTERPRISE
     // Check catalog-level access permissions (Enterprise feature)
     // These checks enforce per-catalog read/write permissions from JWT token claims

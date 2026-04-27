@@ -11,6 +11,7 @@
 
 #include "gizmosql_logging.h"
 #include "session_context.h"
+#include "system_catalog.h"
 #include "enterprise/enterprise_features.h"
 #include "instrumentation/instrumentation_manager.h"
 #include "instrumentation/instrumentation_records.h"
@@ -22,6 +23,15 @@ CatalogAccessLevel GetCatalogAccess(
     const std::string& role,
     const std::vector<CatalogAccessRule>& catalog_access,
     const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+  // The system catalog is read-only for everyone, always. Bypass all
+  // role/license/rule logic — clients (regardless of role) need to be able
+  // to read its metadata helper views, and writes are denied separately at
+  // the SQL execution layer (duckdb_statement.cpp) for both Core and
+  // Enterprise builds.
+  if (gizmosql::IsSystemCatalog(catalog_name)) {
+    return CatalogAccessLevel::kRead;
+  }
+
   // The instrumentation catalog is special: system-managed, read-only for admins.
   // This protection ALWAYS applies, regardless of licensing or token rules.
   // The catalog name is configurable (e.g., DuckLake catalogs), so we check dynamically.
@@ -330,6 +340,13 @@ const std::vector<MetadataPattern>& GetMetadataPatterns() {
       {"information_schema.key_column_usage", "table_catalog", false},
       {"information_schema.referential_constraints", "constraint_catalog", false},
       {"information_schema.table_constraints", "table_catalog", false},
+      // GizmoSQL system-catalog metadata views. The columns are JDBC-shaped
+      // (e.g. "TABLE_CAT"), created via 'AS "TABLE_CAT"' in the view DDL,
+      // so the filter column name must be double-quoted to preserve case.
+      // The matcher's one-level catalog-prefix back-scan handles the
+      // _gizmosql_system. qualifier when present in the user's SQL.
+      {"main.gizmosql_index_info", "\"TABLE_CAT\"", false},
+      {"main.gizmosql_view_definition", "\"TABLE_CAT\"", false},
       // duckdb_*() function calls
       {"duckdb_databases()", "database_name", true},
       {"duckdb_tables()", "database_name", true},
