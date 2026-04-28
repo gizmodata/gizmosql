@@ -299,7 +299,12 @@ struct DotCommandProcessor {
     private static func handleTables(arg: String,
                                      client: FlightSQLClient,
                                      settings: ClientSettings) async -> [OutputLine] {
+        // Hide internal schemas AND the GizmoSQL system catalog. The system
+        // catalog hosts server-managed metadata helper views (gizmosql_index_info,
+        // gizmosql_view_definition) that are not user data, so .tables shouldn't
+        // surface them — same rationale as hiding information_schema.
         var where_ = "table_schema NOT IN ('information_schema', 'pg_catalog')"
+                   + " AND table_catalog != '\(GizmoSQLConstants.systemCatalogName)'"
         if !arg.isEmpty {
             // Users type a simple LIKE pattern (e.g. `cust%`)
             let escaped = arg.replacingOccurrences(of: "'", with: "''")
@@ -329,9 +334,12 @@ struct DotCommandProcessor {
 
     private static func handleCatalogs(client: FlightSQLClient,
                                        settings: ClientSettings) async -> [OutputLine] {
+        // Exclude the GizmoSQL system catalog — it's a server-managed in-memory
+        // catalog hosting metadata helper views, not user data.
         let sql = """
         SELECT DISTINCT table_catalog AS catalog
         FROM information_schema.tables
+        WHERE table_catalog != '\(GizmoSQLConstants.systemCatalogName)'
         ORDER BY catalog
         """
         let result = client.execute(sql)

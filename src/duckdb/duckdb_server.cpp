@@ -46,6 +46,7 @@
 #include "duckdb_tables_schema_batch_reader.h"
 #include "gizmosql_security.h"
 #include "gizmosql_logging.h"
+#include "system_catalog.h"
 #include "gizmosql_telemetry.h"
 #include "telemetry_middleware.h"
 #include "flight_sql_fwd.h"
@@ -695,12 +696,23 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
                  "table_name, "
                  "table_type FROM information_schema.tables where 1=1";
 
-  table_query << " and table_catalog ";
   if (command.catalog.has_value()) {
-    table_query << "LIKE ?";
+    table_query << " and table_catalog LIKE ?";
     bind_parameters.emplace_back(command.catalog.value());
   } else {
-    table_query << "= CURRENT_DATABASE()";
+    // Match DuckDB CLI's `.tables` behavior: when the caller doesn't
+    // specify a catalog, return tables/views from every attached
+    // catalog — not just CURRENT_DATABASE(). The previous behavior
+    // hid every non-default catalog by default, which surprised users
+    // who attached additional databases (DuckLake, secondary .duckdb
+    // files, etc.) and queried them via `.tables`.
+    //
+    // Always exclude the GizmoSQL system catalog: it's a server-managed
+    // in-memory catalog hosting metadata helper views (gizmosql_index_info,
+    // gizmosql_view_definition), not user data. Same rationale as the
+    // existing exclusion of information_schema schemas.
+    table_query << " and table_catalog != '" << gizmosql::kSystemCatalogName
+                << "'";
   }
 
   if (command.db_schema_filter_pattern.has_value()) {

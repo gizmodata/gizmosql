@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.4] - 2026-04-27
+
+### Fixed
+
+- **iOS app: Browser screen now correctly previews tables in non-default catalogs.** `loadPreview`, `loadColumns`, and `dropTable` in `BrowserView.swift` were building 2-part identifiers `"schema"."table"`, which only resolve against the current/default catalog. DuckDB returned `Catalog Error: Table with name "..." does not exist` for any other attached catalog (e.g. an additional ATTACHed DuckLake or DuckDB file). The three sites now build fully-qualified 3-part `"catalog"."schema"."table"` identifiers with proper double-quote escaping for each part.
+- **iOS app: `_gizmosql_system` catalog is now hidden from the catalog/table browser and `.tables` / `.catalogs` dot-commands.** It's a server-managed in-memory catalog with metadata helper views (`gizmosql_index_info`, `gizmosql_view_definition`), not user data — same rationale as hiding `information_schema`. The Browser screen filters it out of `duckdb_databases()`; the Query screen's `.tables` and `.catalogs` add `table_catalog != '_gizmosql_system'` to their `WHERE`.
+
+### Changed
+
+- **Server-side Flight SQL `GetTables` now returns tables from every attached catalog when the caller doesn't specify one.** Previously, an absent `catalog` filter implicitly restricted results to `CURRENT_DATABASE()`, which hid tables in any other ATTACHed catalog — surprising users who came from DuckDB's CLI (whose `.tables` shows all attached catalogs by default). The CLI client's `.tables`, JDBC `DatabaseMetaData.getTables(null, ...)`, and any other Flight SQL client all benefit. `_gizmosql_system` is still excluded server-side regardless, since it's not user data. Explicit catalog filters are unchanged — `LIKE` still scopes to whatever the caller asked for.
+
 ## [1.22.3] - 2026-04-27
 
 ### Fixed

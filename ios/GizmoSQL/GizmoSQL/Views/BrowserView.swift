@@ -58,10 +58,14 @@ class BrowserViewModel: ObservableObject {
         Task.detached {
             // duckdb_databases() returns: database_name, database_oid, path,
             // comment, tags, type, readonly, internal, ...
-            // Hide internal catalogs (system_catalog, temp, etc.).
+            // Hide internal catalogs (system_catalog, temp, etc.) and the
+            // GizmoSQL system catalog (server-managed metadata helper views,
+            // not user data — same rationale as hiding information_schema).
             let result = await client.execute(
                 "SELECT database_name, type FROM duckdb_databases() " +
-                "WHERE internal = false ORDER BY database_name",
+                "WHERE internal = false " +
+                "  AND database_name != '\(GizmoSQLConstants.systemCatalogName)' " +
+                "ORDER BY database_name",
                 maxRows: 1000)
             await MainActor.run {
                 self.isLoading = false
@@ -143,9 +147,12 @@ class BrowserViewModel: ObservableObject {
         errorMessage = nil
         // Clear stale data from a previously-viewed table
         columns = []
+        // Use a 3-part qualified name so non-default catalogs resolve.
+        // 2-part "schema"."table" only works for the current/default catalog.
+        let escapedCatalog = catalog.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedSchema = schema.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedTable = table.replacingOccurrences(of: "\"", with: "\"\"")
-        let sql = "DESCRIBE \"\(escapedSchema)\".\"\(escapedTable)\""
+        let sql = "DESCRIBE \"\(escapedCatalog)\".\"\(escapedSchema)\".\"\(escapedTable)\""
         Task.detached {
             // DESCRIBE returns: column_name, column_type, null, key, default, extra
             let result = await client.execute(sql, maxRows: 10000)
@@ -171,9 +178,11 @@ class BrowserViewModel: ObservableObject {
         guard let client, client.isConnected else { return }
         isLoading = true
         previewResult = nil
+        // 3-part qualified name so non-default catalogs resolve.
+        let escapedCatalog = catalog.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedSchema = schema.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedTable = table.replacingOccurrences(of: "\"", with: "\"\"")
-        let sql = "SELECT * FROM \"\(escapedSchema)\".\"\(escapedTable)\" LIMIT 50"
+        let sql = "SELECT * FROM \"\(escapedCatalog)\".\"\(escapedSchema)\".\"\(escapedTable)\" LIMIT 50"
         Task.detached {
             let result = await client.execute(sql, maxRows: 50)
             await MainActor.run {
@@ -189,10 +198,11 @@ class BrowserViewModel: ObservableObject {
             completion(false)
             return
         }
+        let escapedCatalog = catalog.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedSchema = schema.replacingOccurrences(of: "\"", with: "\"\"")
         let escapedTable = table.replacingOccurrences(of: "\"", with: "\"\"")
         let kind = type == "VIEW" ? "VIEW" : "TABLE"
-        let sql = "DROP \(kind) \"\(escapedSchema)\".\"\(escapedTable)\""
+        let sql = "DROP \(kind) \"\(escapedCatalog)\".\"\(escapedSchema)\".\"\(escapedTable)\""
         Task.detached {
             let result = await client.execute(sql, maxRows: 0)
             await MainActor.run {
