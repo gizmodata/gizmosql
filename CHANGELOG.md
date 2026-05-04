@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.5] - 2026-05-04
+
 ### Changed
 
 - **Client now refuses `--tls-skip-verify` together with `--mtls-cert`/`--mtls-key`.** Arrow Flight's gRPC transport silently drops the client certificate when `disable_server_verification` is set (it routes through `TlsChannelCredentialsOptions`, which doesn't read `cert_chain`/`private_key`), so the server rejected the handshake with a cryptic `peer did not return a certificate`. The client now errors out up-front with an actionable message pointing users at `--tls-roots`.
