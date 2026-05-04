@@ -137,6 +137,23 @@ void FlightConnection::SendCancelToServer() {
 arrow::Status FlightConnection::Connect(const ClientConfig& config) {
   Disconnect();
 
+  // --tls-skip-verify is incompatible with mTLS. Arrow Flight's gRPC
+  // transport silently drops options.cert_chain/private_key when
+  // disable_server_verification is true (it routes through
+  // TlsChannelCredentialsOptions, which doesn't read those fields), so
+  // the server sees a TLS handshake with no client cert and rejects it
+  // with "peer did not return a certificate". Refuse the combination
+  // up-front rather than letting the user hit a cryptic gRPC error.
+  if (config.tls_skip_verify && !config.mtls_cert.empty()) {
+    return arrow::Status::Invalid(
+        "--tls-skip-verify cannot be combined with --mtls-cert/--mtls-key. "
+        "Arrow Flight drops the client certificate when server verification "
+        "is disabled. Use --tls-roots <ca-or-self-signed-cert>.pem to trust "
+        "the server's certificate properly. For a self-signed server cert "
+        "(e.g. produced by `openssl req -x509 ... -out cert.pem`), pass "
+        "cert.pem directly to --tls-roots — it acts as its own CA.");
+  }
+
   ARROW_ASSIGN_OR_RAISE(
       auto location,
       config.use_tls

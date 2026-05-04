@@ -115,6 +115,8 @@ gizmosql_client --host my-server.example.com --username admin \
   --mtls-cert /path/to/client.crt --mtls-key /path/to/client.key
 ```
 
+> **`--tls-skip-verify` cannot be combined with `--mtls-cert`/`--mtls-key`.** Arrow Flight's underlying gRPC transport drops the client certificate when server verification is disabled, so the server rejects the handshake. The client refuses this combination at startup. Use `--tls-roots <ca-or-self-signed-cert>.pem` to trust the server's certificate properly. For a self-signed server cert (e.g. produced by `openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -nodes -subj "/CN=localhost"`), pass `cert.pem` directly to `--tls-roots` — it acts as its own CA.
+
 ## OAuth / SSO Authentication
 
 For servers configured with [OAuth/SSO](oauth_sso_setup.md), use `--auth-type external` to authenticate via browser-based login:

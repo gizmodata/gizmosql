@@ -105,6 +105,50 @@ TEST_F(InteractiveClientFixture, ConnectWithValidCredentials) {
   ASSERT_TRUE(conn.IsConnected());
 }
 
+// --tls-skip-verify is incompatible with mTLS: Arrow Flight's gRPC transport
+// silently drops options.cert_chain/private_key when disable_server_verification
+// is set, so the server rejects the handshake with the cryptic "peer did not
+// return a certificate". FlightConnection::Connect must refuse the combination
+// up-front with an actionable message — verified here without needing a real
+// server, since the check fires before any network I/O.
+TEST(FlightConnectionConfig, TlsSkipVerifyWithMtlsCertIsRejected) {
+  ClientConfig config;
+  config.host = "localhost";
+  config.port = 31337;
+  config.use_tls = true;
+  config.tls_skip_verify = true;
+  config.mtls_cert = "/tmp/does-not-need-to-exist.crt";
+  config.mtls_key = "/tmp/does-not-need-to-exist.key";
+
+  FlightConnection conn;
+  auto status = conn.Connect(config);
+  ASSERT_FALSE(status.ok())
+      << "Should reject --tls-skip-verify combined with --mtls-cert";
+  EXPECT_TRUE(status.IsInvalid())
+      << "Expected Invalid status, got: " << status.ToString();
+  // The error must point users toward --tls-roots — that's the actionable bit.
+  EXPECT_NE(status.message().find("--tls-roots"), std::string::npos)
+      << "Error message should reference --tls-roots: " << status.message();
+}
+
+// Sanity check: --tls-skip-verify alone (no mTLS) must still be permitted —
+// the validation should only fire when both are present.
+TEST(FlightConnectionConfig, TlsSkipVerifyAloneIsPermittedAtConfigCheck) {
+  ClientConfig config;
+  config.host = "127.0.0.1";
+  config.port = 1;  // unreachable port — Connect will fail at network step
+  config.use_tls = true;
+  config.tls_skip_verify = true;
+  // No mtls_cert / mtls_key set.
+
+  FlightConnection conn;
+  auto status = conn.Connect(config);
+  // We expect it to fail (network), but NOT with the validation error.
+  EXPECT_EQ(status.message().find("--tls-skip-verify cannot be combined"),
+            std::string::npos)
+      << "Validation should not fire without mTLS flags: " << status.message();
+}
+
 TEST_F(InteractiveClientFixture, ConnectWithInvalidCredentials) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
   ClientConfig config;

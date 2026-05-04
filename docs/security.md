@@ -150,6 +150,8 @@ openssl x509 -req -in client.csr -CA client-ca.pem -CAkey client-ca-key.pem \
 
 The server's `--mtls-ca-cert-filename` should point to the CA that signed your client certificates. The client's identity (the `CN` field) is tracked in the session context for audit logging.
 
+> **Note:** `--tls-skip-verify` is **not compatible** with mTLS on the client side. Arrow Flight's TLS implementation drops the client certificate when server verification is disabled, so the server will reject the handshake with `peer did not return a certificate`. The GizmoSQL client refuses this combination at startup and tells you to either trust the server's cert via `--tls-roots <ca-or-self-signed-cert>.pem` or use a CA-signed server certificate. For local self-signed setups (e.g. `openssl req -x509 ... -out cert.pem`), pass the server's `cert.pem` directly to `--tls-roots` — it acts as its own CA.
+
 ---
 
 ## Layer 3: Authentication
