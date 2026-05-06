@@ -29,6 +29,7 @@ const int DEFAULT_FLIGHT_PORT = 31337;
 const int DEFAULT_HEALTH_PORT = 31338;  // Plaintext health check port for Kubernetes
 const int DEFAULT_OAUTH_PORT = 31339;  // OAuth HTTP server port
 const int32_t DEFAULT_QUERY_TIMEOUT_SECONDS = 0;  // Unlimited timeout
+const int32_t DEFAULT_MAX_METADATA_SIZE = 0;  // 0 = use gRPC default (~8 KB)
 
 enum class BackendType { duckdb, sqlite };
 
@@ -88,6 +89,7 @@ enum class BackendType { duckdb, sqlite };
  * @param otel_endpoint OTLP endpoint. Default is "" - if so, uses env GIZMOSQL_OTEL_ENDPOINT, fallback based on exporter type.
  * @param otel_service_name Service name for telemetry. Default is "" - if so, uses env GIZMOSQL_OTEL_SERVICE_NAME, fallback to "gizmosql".
  * @param otel_headers Additional headers for OTLP exporter (key1=value1,key2=value2). Default is "" - if so, uses env GIZMOSQL_OTEL_HEADERS.
+ * @param max_metadata_size Maximum size in bytes of inbound gRPC HTTP/2 header metadata per call (sets GRPC_ARG_MAX_METADATA_SIZE). gRPC's default is ~8 KB; raise this if clients legitimately send large per-call metadata (e.g. extra JDBC URL parameters that the Flight SQL JDBC driver forwards as headers, large bearer tokens, accumulated cookies, or proxy-injected trace headers). 0 = use the gRPC default. If 0, uses env var GIZMOSQL_MAX_METADATA_SIZE.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -156,5 +158,6 @@ int RunFlightSQLServer(
     std::optional<bool> oauth_disable_tls = std::nullopt,
     std::optional<bool> otel_enabled = std::nullopt, std::string otel_exporter = "",
     std::string otel_endpoint = "", std::string otel_service_name = "",
-    std::string otel_headers = "");
+    std::string otel_headers = "",
+    int32_t max_metadata_size = DEFAULT_MAX_METADATA_SIZE);
 }

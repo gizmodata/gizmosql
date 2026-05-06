@@ -69,7 +69,8 @@ CreateFlightSQLServer(
     std::string oauth_redirect_uri = "",
     std::string oauth_instance_id = "",
     const bool& oauth_disable_tls = false,
-    const bool& telemetry_enabled = false);
+    const bool& telemetry_enabled = false,
+    int32_t max_metadata_size = 0);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -109,6 +110,7 @@ struct TestServerConfig {
   bool print_queries = false;                    // Enable query logging
   arrow::util::ArrowLogLevel query_log_level =
       arrow::util::ArrowLogLevel::ARROW_INFO;    // Query log level threshold
+  int32_t max_metadata_size = 0;                 // gRPC max header metadata bytes per call (0 = gRPC default ~8 KB)
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -206,7 +208,9 @@ class ServerTestFixture : public ::testing::Test {
         /*oauth_base_url=*/config_.oauth_base_url,
         /*oauth_redirect_uri=*/config_.oauth_redirect_uri,
         /*oauth_instance_id=*/config_.oauth_instance_id,
-        /*oauth_disable_tls=*/config_.oauth_disable_tls);
+        /*oauth_disable_tls=*/config_.oauth_disable_tls,
+        /*telemetry_enabled=*/false,
+        /*max_metadata_size=*/config_.max_metadata_size);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

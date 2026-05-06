@@ -483,7 +483,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& oauth_redirect_uri,
     const std::string& oauth_instance_id,
     const bool& oauth_disable_tls,
-    const bool& telemetry_enabled) {
+    const bool& telemetry_enabled,
+    int32_t max_metadata_size) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -889,15 +890,39 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
           });
     }
 
-    // Set up builder_hook to register the health service and reflection with the gRPC server
-    if (g_health_service) {
+    // Set up builder_hook to (a) configure GRPC_ARG_MAX_METADATA_SIZE if requested
+    // and (b) register the health service and reflection with the gRPC server.
+    // The hook always runs when there is *something* to do; either condition
+    // alone is sufficient.
+    const bool register_health = static_cast<bool>(g_health_service);
+    const bool tune_metadata = max_metadata_size > 0;
+    if (register_health) {
       // Enable gRPC reflection (must be called before building the server)
       grpc::reflection::InitProtoReflectionServerBuilderPlugin();
-
-      options.builder_hook = [health_service = g_health_service](void* raw_builder) {
+    }
+    if (register_health || tune_metadata) {
+      options.builder_hook = [health_service = g_health_service, max_metadata_size,
+                              register_health](void* raw_builder) {
         auto* builder = reinterpret_cast<grpc::ServerBuilder*>(raw_builder);
-        builder->RegisterService(health_service.get());
+        if (max_metadata_size > 0) {
+          // Maps to GRPC_ARG_MAX_METADATA_SIZE; gRPC's default is ~8 KB and
+          // is too small when clients send large per-call metadata
+          // (e.g. extra JDBC URL params that the Apache Flight SQL JDBC
+          // driver forwards as gRPC headers, large bearer tokens, or
+          // accumulated cookies).
+          builder->AddChannelArgument(GRPC_ARG_MAX_METADATA_SIZE,
+                                      max_metadata_size);
+        }
+        if (register_health && health_service) {
+          builder->RegisterService(health_service.get());
+        }
       };
+    }
+    if (tune_metadata) {
+      GIZMOSQL_LOG(INFO) << "gRPC max metadata size set to: " << max_metadata_size
+                         << " bytes";
+    }
+    if (register_health) {
       GIZMOSQL_LOG(INFO) << "gRPC Health service enabled (on main TLS port)";
       GIZMOSQL_LOG(INFO) << "gRPC Reflection service enabled";
     }
@@ -975,7 +1000,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string oauth_redirect_uri,
     std::string oauth_instance_id,
     const bool& oauth_disable_tls,
-    const bool& telemetry_enabled) {
+    const bool& telemetry_enabled,
+    int32_t max_metadata_size) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1260,7 +1286,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       instrumentation_catalog, instrumentation_schema, instance_tag,
       allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled);
+      oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled,
+      max_metadata_size);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1347,7 +1374,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::optional<bool> oauth_disable_tls,
                        std::optional<bool> otel_enabled, std::string otel_exporter,
                        std::string otel_endpoint, std::string otel_service_name,
-                       std::string otel_headers) {
+                       std::string otel_headers,
+                       int32_t max_metadata_size) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1419,6 +1447,28 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   resolve_bool_env(oauth_disable_tls, "GIZMOSQL_OAUTH_DISABLE_TLS");
   resolve_bool_env(otel_enabled, "GIZMOSQL_OTEL_ENABLED");
   // ----------------------------------------------------------
+
+  // Integer env var fallback for max_metadata_size: only consult env when the
+  // CLI/library caller left it at the sentinel default (0). Negative values
+  // are rejected. Invalid env values fall back to 0 (= use gRPC default).
+  if (max_metadata_size <= 0) {
+    auto env = gizmosql::SafeGetEnvVarValue("GIZMOSQL_MAX_METADATA_SIZE");
+    if (!env.empty()) {
+      try {
+        int parsed = std::stoi(env);
+        if (parsed > 0) {
+          max_metadata_size = parsed;
+        } else if (parsed < 0) {
+          std::cerr << "GIZMOSQL_MAX_METADATA_SIZE must be a positive integer; got '"
+                    << env << "', ignoring." << std::endl;
+        }
+      } catch (const std::exception&) {
+        std::cerr << "GIZMOSQL_MAX_METADATA_SIZE is not a valid integer ('"
+                  << env << "'), ignoring." << std::endl;
+      }
+    }
+    if (max_metadata_size < 0) max_metadata_size = 0;
+  }
 
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
@@ -1518,7 +1568,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       instrumentation_catalog, instrumentation_schema, instance_tag,
       allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled);
+      oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled,
+      max_metadata_size);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
