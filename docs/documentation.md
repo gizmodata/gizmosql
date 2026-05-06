@@ -440,6 +440,7 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | access-log / GIZMOSQL_ACCESS_LOG | Per-RPC access logging: on|off | off (if unset) | --access-log |
 | log-file / GIZMOSQL_LOG_FILE | Log file path; '-' => stdout; empty => stderr | stderr (if unset) | --log-file |
 | query-timeout | Query timeout in seconds (0 = unlimited) | DEFAULT_QUERY_TIMEOUT_SECONDS | --query-timeout |
+| max-metadata-size / GIZMOSQL_MAX_METADATA_SIZE | Max inbound gRPC HTTP/2 header metadata bytes per call (`GRPC_ARG_MAX_METADATA_SIZE`). Raise above the gRPC default of ~8 KB if clients send large per-call metadata (e.g. extra Apache Flight SQL JDBC URL parameters that get forwarded as gRPC headers, large bearer tokens, accumulated cookies, proxy-injected trace headers) | 0 (= use gRPC default) | --max-metadata-size |
 | query-log-level / GIZMOSQL_QUERY_LOG_LEVEL | Query log level | info (if unset) | --query-log-level |
 | auth-log-level / GIZMOSQL_AUTH_LOG_LEVEL | Authentication log level | info (if unset) | --auth-log-level |
 | health-port | Plaintext gRPC health check port (0 = disable) | DEFAULT_HEALTH_PORT | --health-port |

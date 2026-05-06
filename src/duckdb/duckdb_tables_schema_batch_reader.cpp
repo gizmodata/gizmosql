@@ -101,7 +101,7 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
             columns_stmt,
             DuckDBStatement::Create(
                 client_session_,
-                "SELECT column_name, is_nullable, comment, column_default "
+                "SELECT column_name, is_nullable, comment, column_default, data_type "
                 "FROM duckdb_columns() "
                 "WHERE database_name = ? AND schema_name = ? AND table_name = ?",
                 arrow::util::ArrowLogLevel::ARROW_DEBUG, false, nullptr,
@@ -115,6 +115,7 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
           std::string comment;       // Empty = no comment.
           std::string column_default;  // Empty = no default.
           bool has_default = false;
+          std::string type_name;     // DuckDB SQL type name (base form, e.g. "DOUBLE").
         };
         std::unordered_map<std::string, ColumnInfo> info_by_column;
 
@@ -133,6 +134,8 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
                 batch->GetColumnByName("comment"));
             auto default_arr = std::static_pointer_cast<arrow::StringArray>(
                 batch->GetColumnByName("column_default"));
+            auto type_arr = std::static_pointer_cast<arrow::StringArray>(
+                batch->GetColumnByName("data_type"));
             if (!name_arr) break;
             for (int64_t r = 0; r < batch->num_rows(); ++r) {
               if (name_arr->IsNull(r)) continue;
@@ -146,6 +149,18 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
               if (default_arr && !default_arr->IsNull(r)) {
                 info.column_default = std::string(default_arr->GetView(r));
                 info.has_default = true;
+              }
+              if (type_arr && !type_arr->IsNull(r)) {
+                // DuckDB's `data_type` includes parameters / decorations
+                // (e.g. "DECIMAL(18,3)", "INTEGER[]", "STRUCT(a INTEGER)").
+                // Strip to the base type name so consumers (Power BI's ADBC
+                // connector matches on literals like "DECIMAL", "DOUBLE",
+                // "INTEGER", "VARCHAR") see the canonical name.
+                std::string type = std::string(type_arr->GetView(r));
+                size_t end = type.find_first_of("([");
+                if (end == std::string::npos) end = type.find(' ');
+                if (end != std::string::npos) type.resize(end);
+                info.type_name = std::move(type);
               }
               info_by_column.emplace(std::string(name_arr->GetView(r)), std::move(info));
             }
@@ -175,6 +190,11 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
             }
             if (!info.comment.empty()) {
               md["ARROW:FLIGHT:SQL:REMARKS"] = info.comment;
+            }
+            // Standard Flight SQL key — read by ADBC clients (e.g. the Apache
+            // FlightSQL ADBC driver populates xdbc_type_name from this).
+            if (!info.type_name.empty()) {
+              md["ARROW:FLIGHT:SQL:TYPE_NAME"] = info.type_name;
             }
             // DuckDB's auto-increment idiom is a DEFAULT of `nextval('...')`. Mark the
             // column as IS_AUTO_INCREMENT so the JDBC driver can surface it as "YES".
@@ -212,7 +232,8 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
                                           std::move(new_metadata));
             corrected_fields.emplace_back(new_field);
             if (f->nullable() != info.is_nullable || !info.comment.empty() ||
-                info.has_default || md.count("ARROW:FLIGHT:SQL:IS_AUTO_INCREMENT")) {
+                info.has_default || md.count("ARROW:FLIGHT:SQL:IS_AUTO_INCREMENT") ||
+                !info.type_name.empty()) {
               any_changed = true;
             }
           }

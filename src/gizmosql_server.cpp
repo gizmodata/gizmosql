@@ -98,6 +98,13 @@ int main(int argc, char** argv) {
              "Log file path; use '-' for stdout; empty => stderr. Can also use env GIZMOSQL_LOG_FILE.")
             ("query-timeout",   po::value<int32_t>()->default_value(DEFAULT_QUERY_TIMEOUT_SECONDS),
              "The Query Timeout limit in seconds.  A value of 0 means unlimited.")
+            ("max-metadata-size", po::value<int32_t>()->default_value(DEFAULT_MAX_METADATA_SIZE),
+             "Maximum size in bytes of inbound gRPC HTTP/2 header metadata per call "
+             "(GRPC_ARG_MAX_METADATA_SIZE). gRPC's default is ~8 KB; raise this if clients "
+             "legitimately send large per-call metadata (e.g. extra JDBC URL parameters that "
+             "the Apache Flight SQL JDBC driver forwards as gRPC headers, large bearer tokens, "
+             "accumulated cookies, or proxy-injected trace headers). 0 = use the gRPC default. "
+             "If 0, uses env var GIZMOSQL_MAX_METADATA_SIZE.")
             ("query-log-level",  po::value<std::string>()->default_value(""),
              "Query Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_QUERY_LOG_LEVEL or defaults to info.")
             ("auth-log-level",  po::value<std::string>()->default_value(""),
@@ -300,6 +307,8 @@ int main(int argc, char** argv) {
   int32_t query_timeout =
       vm.count("query-timeout") ? vm["query-timeout"].as<int32_t>() : 0;
 
+  int32_t max_metadata_size = vm["max-metadata-size"].as<int32_t>();
+
   std::string query_log_level =
       vm.count("query-log-level") ? vm["query-log-level"].as<std::string>() : "";
   std::string auth_log_level =
@@ -381,5 +390,5 @@ int main(int argc, char** argv) {
       instrumentation_catalog, instrumentation_schema, instance_tag, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
-      otel_endpoint, otel_service_name, otel_headers);
+      otel_endpoint, otel_service_name, otel_headers, max_metadata_size);
 }

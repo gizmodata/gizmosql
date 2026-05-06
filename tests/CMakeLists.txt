@@ -30,6 +30,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_interactive_client.cpp
         integration/test_internal_query_log_level.cpp
         integration/test_log_level_filtering.cpp
+        integration/test_max_metadata_size.cpp
         integration/test_set_query_log_level.cpp
         integration/test_sqlite_backend.cpp
         integration/test_system_catalog.cpp

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-05-06
+
+### Added
+
+- **`--max-metadata-size` / `GIZMOSQL_MAX_METADATA_SIZE`.** New server option exposing gRPC's `GRPC_ARG_MAX_METADATA_SIZE`. gRPC's default of ~8 KB rejects calls whose total HTTP/2 header list exceeds the limit, surfacing as `Http2Exception$HeaderListSizeException: Header size exceeded max allowed size (8192)` on Apache Arrow Flight SQL JDBC clients that forward unrecognized JDBC URL parameters as gRPC headers. SQL itself is unaffected (it's sent in the request body), so the symptom was misleading. Default is `0` (= keep gRPC's default); set to e.g. `65536` if your clients legitimately ship large per-call metadata (extra JDBC URL parameters, large bearer tokens, accumulated cookies, proxy-injected trace headers).
+
+### Fixed
+
+- **`GetTables(include_schema=true)` now emits `ARROW:FLIGHT:SQL:TYPE_NAME` per column.** ADBC Flight SQL clients (e.g. the Apache `libadbc_driver_flightsql` driver used by Power BI's `Adbc.DataSource()` M function) populate `xdbc_type_name` from this Flight SQL standard metadata key. Previously it was unset, so `adbc_get_objects(depth='columns')` returned `xdbc_type_name=None` for every column, breaking type resolution in Power BI's Power Query connector. The value is taken verbatim from DuckDB's `duckdb_columns().data_type`, with parameter / decoration suffixes stripped (`DECIMAL(18,3)` → `DECIMAL`, `INTEGER[]` → `INTEGER`, `STRUCT(...)` → `STRUCT`).
+
 ## [1.22.5] - 2026-05-04
 
 ### Changed
