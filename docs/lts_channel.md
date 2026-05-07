@@ -44,7 +44,7 @@ LTS artifacts are suffixed so they coexist with stable on the same machine, imag
 | Windows MSI       | `GizmoSQL-amd64.msi`                           | `GizmoSQL-amd64-lts.msi`                         |
 | Docker (Hub)      | `gizmodata/gizmosql:<ver>` *(+ `-slim`)*       | `gizmodata/gizmosql-lts:<ver>` *(+ `-slim`)*     |
 | Docker (GHCR)     | `ghcr.io/gizmodata/gizmosql:<ver>`             | `ghcr.io/gizmodata/gizmosql-lts:<ver>`           |
-| Homebrew tap      | `gizmodata/tap` → formula `gizmosql`           | `gizmodata/tap-lts` → formula `gizmosql-lts`     |
+| Homebrew formula  | `gizmodata/tap` → `gizmosql`                   | `gizmodata/tap` → `gizmosql-lts` *(same tap)*    |
 
 > **iOS:** The iOS edition is currently stable-only. The DuckDB LTS pin is not synced for the iOS extension build matrix.
 
@@ -52,12 +52,16 @@ LTS artifacts are suffixed so they coexist with stable on the same machine, imag
 
 ### Homebrew (macOS / Linux)
 
+The LTS formula lives in the same `gizmodata/tap` as the regular `gizmosql` formula — no separate tap to add:
+
 ```bash
-brew tap gizmodata/tap-lts
-brew install gizmosql-lts
+brew tap gizmodata/tap         # once (skip if already tapped)
+brew install gizmosql-lts      # LTS channel
+# or, side-by-side:
+brew install gizmosql gizmosql-lts
 ```
 
-This installs `gizmosql_server_lts` and `gizmosql_client_lts` — both can coexist with the regular `gizmosql` formula.
+The LTS formula installs `gizmosql_server_lts` / `gizmosql_client_lts`, so it coexists cleanly with the regular `gizmosql` formula's `gizmosql_server` / `gizmosql_client`.
 
 ### Docker
 
