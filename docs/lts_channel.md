@@ -19,18 +19,35 @@ When DuckDB names a new LTS, GizmoSQL bumps `DUCKDB_LTS_VERSION` in `CMakeLists.
 
 ## Telling the channels apart
 
-The LTS server identifies itself in three ways so it's never ambiguous which build is running:
+The LTS server identifies itself in four ways so it's never ambiguous which build is running:
+
+**1. The `--version` flag on both the server and the client binaries**
 
 ```text
 $ gizmosql_server_lts --version
-GizmoSQL Server CLI: v1.24.0-LTS
+GizmoSQL Server CLI: v1.25.0-LTS
+
+$ gizmosql_client_lts --version
+GizmoSQL Client v1.25.0-LTS
 ```
+
+**2. The startup banner**
 
 ```text
-INFO ... GizmoSQL server version: v1.24.0-LTS - with engine: DuckDB (LTS channel — DuckDB v1.4.4) - will listen on grpc+tcp://0.0.0.0:31337
+INFO ... GizmoSQL server version: v1.25.0-LTS - with engine: DuckDB (LTS channel — DuckDB v1.4.4) - will listen on grpc+tcp://0.0.0.0:31337
 ```
 
-The `-LTS` suffix on the version string is also reflected in OpenTelemetry `service.version`, instrumentation records, and any other place the server reports its version.
+**3. The `GIZMOSQL_VERSION()` SQL function** — query it from any client (JDBC, ADBC, gizmosql_client, etc.) to confirm which channel the server you connected to was built from:
+
+```sql
+SELECT GIZMOSQL_VERSION();
+-- v1.25.0-LTS    (when connected to an LTS server)
+-- v1.25.0        (when connected to a stable server)
+```
+
+**4. The `.about` / `.info` dot-commands and the interactive shell banner** in `gizmosql_client_lts` all carry the suffix.
+
+The `-LTS` suffix is also reflected in OpenTelemetry `service.version`, the `gizmosql_version` column on session-instrumentation records, and any other place the server reports its version — so a single string lets you tell at a glance which channel produced any log line, span, or audit row.
 
 ## Artifact naming
 
