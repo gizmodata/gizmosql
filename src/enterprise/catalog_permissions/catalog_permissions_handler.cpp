@@ -317,9 +317,15 @@ bool RewriteShowCommand(const std::string& sql, const std::string& filter_in,
     return true;
   }
 
-  // SHOW SCHEMAS shows schemas across all catalogs (DuckDB v1.5.0+) — needs filtering
+  // SHOW SCHEMAS shows schemas across all catalogs and needs filtering. Use
+  // duckdb_schemas() instead of `SELECT * FROM (SHOW SCHEMAS)` because the
+  // latter only parses on DuckDB v1.5+ (1.4 rejects `SHOW SCHEMAS` as a
+  // subquery); duckdb_schemas() carries the same database_name/schema_name
+  // columns on both channels.
   if (upper == "SHOW SCHEMAS") {
-    rewritten = "SELECT * FROM (SHOW SCHEMAS) WHERE database_name " + filter_in;
+    rewritten = "SELECT database_name, schema_name FROM duckdb_schemas() "
+                "WHERE database_name " + filter_in +
+                " ORDER BY database_name, schema_name";
     return true;
   }
 
