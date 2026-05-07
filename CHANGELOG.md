@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-05-07
+
 ### Changed
 
 - **Client now also accepts `GIZMOSQL_USERNAME` (the server's env var) as a username fallback.** The client previously only honored `GIZMOSQL_USER` while the server only honored `GIZMOSQL_USERNAME`, forcing operators who export both to set two near-identical names. The client still prefers `GIZMOSQL_USER` when both are defined (preserves prior behavior), and an explicit `--username` still wins over both.
