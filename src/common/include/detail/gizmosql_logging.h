@@ -306,4 +306,20 @@ ScopeGuard<F> MakeScopeGuard(F f) {
 #define GIZMOSQL_LOGKV_SESSION_DYNAMIC(SEV, SESSION, MSG, ...) \
     GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(SEV, SEV, SESSION, MSG, __VA_ARGS__)
 
+// Session-aware variant of GIZMOSQL_LOGKV_DYNAMIC_AT: gates on BOTH the
+// component THRESHOLD and the global logger severity (mirrors auth-style
+// behavior, unlike GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT which bypasses the
+// global threshold). Use this for server-wide thresholds that should still
+// defer to --log-level (e.g., session_log_level).
+#define GIZMOSQL_LOGKV_SESSION_AT(THRESHOLD, DISPLAY_SEV, SESSION, MSG, ...) \
+  do {                                                                       \
+    auto _logger_sp = ::arrow::util::LoggerRegistry::GetDefaultLogger();     \
+    auto* _logger = _logger_sp.get();                                        \
+    if (_logger && (DISPLAY_SEV >= THRESHOLD) &&                             \
+        (DISPLAY_SEV >= _logger->severity_threshold())) {                    \
+      ::gizmosql::LogWithFields(DISPLAY_SEV, __FILE__, __LINE__, MSG,        \
+          ::gizmosql::FieldList{SESSION_KV_FIELDS(SESSION), __VA_ARGS__});   \
+    }                                                                        \
+  } while (0)
+
 }  // namespace gizmosql

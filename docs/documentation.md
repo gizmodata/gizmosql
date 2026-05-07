@@ -443,6 +443,7 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | max-metadata-size / GIZMOSQL_MAX_METADATA_SIZE | Max inbound gRPC HTTP/2 header metadata bytes per call (`GRPC_ARG_MAX_METADATA_SIZE`). Raise above the gRPC default of ~8 KB if clients send large per-call metadata (e.g. extra Apache Flight SQL JDBC URL parameters that get forwarded as gRPC headers, large bearer tokens, accumulated cookies, proxy-injected trace headers) | 0 (= use gRPC default) | --max-metadata-size |
 | query-log-level / GIZMOSQL_QUERY_LOG_LEVEL | Query log level | info (if unset) | --query-log-level |
 | auth-log-level / GIZMOSQL_AUTH_LOG_LEVEL | Authentication log level | info (if unset) | --auth-log-level |
+| session-log-level / GIZMOSQL_SESSION_LOG_LEVEL | Client session lifecycle (create/close) log level | info (if unset) | --session-log-level |
 | health-port | Plaintext gRPC health check port (0 = disable) | DEFAULT_HEALTH_PORT | --health-port |
 | health-check-query / GIZMOSQL_HEALTH_CHECK_QUERY | SQL query used for health checks | SELECT 1 | --health-check-query |
 | enable-instrumentation / GIZMOSQL_ENABLE_INSTRUMENTATION | *[Enterprise]* Enable session instrumentation | false | --enable-instrumentation |

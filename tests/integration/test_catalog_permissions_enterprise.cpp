@@ -210,6 +210,7 @@ class BootstrapTokenEnterpriseFixture : public ::testing::Test {
         /*query_timeout=*/0,
         /*query_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*auth_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
+        /*session_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
         /*health_port=*/health_port_,
         /*health_check_query=*/"",
         /*enable_instrumentation=*/false,

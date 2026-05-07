@@ -467,7 +467,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& token_authorized_emails,
     const bool& access_logging_enabled,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const arrow::util::ArrowLogLevel& auth_log_level,
+    const arrow::util::ArrowLogLevel& session_log_level, const int& health_port,
     const std::string& health_check_query,
     const bool& enable_instrumentation,
     const std::string& instrumentation_db_path,
@@ -693,7 +694,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
                                              database_filename.string(), read_only, print_queries,
-                                             query_timeout, query_log_level,
+                                             query_timeout, query_log_level, session_log_level,
                                              nullptr))  // No instrumentation manager yet
 
     // Set instance_id for all future log entries (enables log correlation)
@@ -984,7 +985,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string token_authorized_emails,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const arrow::util::ArrowLogLevel& auth_log_level,
+    const arrow::util::ArrowLogLevel& session_log_level, const int& health_port,
     std::string health_check_query,
     const bool& enable_instrumentation,
     std::string instrumentation_db_path,
@@ -1199,6 +1201,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
                      << log_level_arrow_log_level_to_string(query_log_level);
   GIZMOSQL_LOG(INFO) << "Authentication Log Level is set to: "
                      << log_level_arrow_log_level_to_string(auth_log_level);
+  GIZMOSQL_LOG(INFO) << "Session Log Level is set to: "
+                     << log_level_arrow_log_level_to_string(session_log_level);
 
   // Resolve health check query: CLI arg > env var > default
   if (health_check_query.empty()) {
@@ -1281,7 +1285,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, token_jwks_uri, token_default_role,
       token_authorized_emails, access_logging_enabled, query_timeout,
-      query_log_level, auth_log_level, health_port, health_check_query,
+      query_log_level, auth_log_level, session_log_level, health_port, health_check_query,
       enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, instance_tag,
       allow_cross_instance_tokens,
@@ -1356,6 +1360,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_format, std::string access_log,
                        std::string log_file, int32_t query_timeout,
                        std::string query_log_level, std::string auth_log_level,
+                       std::string session_log_level,
                        int health_port, std::string health_check_query,
                        std::optional<bool> enable_instrumentation,
                        std::string instrumentation_db_path,
@@ -1390,10 +1395,13 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   std::string file_s = pick(log_file, "GIZMOSQL_LOG_FILE", "");
   std::string query_lvl_s = pick(query_log_level, "GIZMOSQL_QUERY_LOG_LEVEL", "info");
   std::string auth_lvl_s = pick(auth_log_level, "GIZMOSQL_AUTH_LOG_LEVEL", "info");
+  std::string session_lvl_s =
+      pick(session_log_level, "GIZMOSQL_SESSION_LOG_LEVEL", "info");
 
   auto level = gizmosql::log_level_string_to_arrow_log_level(lvl_s);
   auto query_level = gizmosql::log_level_string_to_arrow_log_level(query_lvl_s);
   auto auth_level = gizmosql::log_level_string_to_arrow_log_level(auth_lvl_s);
+  auto session_level = gizmosql::log_level_string_to_arrow_log_level(session_lvl_s);
 
   // format
   gizmosql::LogFormat fmt = gizmosql::LogFormat::kText;
@@ -1563,7 +1571,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
       token_default_role, token_authorized_emails, access_logging_enabled,
-      query_timeout, query_level, auth_level, health_port, health_check_query,
+      query_timeout, query_level, auth_level, session_level, health_port, health_check_query,
       enable_instrumentation.value(), instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, instance_tag,
       allow_cross_instance_tokens.value(),

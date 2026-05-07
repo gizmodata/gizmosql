@@ -53,7 +53,8 @@ CreateFlightSQLServer(
     std::string token_authorized_emails,
     const bool& access_logging_enabled, const int32_t& query_timeout,
     const arrow::util::ArrowLogLevel& query_log_level,
-    const arrow::util::ArrowLogLevel& auth_log_level, const int& health_port,
+    const arrow::util::ArrowLogLevel& auth_log_level,
+    const arrow::util::ArrowLogLevel& session_log_level, const int& health_port,
     std::string health_check_query,
     const bool& enable_instrumentation,
     std::string instrumentation_db_path = "",
@@ -110,6 +111,8 @@ struct TestServerConfig {
   bool print_queries = false;                    // Enable query logging
   arrow::util::ArrowLogLevel query_log_level =
       arrow::util::ArrowLogLevel::ARROW_INFO;    // Query log level threshold
+  arrow::util::ArrowLogLevel session_log_level =
+      arrow::util::ArrowLogLevel::ARROW_INFO;    // Session lifecycle log level threshold
   int32_t max_metadata_size = 0;                 // gRPC max header metadata bytes per call (0 = gRPC default ~8 KB)
 };
 
@@ -193,6 +196,7 @@ class ServerTestFixture : public ::testing::Test {
         /*query_timeout=*/0,
         /*query_log_level=*/config_.query_log_level,
         /*auth_log_level=*/arrow::util::ArrowLogLevel::ARROW_INFO,
+        /*session_log_level=*/config_.session_log_level,
         /*health_port=*/config_.health_port,
         /*health_check_query=*/config_.health_check_query,
         /*enable_instrumentation=*/config_.enable_instrumentation,

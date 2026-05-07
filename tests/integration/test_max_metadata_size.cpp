@@ -254,6 +254,7 @@ TEST(MaxMetadataEnvVar, EnvVarRaisesLimit) {
         /*query_timeout=*/0,
         /*query_log_level=*/"warn",
         /*auth_log_level=*/"warn",
+        /*session_log_level=*/"warn",
         /*health_port=*/kHealthPort,
         /*health_check_query=*/"",
         /*enable_instrumentation=*/std::optional<bool>(false),
