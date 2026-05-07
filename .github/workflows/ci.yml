@@ -197,7 +197,7 @@ jobs:
             ${{ env.zip_file_name }}
 
   build-project-linux:
-    name: Build Project - Linux (${{ matrix.duckdb_channel }})
+    name: Build Project - Linux ${{ matrix.platform }} (${{ matrix.duckdb_channel }})
     strategy:
       fail-fast: false
       matrix:
