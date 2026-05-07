@@ -282,7 +282,7 @@ arrow::Status FlightConnection::Connect(const ClientConfig& config) {
         config.auth_type_external || !config.username.empty();
     std::string hint = auth_was_attempted
         ? " — check your credentials"
-        : " — authentication required. Provide --username or set GIZMOSQL_USER";
+        : " — authentication required. Provide --username or set GIZMOSQL_USER (or GIZMOSQL_USERNAME)";
     return arrow::Status::IOError(
         "Connection to " + server_addr + " failed" + hint);
   }

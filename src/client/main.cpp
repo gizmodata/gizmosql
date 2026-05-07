@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
       ("port,p", po::value<int>(&config.port)->default_value(31337),
        "Server port (env: GIZMOSQL_PORT)")
       ("username,u", po::value<std::string>(&config.username),
-       "Username (env: GIZMOSQL_USER)")
+       "Username (env: GIZMOSQL_USER, falls back to GIZMOSQL_USERNAME for parity with the server)")
       ("password,W", "Force password prompt (env: GIZMOSQL_PASSWORD)")
 
       // TLS
@@ -286,7 +286,8 @@ int main(int argc, char** argv) {
   bool host_explicit = (vm.count("host") > 0 && !vm["host"].defaulted()) ||
                        env_set("GIZMOSQL_HOST");
   bool user_explicit = vm.count("username") > 0 ||
-                       env_set("GIZMOSQL_USER");
+                       env_set("GIZMOSQL_USER") ||
+                       env_set("GIZMOSQL_USERNAME");
   bool has_connection_params = host_explicit || user_explicit ||
                                config.auth_type_external || uri_provided;
 
