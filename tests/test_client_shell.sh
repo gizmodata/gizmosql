@@ -32,9 +32,19 @@ PASSWORD="shellpass123"
 DB_FILE="shell_test_client.db"
 export GIZMOSQL_PASSWORD="$PASSWORD"
 
-# Paths - assume we're running from the build directory
-SERVER_BIN="./gizmosql_server"
-CLIENT_BIN="./gizmosql_client"
+# Paths - assume we're running from the build directory.
+# The LTS channel suffixes the binaries with _lts; auto-detect so this
+# script works against either channel without needing per-channel forks.
+if [ -x "./gizmosql_server" ] && [ -x "./gizmosql_client" ]; then
+    SERVER_BIN="./gizmosql_server"
+    CLIENT_BIN="./gizmosql_client"
+elif [ -x "./gizmosql_server_lts" ] && [ -x "./gizmosql_client_lts" ]; then
+    SERVER_BIN="./gizmosql_server_lts"
+    CLIENT_BIN="./gizmosql_client_lts"
+else
+    SERVER_BIN="./gizmosql_server"  # let the existence check below fail
+    CLIENT_BIN="./gizmosql_client"  # with the canonical error message
+fi
 
 # Cleanup function
 cleanup() {

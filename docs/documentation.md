@@ -46,14 +46,20 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ## Component Versions
 
-| Component                                                                        | Version |
-|----------------------------------------------------------------------------------|---------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.2  |
-| [SQLite](https://sqlite.org)                                                     | 3.52.0  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1 |
-| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2  |
-| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0 |
-| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
+| Component                                                                        | Stable channel | LTS channel |
+|----------------------------------------------------------------------------------|----------------|-------------|
+| [DuckDB](https://duckdb.org)                                                     | v1.5.2         | v1.4.4      |
+| [SQLite](https://sqlite.org)                                                     | 3.52.0         | 3.52.0      |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1         | 23.0.1      |
+| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      |
+| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0        | v1.25.0     |
+| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     |
+
+### Release channels
+
+GizmoSQL ships two parallel release channels: **stable** (latest DuckDB minor) and **LTS** (most recent DuckDB long-term-support release). Both channels carry every GizmoSQL fix and feature; they only differ in which DuckDB release is bundled. LTS artifacts use an `_lts`/`-lts` suffix so they can coexist with stable installs.
+
+See the [LTS Channel guide](lts_channel.md) for details on which DuckDB versions are LTS, artifact naming, install commands, and how to switch channels in production. The DuckDB [release calendar](https://duckdb.org/release_calendar) is the authoritative source for current LTS designations and end-of-support dates.
 
 ### Running from Docker Image
 

@@ -4,6 +4,7 @@
 
 * Getting Started
   * [Editions](editions.md)
+  * [LTS Channel](lts_channel.md)
   * [Security Guide](security.md)
   * [Python ADBC Driver](python_adbc.md)
   * [Client Shell](client.md)

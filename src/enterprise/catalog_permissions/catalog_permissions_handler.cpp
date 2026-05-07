@@ -77,7 +77,15 @@ bool HasWriteAccess(const ClientSession& client_session, const std::string& cata
 
 arrow::Status CheckCatalogWriteAccess(
     const std::shared_ptr<ClientSession>& client_session,
-    const std::unordered_map<std::string, duckdb::StatementProperties::ModificationInfo>& modified_databases,
+    const std::unordered_map<std::string,
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+        // DuckDB v1.4.x called this nested type CatalogIdentity;
+        // v1.5 renamed it to ModificationInfo (same shape).
+        duckdb::StatementProperties::CatalogIdentity
+#else
+        duckdb::StatementProperties::ModificationInfo
+#endif
+    >& modified_databases,
     std::shared_ptr<gizmosql::ddb::InstrumentationManager> instrumentation_manager,
     const std::string& statement_id,
     const std::string& logged_sql,
@@ -309,9 +317,15 @@ bool RewriteShowCommand(const std::string& sql, const std::string& filter_in,
     return true;
   }
 
-  // SHOW SCHEMAS shows schemas across all catalogs (DuckDB v1.5.0+) — needs filtering
+  // SHOW SCHEMAS shows schemas across all catalogs and needs filtering. Use
+  // duckdb_schemas() instead of `SELECT * FROM (SHOW SCHEMAS)` because the
+  // latter only parses on DuckDB v1.5+ (1.4 rejects `SHOW SCHEMAS` as a
+  // subquery); duckdb_schemas() carries the same database_name/schema_name
+  // columns on both channels.
   if (upper == "SHOW SCHEMAS") {
-    rewritten = "SELECT * FROM (SHOW SCHEMAS) WHERE database_name " + filter_in;
+    rewritten = "SELECT database_name, schema_name FROM duckdb_schemas() "
+                "WHERE database_name " + filter_in +
+                " ORDER BY database_name, schema_name";
     return true;
   }
 

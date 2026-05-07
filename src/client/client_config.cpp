@@ -99,7 +99,13 @@ void ResolveEnvironmentVariables(ClientConfig& config) {
   }
 
   if (config.username.empty()) {
+    // GIZMOSQL_USER is the historical client env var. The server uses
+    // GIZMOSQL_USERNAME — accept that too as a fallback so a single
+    // env-var setup works for both, and operators don't have to maintain
+    // two near-identical names.
     if (const char* val = get_env("GIZMOSQL_USER")) {
+      config.username = val;
+    } else if (const char* val = get_env("GIZMOSQL_USERNAME")) {
       config.username = val;
     }
   }

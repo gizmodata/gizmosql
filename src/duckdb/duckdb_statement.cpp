@@ -612,6 +612,11 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     case duckdb::LogicalTypeId::SQLNULL:
     case duckdb::LogicalTypeId::UNKNOWN:
     case duckdb::LogicalTypeId::ANY:
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+    // DuckDB v1.4.x still carries LogicalTypeId::USER as a distinct enum
+    // value; v1.5+ folded it into UNBOUND, so the case is omitted there.
+    case duckdb::LogicalTypeId::USER:
+#endif
       return arrow::null();
     case duckdb::LogicalTypeId::LIST: {
       auto child_type = duckdb::ListType::GetChildType(duckdb_type);
@@ -637,12 +642,15 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
       auto array_size = duckdb::ArrayType::GetSize(duckdb_type);
       return arrow::fixed_size_list(GetDataTypeFromDuckDbType(child_type), array_size);
     }
+#if !GIZMOSQL_DUCKDB_CHANNEL_LTS
     case duckdb::LogicalTypeId::VARIANT:
       // VARIANT is self-describing typed binary data (DuckDB v1.5.0+).
       // DuckDB's Arrow exporter does not yet support VARIANT natively, so
       // clients should cast to VARCHAR or JSON before querying:
       //   SELECT v::VARCHAR FROM t;
+      // Not present in the LTS channel (v1.4.x).
       return arrow::binary();
+#endif
     case duckdb::LogicalTypeId::POINTER:
     case duckdb::LogicalTypeId::VALIDITY:
     case duckdb::LogicalTypeId::UUID:

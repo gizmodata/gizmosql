@@ -701,13 +701,19 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 
-  // Get path to the server executable - try multiple possible locations
+  // Get path to the server executable - try multiple possible locations.
+  // The LTS channel suffixes the binary with _lts, so we probe both names.
   fs::path server_exe;
-  std::vector<fs::path> search_paths = {
-      fs::current_path() / "build" / "gizmosql_server",      // CI: ./build/gizmosql_server
-      fs::current_path() / "gizmosql_server",                 // ./gizmosql_server
-      fs::current_path().parent_path() / "gizmosql_server",   // ../gizmosql_server (local dev)
-  };
+  std::vector<fs::path> search_paths;
+  for (const char* name : {"gizmosql_server",
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+                           "gizmosql_server_lts",
+#endif
+                          }) {
+    search_paths.push_back(fs::current_path() / "build" / name);   // CI: ./build/<name>
+    search_paths.push_back(fs::current_path() / name);              // ./<name>
+    search_paths.push_back(fs::current_path().parent_path() / name);// ../<name> (local dev)
+  }
 
   for (const auto& path : search_paths) {
     if (fs::exists(path)) {
@@ -902,13 +908,19 @@ TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 
-  // Get path to the server executable - try multiple possible locations
+  // Get path to the server executable - try multiple possible locations.
+  // The LTS channel suffixes the binary with _lts, so we probe both names.
   fs::path server_exe;
-  std::vector<fs::path> search_paths = {
-      fs::current_path() / "build" / "gizmosql_server",      // CI: ./build/gizmosql_server
-      fs::current_path() / "gizmosql_server",                 // ./gizmosql_server
-      fs::current_path().parent_path() / "gizmosql_server",   // ../gizmosql_server (local dev)
-  };
+  std::vector<fs::path> search_paths;
+  for (const char* name : {"gizmosql_server",
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+                           "gizmosql_server_lts",
+#endif
+                          }) {
+    search_paths.push_back(fs::current_path() / "build" / name);   // CI: ./build/<name>
+    search_paths.push_back(fs::current_path() / name);              // ./<name>
+    search_paths.push_back(fs::current_path().parent_path() / name);// ../<name> (local dev)
+  }
 
   for (const auto& path : search_paths) {
     if (fs::exists(path)) {
