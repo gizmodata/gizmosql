@@ -1,6 +1,8 @@
 # 🚀 GizmoSQL — High-Performance SQL Server for the Cloud
 
 [![DockerHub](https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker)](https://hub.docker.com/r/gizmodata/gizmosql)
+[![DockerHub LTS](https://img.shields.io/badge/dockerhub-LTS%20image-blue.svg?logo=Docker)](https://hub.docker.com/r/gizmodata/gizmosql-lts)
+[![LTS Channel](https://img.shields.io/badge/LTS-channel%20guide-orange.svg)](https://docs.gizmosql.com/#/lts_channel)
 [![GitHub Container](https://img.shields.io/badge/github--package-container--image-green.svg?logo=Docker)](https://github.com/gizmodata/gizmosql/pkgs/container/gizmosql)
 [![Documentation](https://img.shields.io/badge/Documentation-dev-yellow.svg)](https://arrow.apache.org/docs/format/FlightSql.html)
 [![GitHub](https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql-blue.svg?logo=Github)](https://github.com/gizmodata/gizmosql)
