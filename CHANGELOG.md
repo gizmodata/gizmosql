@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.1] - 2026-05-07
+
+### Fixed
+
+- **`GIZMOSQL_VERSION()` SQL function and `gizmosql_client` `--version` / `.about` / `.info` / interactive shell banner now reflect the `-LTS` suffix on LTS builds.** All four sites still used the raw `PROJECT_VERSION` git tag and silently dropped the channel marker. Switched to `GIZMOSQL_SERVER_VERSION`, which already had the channel-aware suffix logic. Stable builds are unchanged. Updated the LTS Channel docs to enumerate all four reporting surfaces.
+
 ## [1.25.0] - 2026-05-07
 
 ### Changed
