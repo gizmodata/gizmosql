@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-05-06
+
 ### Added
 
 - **`--session-log-level` / `GIZMOSQL_SESSION_LOG_LEVEL`.** New server option that controls the severity threshold for client session lifecycle messages (`session_create`, `session_close`). Mirrors `--auth-log-level`: server-wide, set at startup, defers to the global `--log-level`. Lets operators silence per-session create/close chatter (set to `warn`) without losing other INFO logs, or surface them only when running at `--log-level debug`. Available via the CLI flag, the env var, and the `RunFlightSQLServer()` library API. Default: `info`.
