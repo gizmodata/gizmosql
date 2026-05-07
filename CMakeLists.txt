@@ -324,6 +324,22 @@ set_property(TARGET duckdb APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${DUCKD
 # BEFORE PRIVATE below win ordering.
 set_property(TARGET duckdb PROPERTY IMPORTED_NO_SYSTEM TRUE)
 
+# duckdb_generated_extension_loader is a new static library introduced
+# in DuckDB v1.5 (LTS / v1.4.x doesn't ship it). It has unresolved
+# references to each linked extension's symbols, so it MUST come BEFORE
+# the extension libs in the link order — static archives are scanned
+# in declaration order, and an earlier-listed archive can only be
+# pulled in if an already-scanned object referenced its symbols.
+# Putting the loader after the extensions linked on amd64 (lenient
+# resolver) but failed on arm64 with "undefined reference to vtable
+# for duckdb::IcuExtension" etc. Empty string when LTS so the slot
+# collapses out of the list.
+set(_GIZMOSQL_DUCKDB_GENERATED_LOADER "")
+if(NOT GIZMOSQL_DUCKDB_CHANNEL_LTS)
+    set(_GIZMOSQL_DUCKDB_GENERATED_LOADER
+        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}")
+endif()
+
 target_link_libraries(duckdb
         INTERFACE
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_fastpforlib${LIB_SUFFIX}"
@@ -337,21 +353,13 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_utf8proc${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_yyjson${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_zstd${LIB_SUFFIX}"
+        ${_GIZMOSQL_DUCKDB_GENERATED_LOADER}
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}icu_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}tpch_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
 )
-
-# duckdb_generated_extension_loader is a new static library introduced
-# in DuckDB v1.5; the LTS channel (v1.4.x) doesn't ship it.
-if(NOT GIZMOSQL_DUCKDB_CHANNEL_LTS)
-    target_link_libraries(duckdb
-            INTERFACE
-            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
-    )
-endif()
 
 # Out-of-tree DuckDB extensions are only statically linked on iOS
 # (which is compiled with DISABLE_EXTENSION_LOAD for App Store
