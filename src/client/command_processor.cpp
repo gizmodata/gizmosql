@@ -43,6 +43,7 @@
 #include "output_renderer.hpp"
 #include "password_prompt.hpp"
 #include "version.h"
+#include "gizmosql_library.h"  // GIZMOSQL_SERVER_VERSION (channel-aware)
 
 namespace gizmosql::client {
 
@@ -910,7 +911,7 @@ CommandResult CommandProcessor::Process(const std::string& line) {
   // .about
   if (cmd == ".about") {
     auto& out = *config_.output_stream;
-    out << "GizmoSQL Client " << PROJECT_VERSION << "\n"
+    out << "GizmoSQL Client " << GIZMOSQL_SERVER_VERSION << "\n"
         << "\n"
         << "Copyright (c) 2024-2026 GizmoData LLC\n"
         << "https://gizmodata.com\n"
@@ -1001,7 +1002,7 @@ void CommandProcessor::ShowSettings() {
 
   // --- Client ---
   out << "--- Client ---\n";
-  out << "     version: " << PROJECT_VERSION << "\n";
+  out << "     version: " << GIZMOSQL_SERVER_VERSION << "\n";
 
   // --- Server ---
   if (conn_.IsConnected()) {
