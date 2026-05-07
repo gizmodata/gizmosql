@@ -26,14 +26,62 @@ if(WIN32)
     set(EXE_SUFFIX ".exe")
 endif()
 
+# --------------------- DuckDB Channel ---------------------
+# Two release channels are supported:
+#   stable  → tracks the latest DuckDB minor release (current default)
+#   lts     → tracks the most recent DuckDB LTS release
+# The LTS channel produces parallel artifacts (gizmosql_server_lts,
+# gizmosql_cli_<os>_<arch>-lts.zip, gizmodata/gizmosql-lts:*) so both
+# variants can be installed side-by-side.
+set(GIZMOSQL_DUCKDB_CHANNEL "stable" CACHE STRING
+    "DuckDB release channel for this build: stable | lts")
+set_property(CACHE GIZMOSQL_DUCKDB_CHANNEL PROPERTY STRINGS stable lts)
+
+set(DUCKDB_STABLE_VERSION "v1.5.2" CACHE STRING
+    "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=stable")
+set(DUCKDB_LTS_VERSION "v1.4.4" CACHE STRING
+    "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=lts")
+
+if(GIZMOSQL_DUCKDB_CHANNEL STREQUAL "lts")
+    set(DUCKDB_GIT_TAG "${DUCKDB_LTS_VERSION}")
+    set(GIZMOSQL_ARTIFACT_SUFFIX_DASH "-lts")
+    set(GIZMOSQL_ARTIFACT_SUFFIX_UNDER "_lts")
+    set(GIZMOSQL_DUCKDB_CHANNEL_LTS 1)
+elseif(GIZMOSQL_DUCKDB_CHANNEL STREQUAL "stable")
+    set(DUCKDB_GIT_TAG "${DUCKDB_STABLE_VERSION}")
+    set(GIZMOSQL_ARTIFACT_SUFFIX_DASH "")
+    set(GIZMOSQL_ARTIFACT_SUFFIX_UNDER "")
+    set(GIZMOSQL_DUCKDB_CHANNEL_LTS 0)
+else()
+    message(FATAL_ERROR
+        "GIZMOSQL_DUCKDB_CHANNEL must be 'stable' or 'lts' (got '${GIZMOSQL_DUCKDB_CHANNEL}')")
+endif()
+
+message(STATUS "GIZMOSQL_DUCKDB_CHANNEL: ${GIZMOSQL_DUCKDB_CHANNEL} (DuckDB ${DUCKDB_GIT_TAG})")
+
+# Make the channel visible to source code:
+#   GIZMOSQL_DUCKDB_CHANNEL_LTS  — 0/1, suitable for `#if`
+#   GIZMOSQL_DUCKDB_CHANNEL_NAME — "stable"/"lts" string literal
+#   GIZMOSQL_DUCKDB_VERSION_TAG  — git tag of the linked DuckDB (e.g. "v1.5.2")
+add_compile_definitions(
+    GIZMOSQL_DUCKDB_CHANNEL_LTS=${GIZMOSQL_DUCKDB_CHANNEL_LTS}
+    GIZMOSQL_DUCKDB_CHANNEL_NAME="${GIZMOSQL_DUCKDB_CHANNEL}"
+    GIZMOSQL_DUCKDB_VERSION_TAG="${DUCKDB_GIT_TAG}"
+)
+
 # --------------------- Enterprise Edition Option ---------------------
 option(GIZMOSQL_ENTERPRISE "Build with enterprise features (instrumentation, kill session)" ON)
 
-# --------------------- iOS: force Core edition, no OTel ---------------------
+# --------------------- iOS: force Core edition, no OTel, stable channel ---------------------
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(GIZMOSQL_ENTERPRISE OFF CACHE BOOL "Enterprise disabled on iOS" FORCE)
     set(WITH_OPENTELEMETRY OFF CACHE BOOL "OTel disabled on iOS" FORCE)
-    message(STATUS "Building GizmoSQL iOS Edition (Core only)")
+    if(NOT GIZMOSQL_DUCKDB_CHANNEL STREQUAL "stable")
+        message(FATAL_ERROR
+            "iOS builds only support GIZMOSQL_DUCKDB_CHANNEL=stable "
+            "(LTS extension pins are not synced for iOS).")
+    endif()
+    message(STATUS "Building GizmoSQL iOS Edition (Core only, stable channel)")
 endif()
 
 if(GIZMOSQL_ENTERPRISE)
@@ -93,16 +141,16 @@ configure_file(
 if(WIN32)
     set(RC_ICON_PATH "${CMAKE_SOURCE_DIR}/installer/gizmosql.ico")
     set(RC_FILE_DESCRIPTION "GizmoSQL Server")
-    set(RC_INTERNAL_NAME "gizmosql_server")
-    set(RC_ORIGINAL_FILENAME "gizmosql_server.exe")
+    set(RC_INTERNAL_NAME "gizmosql_server${GIZMOSQL_ARTIFACT_SUFFIX_UNDER}")
+    set(RC_ORIGINAL_FILENAME "gizmosql_server${GIZMOSQL_ARTIFACT_SUFFIX_UNDER}.exe")
     configure_file(
             ${CMAKE_SOURCE_DIR}/src/common/version.rc.in
             ${CMAKE_BINARY_DIR}/gizmosql_server_version.rc
     )
     set(RC_ICON_PATH "${CMAKE_SOURCE_DIR}/installer/gizmosql_client.ico")
     set(RC_FILE_DESCRIPTION "GizmoSQL Client")
-    set(RC_INTERNAL_NAME "gizmosql_client")
-    set(RC_ORIGINAL_FILENAME "gizmosql_client.exe")
+    set(RC_INTERNAL_NAME "gizmosql_client${GIZMOSQL_ARTIFACT_SUFFIX_UNDER}")
+    set(RC_ORIGINAL_FILENAME "gizmosql_client${GIZMOSQL_ARTIFACT_SUFFIX_UNDER}.exe")
     configure_file(
             ${CMAKE_SOURCE_DIR}/src/common/version.rc.in
             ${CMAKE_BINARY_DIR}/gizmosql_client_version.rc
@@ -289,13 +337,21 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_utf8proc${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_yyjson${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_zstd${LIB_SUFFIX}"
-        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}parquet_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}core_functions_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}icu_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}tpch_extension${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_skiplistlib${LIB_SUFFIX}"
 )
+
+# duckdb_generated_extension_loader is a new static library introduced
+# in DuckDB v1.5; the LTS channel (v1.4.x) doesn't ship it.
+if(NOT GIZMOSQL_DUCKDB_CHANNEL_LTS)
+    target_link_libraries(duckdb
+            INTERFACE
+            "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}"
+    )
+endif()
 
 # Out-of-tree DuckDB extensions are only statically linked on iOS
 # (which is compiled with DISABLE_EXTENSION_LOAD for App Store
@@ -649,6 +705,9 @@ add_executable(gizmosql_server
         $<$<BOOL:${WIN32}>:${CMAKE_BINARY_DIR}/gizmosql_server_version.rc>
 )
 
+set_target_properties(gizmosql_server PROPERTIES
+        OUTPUT_NAME "gizmosql_server${GIZMOSQL_ARTIFACT_SUFFIX_UNDER}")
+
 target_link_libraries(gizmosql_server PRIVATE
         gizmosqlserver
         ${Boost_LIBRARIES}
@@ -725,6 +784,9 @@ if(WIN32)
 endif()
 
 add_executable(gizmosql_client ${GIZMOSQL_CLIENT_SRCS})
+
+set_target_properties(gizmosql_client PROPERTIES
+        OUTPUT_NAME "gizmosql_client${GIZMOSQL_ARTIFACT_SUFFIX_UNDER}")
 
 target_include_directories(gizmosql_client
         PRIVATE

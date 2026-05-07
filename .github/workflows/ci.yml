@@ -22,15 +22,24 @@ on:
 
 env:
   DOCKERHUB_IMAGE_NAME: gizmodata/gizmosql
+  DOCKERHUB_LTS_IMAGE_NAME: gizmodata/gizmosql-lts
   GITHUB_IMAGE_NAME: ghcr.io/gizmodata/gizmosql
+  GITHUB_LTS_IMAGE_NAME: ghcr.io/gizmodata/gizmosql-lts
   CMAKE_BUILD_TYPE: ${{ github.event.inputs.cmake_build_type || 'Release' }}
 
 jobs:
   build-project-macos:
-    name: Build Project - MacOS
+    name: Build Project - MacOS (${{ matrix.duckdb_channel }})
     runs-on: macos-14-xlarge
+    strategy:
+      fail-fast: false
+      matrix:
+        duckdb_channel: [stable, lts]
     env:
-      zip_file_name: gizmosql_cli_macos_arm64.zip
+      # Stable produces gizmosql_cli_macos_arm64.zip (unchanged); LTS
+      # gets the _lts suffix so both can land in the release together.
+      zip_file_name: gizmosql_cli_macos_arm64${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}.zip
+      bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,9 +71,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/third_party
-          key: arrow-macos-arm64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
           restore-keys: |
-            arrow-macos-arm64-apache-arrow-23.0.1-
+            arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -77,6 +86,7 @@ jobs:
           options: |
             GIZMOSQL_ENTERPRISE=ON
             WITH_OPENTELEMETRY=ON
+            GIZMOSQL_DUCKDB_CHANNEL=${{ matrix.duckdb_channel }}
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
             OPENSSL_ROOT_DIR=${{ env.OPENSSL_ROOT_DIR }}
@@ -90,7 +100,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/third_party
-          key: arrow-macos-arm64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Run Tests (Core Edition - No License)
         run: |
@@ -127,7 +137,7 @@ jobs:
           pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb
 
           # Start server in background
-          ./build/gizmosql_server --password gizmosql_password &
+          ./build/gizmosql_server${{ env.bin_suffix }} --password gizmosql_password &
           SERVER_PID=$!
           sleep 5
 
@@ -161,7 +171,7 @@ jobs:
           username: ${{ secrets.APPLE_ID_USERNAME }}
           password: ${{ secrets.APPLE_ID_PASSWORD }}
           apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          app-path: build/gizmosql_server
+          app-path: build/gizmosql_server${{ env.bin_suffix }}
           entitlements-path: macos/entitlements.plist
 
       - name: Sign and notarize the client release build
@@ -172,12 +182,12 @@ jobs:
           username: ${{ secrets.APPLE_ID_USERNAME }}
           password: ${{ secrets.APPLE_ID_PASSWORD }}
           apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          app-path: build/gizmosql_client
+          app-path: build/gizmosql_client${{ env.bin_suffix }}
 
       - name: Zip artifacts
         run: |
-          mv build/gizmosql_server build/gizmosql_client .
-          zip -j ${{ env.zip_file_name }} gizmosql_server gizmosql_client
+          mv build/gizmosql_server${{ env.bin_suffix }} build/gizmosql_client${{ env.bin_suffix }} .
+          zip -j ${{ env.zip_file_name }} gizmosql_server${{ env.bin_suffix }} gizmosql_client${{ env.bin_suffix }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -187,19 +197,33 @@ jobs:
             ${{ env.zip_file_name }}
 
   build-project-linux:
-    name: Build Project - Linux
+    name: Build Project - Linux (${{ matrix.duckdb_channel }})
     strategy:
+      fail-fast: false
       matrix:
         include:
           - platform: amd64
             os: linux
             runner: ubuntu-latest
+            duckdb_channel: stable
           - platform: arm64
             os: linux
             runner: ubuntu-24.04-arm
+            duckdb_channel: stable
+          - platform: amd64
+            os: linux
+            runner: ubuntu-latest
+            duckdb_channel: lts
+          - platform: arm64
+            os: linux
+            runner: ubuntu-24.04-arm
+            duckdb_channel: lts
     runs-on: ${{ matrix.runner }}
     env:
-      zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}.zip
+      zip_file_name: gizmosql_cli_${{ matrix.os }}_${{ matrix.platform }}${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}.zip
+      bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
+      docker_image: ${{ matrix.duckdb_channel == 'lts' && 'gizmodata/gizmosql-lts' || 'gizmodata/gizmosql' }}
+      docker_image_ghcr: ${{ matrix.duckdb_channel == 'lts' && 'ghcr.io/gizmodata/gizmosql-lts' || 'ghcr.io/gizmodata/gizmosql' }}
     services:
       # PostgreSQL for general DuckLake tests
       postgres:
@@ -256,9 +280,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/third_party
-          key: arrow-linux-${{ matrix.platform }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
           restore-keys: |
-            arrow-linux-${{ matrix.platform }}-apache-arrow-23.0.1-
+            arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -272,6 +296,7 @@ jobs:
             CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
             GIZMOSQL_ENTERPRISE=ON
             WITH_OPENTELEMETRY=ON
+            GIZMOSQL_DUCKDB_CHANNEL=${{ matrix.duckdb_channel }}
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
 
@@ -280,7 +305,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/third_party
-          key: arrow-linux-${{ matrix.platform }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Start MinIO and setup bucket
         run: |
@@ -344,7 +369,7 @@ jobs:
           pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb
 
           # Start server in background
-          ./build/gizmosql_server --password gizmosql_password &
+          ./build/gizmosql_server${{ env.bin_suffix }} --password gizmosql_password &
           SERVER_PID=$!
           sleep 5
 
@@ -372,8 +397,8 @@ jobs:
 
       - name: Zip artifacts
         run: |
-          mv build/gizmosql_server build/gizmosql_client .
-          zip -j ${{ env.zip_file_name }} gizmosql_server gizmosql_client
+          mv build/gizmosql_server${{ env.bin_suffix }} build/gizmosql_client${{ env.bin_suffix }} .
+          zip -j ${{ env.zip_file_name }} gizmosql_server${{ env.bin_suffix }} gizmosql_client${{ env.bin_suffix }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -388,6 +413,18 @@ jobs:
           # Replace / with - to make valid Docker tag
           SANITIZED_REF=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
           echo "ref_name=${SANITIZED_REF}" >> $GITHUB_OUTPUT
+
+      - name: Stage executables for Docker build
+        # Dockerfile.ci / Dockerfile-slim.ci COPY gizmosql_server and
+        # gizmosql_client by hard-coded path. For the LTS channel the
+        # binaries are built as gizmosql_server_lts / gizmosql_client_lts;
+        # rename them at the source so the same Dockerfiles work for both
+        # channels and the resulting image keeps a stable in-container
+        # binary name (/usr/local/bin/gizmosql_server).
+        if: matrix.duckdb_channel == 'lts'
+        run: |
+          mv gizmosql_server_lts gizmosql_server
+          mv gizmosql_client_lts gizmosql_client
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -410,11 +447,15 @@ jobs:
           platforms: linux/${{ matrix.platform }}
           file: Dockerfile.ci
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
+          # The DuckDB CLI tag baked in for ad-hoc shell use must match
+          # the channel; default in the Dockerfile is the stable version.
+          build-args: |
+            DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.4' || '1.5.2' }}
           tags: |
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
-            ${{ env.GITHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}
-            ${{ env.GITHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
+            ${{ env.docker_image }}:latest-${{ matrix.platform }}
+            ${{ env.docker_image }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
+            ${{ env.docker_image_ghcr }}:latest-${{ matrix.platform }}
+            ${{ env.docker_image_ghcr }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
           no-cache: true
           provenance: false
 
@@ -426,21 +467,27 @@ jobs:
           file: Dockerfile-slim.ci
           push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: |
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}-slim
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
-            ${{ env.GITHUB_IMAGE_NAME }}:latest-${{ matrix.platform }}-slim
-            ${{ env.GITHUB_IMAGE_NAME }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
+            ${{ env.docker_image }}:latest-${{ matrix.platform }}-slim
+            ${{ env.docker_image }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
+            ${{ env.docker_image_ghcr }}:latest-${{ matrix.platform }}-slim
+            ${{ env.docker_image_ghcr }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
           no-cache: true
           provenance: false
 
   build-project-windows:
-    name: Build Project - Windows (x64)
+    name: Build Project - Windows (x64, ${{ matrix.duckdb_channel }})
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        duckdb_channel: [stable, lts]
     env:
       VCPKG_DEFAULT_TRIPLET: x64-windows-static
       # VS 2022 sets VCPKG_ROOT to its own vcpkg copy, conflicting with the
       # runner's vcpkg at C:\vcpkg. Override to suppress the mismatch warning.
       VCPKG_ROOT: C:\vcpkg
+      bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
+      unsigned_artifact: gizmosql-windows-amd64-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -500,9 +547,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/third_party
-          key: arrow-windows-x64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
           restore-keys: |
-            arrow-windows-x64-apache-arrow-23.0.1-
+            arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -516,7 +563,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DVCPKG_MANIFEST_MODE=OFF `
-            -DGIZMOSQL_ENTERPRISE=ON
+            -DGIZMOSQL_ENTERPRISE=ON `
+            -DGIZMOSQL_DUCKDB_CHANNEL=${{ matrix.duckdb_channel }}
 
       - name: Build
         run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }}
@@ -526,7 +574,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/third_party
-          key: arrow-windows-x64-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Copy VC++ runtime DLLs for DuckDB extension compatibility
         run: |
@@ -541,19 +589,27 @@ jobs:
       - name: Upload unsigned executables for signing
         uses: actions/upload-artifact@v4
         with:
-          name: gizmosql-windows-amd64-unsigned
+          name: ${{ env.unsigned_artifact }}
           path: |
-            build/gizmosql_server.exe
-            build/gizmosql_client.exe
+            build/gizmosql_server${{ env.bin_suffix }}.exe
+            build/gizmosql_client${{ env.bin_suffix }}.exe
             build/vcruntime140.dll
             build/vcruntime140_1.dll
             build/msvcp140.dll
 
   sign-windows:
-    name: Sign Windows (amd64)
+    name: Sign Windows (amd64, ${{ matrix.duckdb_channel }})
     needs: build-project-windows
     runs-on: windows-latest
     environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        duckdb_channel: [stable, lts]
+    env:
+      unsigned_artifact: gizmosql-windows-amd64-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
+      signed_artifact: gizmosql-windows-amd64-signed${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
+      cli_zip_name: gizmosql_cli_windows_amd64${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}.zip
     permissions:
       id-token: write
       contents: read
@@ -561,7 +617,7 @@ jobs:
       - name: Download unsigned executables
         uses: actions/download-artifact@v4
         with:
-          name: gizmosql-windows-amd64-unsigned
+          name: ${{ env.unsigned_artifact }}
           path: unsigned
 
       - name: Azure Login
@@ -591,25 +647,34 @@ jobs:
       - name: Upload signed executables
         uses: actions/upload-artifact@v4
         with:
-          name: gizmosql-windows-amd64-signed
+          name: ${{ env.signed_artifact }}
           path: unsigned/**/*.exe
           if-no-files-found: error
 
       - name: Create signed zip
         run: |
-          7z a gizmosql_cli_windows_amd64.zip .\unsigned\*.exe .\unsigned\*.dll
+          7z a ${{ env.cli_zip_name }} .\unsigned\*.exe .\unsigned\*.dll
 
       - name: Upload signed zip
         uses: actions/upload-artifact@v4
         with:
-          name: gizmosql_cli_windows_amd64.zip
-          path: gizmosql_cli_windows_amd64.zip
+          name: ${{ env.cli_zip_name }}
+          path: ${{ env.cli_zip_name }}
 
   build-msi:
-    name: Build MSI (amd64)
+    name: Build MSI (amd64, ${{ matrix.duckdb_channel }})
     needs: sign-windows
     runs-on: windows-latest
     environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        duckdb_channel: [stable, lts]
+    env:
+      signed_artifact: gizmosql-windows-amd64-signed${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
+      msi_artifact: GizmoSQL-amd64${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}-msi.zip
+      msi_filename: GizmoSQL-amd64${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}.msi
+      bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
     permissions:
       id-token: write
       contents: read
@@ -620,7 +685,7 @@ jobs:
       - name: Download signed executables
         uses: actions/download-artifact@v4
         with:
-          name: gizmosql-windows-amd64-signed
+          name: ${{ env.signed_artifact }}
           path: installer/bin
 
       - name: Copy VC++ runtime DLLs
@@ -628,6 +693,16 @@ jobs:
           Copy-Item "$env:SystemRoot\System32\vcruntime140.dll" installer\bin\
           Copy-Item "$env:SystemRoot\System32\vcruntime140_1.dll" installer\bin\
           Copy-Item "$env:SystemRoot\System32\msvcp140.dll" installer\bin\
+
+      - name: Stage binaries for WiX (LTS strips the _lts suffix)
+        # GizmoSQL.wxs references gizmosql_server.exe / gizmosql_client.exe
+        # by literal filename. For the LTS channel the signed binaries
+        # carry the _lts suffix, so rename them in place — the MSI itself
+        # is the channel marker (filename is GizmoSQL-amd64-lts.msi).
+        if: matrix.duckdb_channel == 'lts'
+        run: |
+          Move-Item installer\bin\gizmosql_server_lts.exe installer\bin\gizmosql_server.exe -Force
+          Move-Item installer\bin\gizmosql_client_lts.exe installer\bin\gizmosql_client.exe -Force
 
       - name: Install WiX Toolset
         run: |
@@ -667,7 +742,7 @@ jobs:
             -arch x64 `
             -b BinDir="${{ github.workspace }}\installer\bin" `
             -b "${{ github.workspace }}\installer" `
-            -o "${{ github.workspace }}\installer\GizmoSQL-amd64.msi" `
+            -o "${{ github.workspace }}\installer\${{ env.msi_filename }}" `
             -ext WixToolset.UI.wixext
 
       - name: Azure Login
@@ -690,13 +765,13 @@ jobs:
             --timestamp-digest sha256 `
             --file-digest sha256 `
             --verbose `
-            "${{ github.workspace }}\installer\GizmoSQL-amd64.msi"
+            "${{ github.workspace }}\installer\${{ env.msi_filename }}"
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: GizmoSQL-amd64-msi.zip
-          path: installer/GizmoSQL-amd64.msi
+          name: ${{ env.msi_artifact }}
+          path: installer/${{ env.msi_filename }}
           if-no-files-found: error
 
   create-release:
@@ -750,6 +825,32 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: artifacts/GizmoSQL-amd64.msi
+
+      # ----- LTS channel artifacts -----
+      - name: Attest build provenance - Linux AMD64 (LTS)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_linux_amd64_lts.zip
+
+      - name: Attest build provenance - Linux ARM64 (LTS)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_linux_arm64_lts.zip
+
+      - name: Attest build provenance - macOS ARM64 (LTS)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_macos_arm64_lts.zip
+
+      - name: Attest build provenance - Windows AMD64 (LTS)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/gizmosql_cli_windows_amd64_lts.zip
+
+      - name: Attest build provenance - Windows AMD64 MSI (LTS)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/GizmoSQL-amd64-lts.msi
 
       - name: Extract release notes from CHANGELOG.md
         id: changelog
@@ -830,6 +931,35 @@ jobs:
         with:
           inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
           images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
+          push: true
+
+      # ====== LTS channel manifests ======
+      - name: Create and push full manifest images - DockerHub (LTS)
+        uses: Noelware/docker-manifest-action@0.4.3
+        with:
+          inputs: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}
+          images: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-amd64,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-arm64
+          push: true
+
+      - name: Create and push slim manifest images - DockerHub (LTS)
+        uses: Noelware/docker-manifest-action@0.4.3
+        with:
+          inputs: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-slim,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}-slim
+          images: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-amd64-slim,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-arm64-slim
+          push: true
+
+      - name: Create and push full manifest images - Github (LTS)
+        uses: Noelware/docker-manifest-action@0.4.3
+        with:
+          inputs: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest,${{ env.GITHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}
+          images: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-arm64
+          push: true
+
+      - name: Create and push slim manifest images - Github (LTS)
+        uses: Noelware/docker-manifest-action@0.4.3
+        with:
+          inputs: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}-slim
+          images: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-arm64-slim
           push: true
 
   update-homebrew-tap:
@@ -939,6 +1069,117 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/gizmosql.rb
           git commit -m "Update gizmosql to ${{ github.ref_name }}"
+          git push
+
+  update-homebrew-tap-lts:
+    name: Update Homebrew tap (LTS)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all CLI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: gizmosql_cli_*_lts.zip
+          merge-multiple: true
+
+      - name: Calculate SHA256 checksums
+        id: checksums
+        run: |
+          MACOS_ARM64_SHA=$(sha256sum artifacts/gizmosql_cli_macos_arm64_lts.zip | cut -d ' ' -f 1)
+          LINUX_ARM64_SHA=$(sha256sum artifacts/gizmosql_cli_linux_arm64_lts.zip | cut -d ' ' -f 1)
+          LINUX_AMD64_SHA=$(sha256sum artifacts/gizmosql_cli_linux_amd64_lts.zip | cut -d ' ' -f 1)
+          echo "macos_arm64_sha=${MACOS_ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "linux_arm64_sha=${LINUX_ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "linux_amd64_sha=${LINUX_AMD64_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap-lts
+        uses: actions/checkout@v4
+        with:
+          repository: gizmodata/homebrew-tap-lts
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap-lts
+
+      - name: Update formula
+        env:
+          VERSION: ${{ github.ref_name }}
+          MACOS_ARM64_SHA: ${{ steps.checksums.outputs.macos_arm64_sha }}
+          LINUX_ARM64_SHA: ${{ steps.checksums.outputs.linux_arm64_sha }}
+          LINUX_AMD64_SHA: ${{ steps.checksums.outputs.linux_amd64_sha }}
+        run: |
+          VERSION_NUMBER=${VERSION#v}
+          cat > homebrew-tap-lts/Formula/gizmosql-lts.rb << 'FORMULA_EOF'
+          # typed: false
+          # frozen_string_literal: true
+
+          # GizmoSQL LTS — built against the DuckDB LTS release.
+          # Installs as gizmosql_server_lts / gizmosql_client_lts so it can
+          # coexist with the regular `gizmosql` formula side-by-side.
+          class GizmosqlLts < Formula
+            desc "GizmoSQL (LTS channel) — Flight SQL server on the DuckDB LTS release"
+            homepage "https://github.com/gizmodata/gizmosql"
+            version "VERSION_PLACEHOLDER"
+            license "Apache-2.0"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_arm64_lts.zip"
+                sha256 "MACOS_ARM64_SHA_PLACEHOLDER"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_linux_arm64_lts.zip"
+                sha256 "LINUX_ARM64_SHA_PLACEHOLDER"
+              elsif Hardware::CPU.intel?
+                url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_linux_amd64_lts.zip"
+                sha256 "LINUX_AMD64_SHA_PLACEHOLDER"
+              end
+            end
+
+            def install
+              bin.install "gizmosql_server_lts"
+              bin.install "gizmosql_client_lts"
+            end
+
+            def caveats
+              <<~EOS
+                LTS channel binaries install as gizmosql_server_lts and gizmosql_client_lts.
+
+                Start a GizmoSQL LTS server:
+                  GIZMOSQL_PASSWORD=tiger gizmosql_server_lts --database-filename my_database.duckdb --username scott
+
+                Connect with the interactive SQL shell:
+                  GIZMOSQL_PASSWORD=tiger gizmosql_client_lts --host localhost --username scott
+
+                For TLS and authentication options, see:
+                  gizmosql_server_lts --help
+                  gizmosql_client_lts --help
+              EOS
+            end
+
+            test do
+              assert_match "gizmosql_server", shell_output("#{bin}/gizmosql_server_lts --help 2>&1", 1)
+            end
+          end
+          FORMULA_EOF
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION_NUMBER}/g" homebrew-tap-lts/Formula/gizmosql-lts.rb
+          sed -i "s/MACOS_ARM64_SHA_PLACEHOLDER/${MACOS_ARM64_SHA}/g" homebrew-tap-lts/Formula/gizmosql-lts.rb
+          sed -i "s/LINUX_ARM64_SHA_PLACEHOLDER/${LINUX_ARM64_SHA}/g" homebrew-tap-lts/Formula/gizmosql-lts.rb
+          sed -i "s/LINUX_AMD64_SHA_PLACEHOLDER/${LINUX_AMD64_SHA}/g" homebrew-tap-lts/Formula/gizmosql-lts.rb
+
+      - name: Commit and push
+        working-directory: homebrew-tap-lts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/gizmosql-lts.rb
+          git commit -m "Update gizmosql-lts to ${{ github.ref_name }}"
           git push
 
   build-ios:

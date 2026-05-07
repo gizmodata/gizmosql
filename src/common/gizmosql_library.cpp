@@ -747,8 +747,15 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         "SET autoinstall_known_extensions = true; SET autoload_known_extensions = true;"
         // Install and load ICU extension for timezone support (TIMESTAMPTZ)
         "INSTALL icu; LOAD icu;"
-        // Install and load spatial extension
+        // Install and load spatial extension; on the LTS channel (DuckDB
+        // v1.4.x) GeoArrow integration requires an explicit
+        // register_geoarrow_extensions() call after spatial is loaded —
+        // v1.5+ wires GeoArrow in automatically.
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+        "INSTALL spatial; LOAD spatial; CALL register_geoarrow_extensions();";
+#else
         "INSTALL spatial; LOAD spatial;";
+#endif
 #endif
 
     // Attach a per-process in-memory catalog to host GizmoSQL metadata helpers
@@ -955,7 +962,11 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     }
 
     GIZMOSQL_LOG(INFO) << "GizmoSQL server version: " << GIZMOSQL_SERVER_VERSION
-                       << " - with engine: " << db_type << " - will listen on "
+                       << " - with engine: " << db_type
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+                       << " (LTS channel — DuckDB " << GIZMOSQL_DUCKDB_VERSION_TAG << ")"
+#endif
+                       << " - will listen on "
                        << server->location().ToString();
 
     return server;

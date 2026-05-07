@@ -164,6 +164,14 @@ TEST_F(GeoArrowServerFixture, GeometryExportsAsGeoArrow) {
   result = RunQuery(sql_client, call_options, "LOAD spatial;");
   ASSERT_TRUE(result.success) << "Failed to load spatial: " << result.error_message;
 
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+  // DuckDB v1.4.x ships GeoArrow integration as an opt-in call; v1.5+
+  // wires it in automatically when spatial loads.
+  result = RunQuery(sql_client, call_options, "CALL register_geoarrow_extensions();");
+  ASSERT_TRUE(result.success)
+      << "Failed to register geoarrow extensions: " << result.error_message;
+#endif
+
   // Step 2: Create a table with GEOMETRY column
   std::cerr << "Creating table with GEOMETRY column..." << std::endl;
   result = RunQuery(sql_client, call_options, R"(
@@ -257,6 +265,11 @@ TEST_F(GeoArrowServerFixture, VariousGeometryTypes) {
   // Setup: load spatial and register GeoArrow
   auto result = RunQuery(sql_client, call_options, "LOAD spatial;");
   ASSERT_TRUE(result.success) << result.error_message;
+
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+  result = RunQuery(sql_client, call_options, "CALL register_geoarrow_extensions();");
+  ASSERT_TRUE(result.success) << result.error_message;
+#endif
 
   // Test Point
   result = RunQuery(sql_client, call_options,

@@ -20,7 +20,7 @@ ExternalProject_Add(
     GIT_TAG v0.37.0
     GIT_SHALLOW TRUE
     CMAKE_ARGS
-      -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/cpp-httplib
+      -DCMAKE_INSTALL_PREFIX=@CMAKE_BINARY_DIR@/third_party/cpp-httplib
       -DHTTPLIB_REQUIRE_OPENSSL=ON
       ${_httplib_openssl_args}
     BUILD_COMMAND ""  # This is a header only library

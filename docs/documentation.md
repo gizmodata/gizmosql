@@ -46,14 +46,25 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ## Component Versions
 
-| Component                                                                        | Version |
-|----------------------------------------------------------------------------------|---------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.2  |
-| [SQLite](https://sqlite.org)                                                     | 3.52.0  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1 |
-| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2  |
-| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0 |
-| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
+| Component                                                                        | Stable channel | LTS channel |
+|----------------------------------------------------------------------------------|----------------|-------------|
+| [DuckDB](https://duckdb.org)                                                     | v1.5.2         | v1.4.4      |
+| [SQLite](https://sqlite.org)                                                     | 3.52.0         | 3.52.0      |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1         | 23.0.1      |
+| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      |
+| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0        | v1.25.0     |
+| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     |
+
+### Release channels
+
+GizmoSQL ships two parallel release channels — they share every GizmoSQL feature and only differ in which DuckDB release is bundled:
+
+- **Stable** (default): tracks the latest DuckDB minor release. Picks up every new DuckDB feature, type, and performance improvement on its normal cadence.
+- **LTS**: tracks the most recent DuckDB long-term-support release. Same GizmoSQL code, slower-moving DuckDB engine — useful when you need stability guarantees on the underlying database.
+
+Stable artifacts keep the existing names (`gizmosql_server`, `gizmodata/gizmosql:<ver>`, etc.); LTS artifacts add an `_lts` / `-lts` suffix so both can be installed side-by-side: `gizmosql_server_lts`, `gizmodata/gizmosql-lts:<ver>`, `gizmosql_cli_linux_amd64_lts.zip`, `GizmoSQL-amd64-lts.msi`, Homebrew tap `gizmodata/homebrew-tap-lts` (formula `gizmosql-lts`). The LTS server reports its channel in the startup banner and via `--version` (e.g. `v1.24.0-LTS`).
+
+To build LTS from source, pass `-DGIZMOSQL_DUCKDB_CHANNEL=lts` to CMake.
 
 ### Running from Docker Image
 

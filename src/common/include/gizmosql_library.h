@@ -22,7 +22,16 @@
 #include "version.h"
 
 // Constants
+//
+// GIZMOSQL_SERVER_VERSION is the user-facing version string. On the LTS
+// channel it carries a "-LTS" suffix so log lines, the --version flag,
+// and telemetry attributes make the channel obvious. Stable builds keep
+// the bare semver tag.
+#if defined(GIZMOSQL_DUCKDB_CHANNEL_LTS) && GIZMOSQL_DUCKDB_CHANNEL_LTS
+const std::string GIZMOSQL_SERVER_VERSION = std::string(PROJECT_VERSION) + "-LTS";
+#else
 const std::string GIZMOSQL_SERVER_VERSION = PROJECT_VERSION;
+#endif
 const std::string DEFAULT_GIZMOSQL_HOSTNAME = "0.0.0.0";
 const std::string DEFAULT_GIZMOSQL_USERNAME = "gizmosql_user";
 const int DEFAULT_FLIGHT_PORT = 31337;

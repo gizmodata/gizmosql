@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GizmoSQL LTS channel.** New CMake option `GIZMOSQL_DUCKDB_CHANNEL=stable|lts` builds GizmoSQL against either the latest DuckDB release (stable, default — currently `v1.5.2`) or the most recent DuckDB LTS release (currently `v1.4.4`). The LTS channel produces parallel artifacts that coexist with stable: executables `gizmosql_server_lts` / `gizmosql_client_lts`, ZIP/MSI files suffixed `-lts` / `_lts`, Docker image `gizmodata/gizmosql-lts:<ver>` (full + slim, both architectures), and a separate Homebrew tap `gizmodata/homebrew-tap-lts` shipping `gizmosql-lts.rb`. The server's startup banner identifies the channel (`with engine: DuckDB (LTS channel — DuckDB v1.4.4)`), and `GIZMOSQL_SERVER_VERSION` carries a `-LTS` suffix on LTS builds. Stable artifacts and image tags are unchanged. iOS builds remain stable-only. CI exercises the matrix on Linux (amd64/arm64), macOS (arm64), and Windows (x64).
+
 ## [1.24.0] - 2026-05-06
 
 ### Added
