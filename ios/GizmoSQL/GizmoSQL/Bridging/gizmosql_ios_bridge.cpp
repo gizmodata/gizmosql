@@ -64,6 +64,7 @@ int gizmosql_server_start(const GizmoSQLServerConfig* config) {
         config->query_timeout,
         "",                       // query_log_level (use default)
         "",                       // auth_log_level (use default)
+        "",                       // session_log_level (use default)
         0,                        // health_port — disabled on iOS
         "",                       // health_check_query
         std::nullopt,             // enable_instrumentation (enterprise — disabled)

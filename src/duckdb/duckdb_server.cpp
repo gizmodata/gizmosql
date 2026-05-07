@@ -848,6 +848,7 @@ class DuckDBFlightSqlServer::Impl {
   bool print_queries_;
   int32_t query_timeout_;
   arrow::util::ArrowLogLevel query_log_level_;
+  arrow::util::ArrowLogLevel session_log_level_;
 
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -981,9 +982,11 @@ class DuckDBFlightSqlServer::Impl {
 
       client_sessions_[session_id] = new_session;
       ::gizmosql::metrics::RecordActiveConnections(1);
-      GIZMOSQL_LOGKV_SESSION(INFO, new_session, "Client session was successfully created.",
-                     {"kind", "session_create"}, {"status", "success"},
-                     {"auth_method", new_session->auth_method});
+      GIZMOSQL_LOGKV_SESSION_AT(
+          session_log_level_, arrow::util::ArrowLogLevel::ARROW_INFO,
+          new_session, "Client session was successfully created.",
+          {"kind", "session_create"}, {"status", "success"},
+          {"auth_method", new_session->auth_method});
       return new_session;
     }
   }
@@ -1022,12 +1025,14 @@ class DuckDBFlightSqlServer::Impl {
   explicit Impl(DuckDBFlightSqlServer* outer, std::shared_ptr<duckdb::DuckDB> db_instance,
                 const bool& print_queries, const int32_t& query_timeout,
                 const arrow::util::ArrowLogLevel& query_log_level,
+                const arrow::util::ArrowLogLevel& session_log_level,
                 std::shared_ptr<InstrumentationManager> instrumentation_manager)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
         query_timeout_(query_timeout),
         query_log_level_(query_log_level),
+        session_log_level_(session_log_level),
         instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())),
         instrumentation_manager_(std::move(instrumentation_manager)) {}
 
@@ -1049,12 +1054,14 @@ class DuckDBFlightSqlServer::Impl {
 #else
   explicit Impl(DuckDBFlightSqlServer* outer, std::shared_ptr<duckdb::DuckDB> db_instance,
                 const bool& print_queries, const int32_t& query_timeout,
-                const arrow::util::ArrowLogLevel& query_log_level)
+                const arrow::util::ArrowLogLevel& query_log_level,
+                const arrow::util::ArrowLogLevel& session_log_level)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
         query_timeout_(query_timeout),
         query_log_level_(query_log_level),
+        session_log_level_(session_log_level),
         instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())) {}
 #endif
 
@@ -1944,13 +1951,17 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     const auto remove_status = RemoveSession(client_session->session_id);
     if (remove_status.ok()) {
-      GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Client session was successfully closed.",
-                     {"kind", "session_close"}, {"status", "success"});
+      GIZMOSQL_LOGKV_SESSION_AT(
+          session_log_level_, arrow::util::ArrowLogLevel::ARROW_INFO,
+          client_session, "Client session was successfully closed.",
+          {"kind", "session_close"}, {"status", "success"});
       return flight::CloseSessionResult(flight::CloseSessionStatus::kClosed);
     } else {
-      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
-                     "Client session was NOT successfully closed - session not found.",
-                     {"kind", "session_close"}, {"status", "failure"});
+      GIZMOSQL_LOGKV_SESSION_AT(
+          session_log_level_, arrow::util::ArrowLogLevel::ARROW_WARNING,
+          client_session,
+          "Client session was NOT successfully closed - session not found.",
+          {"kind", "session_close"}, {"status", "failure"});
       return Status::KeyError("Session: '" + client_session->session_id + "' not found");
     }
   }
@@ -2055,6 +2066,7 @@ class DuckDBFlightSqlServer::Impl {
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string& path, const bool& read_only, const bool& print_queries,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
+    const arrow::util::ArrowLogLevel& session_log_level,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2083,10 +2095,11 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 #ifdef GIZMOSQL_ENTERPRISE
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
-      instrumentation_manager);
+      session_log_level, instrumentation_manager);
 #else
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
-      result.get(), db, print_queries, query_timeout, query_log_level);
+      result.get(), db, print_queries, query_timeout, query_log_level,
+      session_log_level);
 #endif
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions

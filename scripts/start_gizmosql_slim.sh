@@ -28,6 +28,7 @@
 #   GIZMOSQL_LOG_FILE         --log-file
 #   GIZMOSQL_QUERY_LOG_LEVEL  --query-log-level
 #   GIZMOSQL_AUTH_LOG_LEVEL   --auth-log-level
+#   GIZMOSQL_SESSION_LOG_LEVEL --session-log-level
 #   GIZMOSQL_HEALTH_CHECK_QUERY      --health-check-query
 #   GIZMOSQL_ENABLE_INSTRUMENTATION  --enable-instrumentation
 #   GIZMOSQL_INSTRUMENTATION_DB_PATH --instrumentation-db-path

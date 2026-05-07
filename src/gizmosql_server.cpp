@@ -109,6 +109,9 @@ int main(int argc, char** argv) {
              "Query Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_QUERY_LOG_LEVEL or defaults to info.")
             ("auth-log-level",  po::value<std::string>()->default_value(""),
               "Authentication Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_AUTH_LOG_LEVEL or defaults to info.")
+            ("session-log-level",  po::value<std::string>()->default_value(""),
+              "Client Session lifecycle (create/close) Log level: debug|info|warn|error|fatal. "
+              "If empty, uses env GIZMOSQL_SESSION_LOG_LEVEL or defaults to info.")
             ("health-port",  po::value<int>()->default_value(DEFAULT_HEALTH_PORT),
               "Port for plaintext gRPC health check server (for Kubernetes probes). Set to 0 to disable.")
             ("health-check-query", po::value<std::string>()->default_value(""),
@@ -313,6 +316,8 @@ int main(int argc, char** argv) {
       vm.count("query-log-level") ? vm["query-log-level"].as<std::string>() : "";
   std::string auth_log_level =
       vm.count("auth-log-level") ? vm["auth-log-level"].as<std::string>() : "";
+  std::string session_log_level =
+      vm.count("session-log-level") ? vm["session-log-level"].as<std::string>() : "";
 
   int health_port = vm["health-port"].as<int>();
 
@@ -385,7 +390,8 @@ int main(int argc, char** argv) {
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
       token_default_role, token_authorized_emails, log_level, log_format,
-      access_log, log_file, query_timeout, query_log_level, auth_log_level, health_port,
+      access_log, log_file, query_timeout, query_log_level, auth_log_level,
+      session_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, instance_tag, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,

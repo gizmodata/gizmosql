@@ -69,6 +69,7 @@ enum class BackendType { duckdb, sqlite };
  * @param query_timeout The query timeout in seconds.  Queries running longer than this will be canceled by the server.  Default is: 0 (no timeout)
  * @param query_log_level The logging level to use for the queries run by users.  Default is: info
  * @param auth_log_level The logging level to use for authentication to the server.  Default is: info
+ * @param session_log_level The logging level to use for client session lifecycle messages (creation/closure).  Default is: info. If empty, uses env var GIZMOSQL_SESSION_LOG_LEVEL.
  * @param health_port The port for the plaintext gRPC health check server (for Kubernetes probes). Default is DEFAULT_HEALTH_PORT (31338). Set to 0 to disable.
  * @param health_check_query The SQL query to use for health checks. If empty, uses env var GIZMOSQL_HEALTH_CHECK_QUERY, or defaults to "SELECT 1".
  * @param enable_instrumentation [Enterprise] Whether to enable session instrumentation (tracking instances, sessions, SQL statements). Default is std::nullopt (check env var GIZMOSQL_ENABLE_INSTRUMENTATION, fallback to false). Pass true/false to override env var. Requires valid enterprise license.
@@ -139,6 +140,7 @@ int RunFlightSQLServer(
     std::string log_level = "", std::string log_format = "", std::string access_log = "",
     std::string log_file = "", int32_t query_timeout = 0,
     std::string query_log_level = "", std::string auth_log_level = "",
+    std::string session_log_level = "",
     int health_port = DEFAULT_HEALTH_PORT,
     std::string health_check_query = "",
     std::optional<bool> enable_instrumentation = std::nullopt,
