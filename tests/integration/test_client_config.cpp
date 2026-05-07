@@ -24,9 +24,27 @@
 
 namespace {
 
-// RAII helper: scope-bounded setenv/unsetenv so each test starts from a
-// clean slate regardless of how the parent shell or earlier tests left
-// the relevant env vars.
+// Cross-platform env-var helpers: POSIX has setenv/unsetenv; MSVC only
+// has _putenv_s ("VAR=value" to set, "VAR=" to unset).
+inline void EnvSet(const char* name, const std::string& value) {
+#ifdef _WIN32
+  _putenv_s(name, value.c_str());
+#else
+  ::setenv(name, value.c_str(), /*overwrite=*/1);
+#endif
+}
+
+inline void EnvUnset(const char* name) {
+#ifdef _WIN32
+  _putenv_s(name, "");
+#else
+  ::unsetenv(name);
+#endif
+}
+
+// RAII helper: scope-bounded set/unset so each test starts from a clean
+// slate regardless of how the parent shell or earlier tests left the
+// relevant env vars.
 class ScopedEnv {
  public:
   explicit ScopedEnv(const char* name) : name_(name) {
@@ -39,17 +57,14 @@ class ScopedEnv {
 
   ~ScopedEnv() {
     if (had_old_) {
-      ::setenv(name_, old_value_.c_str(), /*overwrite=*/1);
+      EnvSet(name_, old_value_);
     } else {
-      ::unsetenv(name_);
+      EnvUnset(name_);
     }
   }
 
-  void Set(const std::string& value) {
-    ::setenv(name_, value.c_str(), /*overwrite=*/1);
-  }
-
-  void Unset() { ::unsetenv(name_); }
+  void Set(const std::string& value) { EnvSet(name_, value); }
+  void Unset() { EnvUnset(name_); }
 
  private:
   const char* name_;
