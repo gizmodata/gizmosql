@@ -56,6 +56,7 @@
 #endif
 #include <nlohmann/json.hpp>
 #include "version.h"
+#include "gizmosql_library.h"  // GIZMOSQL_SERVER_VERSION (channel-aware)
 
 using arrow::Status;
 using duckdb::QueryResult;
@@ -425,7 +426,10 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
       std::string upper_candidate = boost::to_upper_copy(candidate);
       if (upper_candidate == "GIZMOSQL_VERSION()") {
         result += '\'';
-        result += PROJECT_VERSION;
+        // Use the channel-aware version string so SELECT GIZMOSQL_VERSION()
+        // on an LTS server returns e.g. "v1.25.0-LTS" rather than the bare
+        // git tag "v1.25.0". Stable builds remain unchanged.
+        result += GIZMOSQL_SERVER_VERSION;
         result += '\'';
         if (ShouldAddAlias(sql, i, i + kVersionFuncLen)) {
           result += " AS \"GIZMOSQL_VERSION()\"";

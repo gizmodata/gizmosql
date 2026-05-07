@@ -31,6 +31,7 @@
 #include "shell_completer.hpp"
 #include "syntax_highlighter.hpp"
 #include "version.h"
+#include "gizmosql_library.h"  // GIZMOSQL_SERVER_VERSION (channel-aware)
 
 namespace gizmosql::client {
 
@@ -462,7 +463,7 @@ int RunShellLoop(FlightConnection& conn, CommandProcessor& cmd_proc,
   RefreshDynamicPrompt(conn, config);
 
   if (!config.quiet) {
-    std::cout << "GizmoSQL Client " << PROJECT_VERSION << std::endl;
+    std::cout << "GizmoSQL Client " << GIZMOSQL_SERVER_VERSION << std::endl;
     if (conn.IsConnected()) {
       std::cout << "Connected to " << config.host << ":" << config.port
                 << std::endl;

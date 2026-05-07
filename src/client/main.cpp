@@ -40,6 +40,7 @@
 #include "shell_loop.hpp"
 #include "sql_processor.hpp"
 #include "version.h"
+#include "gizmosql_library.h"  // GIZMOSQL_SERVER_VERSION (channel-aware)
 
 namespace po = boost::program_options;
 using namespace gizmosql::client;
@@ -165,7 +166,7 @@ int main(int argc, char** argv) {
   }
 
   if (vm.count("version")) {
-    std::cout << "GizmoSQL Client " << PROJECT_VERSION << std::endl;
+    std::cout << "GizmoSQL Client " << GIZMOSQL_SERVER_VERSION << std::endl;
     return 0;
   }
 
