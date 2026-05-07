@@ -57,14 +57,9 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ### Release channels
 
-GizmoSQL ships two parallel release channels — they share every GizmoSQL feature and only differ in which DuckDB release is bundled:
+GizmoSQL ships two parallel release channels: **stable** (latest DuckDB minor) and **LTS** (most recent DuckDB long-term-support release). Both channels carry every GizmoSQL fix and feature; they only differ in which DuckDB release is bundled. LTS artifacts use an `_lts`/`-lts` suffix so they can coexist with stable installs.
 
-- **Stable** (default): tracks the latest DuckDB minor release. Picks up every new DuckDB feature, type, and performance improvement on its normal cadence.
-- **LTS**: tracks the most recent DuckDB long-term-support release. Same GizmoSQL code, slower-moving DuckDB engine — useful when you need stability guarantees on the underlying database.
-
-Stable artifacts keep the existing names (`gizmosql_server`, `gizmodata/gizmosql:<ver>`, etc.); LTS artifacts add an `_lts` / `-lts` suffix so both can be installed side-by-side: `gizmosql_server_lts`, `gizmodata/gizmosql-lts:<ver>`, `gizmosql_cli_linux_amd64_lts.zip`, `GizmoSQL-amd64-lts.msi`, Homebrew tap `gizmodata/homebrew-tap-lts` (formula `gizmosql-lts`). The LTS server reports its channel in the startup banner and via `--version` (e.g. `v1.24.0-LTS`).
-
-To build LTS from source, pass `-DGIZMOSQL_DUCKDB_CHANNEL=lts` to CMake.
+See the [LTS Channel guide](lts_channel.md) for details on which DuckDB versions are LTS, artifact naming, install commands, and how to switch channels in production. The DuckDB [release calendar](https://duckdb.org/release_calendar) is the authoritative source for current LTS designations and end-of-support dates.
 
 ### Running from Docker Image
 
