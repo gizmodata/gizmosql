@@ -8,6 +8,7 @@
   * [LTS Channel](lts_channel.md)
   * [Security Guide](security.md)
   * [Python ADBC Driver](python_adbc.md)
+  * [Python Library (run a server)](python_library.md)
   * [Client Shell](client.md)
   * [Token Authentication](token_authentication.md)
   * [OAuth / SSO Setup](oauth_sso_setup.md) *(Enterprise)*
