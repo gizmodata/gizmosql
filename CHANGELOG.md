@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.2] - 2026-05-08
+
 ### Fixed
 
 - **Server now starts in read-only mode (`--readonly` / `-O`).** Previously, startup failed with `Catalog Error: Cannot launch in-memory database in read-only mode!` because the system-catalog `ATTACH ':memory:' AS _gizmosql_system` inherited the parent database's `READ_ONLY` access mode. Both the system-catalog attach and the (Enterprise) instrumentation database attach now specify `(READ_WRITE)` explicitly, so server-managed metadata and instrumentation continue to work even when the user's main database is opened read-only. Added `tests/integration/test_read_only_mode.cpp` as a regression guard.
