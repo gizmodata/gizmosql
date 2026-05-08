@@ -1148,6 +1148,29 @@ jobs:
           git commit -m "Update gizmosql + gizmosql-lts to ${{ github.ref_name }}"
           git push
 
+  trigger-gizmosql-py-release:
+    name: Trigger gizmosql-py release (PyPI)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire repository_dispatch on gizmosql-py
+        # Sends an `upstream-release` event to gizmodata/gizmosql-py with
+        # this tag's version. That repo's sync-version.yml workflow listens
+        # for it, bumps src/gizmosql/_version.py, tags v<X.Y.Z>, and pushes
+        # — which triggers gizmosql-py's own publish workflow and lands a
+        # matching release on PyPI. End result: every GizmoSQL release ships
+        # a same-versioned `pip install gizmosql` automatically.
+        env:
+          GH_TOKEN: ${{ secrets.GIZMOSQL_PY_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api repos/gizmodata/gizmosql-py/dispatches \
+            -X POST \
+            -f event_type=upstream-release \
+            -f "client_payload[version]=${GITHUB_REF_NAME}"
+          echo "✓ Dispatched upstream-release(${GITHUB_REF_NAME}) to gizmosql-py"
+
   build-ios:
     name: Build & Sign iOS App
     # macos-26 runner image ships Xcode 26 / iOS 26 SDK. Apple requires
