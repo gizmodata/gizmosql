@@ -795,7 +795,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
           instr_schema = "main";
         }
         GIZMOSQL_LOG(INFO) << "Instrumentation database path: " << instr_db_path;
-        duckdb_init_sql_commands += "ATTACH '" + instr_db_path + "' AS _gizmosql_instr;";
+        // (READ_WRITE) is required so instrumentation can record metrics even
+        // when the main DuckDB database is opened in read-only mode.
+        duckdb_init_sql_commands +=
+            "ATTACH '" + instr_db_path + "' AS _gizmosql_instr (READ_WRITE);";
       }
     } else {
       GIZMOSQL_LOG(INFO) << "Instrumentation is disabled";

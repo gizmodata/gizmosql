@@ -4,7 +4,10 @@ namespace gizmosql {
 
 std::string GetSystemCatalogInitSql() {
   return
-      "ATTACH ':memory:' AS _gizmosql_system;"
+      // READ_WRITE is required so this still attaches when the main DuckDB
+      // database is opened in read-only mode (DuckDB otherwise refuses to
+      // launch an in-memory database under a read-only parent).
+      "ATTACH ':memory:' AS _gizmosql_system (READ_WRITE);"
 
       // JDBC DatabaseMetaData.getIndexInfo() — one row per (index, column)
       // with the exact column names/types defined by the JDBC contract.

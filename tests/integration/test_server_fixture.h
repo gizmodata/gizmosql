@@ -109,6 +109,7 @@ struct TestServerConfig {
   std::string oauth_instance_id = "";           // Instance ID for multi-instance OAuth proxy routing
   bool oauth_disable_tls = false;               // Disable TLS on OAuth callback server
   bool print_queries = false;                    // Enable query logging
+  bool read_only = false;                        // Open database in read-only mode
   arrow::util::ArrowLogLevel query_log_level =
       arrow::util::ArrowLogLevel::ARROW_INFO;    // Query log level threshold
   arrow::util::ArrowLogLevel session_log_level =
@@ -185,7 +186,7 @@ class ServerTestFixture : public ::testing::Test {
         /*init_sql_commands=*/config_.init_sql_commands,
         /*init_sql_commands_file=*/fs::path(),
         /*print_queries=*/config_.print_queries,
-        /*read_only=*/false,
+        /*read_only=*/config_.read_only,
         /*token_allowed_issuer=*/config_.token_allowed_issuer,
         /*token_allowed_audience=*/config_.token_allowed_audience,
         /*token_signature_verify_cert_path=*/fs::path(config_.token_signature_verify_cert_path),

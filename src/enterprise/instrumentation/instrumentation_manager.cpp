@@ -322,8 +322,10 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
     if (!use_external_catalog) {
       // File-based mode: ATTACH the instrumentation database on this connection
       // (ATTACH is connection-specific in DuckDB)
+      // (READ_WRITE) is required so instrumentation can record metrics even
+      // when the main DuckDB database is opened in read-only mode.
       auto attach_result = writer_connection->Get().Query(
-          "ATTACH IF NOT EXISTS '" + db_path + "' AS " + catalog);
+          "ATTACH IF NOT EXISTS '" + db_path + "' AS " + catalog + " (READ_WRITE)");
       if (attach_result->HasError()) {
         return arrow::Status::Invalid("Failed to attach instrumentation database: ",
                                       attach_result->GetError());

@@ -110,6 +110,30 @@ GIZMOSQL_PASSWORD="password" gizmosql_server \
   "
 ```
 
+#### Read-Only Mode (`--readonly`) with an External Instrumentation Catalog
+
+When you start the server with `--readonly` (or `GIZMOSQL_READONLY=1`), DuckDB
+opens the **main** database in read-only mode and propagates that access mode
+to every database that gets attached afterwards. For the built-in system
+catalog and the file-based instrumentation database, GizmoSQL forces
+`(READ_WRITE)` on the attach automatically. **For an external instrumentation
+catalog, GizmoSQL cannot do that for you** — the `ATTACH` statement lives in
+your `--init-sql-commands`, so you must add `(READ_WRITE)` yourself.
+
+Without it, instrumentation manager startup will fail trying to `CREATE TABLE`
+/ `INSERT` against a read-only attached catalog.
+
+```bash
+# WRONG under --readonly: inherits READ_ONLY from the parent DB
+ATTACH 'ducklake:ducklake_secret' AS instr_ducklake;
+
+# CORRECT under --readonly: explicit READ_WRITE override
+ATTACH 'ducklake:ducklake_secret' AS instr_ducklake (READ_WRITE);
+```
+
+The same rule applies to any pre-attached catalog you want to write to (e.g.
+a Postgres scanner attach) when the server is in read-only mode.
+
 #### Multiple GizmoSQL Instances
 
 When running multiple GizmoSQL instances with shared DuckLake instrumentation:
