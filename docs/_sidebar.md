@@ -3,6 +3,7 @@
 * [Home](/)
 
 * Getting Started
+  * [Quick Start](quickstart.md)
   * [Editions](editions.md)
   * [LTS Channel](lts_channel.md)
   * [Security Guide](security.md)
