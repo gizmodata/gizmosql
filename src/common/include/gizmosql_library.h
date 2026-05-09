@@ -100,6 +100,7 @@ enum class BackendType { duckdb, sqlite };
  * @param otel_service_name Service name for telemetry. Default is "" - if so, uses env GIZMOSQL_OTEL_SERVICE_NAME, fallback to "gizmosql".
  * @param otel_headers Additional headers for OTLP exporter (key1=value1,key2=value2). Default is "" - if so, uses env GIZMOSQL_OTEL_HEADERS.
  * @param max_metadata_size Maximum size in bytes of inbound gRPC HTTP/2 header metadata per call (sets GRPC_ARG_MAX_METADATA_SIZE). gRPC's default is ~8 KB; raise this if clients legitimately send large per-call metadata (e.g. extra JDBC URL parameters that the Flight SQL JDBC driver forwards as headers, large bearer tokens, accumulated cookies, or proxy-injected trace headers). 0 = use the gRPC default. If 0, uses env var GIZMOSQL_MAX_METADATA_SIZE.
+ * @param storage_version DuckDB storage format version to use when creating new database files (e.g. "latest", "v1.4.0", "v1.2.0"). Maps directly to DuckDB's `storage_version` config option (the same one set by `duckdb -storage_version <ver>`). Useful when you want a database file that newer DuckDB clients can read at their newest format, or to cap the format at an older version for cross-version compatibility. Default is "" - if so, uses env var GIZMOSQL_STORAGE_VERSION; if that is unset, DuckDB's built-in default applies. Ignored for the SQLite backend.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -170,5 +171,6 @@ int RunFlightSQLServer(
     std::optional<bool> otel_enabled = std::nullopt, std::string otel_exporter = "",
     std::string otel_endpoint = "", std::string otel_service_name = "",
     std::string otel_headers = "",
-    int32_t max_metadata_size = DEFAULT_MAX_METADATA_SIZE);
+    int32_t max_metadata_size = DEFAULT_MAX_METADATA_SIZE,
+    std::string storage_version = "");
 }

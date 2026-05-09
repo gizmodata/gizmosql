@@ -54,6 +54,7 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
       const std::string& path, const bool& read_only, const bool& print_queries,
       const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
       const arrow::util::ArrowLogLevel& session_log_level,
+      const std::string& storage_version,
 #ifdef GIZMOSQL_ENTERPRISE
       std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr);
 #else

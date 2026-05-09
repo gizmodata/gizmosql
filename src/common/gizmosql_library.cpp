@@ -485,7 +485,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& oauth_instance_id,
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled,
-    int32_t max_metadata_size) {
+    int32_t max_metadata_size,
+    const std::string& storage_version) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -695,6 +696,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
                                              database_filename.string(), read_only, print_queries,
                                              query_timeout, query_log_level, session_log_level,
+                                             storage_version,
                                              nullptr))  // No instrumentation manager yet
 
     // Set instance_id for all future log entries (enables log correlation)
@@ -1017,7 +1019,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string oauth_instance_id,
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled,
-    int32_t max_metadata_size) {
+    int32_t max_metadata_size,
+    std::string storage_version) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1305,7 +1308,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled,
-      max_metadata_size);
+      max_metadata_size, storage_version);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1394,7 +1397,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::optional<bool> otel_enabled, std::string otel_exporter,
                        std::string otel_endpoint, std::string otel_service_name,
                        std::string otel_headers,
-                       int32_t max_metadata_size) {
+                       int32_t max_metadata_size,
+                       std::string storage_version) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1411,6 +1415,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   std::string auth_lvl_s = pick(auth_log_level, "GIZMOSQL_AUTH_LOG_LEVEL", "info");
   std::string session_lvl_s =
       pick(session_log_level, "GIZMOSQL_SESSION_LOG_LEVEL", "info");
+  // DuckDB storage version: empty string => let DuckDB use its built-in default.
+  storage_version = pick(storage_version, "GIZMOSQL_STORAGE_VERSION", "");
 
   auto level = gizmosql::log_level_string_to_arrow_log_level(lvl_s);
   auto query_level = gizmosql::log_level_string_to_arrow_log_level(query_lvl_s);
@@ -1591,7 +1597,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled,
-      max_metadata_size);
+      max_metadata_size, storage_version);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

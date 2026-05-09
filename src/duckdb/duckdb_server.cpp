@@ -2067,6 +2067,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string& path, const bool& read_only, const bool& print_queries,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& session_log_level,
+    const std::string& storage_version,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2088,6 +2089,16 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     config.options.access_mode = duckdb::AccessMode::READ_ONLY;
   }
 
+  if (!storage_version.empty()) {
+    try {
+      config.options.serialization_compatibility =
+          duckdb::SerializationCompatibility::FromString(storage_version);
+      GIZMOSQL_LOG(INFO) << "DuckDB storage version set to: " << storage_version;
+    } catch (const std::exception& e) {
+      return arrow::Status::Invalid(
+          "Invalid DuckDB storage version '" + storage_version + "': " + e.what());
+    }
+  }
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
 
