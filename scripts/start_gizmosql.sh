@@ -46,6 +46,7 @@
 #   GIZMOSQL_OAUTH_INSTANCE_ID           --oauth-instance-id
 #   GIZMOSQL_OAUTH_DISABLE_TLS           --oauth-disable-tls (localhost only!)
 #   GIZMOSQL_MAX_METADATA_SIZE           --max-metadata-size
+#   GIZMOSQL_STORAGE_VERSION             --storage-version (DuckDB only)
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────
 #   GIZMOSQL_EXTRA_ARGS       Appended verbatim to the command line.

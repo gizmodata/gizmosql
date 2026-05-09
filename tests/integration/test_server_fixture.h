@@ -71,7 +71,8 @@ CreateFlightSQLServer(
     std::string oauth_instance_id = "",
     const bool& oauth_disable_tls = false,
     const bool& telemetry_enabled = false,
-    int32_t max_metadata_size = 0);
+    int32_t max_metadata_size = 0,
+    std::string storage_version = "");
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -115,6 +116,7 @@ struct TestServerConfig {
   arrow::util::ArrowLogLevel session_log_level =
       arrow::util::ArrowLogLevel::ARROW_INFO;    // Session lifecycle log level threshold
   int32_t max_metadata_size = 0;                 // gRPC max header metadata bytes per call (0 = gRPC default ~8 KB)
+  std::string storage_version = "";              // [DuckDB] storage_version (e.g. "latest"); empty => DuckDB default
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -215,7 +217,8 @@ class ServerTestFixture : public ::testing::Test {
         /*oauth_instance_id=*/config_.oauth_instance_id,
         /*oauth_disable_tls=*/config_.oauth_disable_tls,
         /*telemetry_enabled=*/false,
-        /*max_metadata_size=*/config_.max_metadata_size);
+        /*max_metadata_size=*/config_.max_metadata_size,
+        /*storage_version=*/config_.storage_version);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

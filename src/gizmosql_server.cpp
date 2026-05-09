@@ -65,6 +65,11 @@ int main(int argc, char** argv) {
              "Specify an optional mTLS CA certificate path used to verify clients.  The certificate MUST be in PEM format.")
             ("print-queries,Q", po::bool_switch()->default_value(false), "Print queries run by clients to stdout")
             ("readonly,O", po::bool_switch()->default_value(false), "Open the database in read-only mode")
+            ("storage-version", po::value<std::string>()->default_value(""),
+             "[DuckDB only] Storage format version for newly created databases (e.g. 'latest', 'v1.4.0', 'v1.2.0'). "
+             "Maps to DuckDB's `storage_version` config (the same option set by `duckdb -storage_version <ver>`). "
+             "If not set, uses env var GIZMOSQL_STORAGE_VERSION; if that is unset, DuckDB's built-in default applies. "
+             "Ignored when --backend=sqlite.")
             ("token-allowed-issuer", po::value<std::string>()->default_value(""),
              "Specify the allowed token issuer for JWT token-based authentication - see docs for details.  "
              "If not set, we will use env var: 'TOKEN_ALLOWED_ISSUER'.")
@@ -275,6 +280,9 @@ int main(int argc, char** argv) {
 
   bool read_only = vm["readonly"].as<bool>();
 
+  std::string storage_version =
+      vm.count("storage-version") ? vm["storage-version"].as<std::string>() : "";
+
   std::string token_allowed_issuer = "";
   if (vm.count("token-allowed-issuer")) {
     token_allowed_issuer = vm["token-allowed-issuer"].as<std::string>();
@@ -396,5 +404,6 @@ int main(int argc, char** argv) {
       instrumentation_catalog, instrumentation_schema, instance_tag, license_key_file,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
-      otel_endpoint, otel_service_name, otel_headers, max_metadata_size);
+      otel_endpoint, otel_service_name, otel_headers, max_metadata_size,
+      storage_version);
 }
