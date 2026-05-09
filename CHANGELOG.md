@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-05-09
+
 ### Added
 
 - **`--storage-version` / `GIZMOSQL_STORAGE_VERSION`.** New server option that pins the DuckDB storage format version (e.g. `latest`, `v1.4.0`, `v1.2.0`) for newly created database files, mirroring `duckdb -storage_version <ver>`. Maps directly onto DuckDB's `serialization_compatibility` `DBConfig` option (`SerializationCompatibility::FromString`). Useful for forcing a newer on-disk format so newer DuckDB clients can attach at their newest level, or capping at an older version for cross-version compatibility. Available via the CLI flag, the env var (handy for container deployments), and the `RunFlightSQLServer()` library API. Ignored for the SQLite backend. Default: empty (DuckDB's built-in default applies).
