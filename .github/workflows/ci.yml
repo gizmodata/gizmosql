@@ -875,13 +875,31 @@ jobs:
             echo "WARNING: no matching CHANGELOG section for ${VERSION}; release will use auto-generated notes."
           fi
 
+      - name: Generate per-asset SHA-256 sidecars
+        # Emits a `<asset>.sha256` next to each release asset so downstream
+        # tools (the install.gizmosql.com curl|sh script in particular) can do
+        # a transit-integrity check without needing `gh attestation verify`.
+        # This is complementary to the Sigstore build attestations above —
+        # attestation is the stronger guarantee, this just lights up the
+        # bare-curl install path's existing verification branch.
+        run: |
+          set -euo pipefail
+          cd artifacts
+          for f in gizmosql_cli_*.zip GizmoSQL-*.msi; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" | awk '{print $1"  "$2}' > "${f}.sha256"
+            echo "  $(cat "${f}.sha256")"
+          done
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           body_path: release_notes.md
           files: |
             artifacts/gizmosql_cli_*.zip
+            artifacts/gizmosql_cli_*.zip.sha256
             artifacts/GizmoSQL-*.msi
+            artifacts/GizmoSQL-*.msi.sha256
             LICENSE
 
   update-image-manifest:
