@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.26.1] - 2026-05-10
-
 ### Added
 
 - **Per-asset SHA-256 sidecar files in GitHub releases.** The release CI now emits a `<asset>.sha256` next to every published CLI ZIP and MSI, so transit-integrity verification works for clients that fetch a release artifact without pulling the GitHub attestation manifest. In particular, the `curl -fsSL https://install.gizmosql.com/install.sh | sh` flow already had a verification branch keyed on a sibling `.sha256` file; previously it printed `(no published SHA-256 manifest for this release; skipping verification)` and fell back to no check. Complementary to (not a replacement for) the existing Sigstore build attestations on every release artifact — attestation remains the stronger guarantee for supply-chain provenance.
