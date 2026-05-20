@@ -376,8 +376,16 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif()
 
-# Only link jemalloc_extension on Linux
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Only link jemalloc_extension on Linux — and only on the LTS channel.
+#
+# In DuckDB v1.5.3 (stable) the jemalloc allocator was removed from the
+# extension system and absorbed into libduckdb_static itself (controlled
+# by the new ENABLE_JEMALLOC cmake option, default ON). The
+# libjemalloc_extension.a static library is no longer produced — only an
+# empty INTERFACE shim target named jemalloc_extension exists for
+# backward source compatibility. LTS (v1.4.x) still ships jemalloc as
+# the old separate static extension, so the link is still needed there.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND GIZMOSQL_DUCKDB_CHANNEL_LTS)
     target_link_libraries(duckdb
             INTERFACE
             "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}jemalloc_extension${LIB_SUFFIX}"

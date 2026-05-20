@@ -348,26 +348,20 @@ PYEOF
     NEED_RECONFIGURE=1
 fi
 
-# Patch ducklake to use the IMPORTED roaring target's include dirs
-DUCKLAKE_TOPLEVEL="${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/_deps/ducklake_extension_fc-src/CMakeLists.txt"
-if [ -f "${DUCKLAKE_TOPLEVEL}" ] && ! grep -q "Patch added by GizmoSQL" "${DUCKLAKE_TOPLEVEL}"; then
-    echo "Patching ducklake CMakeLists to use IMPORTED roaring include dirs..."
-    python3 - << PYEOF
-p = "${DUCKLAKE_TOPLEVEL}"
-with open(p) as f: s = f.read()
-old = "include_directories(\${roaring_DIR}/../../include)"
-new = ("# Patch added by GizmoSQL: upstream's relative path math assumes a\n"
-       "# 2-level vcpkg layout (share/roaring/) but the standard CMake install\n"
-       "# layout uses lib/cmake/roaring/, which needs three '..' levels.\n"
-       "# Use the IMPORTED target's INTERFACE_INCLUDE_DIRECTORIES instead.\n"
-       "get_target_property(_GIZMOSQL_ROARING_INCS roaring::roaring-headers-cpp INTERFACE_INCLUDE_DIRECTORIES)\n"
-       "include_directories(\${_GIZMOSQL_ROARING_INCS})")
-assert old in s, "DuckLake CMakeLists.txt no longer contains the expected include_directories line — patch needs updating"
-s = s.replace(old, new)
-with open(p, "w") as f: f.write(s)
-PYEOF
-    NEED_RECONFIGURE=1
-fi
+# DuckLake roaring include-dir patch — no longer needed.
+#
+# Up through the DuckDB 1.5.2-era ducklake pin, the extension hard-coded
+# `include_directories(${roaring_DIR}/../../include)`, which assumes the
+# 2-level vcpkg layout (share/roaring/) and silently produces a wrong
+# path under the standard CMake install layout (lib/cmake/roaring/) we
+# install croaring at in Phase 1.5. We patched it to read the IMPORTED
+# target's INTERFACE_INCLUDE_DIRECTORIES instead.
+#
+# The 1.5.3-era ducklake pin (e6a3bd0a…) now does this itself: it
+# resolves the include dir from roaring::roaring-headers via
+# get_target_property() and only falls back to the relative path math
+# if the property isn't set — so the patch is redundant. Left here as
+# a marker; re-add if a future ducklake pin regresses.
 
 # Patch httpfs to drop the curl dependency
 HTTPFS_DIR="${IOS_LIB_BUILD_DIR}/third_party/src/duckdb_project-build/_deps/httpfs_extension_fc-src"
