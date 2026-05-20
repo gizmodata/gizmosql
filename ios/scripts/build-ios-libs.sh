@@ -388,28 +388,27 @@ s = s.replace("\${CURL_LIBRARIES}", "")
 with open(p, "w") as f: f.write(s)
 PYEOF
     # Patch httpfs_extension.cpp to use HTTPFSUtil instead of HTTPFSCurlUtil
+    # at every construction site so HTTPFSCurlUtil is never instantiated on
+    # iOS. Also comment out the #include of httpfs_curl_client.hpp because
+    # that header pulls in <curl/curl.h>, which isn't available in the iOS
+    # cross-build. HTTPFSCurlUtil's class declaration lives in
+    # httpfs_client.hpp (already included), so the (now-dead-at-runtime)
+    # static_cast<HTTPFSCurlUtil*> branch still compiles.
+    #
+    # Older httpfs pins also had a dynamic_cast<HTTPFSCurlUtil*> block
+    # here which we patched out to avoid pulling in typeinfo. The
+    # 1.5.3-era pin (52afb420…) replaced it with a static_cast gated by
+    # a GetName() == "HTTPFS-Curl" check, so the typeinfo concern is
+    # gone and patching that branch is no longer needed.
     python3 - << PYEOF
 p = "${HTTPFS_EXT_CPP}"
 with open(p) as f: s = f.read()
+needle = 'config.SetHTTPUtil(make_shared_ptr<HTTPFSCurlUtil>());'
+assert needle in s, "httpfs_extension.cpp no longer constructs HTTPFSCurlUtil via make_shared_ptr — patch needs updating"
 s = s.replace(
-    'config.SetHTTPUtil(make_shared_ptr<HTTPFSCurlUtil>());',
+    needle,
     'config.SetHTTPUtil(make_shared_ptr<HTTPFSUtil>());  // Patched by GizmoSQL: use httplib instead of curl on iOS')
-# Also remove the #include of httpfs_curl_client.hpp
-s = s.replace('#include "httpfs_curl_client.hpp"', '// #include "httpfs_curl_client.hpp"  // Patched by GizmoSQL')
-# Remove the dynamic_cast<HTTPFSCurlUtil*> block: it's the only thing
-# referencing HTTPFSCurlUtil's typeinfo, and excluding httpfs_curl_client.cpp
-# from the build means the vtable's key function is never defined → typeinfo
-# missing → undefined symbol at iOS app link time.
-old_dc = (
-    "#ifndef EMSCRIPTEN\n"
-    "\t\tauto *curl_util = dynamic_cast<HTTPFSCurlUtil *>(&http_util);\n"
-    "\t\tif (curl_util) {\n"
-    "\t\t\tcurl_util->connection_caching_enabled = BooleanValue::Get(parameter);\n"
-    "\t\t}\n"
-    "#endif")
-new_dc = "// Patched by GizmoSQL: HTTPFSCurlUtil is unused on iOS"
-assert old_dc in s, "httpfs_extension.cpp dynamic_cast block doesn't match expected shape — patch needs updating"
-s = s.replace(old_dc, new_dc)
+s = s.replace('#include "httpfs_curl_client.hpp"', '// #include "httpfs_curl_client.hpp"  // Patched by GizmoSQL: pulls in <curl/curl.h>')
 with open(p, "w") as f: f.write(s)
 PYEOF
     NEED_RECONFIGURE=1
