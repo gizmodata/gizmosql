@@ -257,9 +257,11 @@ cmake "${REPO_ROOT}" \
 #    HTTPFSUtil (httplib) instead of HTTPFSCurlUtil.
 #
 # Note: we used to also patch postgres_scanner here to add a
-# build_static_extension() call, but as of the DuckDB 1.5.3-era pin
-# (postgres_scanner 6b2b12ca...) upstream now ships its own static
-# target. Re-adding ours collides — see CLAUDE.md "Bumping DuckDB
+# build_static_extension() call, but the postgres_scanner pin we use
+# on iOS (c89234f0... — the DuckDB v1.5.2-era pin, see
+# third_party/duckdb_extensions.cmake for why we don't follow
+# DuckDB's newer pin on iOS) now ships its own static target.
+# Re-adding ours collides — see CLAUDE.md "Bumping DuckDB
 # (iOS extension sync)".
 NEED_RECONFIGURE=0
 
