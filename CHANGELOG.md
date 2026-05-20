@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.2] - 2026-05-20
+
+### Changed
+
+- **Upgraded DuckDB from v1.5.2 to v1.5.3** (stable channel). DuckDB 1.5.3 is a bugfix release with 120+ fixes for issues discovered after v1.5.2. The iOS extension pins (`ducklake`, `httpfs`, `postgres_scanner`) were re-synced to match DuckDB's own pins for the v1.5.3 release.
+- **Upgraded SQLite from 3.52.0 to 3.53.1.** Upstream SQLite 3.52.0 was withdrawn and superseded by 3.53.0 (major release, 2026-04-09) and the follow-up bugfix 3.53.1 (2026-05-05).
+
 ## [1.26.0] - 2026-05-09
 
 ### Added

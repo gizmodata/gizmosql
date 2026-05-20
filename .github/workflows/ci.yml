@@ -450,7 +450,7 @@ jobs:
           # The DuckDB CLI tag baked in for ad-hoc shell use must match
           # the channel; default in the Dockerfile is the stable version.
           build-args: |
-            DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.4' || '1.5.2' }}
+            DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.4' || '1.5.3' }}
           tags: |
             ${{ env.docker_image }}:latest-${{ matrix.platform }}
             ${{ env.docker_image }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}

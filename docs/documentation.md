@@ -48,8 +48,8 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 | Component                                                                        | Stable channel | LTS channel |
 |----------------------------------------------------------------------------------|----------------|-------------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.2         | v1.4.4      |
-| [SQLite](https://sqlite.org)                                                     | 3.52.0         | 3.52.0      |
+| [DuckDB](https://duckdb.org)                                                     | v1.5.3         | v1.4.4      |
+| [SQLite](https://sqlite.org)                                                     | 3.53.1         | 3.53.1      |
 | [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1         | 23.0.1      |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      |
 | [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0        | v1.25.0     |
@@ -88,15 +88,15 @@ The above command will start GizmoSQL with an in-memory DuckDB database. To use 
 **Note**: You can disable TLS in the container by setting environment variable: `TLS_ENABLED` to "0" (default is "1" - enabled).  This is not recommended unless you are using an mTLS sidecar in Kubernetes or something similar, as it will be insecure.    
 
 ### Optional - open a different database file
-When running the Docker image - you can have it run your own DuckDB database file (the database must be built with DuckDB version: 1.5.2).
+When running the Docker image - you can have it run your own DuckDB database file (the database must be built with DuckDB version: 1.5.3).
 
 Prerequisite: DuckDB CLI
-Install DuckDB CLI version [1.5.2](https://github.com/duckdb/duckdb/releases/tag/v1.5.2) - and make sure the executable is on your PATH.
+Install DuckDB CLI version [1.5.3](https://github.com/duckdb/duckdb/releases/tag/v1.5.3) - and make sure the executable is on your PATH.
 
 Platform Downloads:
-[Linux x86-64](https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-linux-amd64.zip)
-[Linux arm64 (aarch64)](https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-linux-arm64.zip)
-[MacOS Universal](https://github.com/duckdb/duckdb/releases/download/v1.5.2/duckdb_cli-osx-universal.zip)
+[Linux x86-64](https://github.com/duckdb/duckdb/releases/download/v1.5.3/duckdb_cli-linux-amd64.zip)
+[Linux arm64 (aarch64)](https://github.com/duckdb/duckdb/releases/download/v1.5.3/duckdb_cli-linux-arm64.zip)
+[MacOS Universal](https://github.com/duckdb/duckdb/releases/download/v1.5.3/duckdb_cli-osx-universal.zip)
 
 In this example, we'll generate a new TPC-H Scale Factor 1 (1GB) database file, and then run the docker image to mount it:
 
@@ -495,7 +495,7 @@ GizmoSQL - Copyright © 2025 GizmoData LLC
  https://www.apache.org/licenses/LICENSE-2.0
 Apache Arrow version: 23.0.1
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
-DuckDB version: v1.5.2
+DuckDB version: v1.5.3
 Running Init SQL command: 
 SET autoinstall_known_extensions = true;
 Running Init SQL command: 

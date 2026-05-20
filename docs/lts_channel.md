@@ -4,7 +4,7 @@ GizmoSQL ships in two parallel **release channels** that share the same GizmoSQL
 
 | Channel    | DuckDB tracked                         | When to pick it |
 |------------|----------------------------------------|------------------|
-| **Stable** | Latest DuckDB minor (e.g. `v1.5.2`)    | You want every new DuckDB feature, type, and performance improvement on its normal cadence. |
+| **Stable** | Latest DuckDB minor (e.g. `v1.5.3`)    | You want every new DuckDB feature, type, and performance improvement on its normal cadence. |
 | **LTS**    | Most recent DuckDB LTS (e.g. `v1.4.4`) | You need a slower-moving, longer-supported DuckDB engine — production deployments where the underlying database's stability guarantees matter more than new features. |
 
 Both channels get every GizmoSQL fix, feature, and quality-of-life improvement at the same time. Choosing LTS only changes which DuckDB version is statically linked into the binary; the GizmoSQL CLI flags, library API, configuration, authentication, and protocol behavior are identical.
