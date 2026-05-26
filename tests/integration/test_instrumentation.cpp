@@ -1019,3 +1019,158 @@ TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 }
+
+// Regression test: instrumentation timing columns must be TIMESTAMPTZ so that
+// filters using `now()` work without an explicit cast. The earlier schema used
+// naive TIMESTAMP, which forced customers to write `start_time > (now())::TIMESTAMP`.
+TEST_F(InstrumentationServerFixture, TimingColumnsAreTimestampTz) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // Drive at least one statement so we have a row to filter on.
+  ASSERT_ARROW_OK_AND_ASSIGN(auto warm,
+                             sql_client.Execute(call_options, "SELECT 1"));
+  for (const auto& endpoint : warm->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    std::shared_ptr<arrow::Table> table;
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  // Schema-level assertion: information_schema must report TIMESTAMP WITH TIME ZONE
+  // for every timing column we migrated.
+  const std::vector<std::pair<std::string, std::string>> timing_columns = {
+      {"instances", "start_time"},        {"instances", "stop_time"},
+      {"sessions", "start_time"},         {"sessions", "stop_time"},
+      {"sql_statements", "created_time"},
+      {"sql_executions", "execution_start_time"},
+      {"sql_executions", "execution_end_time"},
+  };
+  for (const auto& [table_name, column_name] : timing_columns) {
+    std::string query =
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_name = '" + table_name + "' AND column_name = '" + column_name + "'";
+    ASSERT_ARROW_OK_AND_ASSIGN(auto info, sql_client.Execute(call_options, query));
+    bool checked = false;
+    for (const auto& endpoint : info->endpoints()) {
+      ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                                 sql_client.DoGet(call_options, endpoint.ticket));
+      std::shared_ptr<arrow::Table> table;
+      ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+      ASSERT_GE(table->num_rows(), 1)
+          << "Missing column " << table_name << "." << column_name;
+      auto data_type = std::static_pointer_cast<arrow::StringArray>(
+                           table->column(0)->chunk(0))
+                           ->GetString(0);
+      EXPECT_NE(data_type.find("WITH TIME ZONE"), std::string::npos)
+          << table_name << "." << column_name
+          << " should be TIMESTAMP WITH TIME ZONE, got: " << data_type;
+      checked = true;
+    }
+    ASSERT_TRUE(checked) << "No endpoint returned for " << table_name << "." << column_name;
+  }
+
+  // Behavioral assertion: the customer-reported filter shape must run without
+  // an explicit cast and must match the session we just opened.
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto recent,
+      sql_client.Execute(
+          call_options,
+          "SELECT COUNT(*) FROM _gizmosql_instr.sessions "
+          "WHERE start_time > now() - INTERVAL '1 hour'"));
+  int64_t recent_sessions = 0;
+  for (const auto& endpoint : recent->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    std::shared_ptr<arrow::Table> table;
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+    if (table->num_rows() > 0) {
+      recent_sessions = std::static_pointer_cast<arrow::Int64Array>(
+                            table->column(0)->chunk(0))
+                            ->Value(0);
+    }
+  }
+  ASSERT_GE(recent_sessions, 1)
+      << "Expected `WHERE start_time > now() - INTERVAL '1 hour'` to match the active session";
+}
+
+// Regression test: when a legacy instrumentation database is found with naive
+// TIMESTAMP columns, GizmoSQL must auto-migrate it to TIMESTAMPTZ (interpreting
+// existing values as UTC) without losing rows.
+TEST(InstrumentationManagerTest, AutoMigratesNaiveTimestampToTimestampTz) {
+  namespace fs = std::filesystem;
+  std::string instr_db = "tz_migration_test_instr.db";
+  std::error_code ec;
+  fs::remove(instr_db, ec);
+  fs::remove(instr_db + ".wal", ec);
+
+  // Seed a database with the OLD schema (naive TIMESTAMP) and one row in each
+  // table whose timestamp is "now in UTC" written without tz info.
+  {
+    duckdb::DuckDB db(instr_db);
+    duckdb::Connection conn(db);
+    auto json_r = conn.Query("INSTALL json; LOAD json;");
+    ASSERT_FALSE(json_r->HasError()) << json_r->GetError();
+    auto r = conn.Query(R"SQL(
+      CREATE TABLE instances (
+        instance_id UUID NOT NULL, gizmosql_version VARCHAR NOT NULL,
+        gizmosql_edition VARCHAR NOT NULL, duckdb_version VARCHAR NOT NULL,
+        arrow_version VARCHAR NOT NULL, hostname VARCHAR, hostname_arg VARCHAR,
+        server_ip VARCHAR, port INTEGER, database_path VARCHAR,
+        tls_enabled BOOLEAN NOT NULL, tls_cert_path VARCHAR, tls_key_path VARCHAR,
+        mtls_required BOOLEAN NOT NULL, mtls_ca_cert_path VARCHAR,
+        readonly BOOLEAN NOT NULL, os_platform VARCHAR, os_name VARCHAR,
+        os_version VARCHAR, cpu_arch VARCHAR, cpu_model VARCHAR,
+        cpu_count INTEGER, memory_total_bytes BIGINT,
+        start_time TIMESTAMP NOT NULL, stop_time TIMESTAMP,
+        status VARCHAR NOT NULL, stop_reason VARCHAR, instance_tag JSON);
+      INSERT INTO instances VALUES
+        (gen_random_uuid(), 'x','x','x','x',NULL,NULL,NULL,NULL,NULL,
+         false,NULL,NULL,false,NULL,false,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+         (now() AT TIME ZONE 'UTC')::TIMESTAMP, NULL, 'running', NULL, NULL);
+    )SQL");
+    ASSERT_FALSE(r->HasError()) << r->GetError();
+  }
+
+  // Attaching via the manager should auto-migrate the schema in place.
+  auto db_instance = std::make_shared<duckdb::DuckDB>(":memory:");
+  auto mgr = gizmosql::ddb::InstrumentationManager::Create(
+      db_instance, instr_db, "_gizmosql_instr", "main",
+      /*use_external_catalog=*/false);
+  ASSERT_TRUE(mgr.ok()) << mgr.status().ToString();
+
+  // Verify: column is now TIMESTAMP WITH TIME ZONE, and the legacy row survived.
+  {
+    duckdb::Connection conn(*db_instance);
+    auto type_q = conn.Query(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_catalog='_gizmosql_instr' AND table_name='instances' "
+        "AND column_name='start_time'");
+    ASSERT_FALSE(type_q->HasError()) << type_q->GetError();
+    ASSERT_EQ(type_q->RowCount(), 1u);
+    EXPECT_NE(type_q->GetValue(0, 0).ToString().find("WITH TIME ZONE"),
+              std::string::npos);
+
+    auto count_q = conn.Query(
+        "SELECT COUNT(*) FROM _gizmosql_instr.instances WHERE gizmosql_version='x'");
+    ASSERT_FALSE(count_q->HasError()) << count_q->GetError();
+    EXPECT_EQ(count_q->GetValue(0, 0).GetValue<int64_t>(), 1);
+  }
+
+  (*mgr)->Shutdown();
+  fs::remove(instr_db, ec);
+  fs::remove(instr_db + ".wal", ec);
+}

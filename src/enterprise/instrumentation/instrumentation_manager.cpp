@@ -75,8 +75,11 @@ CREATE TABLE IF NOT EXISTS instances (
     cpu_count INTEGER,
     memory_total_bytes BIGINT,
     -- Timestamps and status
-    start_time TIMESTAMP NOT NULL,
-    stop_time TIMESTAMP,
+    -- TIMESTAMPTZ (TIMESTAMP WITH TIME ZONE) so callers can filter with
+    -- `WHERE start_time > now() - INTERVAL '1 hour'` without an explicit cast
+    -- (DuckDB's now() returns TIMESTAMPTZ).
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    stop_time TIMESTAMP WITH TIME ZONE,
     status VARCHAR NOT NULL,  -- CHECK (status IN ('running', 'stopped')) not supported in DuckLake
     stop_reason VARCHAR,
     instance_tag JSON
@@ -93,8 +96,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     peer_identity VARCHAR,
     user_agent VARCHAR,
     connection_protocol VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
-    start_time TIMESTAMP NOT NULL,
-    stop_time TIMESTAMP,
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    stop_time TIMESTAMP WITH TIME ZONE,
     status VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
     stop_reason VARCHAR,
     session_tag JSON
@@ -109,7 +112,7 @@ CREATE TABLE IF NOT EXISTS sql_statements (
     is_internal BOOLEAN NOT NULL,
     prepare_success BOOLEAN NOT NULL,
     prepare_error VARCHAR,
-    created_time TIMESTAMP NOT NULL,
+    created_time TIMESTAMP WITH TIME ZONE NOT NULL,
     query_tag JSON
 );
 
@@ -118,8 +121,8 @@ CREATE TABLE IF NOT EXISTS sql_executions (
     execution_id UUID NOT NULL,  -- PRIMARY KEY (not supported in DuckLake)
     statement_id UUID NOT NULL,
     bind_parameters VARCHAR,
-    execution_start_time TIMESTAMP NOT NULL,
-    execution_end_time TIMESTAMP,
+    execution_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    execution_end_time TIMESTAMP WITH TIME ZONE,
     rows_fetched BIGINT,
     status VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
     error_message VARCHAR,
@@ -337,12 +340,125 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
     auto schema_check = writer_connection->Get().Query(
         "SELECT column_name FROM information_schema.columns "
         "WHERE table_catalog = '" + catalog + "' AND table_name = 'instances' AND column_name = 'os_platform'");
+    // Detect the pre-TIMESTAMPTZ schema, where start_time was a naive TIMESTAMP.
+    // Legacy values were written by `now()` and stripped of tz on insert, so we
+    // interpret them as UTC. We migrate via stage-drop-restore (not ALTER
+    // COLUMN ... USING) because DuckLake rejects type changes that use an
+    // expression. The plan, executed across the InitializeSchema call below:
+    //   1. Stage each legacy table into a TEMP table with timing columns cast
+    //      `<col> AT TIME ZONE 'UTC'` (yielding TIMESTAMPTZ).
+    //   2. Drop the dependent views and the legacy tables.
+    //   3. InitializeSchema() recreates fresh tz-aware tables + views.
+    //   4. Restore rows from each TEMP table via `INSERT ... BY NAME`.
+    // Note on parameterization: WHERE clauses bind values (catalog/table/column
+    // names are compared as strings); DDL below interpolates the same names as
+    // identifiers, which SQL does not allow parameters for.
+    auto tz_check_stmt = writer_connection->Get().Prepare(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_catalog = $1 AND table_name = $2 AND column_name = $3");
+    duckdb::vector<duckdb::Value> tz_check_args{
+        duckdb::Value(catalog), duckdb::Value("instances"),
+        duckdb::Value("start_time")};
+    auto tz_check_raw =
+        tz_check_stmt->Execute(tz_check_args, /*allow_stream_result=*/false);
+    auto& tz_check = tz_check_raw->Cast<duckdb::MaterializedQueryResult>();
+    // Tables (and their timing columns) we may need to restore from TEMP
+    // staging after InitializeSchema reconstructs the schema.
+    struct LegacyTable {
+      std::string table;
+      std::vector<std::string> tz_cols;
+    };
+    std::vector<LegacyTable> staged_for_restore;
     if (!schema_check->HasError()) {
       // Check if instances table exists (by checking for any column)
       auto table_exists = writer_connection->Get().Query(
           "SELECT column_name FROM information_schema.columns "
           "WHERE table_catalog = '" + catalog + "' AND table_name = 'instances' LIMIT 1");
       if (!table_exists->HasError() && table_exists->RowCount() > 0) {
+        // Table exists - check timestamp column type for tz-awareness
+        if (!tz_check.HasError() && tz_check.RowCount() > 0) {
+          std::string start_time_type = tz_check.GetValue(0, 0).ToString();
+          if (start_time_type.find("WITH TIME ZONE") == std::string::npos) {
+            GIZMOSQL_LOG(INFO)
+                << "Migrating instrumentation timing columns from TIMESTAMP to "
+                   "TIMESTAMP WITH TIME ZONE (interpreting existing values as UTC) in "
+                << (use_external_catalog ? ("catalog " + catalog + "." + schema)
+                                         : ("database " + db_path));
+
+            const std::string prefix =
+                catalog + (use_external_catalog ? ("." + schema) : "");
+
+            // Drop dependent views first (recreated by InitializeSchema below).
+            for (const char* view : {"execution_details", "session_stats",
+                                     "active_sessions", "session_activity"}) {
+              auto drop_result = writer_connection->Get().Query(
+                  std::string("DROP VIEW IF EXISTS ") + prefix + "." + view);
+              if (drop_result->HasError()) {
+                GIZMOSQL_LOG(WARNING)
+                    << "Failed to drop view " << view << " during TZ migration: "
+                    << drop_result->GetError();
+              }
+            }
+
+            const std::vector<LegacyTable> tables = {
+                {"instances", {"start_time", "stop_time"}},
+                {"sessions", {"start_time", "stop_time"}},
+                {"sql_statements", {"created_time"}},
+                {"sql_executions", {"execution_start_time", "execution_end_time"}},
+            };
+            for (const auto& tbl : tables) {
+              // Skip if this legacy table doesn't exist (partial schema) or has
+              // already been migrated to TIMESTAMPTZ (idempotent re-run).
+              auto col_check_stmt = writer_connection->Get().Prepare(
+                  "SELECT data_type FROM information_schema.columns "
+                  "WHERE table_catalog = $1 AND table_name = $2 AND column_name = $3");
+              duckdb::vector<duckdb::Value> col_check_args{
+                  duckdb::Value(catalog), duckdb::Value(tbl.table),
+                  duckdb::Value(tbl.tz_cols.front())};
+              auto col_check_raw = col_check_stmt->Execute(
+                  col_check_args, /*allow_stream_result=*/false);
+              auto& col_check =
+                  col_check_raw->Cast<duckdb::MaterializedQueryResult>();
+              if (col_check.HasError() || col_check.RowCount() == 0) continue;
+              if (col_check.GetValue(0, 0).ToString().find("WITH TIME ZONE") !=
+                  std::string::npos) {
+                continue;
+              }
+
+              // Build: SELECT * EXCLUDE (<tz cols>), <col> AT TIME ZONE 'UTC' AS <col>, ...
+              std::string exclude_list;
+              std::string tz_select;
+              for (size_t i = 0; i < tbl.tz_cols.size(); ++i) {
+                if (i > 0) {
+                  exclude_list += ", ";
+                  tz_select += ", ";
+                }
+                exclude_list += tbl.tz_cols[i];
+                tz_select += tbl.tz_cols[i] + " AT TIME ZONE 'UTC' AS " +
+                             tbl.tz_cols[i];
+              }
+              const std::string staging = "_gizmosql_mig_" + tbl.table;
+              std::string stage_sql = "CREATE TEMP TABLE " + staging +
+                                      " AS SELECT * EXCLUDE (" + exclude_list +
+                                      "), " + tz_select + " FROM " + prefix + "." +
+                                      tbl.table;
+              auto stage_r = writer_connection->Get().Query(stage_sql);
+              if (stage_r->HasError()) {
+                return arrow::Status::Invalid(
+                    "Failed to stage legacy rows from ", tbl.table,
+                    " during TIMESTAMPTZ migration: ", stage_r->GetError());
+              }
+              auto drop_r = writer_connection->Get().Query("DROP TABLE " + prefix +
+                                                            "." + tbl.table);
+              if (drop_r->HasError()) {
+                return arrow::Status::Invalid(
+                    "Failed to drop legacy table ", tbl.table,
+                    " during TIMESTAMPTZ migration: ", drop_r->GetError());
+              }
+              staged_for_restore.push_back(tbl);
+            }
+          }
+        }
         // Table exists - check if os_platform column exists
         if (schema_check->RowCount() == 0) {
           // Old schema detected - missing new columns
@@ -369,6 +485,29 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
         std::move(db_instance), std::move(writer_connection)));
 
     ARROW_RETURN_NOT_OK(manager->InitializeSchema());
+
+    // Restore staged rows from the TIMESTAMPTZ migration. InitializeSchema has
+    // recreated each table with tz-aware columns; we INSERT BY NAME so the
+    // staged-column order is irrelevant.
+    if (!staged_for_restore.empty()) {
+      const std::string prefix =
+          catalog + (use_external_catalog ? ("." + schema) : "");
+      for (const auto& tbl : staged_for_restore) {
+        const std::string staging = "_gizmosql_mig_" + tbl.table;
+        auto restore_r = manager->writer_connection_->Get().Query(
+            "INSERT INTO " + prefix + "." + tbl.table +
+            " BY NAME SELECT * FROM " + staging);
+        if (restore_r->HasError()) {
+          return arrow::Status::Invalid(
+              "Failed to restore legacy rows into ", tbl.table,
+              " after TIMESTAMPTZ migration: ", restore_r->GetError());
+        }
+        manager->writer_connection_->Get().Query("DROP TABLE " + staging);
+      }
+      GIZMOSQL_LOG(INFO) << "Restored legacy rows into " << staged_for_restore.size()
+                         << " table(s) after TIMESTAMPTZ migration";
+    }
+
     ARROW_RETURN_NOT_OK(manager->CleanupStaleRecords());
 
     manager->writer_thread_ = std::thread(&InstrumentationManager::WriterThreadLoop, manager.get());

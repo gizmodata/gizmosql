@@ -231,8 +231,8 @@ Tracks server instance lifecycle.
 | `cpu_model` | VARCHAR | CPU model name |
 | `cpu_count` | INTEGER | Number of CPU cores |
 | `memory_total_bytes` | BIGINT | Total system memory in bytes |
-| `start_time` | TIMESTAMP | When server started |
-| `stop_time` | TIMESTAMP | When server stopped (NULL if running) |
+| `start_time` | TIMESTAMPTZ | When server started (tz-aware; compare directly to `now()`) |
+| `stop_time` | TIMESTAMPTZ | When server stopped (NULL if running) |
 | `status` | VARCHAR | 'running' or 'stopped' |
 | `stop_reason` | VARCHAR | Reason for shutdown |
 | `instance_tag` | JSON | User-defined JSON tag set via `--instance-tag` CLI flag (NULL if not set) |
@@ -252,8 +252,8 @@ Tracks client session lifecycle.
 | `peer_identity` | VARCHAR | mTLS client certificate identity (NULL if not using mTLS) |
 | `user_agent` | VARCHAR | Client user-agent header (e.g., 'ADBC Flight SQL Driver v1.10.0', 'grpc-java-netty/1.65.0') |
 | `connection_protocol` | VARCHAR | 'plaintext', 'tls', or 'mtls' |
-| `start_time` | TIMESTAMP | When session started |
-| `stop_time` | TIMESTAMP | When session ended (NULL if active) |
+| `start_time` | TIMESTAMPTZ | When session started (tz-aware; compare directly to `now()`) |
+| `stop_time` | TIMESTAMPTZ | When session ended (NULL if active) |
 | `status` | VARCHAR | 'active', 'closed', 'killed', 'timeout', 'error' |
 | `stop_reason` | VARCHAR | Reason session ended |
 | `session_tag` | JSON | User-defined JSON tag set via `SET gizmosql.session_tag` (NULL if not set) |
@@ -271,7 +271,7 @@ Tracks prepared statement definitions (one per prepared statement).
 | `is_internal` | BOOLEAN | Whether this is an internal statement (metadata queries, etc.) |
 | `prepare_success` | BOOLEAN | Whether statement preparation succeeded |
 | `prepare_error` | VARCHAR | Error message if statement preparation failed (NULL if successful) |
-| `created_time` | TIMESTAMP | When statement was created |
+| `created_time` | TIMESTAMPTZ | When statement was created (tz-aware) |
 | `query_tag` | JSON | User-defined JSON tag set via `SET gizmosql.query_tag` (NULL if not set) |
 
 **Internal vs Client Statements:**
@@ -297,8 +297,8 @@ Tracks individual executions of statements (one per execution).
 | `execution_id` | UUID | Primary key (same as used in logs) |
 | `statement_id` | UUID | Reference to sql_statements |
 | `bind_parameters` | VARCHAR | JSON array of bind parameters (NULL if none) |
-| `execution_start_time` | TIMESTAMP | When execution started |
-| `execution_end_time` | TIMESTAMP | When execution completed |
+| `execution_start_time` | TIMESTAMPTZ | When execution started (tz-aware) |
+| `execution_end_time` | TIMESTAMPTZ | When execution completed |
 | `rows_fetched` | BIGINT | Number of rows returned |
 | `status` | VARCHAR | 'executing', 'success', 'error', 'timeout', 'cancelled' |
 | `error_message` | VARCHAR | Error message if failed |
