@@ -19,7 +19,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install WiX Toolset
         run: |
@@ -93,7 +93,7 @@ jobs:
             "${{ github.workspace }}\installer\GizmoSQL-amd64.msi"
 
       - name: Upload MSI
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: GizmoSQL-test-amd64.zip
           path: installer/GizmoSQL-amd64.msi

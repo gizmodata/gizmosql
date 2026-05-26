@@ -42,7 +42,7 @@ jobs:
       bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install build requirements
         env:
@@ -68,7 +68,7 @@ jobs:
 
       - name: Restore Arrow cache
         id: arrow-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: build/third_party
           key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
@@ -76,7 +76,7 @@ jobs:
             arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
@@ -97,7 +97,7 @@ jobs:
 
       - name: Save Arrow cache
         if: steps.arrow-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: build/third_party
           key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
@@ -126,7 +126,7 @@ jobs:
           cd build && bash ../tests/test_client_shell.sh
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -164,7 +164,7 @@ jobs:
           exit $TEST_EXIT_CODE
 
       - name: Sign and notarize the server release build
-        uses: toitlang/action-macos-sign-notarize@v1.2.1
+        uses: toitlang/action-macos-sign-notarize@v1.3.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -175,7 +175,7 @@ jobs:
           entitlements-path: macos/entitlements.plist
 
       - name: Sign and notarize the client release build
-        uses: toitlang/action-macos-sign-notarize@v1.2.1
+        uses: toitlang/action-macos-sign-notarize@v1.3.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -190,7 +190,7 @@ jobs:
           zip -j ${{ env.zip_file_name }} gizmosql_server${{ env.bin_suffix }} gizmosql_client${{ env.bin_suffix }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.zip_file_name }}
           path: |
@@ -255,7 +255,7 @@ jobs:
           --health-retries 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install build requirements
         run: |
@@ -277,7 +277,7 @@ jobs:
 
       - name: Restore Arrow cache
         id: arrow-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: build/third_party
           key: arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
@@ -285,7 +285,7 @@ jobs:
             arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
@@ -302,7 +302,7 @@ jobs:
 
       - name: Save Arrow cache
         if: steps.arrow-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: build/third_party
           key: arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
@@ -358,7 +358,7 @@ jobs:
           cd build && bash ../tests/test_client_shell.sh
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -401,7 +401,7 @@ jobs:
           zip -j ${{ env.zip_file_name }} gizmosql_server${{ env.bin_suffix }} gizmosql_client${{ env.bin_suffix }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.zip_file_name }}
           path: |
@@ -490,7 +490,7 @@ jobs:
       unsigned_artifact: gizmosql-windows-amd64-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -512,7 +512,7 @@ jobs:
 
       - name: Restore vcpkg cache
         id: vcpkg-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
           key: vcpkg-x64-windows-static-${{ hashFiles('.github/workflows/ci.yml') }}
@@ -526,7 +526,7 @@ jobs:
 
       - name: Save vcpkg cache
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
           key: vcpkg-x64-windows-static-${{ hashFiles('.github/workflows/ci.yml') }}
@@ -544,7 +544,7 @@ jobs:
 
       - name: Restore Arrow cache
         id: arrow-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: build/third_party
           key: arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
@@ -552,7 +552,7 @@ jobs:
             arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Configure
         run: |
@@ -571,7 +571,7 @@ jobs:
 
       - name: Save Arrow cache
         if: steps.arrow-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: build/third_party
           key: arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
@@ -587,7 +587,7 @@ jobs:
         run: .\build\tests\gizmosql_integration_tests.exe
 
       - name: Upload unsigned executables for signing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.unsigned_artifact }}
           path: |
@@ -615,7 +615,7 @@ jobs:
       contents: read
     steps:
       - name: Download unsigned executables
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.unsigned_artifact }}
           path: unsigned
@@ -645,7 +645,7 @@ jobs:
           }
 
       - name: Upload signed executables
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.signed_artifact }}
           path: unsigned/**/*.exe
@@ -656,7 +656,7 @@ jobs:
           7z a ${{ env.cli_zip_name }} .\unsigned\*.exe .\unsigned\*.dll
 
       - name: Upload signed zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.cli_zip_name }}
           path: ${{ env.cli_zip_name }}
@@ -680,10 +680,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download signed executables
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.signed_artifact }}
           path: installer/bin
@@ -768,7 +768,7 @@ jobs:
             "${{ github.workspace }}\installer\${{ env.msi_filename }}"
 
       - name: Upload MSI
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.msi_artifact }}
           path: installer/${{ env.msi_filename }}
@@ -785,70 +785,70 @@ jobs:
       attestations: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download CLI zip artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: gizmosql_cli_*.zip
           merge-multiple: true
 
       - name: Download MSI artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: GizmoSQL-*-msi.zip
           merge-multiple: true
 
       - name: Attest build provenance - Linux AMD64
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_linux_amd64.zip
 
       - name: Attest build provenance - Linux ARM64
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_linux_arm64.zip
 
       - name: Attest build provenance - macOS ARM64
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_macos_arm64.zip
 
       - name: Attest build provenance - Windows AMD64
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_windows_amd64.zip
 
       - name: Attest build provenance - Windows AMD64 MSI
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/GizmoSQL-amd64.msi
 
       # ----- LTS channel artifacts -----
       - name: Attest build provenance - Linux AMD64 (LTS)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_linux_amd64_lts.zip
 
       - name: Attest build provenance - Linux ARM64 (LTS)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_linux_arm64_lts.zip
 
       - name: Attest build provenance - macOS ARM64 (LTS)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_macos_arm64_lts.zip
 
       - name: Attest build provenance - Windows AMD64 (LTS)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/gizmosql_cli_windows_amd64_lts.zip
 
       - name: Attest build provenance - Windows AMD64 MSI (LTS)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/GizmoSQL-amd64-lts.msi
 
@@ -969,10 +969,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download all CLI artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: gizmosql_cli_*.zip
@@ -997,7 +997,7 @@ jobs:
           echo "linux_amd64_sha_lts=${LINUX_AMD64_SHA_LTS}" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: gizmodata/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -1193,7 +1193,7 @@ jobs:
       EXPORT_PATH: ios/GizmoSQL/build/export
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -1222,7 +1222,7 @@ jobs:
       # Key on the inputs that materially change the output.
       - name: Cache iOS dependency build
         id: ios-deps-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ios/build/libs
@@ -1352,7 +1352,7 @@ jobs:
             -allowProvisioningUpdates=NO
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: GizmoSQL-iOS-ipa
           path: ios/GizmoSQL/build/export/*.ipa
