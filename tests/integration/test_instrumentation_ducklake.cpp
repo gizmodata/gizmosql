@@ -59,6 +59,7 @@
 
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/enterprise_features.h"
+#include "instrumentation/instrumentation_manager.h"
 #endif
 
 using arrow::flight::sql::FlightSqlClient;
@@ -1002,4 +1003,278 @@ TEST(DuckLakeInstrumentation, CatalogIsReadOnly) {
   fs::remove(db_path.string() + ".wal", ec);
 
   std::cerr << "\n=== DuckLake Catalog Read-Only Protection Test PASSED ===" << std::endl;
+}
+
+// ============================================================================
+// Test: Auto-migrate legacy naive-TIMESTAMP schema in a DuckLake catalog
+// ============================================================================
+//
+// Simulates the customer scenario: a DuckLake catalog (Postgres metadata +
+// MinIO data) was populated by an older GizmoSQL server that wrote naive
+// TIMESTAMP values into instances/sessions/sql_statements/sql_executions.
+// On startup, the new server must auto-migrate every timing column to
+// TIMESTAMP WITH TIME ZONE in place, interpreting existing values as UTC,
+// without losing rows or breaking the dependent views.
+//
+// The legacy rows are seeded by issuing the same DDL/DML the prior server
+// version would have produced, directly against the live DuckLake catalog --
+// the on-disk artifact (parquet files referenced from Postgres metadata) is
+// identical to what an older binary would have written.
+TEST(DuckLakeInstrumentation, AutoMigrateLegacyNaiveTimestampSchema) {
+  if (!IsInstrumentationPostgresAvailable()) {
+    GTEST_SKIP() << "Instrumentation PostgreSQL not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+  if (!IsMinioAvailable()) {
+    GTEST_SKIP() << "MinIO not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+
+#ifdef GIZMOSQL_ENTERPRISE
+  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  if (!license_file || !fs::exists(license_file)) {
+    GTEST_SKIP() << "License key file not found";
+  }
+  auto& enterprise = gizmosql::enterprise::EnterpriseFeatures::Instance();
+  auto license_status = enterprise.Initialize(license_file);
+  if (!license_status.ok()) {
+    GTEST_SKIP() << "Failed to initialize enterprise license: "
+                 << license_status.ToString();
+  }
+#else
+  GTEST_SKIP() << "Enterprise features not available";
+#endif
+
+  std::cerr << "\n=== DuckLake Auto-Migrate Legacy Schema Test ===" << std::endl;
+
+  const std::string catalog_name = "tz_mig_ducklake";
+  const std::string schema_name = "main";
+  // Share the same DuckLake metadata DB + S3 data path as the other tests in
+  // this file. DuckLake stores ONE data_path per metadata DB, so using a
+  // different one here would break sibling tests when run in sequence.
+  const std::string init_sql =
+      GetDuckLakeInitSQLWithS3(catalog_name, "instrumentation_data/");
+
+  // ---- Phase 1: seed the DuckLake catalog with the LEGACY schema. ----------
+  // Use a private duckdb instance to lay down naive-TIMESTAMP tables + rows
+  // that look exactly like what the prior server version would have written.
+  std::cerr << "Phase 1: seeding legacy naive-TIMESTAMP schema in DuckLake..."
+            << std::endl;
+  {
+    auto seed_db = std::make_shared<duckdb::DuckDB>(":memory:");
+    duckdb::Connection seed_conn(*seed_db);
+    auto attach_r = seed_conn.Query(init_sql);
+    ASSERT_FALSE(attach_r->HasError())
+        << "Failed to attach DuckLake catalog for seeding: " << attach_r->GetError();
+    auto json_r = seed_conn.Query("INSTALL json; LOAD json;");
+    ASSERT_FALSE(json_r->HasError()) << json_r->GetError();
+
+    // Clean slate in case a prior run left tables behind in this DuckLake catalog.
+    for (const char* view : {"execution_details", "session_stats",
+                             "active_sessions", "session_activity"}) {
+      seed_conn.Query("DROP VIEW IF EXISTS " + catalog_name + "." + schema_name +
+                      "." + view);
+    }
+    for (const char* tbl : {"sql_executions", "sql_statements", "sessions",
+                            "instances"}) {
+      seed_conn.Query("DROP TABLE IF EXISTS " + catalog_name + "." + schema_name +
+                      "." + tbl);
+    }
+
+    seed_conn.Query("USE " + catalog_name + "." + schema_name);
+
+    // Create tables with the OLD naive-TIMESTAMP shape. Matches the
+    // pre-migration schema in instrumentation_manager.cpp.
+    auto create_r = seed_conn.Query(R"SQL(
+      CREATE TABLE instances (
+        instance_id UUID NOT NULL,
+        gizmosql_version VARCHAR NOT NULL,
+        gizmosql_edition VARCHAR NOT NULL,
+        duckdb_version VARCHAR NOT NULL,
+        arrow_version VARCHAR NOT NULL,
+        hostname VARCHAR, hostname_arg VARCHAR, server_ip VARCHAR,
+        port INTEGER, database_path VARCHAR,
+        tls_enabled BOOLEAN NOT NULL, tls_cert_path VARCHAR, tls_key_path VARCHAR,
+        mtls_required BOOLEAN NOT NULL, mtls_ca_cert_path VARCHAR,
+        readonly BOOLEAN NOT NULL,
+        os_platform VARCHAR, os_name VARCHAR, os_version VARCHAR,
+        cpu_arch VARCHAR, cpu_model VARCHAR,
+        cpu_count INTEGER, memory_total_bytes BIGINT,
+        start_time TIMESTAMP NOT NULL,
+        stop_time TIMESTAMP,
+        status VARCHAR NOT NULL,
+        stop_reason VARCHAR,
+        instance_tag JSON);
+      CREATE TABLE sessions (
+        session_id UUID NOT NULL, instance_id UUID NOT NULL,
+        username VARCHAR NOT NULL, role VARCHAR NOT NULL,
+        auth_method VARCHAR NOT NULL, peer VARCHAR NOT NULL,
+        peer_identity VARCHAR, user_agent VARCHAR,
+        connection_protocol VARCHAR NOT NULL,
+        start_time TIMESTAMP NOT NULL,
+        stop_time TIMESTAMP,
+        status VARCHAR NOT NULL,
+        stop_reason VARCHAR,
+        session_tag JSON);
+      CREATE TABLE sql_statements (
+        statement_id UUID NOT NULL, session_id UUID NOT NULL,
+        sql_text VARCHAR NOT NULL, flight_method VARCHAR,
+        is_internal BOOLEAN NOT NULL,
+        prepare_success BOOLEAN NOT NULL, prepare_error VARCHAR,
+        created_time TIMESTAMP NOT NULL,
+        query_tag JSON);
+      CREATE TABLE sql_executions (
+        execution_id UUID NOT NULL, statement_id UUID NOT NULL,
+        bind_parameters VARCHAR,
+        execution_start_time TIMESTAMP NOT NULL,
+        execution_end_time TIMESTAMP,
+        rows_fetched BIGINT,
+        status VARCHAR NOT NULL,
+        error_message VARCHAR,
+        duration_ms BIGINT);
+    )SQL");
+    ASSERT_FALSE(create_r->HasError())
+        << "Failed to create legacy tables: " << create_r->GetError();
+
+    // The legacy `now()` insert path stripped the tz to local wall-clock; the
+    // migration assumes those naive values are UTC. We mimic that by writing
+    // `(now() AT TIME ZONE 'UTC')::TIMESTAMP` so the assumed-UTC value is the
+    // actual current UTC instant, which lets us verify rows survive AND that
+    // the migrated tz-aware values compare correctly to `now()`.
+    auto insert_r = seed_conn.Query(R"SQL(
+      INSERT INTO instances VALUES
+        ('11111111-1111-1111-1111-111111111111','legacy','enterprise','x','x',
+         NULL,NULL,NULL,NULL,NULL,false,NULL,NULL,false,NULL,false,
+         NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+         (now() AT TIME ZONE 'UTC')::TIMESTAMP, NULL, 'running', NULL, NULL);
+      INSERT INTO sessions VALUES
+        ('22222222-2222-2222-2222-222222222222',
+         '11111111-1111-1111-1111-111111111111',
+         'legacy_user','admin','Basic','127.0.0.1',NULL,NULL,'plaintext',
+         (now() AT TIME ZONE 'UTC')::TIMESTAMP, NULL, 'active', NULL, NULL);
+      INSERT INTO sql_statements VALUES
+        ('33333333-3333-3333-3333-333333333333',
+         '22222222-2222-2222-2222-222222222222',
+         'SELECT 1', 'CreatePreparedStatement', false, true, NULL,
+         (now() AT TIME ZONE 'UTC')::TIMESTAMP, NULL);
+      INSERT INTO sql_executions VALUES
+        ('44444444-4444-4444-4444-444444444444',
+         '33333333-3333-3333-3333-333333333333',
+         NULL, (now() AT TIME ZONE 'UTC')::TIMESTAMP, NULL,
+         42, 'success', NULL, 5);
+    )SQL");
+    ASSERT_FALSE(insert_r->HasError())
+        << "Failed to seed legacy rows: " << insert_r->GetError();
+
+    std::cerr << "  Seeded 1 instance / 1 session / 1 statement / 1 execution"
+              << std::endl;
+  }
+
+  // ---- Phase 2: open a fresh duckdb instance and run the migration. -------
+  // This mirrors what the server does on startup: ATTACH the DuckLake catalog,
+  // then hand the connection to InstrumentationManager::Create.
+  std::cerr << "Phase 2: triggering InstrumentationManager auto-migration..."
+            << std::endl;
+  {
+    auto db = std::make_shared<duckdb::DuckDB>(":memory:");
+    duckdb::Connection setup_conn(*db);
+    auto attach_r = setup_conn.Query(init_sql);
+    ASSERT_FALSE(attach_r->HasError())
+        << "Failed to attach DuckLake catalog for migration: "
+        << attach_r->GetError();
+
+    auto mgr_result = gizmosql::ddb::InstrumentationManager::Create(
+        db, /*db_path=*/"", catalog_name, schema_name,
+        /*use_external_catalog=*/true);
+    ASSERT_TRUE(mgr_result.ok())
+        << "Migration failed: " << mgr_result.status().ToString();
+    auto mgr = *mgr_result;
+
+    // ---- Phase 3: verify schema & rows on the migrated catalog. -----------
+    duckdb::Connection verify_conn(*db);
+    const std::vector<std::pair<std::string, std::string>> timing_columns = {
+        {"instances", "start_time"},        {"instances", "stop_time"},
+        {"sessions", "start_time"},         {"sessions", "stop_time"},
+        {"sql_statements", "created_time"},
+        {"sql_executions", "execution_start_time"},
+        {"sql_executions", "execution_end_time"},
+    };
+    for (const auto& [tbl, col] : timing_columns) {
+      auto q = verify_conn.Query(
+          "SELECT data_type FROM information_schema.columns "
+          "WHERE table_catalog = '" + catalog_name +
+          "' AND table_name = '" + tbl +
+          "' AND column_name = '" + col + "'");
+      ASSERT_FALSE(q->HasError()) << q->GetError();
+      ASSERT_EQ(q->RowCount(), 1u) << "Missing " << tbl << "." << col;
+      auto type_str = q->GetValue(0, 0).ToString();
+      EXPECT_NE(type_str.find("WITH TIME ZONE"), std::string::npos)
+          << tbl << "." << col << " not migrated, got: " << type_str;
+    }
+    std::cerr << "  All 7 timing columns are TIMESTAMP WITH TIME ZONE" << std::endl;
+
+    // Rows survived
+    for (const auto& [tbl, expected_id] : std::vector<std::pair<std::string, std::string>>{
+             {"instances", "11111111-1111-1111-1111-111111111111"},
+             {"sessions", "22222222-2222-2222-2222-222222222222"},
+             {"sql_statements", "33333333-3333-3333-3333-333333333333"},
+             {"sql_executions", "44444444-4444-4444-4444-444444444444"}}) {
+      std::string id_col = tbl == "instances"     ? "instance_id"
+                           : tbl == "sessions"     ? "session_id"
+                           : tbl == "sql_statements" ? "statement_id"
+                                                     : "execution_id";
+      auto q = verify_conn.Query("SELECT COUNT(*) FROM " + catalog_name + "." +
+                                 schema_name + "." + tbl + " WHERE " + id_col +
+                                 " = '" + expected_id + "'");
+      ASSERT_FALSE(q->HasError()) << q->GetError();
+      EXPECT_EQ(q->GetValue(0, 0).GetValue<int64_t>(), 1)
+          << "Legacy row missing from " << tbl;
+    }
+    std::cerr << "  All 4 legacy rows preserved" << std::endl;
+
+    // Customer's filter shape must work without a cast and find the seeded row.
+    auto recent = verify_conn.Query(
+        "SELECT COUNT(*) FROM " + catalog_name + "." + schema_name +
+        ".sessions WHERE start_time > now() - INTERVAL '1 hour'");
+    ASSERT_FALSE(recent->HasError()) << recent->GetError();
+    EXPECT_GE(recent->GetValue(0, 0).GetValue<int64_t>(), 1)
+        << "Customer-style filter should match the legacy session "
+           "(timestamp interpreted as UTC, < 1 hour ago)";
+    std::cerr << "  `WHERE start_time > now() - INTERVAL '1 hour'` works "
+                 "without a cast"
+              << std::endl;
+
+    // Views must be present again (the migration drops then InitializeSchema
+    // recreates them).
+    for (const char* view : {"session_activity", "active_sessions",
+                             "session_stats", "execution_details"}) {
+      auto v = verify_conn.Query("SELECT COUNT(*) FROM " + catalog_name + "." +
+                                 schema_name + "." + view);
+      EXPECT_FALSE(v->HasError())
+          << "View " << view << " missing after migration: " << v->GetError();
+    }
+    std::cerr << "  All 4 dependent views were recreated" << std::endl;
+
+    mgr->Shutdown();
+  }
+
+  // ---- Phase 4: cleanup to leave the catalog usable by other tests --------
+  {
+    auto cleanup_db = std::make_shared<duckdb::DuckDB>(":memory:");
+    duckdb::Connection cleanup_conn(*cleanup_db);
+    cleanup_conn.Query(init_sql);
+    for (const char* view : {"execution_details", "session_stats",
+                             "active_sessions", "session_activity"}) {
+      cleanup_conn.Query("DROP VIEW IF EXISTS " + catalog_name + "." +
+                         schema_name + "." + view);
+    }
+    for (const char* tbl : {"sql_executions", "sql_statements", "sessions",
+                            "instances"}) {
+      cleanup_conn.Query("DROP TABLE IF EXISTS " + catalog_name + "." +
+                         schema_name + "." + tbl);
+    }
+  }
+
+  std::cerr << "\n=== DuckLake Auto-Migrate Legacy Schema Test PASSED ==="
+            << std::endl;
 }

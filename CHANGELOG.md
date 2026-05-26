@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Instrumentation timing columns are now `TIMESTAMP WITH TIME ZONE` (TIMESTAMPTZ)** instead of naive `TIMESTAMP`. This affects `instances.start_time`/`stop_time`, `sessions.start_time`/`stop_time`, `sql_statements.created_time`, and `sql_executions.execution_start_time`/`execution_end_time`. Filters like `WHERE start_time > now() - INTERVAL '1 hour'` now work without an explicit cast, since DuckDB's `now()` is itself tz-aware. **Migration is automatic:** on first startup against an older instrumentation database, GizmoSQL drops dependent views, runs `ALTER COLUMN ... SET DATA TYPE TIMESTAMP WITH TIME ZONE USING <col> AT TIME ZONE 'UTC'` on each timing column, and recreates the views — historical rows are preserved and interpreted as UTC (which matches how `now()` produced them when stripped of tz info on insert). No customer action is required for file-based instrumentation. For DuckLake-backed instrumentation, the same in-place migration is attempted; if the underlying catalog rejects `ALTER COLUMN SET DATA TYPE`, the server logs the underlying error and asks the operator to drop the instrumentation tables so GizmoSQL can recreate them.
+
 ## [1.26.2] - 2026-05-20
 
 ### Changed
