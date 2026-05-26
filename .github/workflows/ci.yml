@@ -26,6 +26,10 @@ env:
   GITHUB_IMAGE_NAME: ghcr.io/gizmodata/gizmosql
   GITHUB_LTS_IMAGE_NAME: ghcr.io/gizmodata/gizmosql-lts
   CMAKE_BUILD_TYPE: ${{ github.event.inputs.cmake_build_type || 'Release' }}
+  # Force the runner to host Node-20 JS actions on Node 24. Currently covers
+  # threeal/cmake-action@v2.1.0 and ilammy/msvc-dev-cmd@v1, which have no
+  # Node 24 release upstream yet. Becomes the default on 2026-06-02.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-project-macos:
@@ -427,21 +431,21 @@ jobs:
           mv gizmosql_client_lts gizmosql_client
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push full Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/${{ matrix.platform }}
@@ -460,7 +464,7 @@ jobs:
           provenance: false
 
       - name: Build and push slim Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/${{ matrix.platform }}
@@ -621,7 +625,7 @@ jobs:
           path: unsigned
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -746,7 +750,7 @@ jobs:
             -ext WixToolset.UI.wixext
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -891,14 +895,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1272,7 +1276,7 @@ jobs:
 
       # ---- Code signing ----
       - name: Import Apple distribution certificate
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@v7
         with:
           p12-file-base64: ${{ secrets.IOS_DIST_CERT_B64 }}
           p12-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
