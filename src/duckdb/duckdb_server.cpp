@@ -2138,8 +2138,16 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   // one. Accepts DuckDB's own syntax ("8GB", "75%", ...). Empty => leave DuckDB's
   // built-in default (80% of physical RAM) in place.
   if (!memory_limit.empty()) {
-    if (memory_limit.find('\'') != std::string::npos) {
-      return arrow::Status::Invalid("Invalid memory_limit value: " + memory_limit);
+    // memory_limit is applied via SET, which DuckDB does not accept as a bound
+    // parameter — so it must be concatenated. Validate it to a safe config token
+    // (digits, units like GB/MiB, %, '-') so the value cannot inject SQL.
+    static const std::string kAllowedMemChars =
+        "0123456789.%- "
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    if (memory_limit.find_first_not_of(kAllowedMemChars) != std::string::npos) {
+      return arrow::Status::Invalid(
+          "Invalid memory_limit '" + memory_limit +
+          "': only digits, units (GB, MiB, ...), %, and '-' are allowed.");
     }
     duckdb::Connection memory_con(*db);
     auto mem_result = memory_con.Query("SET memory_limit = '" + memory_limit + "'");

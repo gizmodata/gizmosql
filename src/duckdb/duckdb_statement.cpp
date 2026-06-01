@@ -1764,15 +1764,33 @@ arrow::Result<int> DuckDBStatement::Execute() {
         auto& controller = admission_server->GetAdmissionController();
         const int32_t max_queue_wait =
             session->max_queue_wait.value_or(controller.DefaultMaxQueueWaitSeconds());
+#ifdef GIZMOSQL_ENTERPRISE
+        // Record the queued phase (status='queued', enqueue_time) so the admin
+        // SQL-monitor can show in-flight queued statements and the queue wait.
+        if (execution_instrumentation_) {
+          execution_instrumentation_->SetQueued();
+        }
+#endif
         auto slot_result = controller.Acquire(/*enforce=*/true, max_queue_wait);
         if (!slot_result.ok()) {
           // Rejected (queue full, or the queue wait elapsed): surface as a
           // retriable Flight UNAVAILABLE so clients can back off and retry.
+#ifdef GIZMOSQL_ENTERPRISE
+          if (execution_instrumentation_) {
+            execution_instrumentation_->SetError(slot_result.status().message());
+          }
+#endif
           return arrow::flight::MakeFlightError(
               arrow::flight::FlightStatusCode::Unavailable,
               slot_result.status().message());
         }
         admission_slot = std::move(slot_result).ValueOrDie();
+#ifdef GIZMOSQL_ENTERPRISE
+        // Slot acquired: queued -> executing (restarts the execution clock).
+        if (execution_instrumentation_) {
+          execution_instrumentation_->SetRunning();
+        }
+#endif
       }
     }
   }
@@ -1943,6 +1961,9 @@ arrow::Result<int> DuckDBStatement::Execute() {
   if (execution_instrumentation_) {
     if (result.ok()) {
       execution_instrumentation_->SetCompleted(GetLastExecutionDurationMs());
+    } else if (session->kill_requested) {
+      // The query was interrupted by KILL SESSION, not a genuine execution error.
+      execution_instrumentation_->SetCancelled();
     } else {
       execution_instrumentation_->SetError(result.status().ToString());
     }

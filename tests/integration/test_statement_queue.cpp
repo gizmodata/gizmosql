@@ -179,3 +179,82 @@ TEST_F(StatementQueueServerFixture, GizmoSqlSettingsIsComposable) {
   EXPECT_EQ(table->num_rows(), 3);
   EXPECT_EQ(table->num_columns(), 3);
 }
+
+namespace {
+// Occupy an execution slot for `ms` milliseconds (admin session opted INTO the
+// queue) using DuckDB's sleep_ms(). Best-effort: errors are ignored.
+void HoldSlot(int port, std::string user, std::string password, int ms) {
+  auto ac = ConnectAdmin(port, user, password);
+  if (!ac.ok()) return;
+  if (!RunStatement(*ac, "SET SESSION gizmosql.bypass_queue = false").ok()) return;
+  RunStatement(*ac, "SELECT sleep_ms(" + std::to_string(ms) + ")");
+}
+}  // namespace
+
+// With both execution slots (limit = 2) held by sleep_ms() statements, a third
+// statement must wait for a slot — proving the cap actually serializes execution.
+TEST_F(StatementQueueServerFixture, QueueSerializesConcurrentStatements) {
+  SKIP_IF_NO_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+
+  std::thread h1(HoldSlot, GetPort(), GetUsername(), GetPassword(), 2000);
+  std::thread h2(HoldSlot, GetPort(), GetUsername(), GetPassword(), 2000);
+  // Let the holders occupy both slots before the probe is submitted.
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto probe,
+                             ConnectAdmin(GetPort(), GetUsername(), GetPassword()));
+  ASSERT_OK(RunStatement(probe, "SET SESSION gizmosql.bypass_queue = false"));
+  const auto start = std::chrono::steady_clock::now();
+  ASSERT_OK(RunStatement(probe, "SELECT 7"));
+  const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - start)
+                          .count();
+
+  h1.join();
+  h2.join();
+
+  // The probe couldn't start until a holder finished (~2s in), so submitted at
+  // ~0.5s it must have waited ~1.5s. A generous floor avoids CI flakiness.
+  EXPECT_GE(waited, 800) << "probe should have queued for a slot; waited " << waited << "ms";
+}
+
+// A statement forced to queue records its queued phase in instrumentation
+// (enqueue_time set, queue_wait_ms computed) — the backbone of the SQL-monitor.
+TEST_F(StatementQueueServerFixture, QueuedExecutionRecordsEnqueueTime) {
+  SKIP_IF_NO_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+
+  std::thread h1(HoldSlot, GetPort(), GetUsername(), GetPassword(), 2000);
+  std::thread h2(HoldSlot, GetPort(), GetUsername(), GetPassword(), 2000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto probe,
+                             ConnectAdmin(GetPort(), GetUsername(), GetPassword()));
+  ASSERT_OK(RunStatement(probe, "SET SESSION gizmosql.bypass_queue = false"));
+  ASSERT_OK(RunStatement(probe, "SELECT 4242 AS qprobe"));
+  h1.join();
+  h2.join();
+
+  // Poll instrumentation (async writer) for the probe's execution row.
+  bool recorded = false;
+  for (int attempt = 0; attempt < 15 && !recorded; ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    auto info = probe.sql_client->Execute(
+        probe.call_options,
+        "SELECT count(*) FROM _gizmosql_instr.execution_details "
+        "WHERE sql_text LIKE '%qprobe%' AND enqueue_time IS NOT NULL "
+        "AND queue_wait_ms IS NOT NULL");
+    if (!info.ok()) continue;
+    for (const auto& endpoint : (*info)->endpoints()) {
+      auto reader = probe.sql_client->DoGet(probe.call_options, endpoint.ticket);
+      if (!reader.ok()) continue;
+      auto t = (*reader)->ToTable();
+      if (!t.ok() || (*t)->num_rows() == 0) continue;
+      auto col = std::static_pointer_cast<arrow::Int64Array>((*t)->column(0)->chunk(0));
+      if (col->Value(0) >= 1) recorded = true;
+    }
+  }
+  EXPECT_TRUE(recorded)
+      << "queued probe execution should record enqueue_time + queue_wait_ms";
+}

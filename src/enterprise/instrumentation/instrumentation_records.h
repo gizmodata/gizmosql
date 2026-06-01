@@ -134,6 +134,12 @@ class ExecutionInstrumentation {
   void SetError(const std::string& error_message);
   void SetTimeout();
   void SetCancelled();
+  /// Mark the execution as waiting in the admission queue (status='queued',
+  /// records enqueue_time). Paired with SetRunning() once a slot is acquired.
+  void SetQueued();
+  /// Transition queued -> executing and (re)start the execution clock, so the
+  /// recorded duration reflects execution time rather than time spent queued.
+  void SetRunning();
   void IncrementRowsFetched(int64_t count);
 
  private:

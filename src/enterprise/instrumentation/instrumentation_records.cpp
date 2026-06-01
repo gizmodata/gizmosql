@@ -242,6 +242,35 @@ void ExecutionInstrumentation::SetCancelled() {
   Finalize();
 }
 
+void ExecutionInstrumentation::SetQueued() {
+  status_ = "queued";
+  if (!manager_ || !manager_->IsEnabled()) {
+    return;
+  }
+  manager_->QueueWrite([exec_id = execution_id_](duckdb::Connection& conn) {
+    auto stmt = conn.Prepare(
+        "UPDATE sql_executions SET status = 'queued', enqueue_time = now() "
+        "WHERE execution_id = $1");
+    stmt->Execute(duckdb::Value::UUID(exec_id));
+  });
+}
+
+void ExecutionInstrumentation::SetRunning() {
+  status_ = "executing";
+  // The statement just left the queue; (re)start the execution clock so the
+  // recorded duration excludes time spent waiting for a slot.
+  start_timestamp_ = std::chrono::system_clock::now();
+  if (!manager_ || !manager_->IsEnabled()) {
+    return;
+  }
+  manager_->QueueWrite([exec_id = execution_id_](duckdb::Connection& conn) {
+    auto stmt = conn.Prepare(
+        "UPDATE sql_executions SET status = 'executing', execution_start_time = now() "
+        "WHERE execution_id = $1 AND status = 'queued'");
+    stmt->Execute(duckdb::Value::UUID(exec_id));
+  });
+}
+
 void ExecutionInstrumentation::IncrementRowsFetched(int64_t count) {
   rows_fetched_.fetch_add(count, std::memory_order_relaxed);
 }
