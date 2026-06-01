@@ -76,7 +76,8 @@ CreateFlightSQLServer(
     int32_t max_concurrent_statements = 0,
     int32_t max_queued_statements = -1,
     int32_t max_queue_wait_seconds = -1,
-    bool admin_bypass_queue_default = true);
+    bool admin_bypass_queue_default = true,
+    std::string memory_limit = "");
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -125,6 +126,7 @@ struct TestServerConfig {
   int32_t max_queued_statements = -1;            // [Enterprise] waiter bound (-1 = auto 8xN; 0 = unbounded)
   int32_t max_queue_wait_seconds = -1;           // [Enterprise] queue wait before reject (-1 = 300s default; 0 = forever)
   bool admin_bypass_queue_default = true;        // [Enterprise] admin sessions bypass the queue by default
+  std::string memory_limit = "";                 // [DuckDB] memory_limit (e.g. "8GB","75%"); empty => DuckDB default
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -230,7 +232,8 @@ class ServerTestFixture : public ::testing::Test {
         /*max_concurrent_statements=*/config_.max_concurrent_statements,
         /*max_queued_statements=*/config_.max_queued_statements,
         /*max_queue_wait_seconds=*/config_.max_queue_wait_seconds,
-        /*admin_bypass_queue_default=*/config_.admin_bypass_queue_default);
+        /*admin_bypass_queue_default=*/config_.admin_bypass_queue_default,
+        /*memory_limit=*/config_.memory_limit);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

@@ -2099,7 +2099,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const arrow::util::ArrowLogLevel& session_log_level,
     const std::string& storage_version, const int32_t& max_concurrent_statements,
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
-    const bool& admin_bypass_queue_default,
+    const bool& admin_bypass_queue_default, const std::string& memory_limit,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2133,6 +2133,22 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   }
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
+
+  // Apply the DuckDB memory limit (global / instance-wide) if the operator set
+  // one. Accepts DuckDB's own syntax ("8GB", "75%", ...). Empty => leave DuckDB's
+  // built-in default (80% of physical RAM) in place.
+  if (!memory_limit.empty()) {
+    if (memory_limit.find('\'') != std::string::npos) {
+      return arrow::Status::Invalid("Invalid memory_limit value: " + memory_limit);
+    }
+    duckdb::Connection memory_con(*db);
+    auto mem_result = memory_con.Query("SET memory_limit = '" + memory_limit + "'");
+    if (mem_result->HasError()) {
+      return arrow::Status::Invalid("Failed to set memory_limit to '" + memory_limit +
+                                    "': " + mem_result->GetError());
+    }
+    GIZMOSQL_LOG(INFO) << "DuckDB memory_limit set to: " << memory_limit;
+  }
 
   auto result = std::make_shared<DuckDBFlightSqlServer>();
 #ifdef GIZMOSQL_ENTERPRISE

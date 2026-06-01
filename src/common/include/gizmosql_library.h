@@ -108,6 +108,7 @@ enum class BackendType { duckdb, sqlite };
  * @param max_queued_statements [Enterprise] Maximum statements that may wait for a slot at once when the concurrency limit is reached; beyond this they are rejected with a retriable error rather than queued. -1 (default) auto-sizes to 8 x max_concurrent_statements; 0 = unbounded waiters. If -1, uses env var GIZMOSQL_MAX_QUEUED_STATEMENTS.
  * @param max_queue_wait_seconds [Enterprise] Maximum seconds a statement may wait in the queue before being rejected with a retriable error. -1 (default) uses the built-in default of 300s; 0 = wait indefinitely. If -1, uses env var GIZMOSQL_MAX_QUEUE_WAIT.
  * @param admin_bypass_queue_default [Enterprise] Whether admin-role sessions bypass the statement queue by default, so diagnostics and KILL SESSION are never stranded behind a saturated queue. Default is std::nullopt (check env var GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT, fallback to true). Admins can still SET SESSION gizmosql.bypass_queue = false to opt into the queue.
+ * @param memory_limit DuckDB memory limit applied at startup (e.g. "8GB", "75%"), a passthrough to DuckDB's `memory_limit` setting (global/instance-wide). Default is "" - if so, uses env var GIZMOSQL_MEMORY_LIMIT; if that is unset, DuckDB's built-in default applies (80% of physical RAM). Ignored for the SQLite backend.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -183,5 +184,6 @@ int RunFlightSQLServer(
     int32_t max_concurrent_statements = DEFAULT_MAX_CONCURRENT_STATEMENTS,
     int32_t max_queued_statements = DEFAULT_MAX_QUEUED_STATEMENTS,
     int32_t max_queue_wait_seconds = DEFAULT_MAX_QUEUE_WAIT_SECONDS,
-    std::optional<bool> admin_bypass_queue_default = std::nullopt);
+    std::optional<bool> admin_bypass_queue_default = std::nullopt,
+    std::string memory_limit = "");
 }

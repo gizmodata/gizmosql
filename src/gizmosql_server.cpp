@@ -131,6 +131,11 @@ int main(int argc, char** argv) {
              "diagnostics and KILL SESSION are never stranded behind a saturated queue. Admins can "
              "still SET SESSION gizmosql.bypass_queue = false to opt in. If not set, uses env var "
              "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT (1/true to enable).")
+            ("memory-limit", po::value<std::string>()->default_value(""),
+             "DuckDB memory limit applied at startup (e.g. \"8GB\", \"75%\"); a passthrough to "
+             "DuckDB's `memory_limit` setting (global / instance-wide). Empty leaves DuckDB's "
+             "built-in default (80% of physical RAM). If empty, uses env var GIZMOSQL_MEMORY_LIMIT. "
+             "Ignored for the SQLite backend.")
             ("query-log-level",  po::value<std::string>()->default_value(""),
              "Query Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_QUERY_LOG_LEVEL or defaults to info.")
             ("auth-log-level",  po::value<std::string>()->default_value(""),
@@ -352,6 +357,8 @@ int main(int argc, char** argv) {
           ? std::nullopt
           : std::optional(vm["admin-bypass-queue-default"].as<bool>());
 
+  std::string memory_limit = vm["memory-limit"].as<std::string>();
+
   std::string query_log_level =
       vm.count("query-log-level") ? vm["query-log-level"].as<std::string>() : "";
   std::string auth_log_level =
@@ -438,5 +445,5 @@ int main(int argc, char** argv) {
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers, max_metadata_size,
       storage_version, max_concurrent_statements, max_queued_statements,
-      max_queue_wait, admin_bypass_queue_default);
+      max_queue_wait, admin_bypass_queue_default, memory_limit);
 }

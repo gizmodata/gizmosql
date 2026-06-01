@@ -488,7 +488,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     int32_t max_metadata_size,
     const std::string& storage_version, const int32_t& max_concurrent_statements,
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
-    const bool& admin_bypass_queue_default) {
+    const bool& admin_bypass_queue_default, const std::string& memory_limit) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -700,7 +700,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                                              query_timeout, query_log_level, session_log_level,
                                              storage_version, max_concurrent_statements,
                                              max_queued_statements, max_queue_wait_seconds,
-                                             admin_bypass_queue_default,
+                                             admin_bypass_queue_default, memory_limit,
                                              nullptr))  // No instrumentation manager yet
 
     // Set instance_id for all future log entries (enables log correlation)
@@ -917,24 +917,36 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       // Enable gRPC reflection (must be called before building the server)
       grpc::reflection::InitProtoReflectionServerBuilderPlugin();
     }
-    if (register_health || tune_metadata) {
-      options.builder_hook = [health_service = g_health_service, max_metadata_size,
-                              register_health](void* raw_builder) {
-        auto* builder = reinterpret_cast<grpc::ServerBuilder*>(raw_builder);
-        if (max_metadata_size > 0) {
-          // Maps to GRPC_ARG_MAX_METADATA_SIZE; gRPC's default is ~8 KB and
-          // is too small when clients send large per-call metadata
-          // (e.g. extra JDBC URL params that the Apache Flight SQL JDBC
-          // driver forwards as gRPC headers, large bearer tokens, or
-          // accumulated cookies).
-          builder->AddChannelArgument(GRPC_ARG_MAX_METADATA_SIZE,
-                                      max_metadata_size);
-        }
-        if (register_health && health_service) {
-          builder->RegisterService(health_service.get());
-        }
-      };
-    }
+    // The builder_hook always runs: it configures gRPC server keepalive (so a
+    // long-lived or queued stream survives an intermediary's idle timeout) and,
+    // when requested, tunes GRPC_ARG_MAX_METADATA_SIZE and registers the health
+    // service.
+    options.builder_hook = [health_service = g_health_service, max_metadata_size,
+                            register_health](void* raw_builder) {
+      auto* builder = reinterpret_cast<grpc::ServerBuilder*>(raw_builder);
+
+      // Server keepalive: proactively ping idle peers so a connection that goes
+      // silent for a while (e.g. a statement parked in the admission queue) is
+      // not dropped by a load balancer / proxy idle timeout (AWS NLB ~350s,
+      // Azure ~4min). Also stay permissive about client-initiated keepalive
+      // pings so we don't GOAWAY well-behaved clients with "too_many_pings".
+      builder->AddChannelArgument(GRPC_ARG_KEEPALIVE_TIME_MS, 30000);
+      builder->AddChannelArgument(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 10000);
+      builder->AddChannelArgument(GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS, 1);
+      builder->AddChannelArgument(GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS,
+                                  10000);
+      builder->AddChannelArgument(GRPC_ARG_HTTP2_MAX_PING_STRIKES, 0);
+
+      if (max_metadata_size > 0) {
+        // Maps to GRPC_ARG_MAX_METADATA_SIZE; gRPC's default is ~8 KB and is too
+        // small when clients send large per-call metadata (e.g. extra JDBC URL
+        // params the Flight SQL JDBC driver forwards as gRPC headers).
+        builder->AddChannelArgument(GRPC_ARG_MAX_METADATA_SIZE, max_metadata_size);
+      }
+      if (register_health && health_service) {
+        builder->RegisterService(health_service.get());
+      }
+    };
     if (tune_metadata) {
       GIZMOSQL_LOG(INFO) << "gRPC max metadata size set to: " << max_metadata_size
                          << " bytes";
@@ -1026,7 +1038,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     int32_t max_metadata_size,
     std::string storage_version, int32_t max_concurrent_statements,
     int32_t max_queued_statements, int32_t max_queue_wait_seconds,
-    bool admin_bypass_queue_default) {
+    bool admin_bypass_queue_default, std::string memory_limit) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1315,7 +1327,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled,
       max_metadata_size, storage_version, max_concurrent_statements,
-      max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default);
+      max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default,
+      memory_limit);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1409,7 +1422,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        int32_t max_concurrent_statements,
                        int32_t max_queued_statements,
                        int32_t max_queue_wait_seconds,
-                       std::optional<bool> admin_bypass_queue_default) {
+                       std::optional<bool> admin_bypass_queue_default,
+                       std::string memory_limit) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1570,6 +1584,11 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     max_queue_wait_seconds = 300;
   }
 
+  // memory_limit: CLI arg > env var > unset (DuckDB's own 80%-of-RAM default).
+  if (memory_limit.empty()) {
+    memory_limit = gizmosql::SafeGetEnvVarValue("GIZMOSQL_MEMORY_LIMIT");
+  }
+
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
   std::tm* localTime = std::localtime(&currentTime);
@@ -1671,7 +1690,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled,
       max_metadata_size, storage_version, max_concurrent_statements,
       max_queued_statements, max_queue_wait_seconds,
-      admin_bypass_queue_default.value_or(true));
+      admin_bypass_queue_default.value_or(true), memory_limit);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
