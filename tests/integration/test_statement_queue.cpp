@@ -154,3 +154,28 @@ TEST_F(StatementQueueServerFixture, QueriesExecuteThroughTheQueue) {
     ASSERT_OK(RunStatement(ac, "SELECT 42")) << "query " << i << " failed";
   }
 }
+
+// gizmosql_settings() is a composable, bind-parameterized table function: it can be
+// filtered and ordered like any relation. (Not license-gated — it's a SQL rewrite.)
+TEST_F(StatementQueueServerFixture, GizmoSqlSettingsIsComposable) {
+  ASSERT_TRUE(IsServerReady());
+  ASSERT_ARROW_OK_AND_ASSIGN(auto ac, ConnectAdmin(GetPort(), GetUsername(), GetPassword()));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info,
+      ac.sql_client->Execute(
+          ac.call_options,
+          "SELECT name, scope, enterprise FROM gizmosql_settings() "
+          "WHERE name LIKE 'gizmosql.max%' ORDER BY name"));
+  std::shared_ptr<arrow::Table> table;
+  for (const auto& endpoint : info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               ac.sql_client->DoGet(ac.call_options, endpoint.ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+  }
+  ASSERT_NE(table, nullptr);
+  // The three gizmosql.max* settings: max_concurrent_statements, max_queue_wait,
+  // max_queued_statements.
+  EXPECT_EQ(table->num_rows(), 3);
+  EXPECT_EQ(table->num_columns(), 3);
+}

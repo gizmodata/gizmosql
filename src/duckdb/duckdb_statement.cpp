@@ -550,6 +550,14 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
 }  // namespace
 
 namespace gizmosql::ddb {
+
+namespace {
+// Defined with the GizmoSQL settings registry below; forward-declared here because
+// DuckDBStatement::Create() uses it for the gizmosql_settings() table function.
+std::string RewriteGizmoSettings(const std::string& sql, const ClientSession& session,
+                                 DuckDBFlightSqlServer* server,
+                                 duckdb::vector<duckdb::Value>& binds);
+}  // namespace
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType& duckdb_type) {
   switch (duckdb_type.id()) {
@@ -733,6 +741,16 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       sql, client_session->session_id, instance_id, client_session->username,
       client_session->role, edition, instrumentation_enabled,
       instrumentation_catalog, instrumentation_schema);
+
+  // gizmosql_settings() table function: rewrite to a bind-parameterized VALUES so
+  // its rows (incl. JSON tags / descriptions) are passed as bound parameters. The
+  // collected binds are attached to the prepared statement below.
+  duckdb::vector<duckdb::Value> settings_binds;
+  if (boost::icontains(effective_sql, "gizmosql_settings()")) {
+    auto settings_server = GetServer(*client_session);
+    effective_sql = RewriteGizmoSettings(effective_sql, *client_session,
+                                         settings_server.get(), settings_binds);
+  }
 
 #ifdef GIZMOSQL_ENTERPRISE
   std::shared_ptr<InstrumentationManager> instr_mgr;
@@ -1043,6 +1061,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       client_session, handle, stmt, log_level, log_queries, override_schema, is_internal,
       flight_method));
 
+  // Bind the gizmosql_settings() values (if this statement referenced it).
+  if (!settings_binds.empty()) {
+    result->bind_parameters = std::move(settings_binds);
+  }
+
 #ifdef GIZMOSQL_ENTERPRISE
   // Create statement instrumentation for prepared statement
   if (auto server = GetServer(*client_session)) {
@@ -1087,6 +1110,11 @@ struct GizmoSetting {
   std::string env_var;                       // "" if none
   std::string default_value;
   std::string description;
+  // Value accessors for gizmosql_settings() (canonical strings; nullopt = unset /
+  // not-applicable-at-this-scope).
+  std::function<std::optional<std::string>(const ClientSession&)> get_session;
+  std::function<std::optional<std::string>(DuckDBFlightSqlServer&, const ClientSession&)>
+      get_global;
   std::function<arrow::Status(ClientSession&, const std::string&)> set_session;
   std::function<arrow::Status(DuckDBFlightSqlServer&, ClientSession&,
                               const std::string&)>
@@ -1198,6 +1226,15 @@ SettingsRegistry::SettingsRegistry() {
       .env_var = "GIZMOSQL_QUERY_TIMEOUT",
       .default_value = "0",
       .description = "Per-statement timeout in seconds (0 = no timeout).",
+      .get_session = [](const ClientSession& s) -> std::optional<std::string> {
+        return s.query_timeout ? std::optional(std::to_string(*s.query_timeout))
+                               : std::nullopt;
+      },
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession& s) -> std::optional<std::string> {
+        auto r = srv.GetQueryTimeout(s);
+        return r.ok() ? std::optional(std::to_string(*r)) : std::nullopt;
+      },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "query_timeout"));
         s.query_timeout = n;
@@ -1217,6 +1254,17 @@ SettingsRegistry::SettingsRegistry() {
       .env_var = "GIZMOSQL_QUERY_LOG_LEVEL",
       .default_value = "INFO",
       .description = "Query-execution log level (DEBUG/INFO/WARNING/ERROR).",
+      .get_session = [](const ClientSession& s) -> std::optional<std::string> {
+        return s.query_log_level ? std::optional(log_level_arrow_log_level_to_string(
+                                       *s.query_log_level))
+                                 : std::nullopt;
+      },
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession& s) -> std::optional<std::string> {
+        auto r = srv.GetQueryLogLevel(s);
+        return r.ok() ? std::optional(log_level_arrow_log_level_to_string(*r))
+                      : std::nullopt;
+      },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         try {
           s.query_log_level = log_level_string_to_arrow_log_level(val);
@@ -1245,6 +1293,11 @@ SettingsRegistry::SettingsRegistry() {
       .input_type = "BOOLEAN",
       .default_value = "false",
       .description = "Skip the statement queue for this session (admin only to enable).",
+      .get_session = [](const ClientSession& s) -> std::optional<std::string> {
+        return s.bypass_queue
+                   ? std::optional(std::string(*s.bypass_queue ? "true" : "false"))
+                   : std::nullopt;
+      },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         ARROW_ASSIGN_OR_RAISE(bool b, ParseSetBool(val, "bypass_queue"));
         // Only admins may *enable* bypass; a non-admin must not be able to lift
@@ -1265,6 +1318,9 @@ SettingsRegistry::SettingsRegistry() {
       .enterprise_feature = "instrumentation",
       .input_type = "VARCHAR",
       .description = "JSON session tag recorded in instrumentation.",
+      .get_session = [](const ClientSession& s) -> std::optional<std::string> {
+        return s.session_tag.empty() ? std::nullopt : std::optional(s.session_tag);
+      },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         if (!val.empty() && !IsValidJSON(val)) {
           return arrow::Status::Invalid("Invalid JSON for session_tag: " + val);
@@ -1286,6 +1342,9 @@ SettingsRegistry::SettingsRegistry() {
       .enterprise_feature = "instrumentation",
       .input_type = "VARCHAR",
       .description = "JSON query tag recorded in instrumentation.",
+      .get_session = [](const ClientSession& s) -> std::optional<std::string> {
+        return s.query_tag.empty() ? std::nullopt : std::optional(s.query_tag);
+      },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         if (!val.empty() && !IsValidJSON(val)) {
           return arrow::Status::Invalid("Invalid JSON for query_tag: " + val);
@@ -1304,6 +1363,10 @@ SettingsRegistry::SettingsRegistry() {
       .env_var = "GIZMOSQL_MAX_CONCURRENT_STATEMENTS",
       .default_value = "0",
       .description = "Max concurrently executing statements (0 = unlimited).",
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(std::to_string(srv.GetAdmissionController().Limit()));
+      },
       .set_global = [](DuckDBFlightSqlServer& srv, ClientSession&,
                        const std::string& val) -> arrow::Status {
         ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_concurrent_statements"));
@@ -1322,6 +1385,10 @@ SettingsRegistry::SettingsRegistry() {
       .env_var = "GIZMOSQL_MAX_QUEUED_STATEMENTS",
       .default_value = "0",
       .description = "Max statements that may wait for a slot (0 = unbounded).",
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(std::to_string(srv.GetAdmissionController().MaxQueued()));
+      },
       .set_global = [](DuckDBFlightSqlServer& srv, ClientSession&,
                        const std::string& val) -> arrow::Status {
         ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_queued_statements"));
@@ -1340,6 +1407,15 @@ SettingsRegistry::SettingsRegistry() {
       .default_value = "300",
       .description =
           "Seconds a statement may wait in the queue before rejection (0 = forever).",
+      .get_session = [](const ClientSession& s) -> std::optional<std::string> {
+        return s.max_queue_wait ? std::optional(std::to_string(*s.max_queue_wait))
+                                : std::nullopt;
+      },
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(
+            std::to_string(srv.GetAdmissionController().DefaultMaxQueueWaitSeconds()));
+      },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_queue_wait"));
         s.max_queue_wait = n;
@@ -1356,6 +1432,88 @@ SettingsRegistry::SettingsRegistry() {
   for (size_t i = 0; i < settings_.size(); ++i) {
     by_name_[settings_[i].name] = i;
   }
+}
+
+const char* ScopeToString(SetScopeKind scope) {
+  switch (scope) {
+    case SetScopeKind::kSessionOnly:
+      return "SESSION";
+    case SetScopeKind::kGlobalOnly:
+      return "GLOBAL";
+    case SetScopeKind::kSessionOrGlobal:
+      return "SESSION_OR_GLOBAL";
+  }
+  return "";
+}
+
+// Build the bind-parameterized VALUES that replaces a gizmosql_settings() call:
+// "(VALUES (CAST(? AS ...),...),...) AS gizmosql_settings(<cols>)". Each value is
+// appended to `binds` (row-major) and passed as a bound parameter — never
+// interpolated — so JSON tags / descriptions can't break or inject SQL. The
+// explicit CASTs fix the column types so GetSchema() works before binding.
+std::string BuildGizmoSettingsValues(const ClientSession& session,
+                                     DuckDBFlightSqlServer* server,
+                                     duckdb::vector<duckdb::Value>& binds) {
+  static constexpr const char* kRow =
+      "(CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),"
+      "CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),"
+      "CAST(? AS BOOLEAN),CAST(? AS VARCHAR))";
+
+  auto push = [&](const std::string& v) { binds.push_back(duckdb::Value(v)); };
+  auto push_opt = [&](const std::optional<std::string>& v) {
+    binds.push_back(v ? duckdb::Value(*v) : duckdb::Value());  // NULL when unset
+  };
+
+  std::string rows;
+  const auto& settings = SettingsRegistry::Instance().All();
+  for (size_t r = 0; r < settings.size(); ++r) {
+    const GizmoSetting& d = settings[r];
+    std::optional<std::string> sess = d.get_session ? d.get_session(session) : std::nullopt;
+    std::optional<std::string> glob =
+        (d.get_global && server) ? d.get_global(*server, session) : std::nullopt;
+    std::string effective = sess.value_or(glob.value_or(d.default_value));
+
+    push(d.name);                  // name
+    push(effective);               // value (effective: session > global > default)
+    push_opt(sess);                // session_value
+    push_opt(glob);                // global_value
+    push(ScopeToString(d.scope));  // scope
+    push(d.input_type);            // input_type
+    push(d.default_value);         // default_value
+    push_opt(d.env_var.empty() ? std::optional<std::string>()
+                               : std::optional<std::string>(d.env_var));  // env_var
+    binds.push_back(duckdb::Value::BOOLEAN(d.enterprise));                // enterprise
+    push(d.description);                                                  // description
+
+    if (r) rows += ", ";
+    rows += kRow;
+  }
+
+  return "(VALUES " + rows +
+         ") AS gizmosql_settings(name, value, session_value, global_value, scope, "
+         "input_type, default_value, env_var, enterprise, description)";
+}
+
+// Case-insensitively replace each "gizmosql_settings()" token with the
+// bind-parameterized VALUES, appending its binds (in left-to-right order).
+std::string RewriteGizmoSettings(const std::string& sql, const ClientSession& session,
+                                 DuckDBFlightSqlServer* server,
+                                 duckdb::vector<duckdb::Value>& binds) {
+  static const std::string token = "gizmosql_settings()";
+  const std::string lower = boost::algorithm::to_lower_copy(sql);
+  std::string out;
+  size_t pos = 0;
+  while (true) {
+    const size_t hit = lower.find(token, pos);
+    if (hit == std::string::npos) {
+      out += sql.substr(pos);
+      break;
+    }
+    out += sql.substr(pos, hit - pos);
+    out += BuildGizmoSettingsValues(session, server, binds);
+    pos = hit + token.size();
+  }
+  return out;
 }
 
 }  // namespace

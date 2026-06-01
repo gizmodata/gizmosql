@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **gRPC server keepalive.** The Flight gRPC server now sends periodic keepalive pings and is permissive about client-initiated pings, so long-lived or queued streams aren't dropped by a load-balancer/proxy idle timeout (AWS NLB ~350s, Azure ~4min).
 - **`SET gizmosql.*` accepts unquoted boolean keywords.** `SET ... = true` / `= false` now work (DuckDB's grammar represents these as a cast expression rather than a constant); previously only quoted/integer constants were accepted.
 - **Runtime `SET GLOBAL` for the statement-queue limits.** Admins can tune `gizmosql.max_concurrent_statements`, `gizmosql.max_queued_statements`, and `gizmosql.max_queue_wait` on a live server (no restart) via `SET GLOBAL` — plus `SET SESSION gizmosql.max_queue_wait` for a per-session override. Changes are in-memory and revert to the configured/env value on restart. Internally, all `SET gizmosql.*` handling now dispatches through a single settings registry (one descriptor per setting; centralized license/scope/admin checks).
+- **`gizmosql_settings()` table function.** Lists every `gizmosql.*` setting with its current effective value, session/global values, scope, input type, default, env var, enterprise flag, and description — the GizmoSQL analog of DuckDB's `duckdb_settings()`. Composable like any relation (`SELECT … FROM gizmosql_settings() WHERE …`); the row values are passed as bound parameters rather than interpolated into SQL.
 
 ## [1.26.3] - 2026-05-26
 
