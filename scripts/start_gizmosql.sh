@@ -47,6 +47,11 @@
 #   GIZMOSQL_OAUTH_DISABLE_TLS           --oauth-disable-tls (localhost only!)
 #   GIZMOSQL_MAX_METADATA_SIZE           --max-metadata-size
 #   GIZMOSQL_STORAGE_VERSION             --storage-version (DuckDB only)
+#   GIZMOSQL_MAX_CONCURRENT_STATEMENTS   --max-concurrent-statements (Enterprise)
+#   GIZMOSQL_MAX_QUEUED_STATEMENTS       --max-queued-statements (Enterprise)
+#   GIZMOSQL_MAX_QUEUE_WAIT              --max-queue-wait (Enterprise)
+#   GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT  --admin-bypass-queue-default (Enterprise)
+#   GIZMOSQL_MEMORY_LIMIT                --memory-limit (DuckDB only)
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────
 #   GIZMOSQL_EXTRA_ARGS       Appended verbatim to the command line.

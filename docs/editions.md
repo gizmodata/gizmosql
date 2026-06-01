@@ -35,6 +35,7 @@ GizmoSQL Enterprise includes all Core features plus:
 | **KILL SESSION** | Terminate active client sessions programmatically via `KILL SESSION 'session-id'` SQL command. Requires admin role. |
 | **Per-Catalog Permissions** | Fine-grained access control via bootstrap tokens. Use the `catalog_access` JWT claim to grant read, write, or no access to specific catalogs on a per-user basis. |
 | **SSO/OAuth (JWKS Auto-Discovery)** | Validate IdP-issued tokens (Keycloak, Okta, Auth0, Azure AD) via JWKS auto-discovery. Supports OIDC `.well-known` discovery, key rotation, and RS256/ES256 algorithms. |
+| **Statement Queuing** | Cap concurrently executing statements; the rest queue transparently (no client changes). Tunable live via `SET GLOBAL`, with admin bypass, retriable rejections, and queued/cancelled visibility in instrumentation. See [Statement Queuing](statement_queuing.md). |
 
 ### Obtaining a License
 
@@ -118,6 +119,7 @@ Returns:
 | **KILL SESSION Command** | - | ✓ |
 | **Per-Catalog Permissions** | - | ✓ |
 | **SSO/OAuth (JWKS)** | - | ✓ |
+| **Statement Queuing** | - | ✓ |
 
 ---
 

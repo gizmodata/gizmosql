@@ -299,8 +299,9 @@ Tracks individual executions of statements (one per execution).
 | `bind_parameters` | VARCHAR | JSON array of bind parameters (NULL if none) |
 | `execution_start_time` | TIMESTAMPTZ | When execution started (tz-aware) |
 | `execution_end_time` | TIMESTAMPTZ | When execution completed |
+| `enqueue_time` | TIMESTAMPTZ | When the statement entered the admission queue (NULL if never queued; see [Statement Queuing](statement_queuing.md)) |
 | `rows_fetched` | BIGINT | Number of rows returned |
-| `status` | VARCHAR | 'executing', 'success', 'error', 'timeout', 'cancelled' |
+| `status` | VARCHAR | 'queued', 'executing', 'success', 'error', 'timeout', 'cancelled' |
 | `error_message` | VARCHAR | Error message if failed |
 | `duration_ms` | BIGINT | Execution duration in milliseconds |
 

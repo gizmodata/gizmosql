@@ -70,6 +70,49 @@ SET gizmosql.query_timeout = 0;
 SET GLOBAL gizmosql.query_timeout = 60;
 ```
 
+### `gizmosql.bypass_queue` *(Enterprise)*
+
+Skips the [statement queue](statement_queuing.md) for the current session.
+
+| Property | Value |
+|----------|-------|
+| **Type** | Boolean |
+| **Default** | `true` for admin sessions (`--admin-bypass-queue-default`), otherwise `false` |
+| **Scope** | Session only; only an **admin** may set it to `true` |
+
+```sql
+-- Opt a heavy admin query INTO the queue rather than bypassing it
+SET SESSION gizmosql.bypass_queue = false;
+```
+
+### `gizmosql.max_concurrent_statements` / `max_queued_statements` / `max_queue_wait` *(Enterprise)*
+
+[Statement-queue](statement_queuing.md) limits. `max_concurrent_statements` and `max_queued_statements` are **server-global** (set with `SET GLOBAL`, admin only); `max_queue_wait` is a server default a session may override.
+
+| Parameter | Type | Default | Environment variable |
+|-----------|------|---------|----------------------|
+| `max_concurrent_statements` | Integer | `0` (unlimited) | `GIZMOSQL_MAX_CONCURRENT_STATEMENTS` |
+| `max_queued_statements` | Integer | auto `8 ×` concurrency limit | `GIZMOSQL_MAX_QUEUED_STATEMENTS` |
+| `max_queue_wait` | Integer (seconds) | `300` | `GIZMOSQL_MAX_QUEUE_WAIT` |
+
+```sql
+-- Tune the live server (admin)
+SET GLOBAL gizmosql.max_concurrent_statements = 8;
+
+-- Shorten this session's queue-wait tolerance
+SET SESSION gizmosql.max_queue_wait = 30;
+```
+
+## Inspecting settings — `gizmosql_settings()`
+
+The `gizmosql_settings()` table function lists every `gizmosql.*` setting with its current effective value, session/global values, scope, default, and environment variable — the GizmoSQL analog of DuckDB's `duckdb_settings()`. It is composable like any relation:
+
+```sql
+SELECT name, value, scope, env_var FROM gizmosql_settings();
+
+SELECT name, value FROM gizmosql_settings() WHERE name LIKE 'gizmosql.max%';
+```
+
 ## Scope and Precedence
 
 | Scope | Who can set | Affects |
