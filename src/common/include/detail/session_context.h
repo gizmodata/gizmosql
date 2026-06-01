@@ -39,6 +39,11 @@ struct ClientSession {
   std::optional<std::string> active_sql_handle;
   std::optional<int32_t> query_timeout = std::nullopt;
   std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;
+  // Statement-queue overrides (Enterprise). bypass_queue: skip the queue for this
+  // session (admin-only to enable). max_queue_wait: per-session override of the
+  // server's default queue wait. Both nullopt => fall through to server defaults.
+  std::optional<bool> bypass_queue = std::nullopt;
+  std::optional<int32_t> max_queue_wait = std::nullopt;
   std::string session_tag;  // JSON-formatted session tag (Enterprise feature, set via SET gizmosql.session_tag)
   std::string query_tag;    // JSON-formatted query tag (Enterprise feature, set via SET gizmosql.query_tag)
 

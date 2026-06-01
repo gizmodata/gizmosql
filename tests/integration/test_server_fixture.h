@@ -72,7 +72,11 @@ CreateFlightSQLServer(
     const bool& oauth_disable_tls = false,
     const bool& telemetry_enabled = false,
     int32_t max_metadata_size = 0,
-    std::string storage_version = "");
+    std::string storage_version = "",
+    int32_t max_concurrent_statements = 0,
+    int32_t max_queued_statements = -1,
+    int32_t max_queue_wait_seconds = -1,
+    bool admin_bypass_queue_default = true);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -117,6 +121,10 @@ struct TestServerConfig {
       arrow::util::ArrowLogLevel::ARROW_INFO;    // Session lifecycle log level threshold
   int32_t max_metadata_size = 0;                 // gRPC max header metadata bytes per call (0 = gRPC default ~8 KB)
   std::string storage_version = "";              // [DuckDB] storage_version (e.g. "latest"); empty => DuckDB default
+  int32_t max_concurrent_statements = 0;         // [Enterprise] max concurrent executing statements (0 = unlimited)
+  int32_t max_queued_statements = -1;            // [Enterprise] waiter bound (-1 = auto 8xN; 0 = unbounded)
+  int32_t max_queue_wait_seconds = -1;           // [Enterprise] queue wait before reject (-1 = 300s default; 0 = forever)
+  bool admin_bypass_queue_default = true;        // [Enterprise] admin sessions bypass the queue by default
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -218,7 +226,11 @@ class ServerTestFixture : public ::testing::Test {
         /*oauth_disable_tls=*/config_.oauth_disable_tls,
         /*telemetry_enabled=*/false,
         /*max_metadata_size=*/config_.max_metadata_size,
-        /*storage_version=*/config_.storage_version);
+        /*storage_version=*/config_.storage_version,
+        /*max_concurrent_statements=*/config_.max_concurrent_statements,
+        /*max_queued_statements=*/config_.max_queued_statements,
+        /*max_queue_wait_seconds=*/config_.max_queue_wait_seconds,
+        /*admin_bypass_queue_default=*/config_.admin_bypass_queue_default);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

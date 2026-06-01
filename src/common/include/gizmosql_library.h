@@ -39,6 +39,9 @@ const int DEFAULT_HEALTH_PORT = 31338;  // Plaintext health check port for Kuber
 const int DEFAULT_OAUTH_PORT = 31339;  // OAuth HTTP server port
 const int32_t DEFAULT_QUERY_TIMEOUT_SECONDS = 0;  // Unlimited timeout
 const int32_t DEFAULT_MAX_METADATA_SIZE = 0;  // 0 = use gRPC default (~8 KB)
+const int32_t DEFAULT_MAX_CONCURRENT_STATEMENTS = 0;  // 0 = unlimited (queue disabled)
+const int32_t DEFAULT_MAX_QUEUED_STATEMENTS = -1;     // -1 = auto (8 x max_concurrent_statements)
+const int32_t DEFAULT_MAX_QUEUE_WAIT_SECONDS = -1;    // -1 = use built-in default (300s)
 
 enum class BackendType { duckdb, sqlite };
 
@@ -101,6 +104,10 @@ enum class BackendType { duckdb, sqlite };
  * @param otel_headers Additional headers for OTLP exporter (key1=value1,key2=value2). Default is "" - if so, uses env GIZMOSQL_OTEL_HEADERS.
  * @param max_metadata_size Maximum size in bytes of inbound gRPC HTTP/2 header metadata per call (sets GRPC_ARG_MAX_METADATA_SIZE). gRPC's default is ~8 KB; raise this if clients legitimately send large per-call metadata (e.g. extra JDBC URL parameters that the Flight SQL JDBC driver forwards as headers, large bearer tokens, accumulated cookies, or proxy-injected trace headers). 0 = use the gRPC default. If 0, uses env var GIZMOSQL_MAX_METADATA_SIZE.
  * @param storage_version DuckDB storage format version to use when creating new database files (e.g. "latest", "v1.4.0", "v1.2.0"). Maps directly to DuckDB's `storage_version` config option (the same one set by `duckdb -storage_version <ver>`). Useful when you want a database file that newer DuckDB clients can read at their newest format, or to cap the format at an older version for cross-version compatibility. Default is "" - if so, uses env var GIZMOSQL_STORAGE_VERSION; if that is unset, DuckDB's built-in default applies. Ignored for the SQLite backend.
+ * @param max_concurrent_statements [Enterprise] Maximum number of SQL statements allowed to execute concurrently. Statements beyond this limit queue (block) until a slot frees; to clients a queued statement is indistinguishable from a slow-executing one. 0 = unlimited (queue disabled). Internal/metadata queries are exempt. Requires a valid enterprise license with the "statement_queue" feature; without it the limit is unenforced (fails open). If 0, uses env var GIZMOSQL_MAX_CONCURRENT_STATEMENTS.
+ * @param max_queued_statements [Enterprise] Maximum statements that may wait for a slot at once when the concurrency limit is reached; beyond this they are rejected with a retriable error rather than queued. -1 (default) auto-sizes to 8 x max_concurrent_statements; 0 = unbounded waiters. If -1, uses env var GIZMOSQL_MAX_QUEUED_STATEMENTS.
+ * @param max_queue_wait_seconds [Enterprise] Maximum seconds a statement may wait in the queue before being rejected with a retriable error. -1 (default) uses the built-in default of 300s; 0 = wait indefinitely. If -1, uses env var GIZMOSQL_MAX_QUEUE_WAIT.
+ * @param admin_bypass_queue_default [Enterprise] Whether admin-role sessions bypass the statement queue by default, so diagnostics and KILL SESSION are never stranded behind a saturated queue. Default is std::nullopt (check env var GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT, fallback to true). Admins can still SET SESSION gizmosql.bypass_queue = false to opt into the queue.
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -172,5 +179,9 @@ int RunFlightSQLServer(
     std::string otel_endpoint = "", std::string otel_service_name = "",
     std::string otel_headers = "",
     int32_t max_metadata_size = DEFAULT_MAX_METADATA_SIZE,
-    std::string storage_version = "");
+    std::string storage_version = "",
+    int32_t max_concurrent_statements = DEFAULT_MAX_CONCURRENT_STATEMENTS,
+    int32_t max_queued_statements = DEFAULT_MAX_QUEUED_STATEMENTS,
+    int32_t max_queue_wait_seconds = DEFAULT_MAX_QUEUE_WAIT_SECONDS,
+    std::optional<bool> admin_bypass_queue_default = std::nullopt);
 }

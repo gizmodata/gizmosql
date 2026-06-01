@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Statement queuing** [Enterprise]. Caps the number of SQL statements executing concurrently; statements beyond the limit queue (block) until a slot frees. To JDBC/ADBC/ODBC clients a queued statement is indistinguishable from a slow-executing one, so no client changes are needed. Internal/metadata introspection queries are exempt (they never consume a slot). Enforcement requires a valid Enterprise license with the `statement_queue` feature; without it the limits are unenforced — the feature **fails open**, so a missing or expired license never blocks queries. All knobs are available as CLI flags, env vars (for container deployments), and `RunFlightSQLServer()` library parameters:
+  - `--max-concurrent-statements` / `GIZMOSQL_MAX_CONCURRENT_STATEMENTS` — execution slots. `0` = unlimited (default; queue disabled).
+  - `--max-queued-statements` / `GIZMOSQL_MAX_QUEUED_STATEMENTS` — waiter bound; statements beyond it are rejected with a retriable Flight `UNAVAILABLE` rather than queued. `-1` (default) auto-sizes to 8× the concurrency limit; `0` = unbounded.
+  - `--max-queue-wait` / `GIZMOSQL_MAX_QUEUE_WAIT` — seconds a statement may wait before being rejected. `-1` (default) = 300s; `0` = wait indefinitely.
+  - `--admin-bypass-queue-default` / `GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT` (default `true`) — admin-role sessions bypass the queue by default so diagnostics and `KILL SESSION` are never stranded behind a saturated queue. Any session can run `SET SESSION gizmosql.bypass_queue = <bool>` (only admins may enable it).
+
 ## [1.26.3] - 2026-05-26
 
 ### Changed

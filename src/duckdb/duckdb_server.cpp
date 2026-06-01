@@ -849,6 +849,8 @@ class DuckDBFlightSqlServer::Impl {
   int32_t query_timeout_;
   arrow::util::ArrowLogLevel query_log_level_;
   arrow::util::ArrowLogLevel session_log_level_;
+  AdmissionController admission_controller_;  // statement-queue admission control
+  bool admin_bypass_queue_default_ = true;    // admin sessions bypass the queue by default
 
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -938,6 +940,14 @@ class DuckDBFlightSqlServer::Impl {
     // SET GLOBAL takes effect immediately for all existing sessions that haven't
     // set a session-level override.
 
+    // Admin sessions bypass the statement queue by default (configurable via
+    // admin_bypass_queue_default) so that diagnostics and KILL SESSION are never
+    // stranded behind a saturated queue. Non-admin sessions leave bypass_queue as
+    // nullopt (=> do not bypass).
+    if (new_session->role == "admin") {
+      new_session->bypass_queue = admin_bypass_queue_default_;
+    }
+
 #ifdef GIZMOSQL_ENTERPRISE
     // Create session instrumentation if manager is available (Enterprise feature)
     if (instrumentation_manager_ && instrumentation_manager_->IsEnabled()) {
@@ -1026,6 +1036,10 @@ class DuckDBFlightSqlServer::Impl {
                 const bool& print_queries, const int32_t& query_timeout,
                 const arrow::util::ArrowLogLevel& query_log_level,
                 const arrow::util::ArrowLogLevel& session_log_level,
+                const int32_t& max_concurrent_statements,
+                const int32_t& max_queued_statements,
+                const int32_t& max_queue_wait_seconds,
+                const bool& admin_bypass_queue_default,
                 std::shared_ptr<InstrumentationManager> instrumentation_manager)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
@@ -1034,7 +1048,12 @@ class DuckDBFlightSqlServer::Impl {
         query_log_level_(query_log_level),
         session_log_level_(session_log_level),
         instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())),
-        instrumentation_manager_(std::move(instrumentation_manager)) {}
+        instrumentation_manager_(std::move(instrumentation_manager)) {
+    admission_controller_.SetLimit(max_concurrent_statements);
+    admission_controller_.SetMaxQueued(max_queued_statements);
+    admission_controller_.SetDefaultMaxQueueWaitSeconds(max_queue_wait_seconds);
+    admin_bypass_queue_default_ = admin_bypass_queue_default;
+  }
 
   std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const {
     return instrumentation_manager_;
@@ -1055,14 +1074,23 @@ class DuckDBFlightSqlServer::Impl {
   explicit Impl(DuckDBFlightSqlServer* outer, std::shared_ptr<duckdb::DuckDB> db_instance,
                 const bool& print_queries, const int32_t& query_timeout,
                 const arrow::util::ArrowLogLevel& query_log_level,
-                const arrow::util::ArrowLogLevel& session_log_level)
+                const arrow::util::ArrowLogLevel& session_log_level,
+                const int32_t& max_concurrent_statements,
+                const int32_t& max_queued_statements,
+                const int32_t& max_queue_wait_seconds,
+                const bool& admin_bypass_queue_default)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
         query_timeout_(query_timeout),
         query_log_level_(query_log_level),
         session_log_level_(session_log_level),
-        instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())) {}
+        instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())) {
+    admission_controller_.SetLimit(max_concurrent_statements);
+    admission_controller_.SetMaxQueued(max_queued_statements);
+    admission_controller_.SetDefaultMaxQueueWaitSeconds(max_queue_wait_seconds);
+    admin_bypass_queue_default_ = admin_bypass_queue_default;
+  }
 #endif
 
   void ReleaseAllSessions() {
@@ -2061,13 +2089,17 @@ class DuckDBFlightSqlServer::Impl {
     std::shared_lock read_lock(config_mutex_);
     return query_log_level_;
   }
+
+  AdmissionController& GetAdmissionController() { return admission_controller_; }
 };
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string& path, const bool& read_only, const bool& print_queries,
     const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& session_log_level,
-    const std::string& storage_version,
+    const std::string& storage_version, const int32_t& max_concurrent_statements,
+    const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
+    const bool& admin_bypass_queue_default,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2106,11 +2138,13 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 #ifdef GIZMOSQL_ENTERPRISE
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
-      session_log_level, instrumentation_manager);
+      session_log_level, max_concurrent_statements, max_queued_statements,
+      max_queue_wait_seconds, admin_bypass_queue_default, instrumentation_manager);
 #else
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
-      session_log_level);
+      session_log_level, max_concurrent_statements, max_queued_statements,
+      max_queue_wait_seconds, admin_bypass_queue_default);
 #endif
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
@@ -2386,6 +2420,10 @@ Status DuckDBFlightSqlServer::SetQueryTimeout(
 Result<int32_t> DuckDBFlightSqlServer::GetQueryTimeout(
     const ClientSession& client_session) {
   return impl_->GetQueryTimeout(client_session);
+}
+
+AdmissionController& DuckDBFlightSqlServer::GetAdmissionController() {
+  return impl_->GetAdmissionController();
 }
 
 Status DuckDBFlightSqlServer::SetPrintQueries(

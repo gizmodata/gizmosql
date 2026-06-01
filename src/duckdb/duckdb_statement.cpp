@@ -1087,10 +1087,19 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
   const std::string& name = set_stmt.name;
   auto scope = set_stmt.scope;
 
-  auto* const_expr = dynamic_cast<duckdb::ConstantExpression*>(set_stmt.value.get());
-  if (!const_expr) return Status::Invalid("SET value is not a constant");
-
-  auto val = const_expr->value.ToString();  // duckdb::Value
+  if (!set_stmt.value) {
+    return Status::Invalid("SET requires a value");
+  }
+  std::string val;
+  if (auto* const_expr =
+          dynamic_cast<duckdb::ConstantExpression*>(set_stmt.value.get())) {
+    val = const_expr->value.ToString();
+  } else {
+    // Bare keyword/identifier values (notably `= true` / `= false`) are not
+    // represented as a ConstantExpression in DuckDB's grammar; fall back to the
+    // parsed expression's textual form so booleans work without quoting.
+    val = set_stmt.value->ToString();
+  }
 
   if (!boost::istarts_with(name, "gizmosql.")) {
     return arrow::Status::Invalid("Unsupported GizmoSQL parameter: " + name);
@@ -1127,6 +1136,46 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
         ARROW_RETURN_NOT_OK(server->SetQueryLogLevel(*session, query_log_level));
       }
     }
+  } else if (name == "gizmosql.bypass_queue") {
+#ifdef GIZMOSQL_ENTERPRISE
+    if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsFeatureAvailable(
+            gizmosql::enterprise::kFeatureStatementQueue)) {
+      return arrow::Status::Invalid(
+          gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
+              "SET gizmosql.bypass_queue"));
+    }
+    bool bypass;
+    {
+      // Tolerate the value forms DuckDB's parser produces: integer/string
+      // constants, and the boolean-literal cast form `true` => CAST('t' AS
+      // BOOLEAN) / `false` => CAST('f' AS BOOLEAN) (see the value extraction
+      // above — unquoted booleans arrive as a cast expression's text).
+      const std::string lowered = boost::algorithm::to_lower_copy(val);
+      if (lowered == "true" || lowered == "1" || lowered == "on" ||
+          lowered == "yes" || lowered == "t" || lowered == "'true'" ||
+          lowered == "cast('t' as boolean)") {
+        bypass = true;
+      } else if (lowered == "false" || lowered == "0" || lowered == "off" ||
+                 lowered == "no" || lowered == "f" || lowered == "'false'" ||
+                 lowered == "cast('f' as boolean)") {
+        bypass = false;
+      } else {
+        return arrow::Status::Invalid("Invalid value for bypass_queue: " + val);
+      }
+    }
+    // Only admins may *enable* bypass; a non-admin must not be able to lift their
+    // own queueing (privilege-escalation footgun).
+    if (bypass && session->role != "admin") {
+      return arrow::Status::Invalid(
+          "Only admin users may set gizmosql.bypass_queue = true");
+    }
+    session->bypass_queue = bypass;
+#else
+    return arrow::Status::Invalid(
+        "SET gizmosql.bypass_queue is a commercially licensed enterprise feature. "
+        "Please provide a valid license key file via --license-key-file "
+        "or contact GizmoData sales at sales@gizmodata.com to obtain a license.");
+#endif
   } else if (name == "gizmosql.session_tag") {
 #ifdef GIZMOSQL_ENTERPRISE
     if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsInstrumentationAvailable()) {
@@ -1348,6 +1397,44 @@ arrow::Result<int> DuckDBStatement::Execute() {
     record_query_metric("OK");
     execute_status = "success";
     return 0;
+  }
+
+  // ---- Statement-queue admission control (Enterprise; fails open) ----------
+  // Acquire a concurrency slot for the duration of execution. DuckDB materializes
+  // results inside Execute(), so this scope covers the heavy CPU/memory work; the
+  // cheap FetchResult() iteration afterward needs no slot. Internal/metadata
+  // queries are exempt. Without an enterprise license (or when the cap is 0),
+  // Acquire() returns an inert handle (unlimited concurrency). The slot is held
+  // until this function returns, covering the success, timeout, and error paths.
+  // admission_server is declared first so it outlives admission_slot (the slot's
+  // destructor releases back into the controller the server owns).
+  std::shared_ptr<DuckDBFlightSqlServer> admission_server;
+  gizmosql::AdmissionSlot admission_slot;
+  {
+    bool enforce_queue = false;
+#ifdef GIZMOSQL_ENTERPRISE
+    enforce_queue =
+        !is_internal_ && !session->bypass_queue.value_or(false) &&
+        gizmosql::enterprise::EnterpriseFeatures::Instance().IsFeatureAvailable(
+            gizmosql::enterprise::kFeatureStatementQueue);
+#endif
+    if (enforce_queue) {
+      admission_server = GetServer(*session);
+      if (admission_server) {
+        auto& controller = admission_server->GetAdmissionController();
+        const int32_t max_queue_wait =
+            session->max_queue_wait.value_or(controller.DefaultMaxQueueWaitSeconds());
+        auto slot_result = controller.Acquire(/*enforce=*/true, max_queue_wait);
+        if (!slot_result.ok()) {
+          // Rejected (queue full, or the queue wait elapsed): surface as a
+          // retriable Flight UNAVAILABLE so clients can back off and retry.
+          return arrow::flight::MakeFlightError(
+              arrow::flight::FlightStatusCode::Unavailable,
+              slot_result.status().message());
+        }
+        admission_slot = std::move(slot_result).ValueOrDie();
+      }
+    }
   }
 
   // Capture the current runtime context so trace/log correlation is preserved

@@ -486,7 +486,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled,
     int32_t max_metadata_size,
-    const std::string& storage_version) {
+    const std::string& storage_version, const int32_t& max_concurrent_statements,
+    const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
+    const bool& admin_bypass_queue_default) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -696,7 +698,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
                                              database_filename.string(), read_only, print_queries,
                                              query_timeout, query_log_level, session_log_level,
-                                             storage_version,
+                                             storage_version, max_concurrent_statements,
+                                             max_queued_statements, max_queue_wait_seconds,
+                                             admin_bypass_queue_default,
                                              nullptr))  // No instrumentation manager yet
 
     // Set instance_id for all future log entries (enables log correlation)
@@ -1020,7 +1024,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     const bool& oauth_disable_tls,
     const bool& telemetry_enabled,
     int32_t max_metadata_size,
-    std::string storage_version) {
+    std::string storage_version, int32_t max_concurrent_statements,
+    int32_t max_queued_statements, int32_t max_queue_wait_seconds,
+    bool admin_bypass_queue_default) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1308,7 +1314,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       allow_cross_instance_tokens,
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled,
-      max_metadata_size, storage_version);
+      max_metadata_size, storage_version, max_concurrent_statements,
+      max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1398,7 +1405,11 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string otel_endpoint, std::string otel_service_name,
                        std::string otel_headers,
                        int32_t max_metadata_size,
-                       std::string storage_version) {
+                       std::string storage_version,
+                       int32_t max_concurrent_statements,
+                       int32_t max_queued_statements,
+                       int32_t max_queue_wait_seconds,
+                       std::optional<bool> admin_bypass_queue_default) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1474,6 +1485,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   resolve_bool_env(allow_cross_instance_tokens, "GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS");
   resolve_bool_env(oauth_disable_tls, "GIZMOSQL_OAUTH_DISABLE_TLS");
   resolve_bool_env(otel_enabled, "GIZMOSQL_OTEL_ENABLED");
+  resolve_bool_env(admin_bypass_queue_default, "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT");
   // ----------------------------------------------------------
 
   // Integer env var fallback for max_metadata_size: only consult env when the
@@ -1496,6 +1508,66 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       }
     }
     if (max_metadata_size < 0) max_metadata_size = 0;
+  }
+
+  // Integer env var fallback for max_concurrent_statements: only consult env when
+  // the CLI/library caller left it at the sentinel default (0). Negative values
+  // are rejected. Invalid env values fall back to 0 (= unlimited / queue disabled).
+  if (max_concurrent_statements <= 0) {
+    auto env = gizmosql::SafeGetEnvVarValue("GIZMOSQL_MAX_CONCURRENT_STATEMENTS");
+    if (!env.empty()) {
+      try {
+        int parsed = std::stoi(env);
+        if (parsed > 0) {
+          max_concurrent_statements = parsed;
+        } else if (parsed < 0) {
+          std::cerr
+              << "GIZMOSQL_MAX_CONCURRENT_STATEMENTS must be a positive integer; got '"
+              << env << "', ignoring." << std::endl;
+        }
+      } catch (const std::exception&) {
+        std::cerr << "GIZMOSQL_MAX_CONCURRENT_STATEMENTS is not a valid integer ('"
+                  << env << "'), ignoring." << std::endl;
+      }
+    }
+    if (max_concurrent_statements < 0) max_concurrent_statements = 0;
+  }
+
+  // Integer env var fallback for max_queued_statements (-1 sentinel = "auto").
+  // 0 = unbounded waiters; positive = bounded. When left at the sentinel, default
+  // to 8 x max_concurrent_statements so blocked statements can't exhaust the gRPC
+  // handler pool.
+  if (max_queued_statements < 0) {
+    auto env = gizmosql::SafeGetEnvVarValue("GIZMOSQL_MAX_QUEUED_STATEMENTS");
+    if (!env.empty()) {
+      try {
+        max_queued_statements = std::stoi(env);
+      } catch (const std::exception&) {
+        std::cerr << "GIZMOSQL_MAX_QUEUED_STATEMENTS is not a valid integer ('" << env
+                  << "'), ignoring." << std::endl;
+      }
+    }
+  }
+  if (max_queued_statements < 0) {
+    max_queued_statements =
+        (max_concurrent_statements > 0) ? 8 * max_concurrent_statements : 0;
+  }
+
+  // Integer env var fallback for max_queue_wait_seconds (-1 sentinel = "use the
+  // built-in 300s default"). 0 = wait indefinitely.
+  if (max_queue_wait_seconds < 0) {
+    auto env = gizmosql::SafeGetEnvVarValue("GIZMOSQL_MAX_QUEUE_WAIT");
+    if (!env.empty()) {
+      try {
+        max_queue_wait_seconds = std::stoi(env);
+      } catch (const std::exception&) {
+        std::cerr << "GIZMOSQL_MAX_QUEUE_WAIT is not a valid integer ('" << env
+                  << "'), ignoring." << std::endl;
+      }
+    }
+  }
+  if (max_queue_wait_seconds < 0) {
+    max_queue_wait_seconds = 300;
   }
 
   auto now = std::chrono::system_clock::now();
@@ -1597,7 +1669,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled,
-      max_metadata_size, storage_version);
+      max_metadata_size, storage_version, max_concurrent_statements,
+      max_queued_statements, max_queue_wait_seconds,
+      admin_bypass_queue_default.value_or(true));
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
