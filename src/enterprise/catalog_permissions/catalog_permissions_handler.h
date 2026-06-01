@@ -23,6 +23,18 @@ class InstrumentationManager;
 
 namespace gizmosql::enterprise {
 
+/// Match a catalog name against a catalog_access rule pattern using
+/// AWS IAM-style glob semantics (case-sensitive):
+///   '*' matches any sequence of characters (including empty)
+///   '?' matches exactly one character
+/// A pattern with no wildcard metacharacters matches exactly, so literal
+/// catalog names and the bare "*" wildcard behave as they always have.
+///
+/// @param pattern The catalog pattern from a catalog_access rule (e.g. "prod_*")
+/// @param catalog_name The concrete catalog name to test
+/// @return true if the pattern matches the catalog name
+bool MatchesCatalogPattern(const std::string& pattern, const std::string& catalog_name);
+
 /// Get the catalog access level for a given catalog name.
 /// This evaluates the catalog_access rules from the session's JWT token.
 /// Special handling for the instrumentation catalog: only admins can read, no one can write.
