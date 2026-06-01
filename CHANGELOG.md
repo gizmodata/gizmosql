@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GetSessionOptions` no longer lazily creates a session, so it can be used as a liveness probe.** GizmoSQL sessions are created on demand by whichever Flight SQL RPC arrives first for a given JWT `session_id`; the catalog is only applied when the client sends `SetSessionOptions` (`USE "<catalog>"`), which drivers do exactly once right after the Handshake. If a pooled connection's server-side session disappeared (e.g. the connection re-routed to a replica that never saw the session), the next RPC would silently create a *new* session in the default (`memory`) catalog and every query would fail with a catalog error (`Table ... does not exist` / `expected catalog X but got memory`). `GetSessionOptions` now performs a **non-creating** lookup and returns an `Unauthenticated` Flight error for an evicted/unknown session instead of materialising one in the wrong catalog. This lets a client's `Connection.isValid()` probe the session and recycle a stale pooled connection, forcing a fresh Handshake + `SetSessionOptions` that lands the replacement session in the correct catalog. All data-plane RPCs keep their existing lazy-create behavior, so clients that never send `SetSessionOptions` (e.g. ADBC using the default catalog) are unaffected. Added `tests/integration/test_session_options_probe.cpp` as a regression guard.
+
 ## [1.26.3] - 2026-05-26
 
 ### Changed
