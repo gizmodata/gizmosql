@@ -1,22 +1,29 @@
 # Statement Queuing — Design Doc
 
-**Status:** Phases 1–2 implemented (`[Unreleased]`); Phases 3–4 planned
+**Status:** Phases 1–3 implemented (`[Unreleased]`, branch `feature/statement-queuing`); Phase 4 (React admin console) planned
 **Edition:** Enterprise (runtime license-gated)
 **Author:** GizmoData
 **Related:** `docs/session_instrumentation.md`, `docs/websocket-migration-plan.md`, `gizmosql-rbac-design.md`
 
-> **Implementation status.** Phase 1 (admission gate, `max_concurrent_statements`,
-> internal-query exemption, license fail-open) and Phase 2 (waiter bound
-> `max_queued_statements`, `max_queue_wait` with Flight `UNAVAILABLE` rejections,
-> `admin_bypass_queue_default` + `SET SESSION gizmosql.bypass_queue`) are
-> implemented and tested (`src/common/include/detail/admission_controller.h`,
-> `tests/integration/test_admission_controller.cpp` (9 unit tests),
-> `tests/integration/test_statement_queue.cpp` (enterprise E2E)). **Deferred:** the
-> `--memory-limit` first-class flag and gRPC keepalive (small, orthogonal); runtime
-> `SET GLOBAL` of the limits, the `queued`/`cancelled` instrumentation, the settings
-> registry, and the admin console (Phases 3–4). A side-improvement landed with
-> Phase 2: `SET gizmosql.*` values now accept unquoted boolean keywords
-> (`= true`/`= false`), which DuckDB's grammar parses as a cast expression.
+> **Implementation status — Phases 1–3 done, on `feature/statement-queuing`:**
+> - **Phase 1** — admission gate (`max_concurrent_statements`), internal-query
+>   exemption, runtime license check that fails open.
+> - **Phase 2** — waiter bound (`max_queued_statements`), `max_queue_wait` with
+>   Flight `UNAVAILABLE` rejections, `admin_bypass_queue_default` +
+>   `SET SESSION gizmosql.bypass_queue`.
+> - **Phase 3** — `--memory-limit` (passthrough to DuckDB, allowlist-validated) +
+>   gRPC server keepalive; the **settings registry** (one descriptor per
+>   `gizmosql.*` setting; centralized license/scope/admin checks) with runtime
+>   `SET GLOBAL` of the queue limits; the `gizmosql_settings()` table function
+>   (bind-parameterized); and `queued`/`cancelled` instrumentation (`enqueue_time`,
+>   `queue_wait_ms`, honest queued→executing transition, `KILL`→`cancelled`).
+>
+> Tested: `tests/integration/test_admission_controller.cpp` (9 unit tests) and
+> `tests/integration/test_statement_queue.cpp` (enterprise E2E, incl. deterministic
+> concurrency via `sleep_ms`). Side-improvement: `SET gizmosql.*` accepts unquoted
+> boolean keywords (`= true`/`= false`). **Remaining (Phase 4 / follow-ups):** the
+> React SQL-monitor admin console, a live `queue_position` view, and the separable
+> `bypassed` audit column.
 
 > File/line references in this document reflect the code at the time of writing
 > and may drift; treat them as starting points, not guarantees. The architectural
