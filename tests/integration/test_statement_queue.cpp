@@ -197,6 +197,28 @@ TEST_F(StatementQueueServerFixture, QueueSerializesConcurrentStatements) {
   SKIP_IF_NO_LICENSE();
   ASSERT_TRUE(IsServerReady());
 
+  // sleep_ms() — used to deterministically hold a slot — was added to DuckDB's
+  // core_functions extension in v1.5.0 (commit 8e6261070, 2025-11-11) and is absent
+  // from the entire v1.4.x LTS line. On the LTS channel the holder queries error,
+  // the slots are never held, and the timing assertion below fails. Probe sleep_ms()
+  // up front and GTEST_SKIP() when it is unavailable or non-blocking; the
+  // AdmissionController unit tests (test_admission_controller.cpp) already cover
+  // serialization deterministically on every build.
+  {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto chk,
+                               ConnectAdmin(GetPort(), GetUsername(), GetPassword()));
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto st = RunStatement(chk, "SELECT sleep_ms(200)");
+    const auto slept = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+    if (!st.ok() || slept < 150) {
+      GTEST_SKIP() << "sleep_ms() is unavailable or non-blocking on this DuckDB "
+                      "build (e.g. the LTS channel); AdmissionController unit tests "
+                      "cover serialization.";
+    }
+  }
+
   std::thread h1(HoldSlot, GetPort(), GetUsername(), GetPassword(), 2000);
   std::thread h2(HoldSlot, GetPort(), GetUsername(), GetPassword(), 2000);
   // Let the holders occupy both slots before the probe is submitted.
