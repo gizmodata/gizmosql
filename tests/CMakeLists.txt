@@ -63,6 +63,7 @@ set(GIZMOSQL_CLIENT_LIB_SRCS
 # Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)
 if(GIZMOSQL_ENTERPRISE)
     set(GIZMOSQL_ENTERPRISE_TEST_SRCS
+            integration/test_catalog_wildcards.cpp
             integration/test_instrumentation.cpp
             integration/test_instrumentation_ducklake.cpp
             integration/test_kill_session.cpp

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Wildcard catalog patterns in catalog-level access control** [Enterprise]. The `catalog` field of each `catalog_access` token rule now supports AWS IAM-style glob matching: `*` matches any sequence of characters (including none) and `?` matches exactly one character. A pattern with no wildcards still matches exactly (case-sensitive), so existing literal-name rules and the bare `*` wildcard are unchanged. This lets a single rule cover a family of catalogs that share a naming convention — e.g. `{"catalog": "prod_*", "access": "write"}` grants write to `prod_sales`, `prod_finance`, etc. Patterns apply everywhere catalog access is evaluated, including metadata visibility filtering (`SHOW DATABASES`, `information_schema.*`, `duckdb_*()` functions, and Flight SQL metadata RPCs). No token-generator or client changes are required — wildcards are ordinary strings in the existing `catalog_access` claim.
+
 ## [1.26.3] - 2026-05-26
 
 ### Changed

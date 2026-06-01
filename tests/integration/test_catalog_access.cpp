@@ -647,6 +647,64 @@ TEST_F(CatalogAccessServerFixture, UseQuotedUnauthorizedCatalogIsDenied) {
       << result.status().ToString();
 }
 
+// ============================================================================
+// Wildcard (AWS IAM-style) catalog pattern matching — end-to-end
+// Proves that a glob pattern in a catalog_access rule flows through the token,
+// the server, and the access decision (write enforcement + visibility), not
+// just the isolated matcher (see test_catalog_wildcards.cpp for the matcher).
+// ============================================================================
+TEST_F(CatalogAccessServerFixture, WildcardPrefixGrantsAndDeniesByPattern) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // As the full-access system user, attach two catalogs that share a naming
+  // convention so a single "prod_*" rule can cover the prod family.
+  {
+    arrow::flight::FlightClientOptions options;
+    ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                               arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto admin_client,
+                               arrow::flight::FlightClient::Connect(location, options));
+    arrow::flight::FlightCallOptions admin_opts;
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto bearer, admin_client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+    admin_opts.headers.push_back(bearer);
+    FlightSqlClient admin(std::move(admin_client));
+    ASSERT_ARROW_OK(
+        ExecuteAndConsume(admin, admin_opts, "ATTACH IF NOT EXISTS ':memory:' AS prod_alpha"));
+    ASSERT_ARROW_OK(
+        ExecuteAndConsume(admin, admin_opts, "ATTACH IF NOT EXISTS ':memory:' AS staging_beta"));
+  }
+
+  // Token: write to anything matching prod_*, deny everything else.
+  std::string catalog_access =
+      R"([{"catalog": "prod_*", "access": "write"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("wildcard_prefix_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // A catalog matching prod_* is writable.
+  ASSERT_ARROW_OK(ExecuteAndConsume(
+      *client, call_options, "CREATE TABLE prod_alpha.wildcard_t (id INTEGER)"));
+
+  // A non-matching catalog is denied (covered only by the "*": none rule).
+  auto denied = ExecuteAndConsume(
+      *client, call_options, "CREATE TABLE staging_beta.wildcard_t (id INTEGER)");
+  ASSERT_FALSE(denied.ok());
+  EXPECT_TRUE(denied.ToString().find("Access denied") != std::string::npos)
+      << denied.ToString();
+
+  // Visibility filtering follows the same pattern: prod_alpha is visible,
+  // staging_beta is hidden.
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table,
+                             ExecuteToTable(*client, call_options, "SHOW DATABASES"));
+  auto db_names = GetColumnValues(table, 0);
+  EXPECT_NE(std::find(db_names.begin(), db_names.end(), "prod_alpha"), db_names.end())
+      << "prod_alpha should be visible (matches prod_*)";
+  EXPECT_EQ(std::find(db_names.begin(), db_names.end(), "staging_beta"), db_names.end())
+      << "staging_beta should be hidden (no matching allow rule)";
+}
+
 TEST_F(CatalogAccessServerFixture, SetSessionOptionsUnauthorizedCatalogIsDenied) {
   SKIP_WITHOUT_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";

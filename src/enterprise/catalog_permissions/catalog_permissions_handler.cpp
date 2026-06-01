@@ -18,6 +18,47 @@
 
 namespace gizmosql::enterprise {
 
+bool MatchesCatalogPattern(const std::string& pattern, const std::string& catalog_name) {
+  // AWS IAM-style glob matching, case-sensitive (consistent with the prior
+  // exact-match semantics):
+  //   '*' matches any sequence of characters, including the empty string
+  //   '?' matches exactly one character
+  // A pattern with no wildcard metacharacters therefore matches exactly, so
+  // existing literal-name rules and the bare "*" wildcard keep working.
+  //
+  // Iterative backtracking matcher (O(len(pattern) * len(name)) worst case, no
+  // recursion) with a remembered '*' position to retry from.
+  size_t p = 0;          // index into pattern
+  size_t s = 0;          // index into catalog_name
+  size_t star = std::string::npos;  // index of last '*' in pattern, if any
+  size_t star_s = 0;     // index into catalog_name when that '*' was seen
+
+  while (s < catalog_name.size()) {
+    if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == catalog_name[s])) {
+      ++p;
+      ++s;
+    } else if (p < pattern.size() && pattern[p] == '*') {
+      // Record the '*' and tentatively match zero characters.
+      star = p;
+      star_s = s;
+      ++p;
+    } else if (star != std::string::npos) {
+      // Mismatch: let the last '*' absorb one more character and retry.
+      p = star + 1;
+      ++star_s;
+      s = star_s;
+    } else {
+      return false;
+    }
+  }
+
+  // Consume any trailing '*' in the pattern (they match the empty string).
+  while (p < pattern.size() && pattern[p] == '*') {
+    ++p;
+  }
+  return p == pattern.size();
+}
+
 CatalogAccessLevel GetCatalogAccess(
     const std::string& catalog_name,
     const std::string& role,
@@ -50,9 +91,11 @@ CatalogAccessLevel GetCatalogAccess(
     return CatalogAccessLevel::kWrite;
   }
 
-  // Check rules in order - first match wins
+  // Check rules in order - first match wins. The catalog pattern supports
+  // AWS IAM-style globs ('*' and '?'); a literal name (no wildcards) matches
+  // exactly, and a bare "*" matches every catalog.
   for (const auto& rule : catalog_access) {
-    if (rule.catalog == catalog_name || rule.catalog == "*") {
+    if (MatchesCatalogPattern(rule.catalog, catalog_name)) {
       return rule.access;
     }
   }
