@@ -255,8 +255,26 @@ generate-gizmosql-token \
 ### Rules
 
 - Rules are evaluated in order; **first match wins**
-- Use `"catalog": "*"` as a wildcard to match all catalogs
+- The `catalog` field is matched against each catalog name using **AWS IAM-style glob patterns**:
+  - `*` matches any sequence of characters (including none)
+  - `?` matches exactly one character
+  - A pattern with no wildcards matches the catalog name **exactly** (case-sensitive)
+- So `"catalog": "*"` matches all catalogs, while `"catalog": "prod_*"` matches `prod_sales`, `prod_finance`, etc.
 - If no `--catalog-access` is specified, full access is granted to all catalogs (backward compatible)
+
+### Wildcard Pattern Matching
+
+The `catalog` field supports glob wildcards, similar to AWS IAM resource policies. This is useful when catalog names follow a naming convention (e.g., per-tenant or per-environment databases backed by object-storage buckets):
+
+| Pattern | Matches | Does **not** match |
+|---------|---------|--------------------|
+| `*` | every catalog | — |
+| `prod_*` | `prod_sales`, `prod_`, `prod_finance_eu` | `staging_sales`, `prod` |
+| `*_west` | `sales_west`, `_west` | `west`, `sales_west_2` |
+| `tenant_?` | `tenant_a`, `tenant_1` | `tenant_`, `tenant_ab` |
+| `data_*_2025` | `data_sales_2025`, `data__2025` | `data_2025` |
+
+> Matching is **case-sensitive**. Use a pattern whose case matches the catalog name as DuckDB reports it (e.g. from `SHOW DATABASES`).
 
 ### Example Configurations
 
@@ -269,6 +287,9 @@ generate-gizmosql-token \
 
 # Access only to specific catalogs, deny all others
 --catalog-access '[{"catalog": "allowed_db", "access": "write"}, {"catalog": "*", "access": "none"}]'
+
+# Wildcard: write to all prod_* catalogs, read all analytics_* catalogs, deny the rest
+--catalog-access '[{"catalog": "prod_*", "access": "write"}, {"catalog": "analytics_*", "access": "read"}, {"catalog": "*", "access": "none"}]'
 ```
 
 > **Note:** The `_gizmosql_instr` instrumentation database has special protection: only admin users can read it, and no one can write to it via client connections (it's system-managed). Token-based `catalog_access` rules do not override this protection.

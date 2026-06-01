@@ -13,7 +13,9 @@ enum class CatalogAccessLevel {
 
 // A single catalog access rule from token claims
 struct CatalogAccessRule {
-    std::string catalog;  // Catalog name or "*" for wildcard
+    std::string catalog;  // Catalog name or AWS IAM-style glob pattern
+                          // ('*' = any sequence, '?' = one char; no
+                          // wildcards = exact match). "*" matches all.
     CatalogAccessLevel access;
 };
 
