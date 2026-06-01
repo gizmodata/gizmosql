@@ -32,6 +32,8 @@
 #include <cctype>
 #include <optional>
 #include <regex>
+#include <functional>
+#include <unordered_map>
 
 #include <boost/algorithm/string.hpp>
 
@@ -1066,6 +1068,298 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
                                  override_schema, flight_method, is_internal);
 }
 
+namespace {
+
+// ---- GizmoSQL settings registry --------------------------------------------
+// Single source of truth for the gizmosql.* session/server settings. Each
+// descriptor carries metadata plus the mutator hooks invoked by
+// SettingsRegistry::Apply(), which centralizes the cross-cutting checks:
+// unknown-name, enterprise license, scope validity, and the admin gate for
+// GLOBAL writes. Adding a setting = one descriptor.
+enum class SetScopeKind { kSessionOnly, kGlobalOnly, kSessionOrGlobal };
+
+struct GizmoSetting {
+  std::string name;
+  SetScopeKind scope;
+  bool enterprise = false;
+  const char* enterprise_feature = nullptr;  // mirrors enterprise::kFeature* values
+  std::string input_type;                    // INTEGER / BOOLEAN / VARCHAR (display)
+  std::string env_var;                       // "" if none
+  std::string default_value;
+  std::string description;
+  std::function<arrow::Status(ClientSession&, const std::string&)> set_session;
+  std::function<arrow::Status(DuckDBFlightSqlServer&, ClientSession&,
+                              const std::string&)>
+      set_global;
+};
+
+// Parse a SET value into a bool, tolerating the forms DuckDB's parser produces:
+// integer/string constants and the `true`/`false` cast-literal text.
+arrow::Result<bool> ParseSetBool(const std::string& val, const std::string& setting) {
+  const std::string lowered = boost::algorithm::to_lower_copy(val);
+  if (lowered == "true" || lowered == "1" || lowered == "on" || lowered == "yes" ||
+      lowered == "t" || lowered == "'true'" || lowered == "cast('t' as boolean)") {
+    return true;
+  }
+  if (lowered == "false" || lowered == "0" || lowered == "off" || lowered == "no" ||
+      lowered == "f" || lowered == "'false'" || lowered == "cast('f' as boolean)") {
+    return false;
+  }
+  return arrow::Status::Invalid("Invalid value for " + setting + ": " + val);
+}
+
+arrow::Result<int32_t> ParseSetInt(const std::string& val, const std::string& setting) {
+  try {
+    return static_cast<int32_t>(std::stoi(val));
+  } catch (...) {
+    return arrow::Status::Invalid("Invalid value for " + setting + ": " + val);
+  }
+}
+
+class SettingsRegistry {
+ public:
+  static const SettingsRegistry& Instance() {
+    static const SettingsRegistry kRegistry;
+    return kRegistry;
+  }
+
+  const GizmoSetting* Find(const std::string& name) const {
+    auto it = by_name_.find(name);
+    return it == by_name_.end() ? nullptr : &settings_[it->second];
+  }
+
+  const std::vector<GizmoSetting>& All() const { return settings_; }
+
+  // Dispatch `SET [SESSION|GLOBAL] <name> = <val>` after centralized checks.
+  arrow::Status Apply(ClientSession& session, DuckDBFlightSqlServer* server,
+                      const std::string& name, duckdb::SetScope scope,
+                      const std::string& val) const {
+    const GizmoSetting* d = Find(name);
+    if (!d) {
+      return arrow::Status::Invalid("Unknown GizmoSQL configuration parameter: " + name);
+    }
+
+    // Enterprise license gate (centralized).
+    if (d->enterprise) {
+#ifdef GIZMOSQL_ENTERPRISE
+      if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsFeatureAvailable(
+              d->enterprise_feature)) {
+        return arrow::Status::Invalid(
+            gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError("SET " +
+                                                                              d->name));
+      }
+#else
+      return arrow::Status::Invalid(
+          "SET " + d->name +
+          " is a commercially licensed enterprise feature. Please provide a valid "
+          "license key file via --license-key-file or contact GizmoData sales at "
+          "sales@gizmodata.com to obtain a license.");
+#endif
+    }
+
+    // Resolve effective scope. A bare SET (AUTOMATIC) on a global-only setting
+    // means GLOBAL; otherwise a non-GLOBAL scope means SESSION.
+    const bool to_global = scope == duckdb::SetScope::GLOBAL ||
+                           (scope != duckdb::SetScope::GLOBAL &&
+                            d->scope == SetScopeKind::kGlobalOnly);
+    if (to_global && d->scope == SetScopeKind::kSessionOnly) {
+      return arrow::Status::Invalid(d->name + " can only be set at SESSION scope");
+    }
+    if (!to_global && d->scope == SetScopeKind::kGlobalOnly) {
+      return arrow::Status::Invalid(d->name + " can only be set with SET GLOBAL");
+    }
+
+    if (to_global) {
+      if (session.role != "admin") {
+        return arrow::Status::Invalid("Only admin users can SET GLOBAL " + d->name);
+      }
+      if (!server || !d->set_global) {
+        return arrow::Status::Invalid(d->name + " cannot be set at GLOBAL scope");
+      }
+      return d->set_global(*server, session, val);
+    }
+    if (!d->set_session) {
+      return arrow::Status::Invalid(d->name + " cannot be set at SESSION scope");
+    }
+    return d->set_session(session, val);
+  }
+
+ private:
+  SettingsRegistry();
+  std::vector<GizmoSetting> settings_;
+  std::unordered_map<std::string, size_t> by_name_;
+};
+
+SettingsRegistry::SettingsRegistry() {
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.query_timeout",
+      .scope = SetScopeKind::kSessionOrGlobal,
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_QUERY_TIMEOUT",
+      .default_value = "0",
+      .description = "Per-statement timeout in seconds (0 = no timeout).",
+      .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "query_timeout"));
+        s.query_timeout = n;
+        return arrow::Status::OK();
+      },
+      .set_global = [](DuckDBFlightSqlServer& srv, ClientSession& s,
+                       const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "query_timeout"));
+        return srv.SetQueryTimeout(s, n);
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.query_log_level",
+      .scope = SetScopeKind::kSessionOrGlobal,
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_QUERY_LOG_LEVEL",
+      .default_value = "INFO",
+      .description = "Query-execution log level (DEBUG/INFO/WARNING/ERROR).",
+      .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
+        try {
+          s.query_log_level = log_level_string_to_arrow_log_level(val);
+        } catch (...) {
+          return arrow::Status::Invalid("Invalid value for query_log_level: " + val);
+        }
+        return arrow::Status::OK();
+      },
+      .set_global = [](DuckDBFlightSqlServer& srv, ClientSession& s,
+                       const std::string& val) -> arrow::Status {
+        arrow::util::ArrowLogLevel lvl;
+        try {
+          lvl = log_level_string_to_arrow_log_level(val);
+        } catch (...) {
+          return arrow::Status::Invalid("Invalid value for query_log_level: " + val);
+        }
+        return srv.SetQueryLogLevel(s, lvl);
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.bypass_queue",
+      .scope = SetScopeKind::kSessionOnly,
+      .enterprise = true,
+      .enterprise_feature = "statement_queue",
+      .input_type = "BOOLEAN",
+      .default_value = "false",
+      .description = "Skip the statement queue for this session (admin only to enable).",
+      .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(bool b, ParseSetBool(val, "bypass_queue"));
+        // Only admins may *enable* bypass; a non-admin must not be able to lift
+        // their own queueing (privilege-escalation footgun).
+        if (b && s.role != "admin") {
+          return arrow::Status::Invalid(
+              "Only admin users may set gizmosql.bypass_queue = true");
+        }
+        s.bypass_queue = b;
+        return arrow::Status::OK();
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.session_tag",
+      .scope = SetScopeKind::kSessionOnly,
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .description = "JSON session tag recorded in instrumentation.",
+      .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
+        if (!val.empty() && !IsValidJSON(val)) {
+          return arrow::Status::Invalid("Invalid JSON for session_tag: " + val);
+        }
+        s.session_tag = val;
+#ifdef GIZMOSQL_ENTERPRISE
+        if (s.instrumentation) {
+          s.instrumentation->UpdateSessionTag(val);
+        }
+#endif
+        return arrow::Status::OK();
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.query_tag",
+      .scope = SetScopeKind::kSessionOnly,
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .description = "JSON query tag recorded in instrumentation.",
+      .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
+        if (!val.empty() && !IsValidJSON(val)) {
+          return arrow::Status::Invalid("Invalid JSON for query_tag: " + val);
+        }
+        s.query_tag = val;
+        return arrow::Status::OK();
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.max_concurrent_statements",
+      .scope = SetScopeKind::kGlobalOnly,
+      .enterprise = true,
+      .enterprise_feature = "statement_queue",
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_MAX_CONCURRENT_STATEMENTS",
+      .default_value = "0",
+      .description = "Max concurrently executing statements (0 = unlimited).",
+      .set_global = [](DuckDBFlightSqlServer& srv, ClientSession&,
+                       const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_concurrent_statements"));
+        if (n < 0) return arrow::Status::Invalid("max_concurrent_statements must be >= 0");
+        srv.GetAdmissionController().SetLimit(n);
+        return arrow::Status::OK();
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.max_queued_statements",
+      .scope = SetScopeKind::kGlobalOnly,
+      .enterprise = true,
+      .enterprise_feature = "statement_queue",
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_MAX_QUEUED_STATEMENTS",
+      .default_value = "0",
+      .description = "Max statements that may wait for a slot (0 = unbounded).",
+      .set_global = [](DuckDBFlightSqlServer& srv, ClientSession&,
+                       const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_queued_statements"));
+        srv.GetAdmissionController().SetMaxQueued(n);
+        return arrow::Status::OK();
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.max_queue_wait",
+      .scope = SetScopeKind::kSessionOrGlobal,
+      .enterprise = true,
+      .enterprise_feature = "statement_queue",
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_MAX_QUEUE_WAIT",
+      .default_value = "300",
+      .description =
+          "Seconds a statement may wait in the queue before rejection (0 = forever).",
+      .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_queue_wait"));
+        s.max_queue_wait = n;
+        return arrow::Status::OK();
+      },
+      .set_global = [](DuckDBFlightSqlServer& srv, ClientSession&,
+                       const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_queue_wait"));
+        srv.GetAdmissionController().SetDefaultMaxQueueWaitSeconds(n);
+        return arrow::Status::OK();
+      },
+  });
+
+  for (size_t i = 0; i < settings_.size(); ++i) {
+    by_name_[settings_[i].name] = i;
+  }
+}
+
+}  // namespace
+
 arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
   ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
@@ -1105,123 +1399,11 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
     return arrow::Status::Invalid("Unsupported GizmoSQL parameter: " + name);
   }
 
-  if (name == "gizmosql.query_timeout") {
-    int timeout_seconds = 0;
-    try {
-      timeout_seconds = std::stoi(val);
-    } catch (...) {
-      return arrow::Status::Invalid("Invalid value for query_timeout: " + val);
-    }
-
-    if (scope == duckdb::SetScope::SESSION || scope == duckdb::SetScope::AUTOMATIC) {
-      session->query_timeout = timeout_seconds;
-    } else if (scope == duckdb::SetScope::GLOBAL) {
-      if (auto server = GetServer(*session)) {
-        ARROW_RETURN_NOT_OK(server->SetQueryTimeout(*session, timeout_seconds));
-      }
-    }
-
-  } else if (name == "gizmosql.query_log_level") {
-    arrow::util::ArrowLogLevel query_log_level;
-    try {
-      query_log_level = log_level_string_to_arrow_log_level(val);
-    } catch (...) {
-      return arrow::Status::Invalid("Invalid value for query_log_level: " + val);
-    }
-
-    if (scope == duckdb::SetScope::SESSION || scope == duckdb::SetScope::AUTOMATIC) {
-      session->query_log_level = query_log_level;
-    } else if (scope == duckdb::SetScope::GLOBAL) {
-      if (auto server = GetServer(*session)) {
-        ARROW_RETURN_NOT_OK(server->SetQueryLogLevel(*session, query_log_level));
-      }
-    }
-  } else if (name == "gizmosql.bypass_queue") {
-#ifdef GIZMOSQL_ENTERPRISE
-    if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsFeatureAvailable(
-            gizmosql::enterprise::kFeatureStatementQueue)) {
-      return arrow::Status::Invalid(
-          gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
-              "SET gizmosql.bypass_queue"));
-    }
-    bool bypass;
-    {
-      // Tolerate the value forms DuckDB's parser produces: integer/string
-      // constants, and the boolean-literal cast form `true` => CAST('t' AS
-      // BOOLEAN) / `false` => CAST('f' AS BOOLEAN) (see the value extraction
-      // above — unquoted booleans arrive as a cast expression's text).
-      const std::string lowered = boost::algorithm::to_lower_copy(val);
-      if (lowered == "true" || lowered == "1" || lowered == "on" ||
-          lowered == "yes" || lowered == "t" || lowered == "'true'" ||
-          lowered == "cast('t' as boolean)") {
-        bypass = true;
-      } else if (lowered == "false" || lowered == "0" || lowered == "off" ||
-                 lowered == "no" || lowered == "f" || lowered == "'false'" ||
-                 lowered == "cast('f' as boolean)") {
-        bypass = false;
-      } else {
-        return arrow::Status::Invalid("Invalid value for bypass_queue: " + val);
-      }
-    }
-    // Only admins may *enable* bypass; a non-admin must not be able to lift their
-    // own queueing (privilege-escalation footgun).
-    if (bypass && session->role != "admin") {
-      return arrow::Status::Invalid(
-          "Only admin users may set gizmosql.bypass_queue = true");
-    }
-    session->bypass_queue = bypass;
-#else
-    return arrow::Status::Invalid(
-        "SET gizmosql.bypass_queue is a commercially licensed enterprise feature. "
-        "Please provide a valid license key file via --license-key-file "
-        "or contact GizmoData sales at sales@gizmodata.com to obtain a license.");
-#endif
-  } else if (name == "gizmosql.session_tag") {
-#ifdef GIZMOSQL_ENTERPRISE
-    if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsInstrumentationAvailable()) {
-      return arrow::Status::Invalid(
-          gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
-              "SET gizmosql.session_tag"));
-    }
-
-    if (!val.empty() && !IsValidJSON(val)) {
-      return arrow::Status::Invalid("Invalid JSON for session_tag: " + val);
-    }
-
-    session->session_tag = val;
-    if (session->instrumentation) {
-      session->instrumentation->UpdateSessionTag(val);
-    }
-#else
-    return arrow::Status::Invalid(
-        "SET gizmosql.session_tag is a commercially licensed enterprise feature. "
-        "Please provide a valid license key file via --license-key-file "
-        "or contact GizmoData sales at sales@gizmodata.com to obtain a license.");
-#endif
-
-  } else if (name == "gizmosql.query_tag") {
-#ifdef GIZMOSQL_ENTERPRISE
-    if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsInstrumentationAvailable()) {
-      return arrow::Status::Invalid(
-          gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
-              "SET gizmosql.query_tag"));
-    }
-
-    if (!val.empty() && !IsValidJSON(val)) {
-      return arrow::Status::Invalid("Invalid JSON for query_tag: " + val);
-    }
-
-    session->query_tag = val;
-#else
-    return arrow::Status::Invalid(
-        "SET gizmosql.query_tag is a commercially licensed enterprise feature. "
-        "Please provide a valid license key file via --license-key-file "
-        "or contact GizmoData sales at sales@gizmodata.com to obtain a license.");
-#endif
-
-  } else {
-    return arrow::Status::Invalid("Unknown GizmoSQL configuration parameter: " + name);
-  }
+  // Dispatch through the settings registry (single source of truth). It performs
+  // the enterprise-license, scope-validity, and GLOBAL-admin checks centrally and
+  // invokes the per-setting mutator hook.
+  ARROW_RETURN_NOT_OK(SettingsRegistry::Instance().Apply(
+      *session, GetServer(*session).get(), name, scope, val));
 
   std::string scope_str = (scope == duckdb::SetScope::GLOBAL) ? "global" : "session";
   std::string msg =
