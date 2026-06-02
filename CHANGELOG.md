@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Docker images now ship SLSA provenance + SBOM attestations.** The CI image build switched from per-platform tag pushes merged with `Noelware/docker-manifest-action` to the canonical Buildx digest-merge pattern: each platform is built `push-by-digest` with `provenance: mode=max` and `sbom: true`, then the per-platform digests are combined into the multi-arch manifest via `docker buildx imagetools create` (which preserves the attestations as referrers). This satisfies Docker Scout's supply-chain attestation policy for the `latest`/`latest-slim` (and versioned, plus LTS) tags on both Docker Hub and GHCR. (Previously the build set `provenance: false` because the old manifest-merge tool could not carry attestations.)
+
+### Changed
+
+- **Hardened the Docker images to reduce vulnerability surface (Docker Scout grade).** The full ("fat") image (`Dockerfile.ci`) is now multi-stage and based on `python:3.12-slim-bookworm` instead of the full `python:3.12.11` image. The C/C++ build toolchain that was previously installed at runtime but never used (`build-essential`, `gcc`, `git`, `cmake`, `ninja-build`, `automake`, `libboost-all-dev`, `vim`, etc. — the server/client binaries are prebuilt in CI and copied in) has been removed. The AWS CLI v2, azcopy, and DuckDB CLI convenience utilities are now installed in a throwaway builder stage and copied into the final image, so their download tooling never ships. The slim image (`Dockerfile-slim.ci`) drops the unused `zip` package, adds `ca-certificates`, and uses `--no-install-recommends`. Convenience utilities (Python, AWS CLI, Azure CLI, azcopy, DuckDB CLI, TLS cert generation) remain available in the full image.
+
 ### Added
 
 - **Wildcard catalog patterns in catalog-level access control** [Enterprise]. The `catalog` field of each `catalog_access` token rule now supports AWS IAM-style glob matching: `*` matches any sequence of characters (including none) and `?` matches exactly one character. A pattern with no wildcards still matches exactly (case-sensitive), so existing literal-name rules and the bare `*` wildcard are unchanged. This lets a single rule cover a family of catalogs that share a naming convention — e.g. `{"catalog": "prod_*", "access": "write"}` grants write to `prod_sales`, `prod_finance`, etc. Patterns apply everywhere catalog access is evaluated, including metadata visibility filtering (`SHOW DATABASES`, `information_schema.*`, `duckdb_*()` functions, and Flight SQL metadata RPCs). No token-generator or client changes are required — wildcards are ordinary strings in the existing `catalog_access` claim.

@@ -411,13 +411,6 @@ jobs:
           path: |
             ${{ env.zip_file_name }}
 
-      - name: Sanitize ref name for Docker tags
-        id: sanitize
-        run: |
-          # Replace / with - to make valid Docker tag
-          SANITIZED_REF=$(echo "${{ github.ref_name }}" | sed 's/\//-/g')
-          echo "ref_name=${SANITIZED_REF}" >> $GITHUB_OUTPUT
-
       - name: Stage executables for Docker build
         # Dockerfile.ci / Dockerfile-slim.ci COPY gizmosql_server and
         # gizmosql_client by hard-coded path. For the LTS channel the
@@ -444,39 +437,72 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push full Docker image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build each platform by digest with SLSA provenance + SBOM attestations.
+      # The per-platform digests are merged into a multi-arch manifest (carrying
+      # the attestations forward) in the update-image-manifest job. On non-tag
+      # builds we build to cache only — validate the Dockerfile without pushing.
+      - name: Build and push full Docker image (by digest)
+        id: build-full
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/${{ matrix.platform }}
           file: Dockerfile.ci
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
           # The DuckDB CLI tag baked in for ad-hoc shell use must match
           # the channel; default in the Dockerfile is the stable version.
           build-args: |
             DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.4' || '1.5.3' }}
-          tags: |
-            ${{ env.docker_image }}:latest-${{ matrix.platform }}
-            ${{ env.docker_image }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
-            ${{ env.docker_image_ghcr }}:latest-${{ matrix.platform }}
-            ${{ env.docker_image_ghcr }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}
           no-cache: true
-          provenance: false
+          provenance: ${{ startsWith(github.ref, 'refs/tags/') && 'mode=max' || 'false' }}
+          sbom: ${{ startsWith(github.ref, 'refs/tags/') }}
+          outputs: ${{ startsWith(github.ref, 'refs/tags/') && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true', env.docker_image, env.docker_image_ghcr) || 'type=cacheonly' }}
 
-      - name: Build and push slim Docker image
+      - name: Export full image digest
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p /tmp/digests/full
+          digest="${{ steps.build-full.outputs.digest }}"
+          touch "/tmp/digests/full/${digest#sha256:}"
+
+      - name: Upload full image digest
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.duckdb_channel }}-full-${{ matrix.platform }}
+          path: /tmp/digests/full/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Build and push slim Docker image (by digest)
+        id: build-slim
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/${{ matrix.platform }}
           file: Dockerfile-slim.ci
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
-          tags: |
-            ${{ env.docker_image }}:latest-${{ matrix.platform }}-slim
-            ${{ env.docker_image }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
-            ${{ env.docker_image_ghcr }}:latest-${{ matrix.platform }}-slim
-            ${{ env.docker_image_ghcr }}:${{ steps.sanitize.outputs.ref_name }}-${{ matrix.platform }}-slim
           no-cache: true
-          provenance: false
+          provenance: ${{ startsWith(github.ref, 'refs/tags/') && 'mode=max' || 'false' }}
+          sbom: ${{ startsWith(github.ref, 'refs/tags/') }}
+          outputs: ${{ startsWith(github.ref, 'refs/tags/') && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true', env.docker_image, env.docker_image_ghcr) || 'type=cacheonly' }}
+
+      - name: Export slim image digest
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p /tmp/digests/slim
+          digest="${{ steps.build-slim.outputs.digest }}"
+          touch "/tmp/digests/slim/${digest#sha256:}"
+
+      - name: Upload slim image digest
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.duckdb_channel }}-slim-${{ matrix.platform }}
+          path: /tmp/digests/slim/*
+          if-no-files-found: error
+          retention-days: 1
 
   build-project-windows:
     name: Build Project - Windows (x64, ${{ matrix.duckdb_channel }})
@@ -889,11 +915,14 @@ jobs:
             LICENSE
 
   update-image-manifest:
-    name: Update DockerHub image manifest to include all built platforms
+    name: Merge per-platform images into multi-arch manifests (with attestations)
     if: startsWith(github.ref, 'refs/tags/')
     needs: build-project-linux
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v4
         with:
@@ -908,63 +937,63 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create and push full manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@0.4.3
+      - name: Download per-platform image digests
+        uses: actions/download-artifact@v7
         with:
-          inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}
-          images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64
-          push: true
+          path: /tmp/digests
+          pattern: digests-*
 
-      - name: Create and push slim manifest images - DockerHub
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          images: ${{ env.DOCKERHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.DOCKERHUB_IMAGE_NAME }}:latest-arm64-slim
-          push: true
+      # Assemble a multi-arch manifest per (channel × variant × registry) from
+      # the per-platform digests. Because each per-platform build pushed an
+      # identical image (by digest) to BOTH registries, the same sha256 resolves
+      # in either registry — so we reference repo@sha256:<digest> per registry.
+      # `imagetools create` flattens the per-platform OCI indexes (which carry
+      # the SLSA provenance + SBOM attestations) into the final manifest list,
+      # preserving the attestations as referrers.
+      - name: Create and push multi-arch manifests
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          for channel in stable lts; do
+            if [ "$channel" = "lts" ]; then
+              dockerhub_repo="${{ env.DOCKERHUB_LTS_IMAGE_NAME }}"
+              ghcr_repo="${{ env.GITHUB_LTS_IMAGE_NAME }}"
+            else
+              dockerhub_repo="${{ env.DOCKERHUB_IMAGE_NAME }}"
+              ghcr_repo="${{ env.GITHUB_IMAGE_NAME }}"
+            fi
+            for variant in full slim; do
+              if [ "$variant" = "slim" ]; then sfx="-slim"; else sfx=""; fi
 
-      # ------------------------------------------------------------------
-      - name: Create and push full manifest images - Github
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}
-          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64
-          push: true
+              # Collect the per-platform digests for this channel+variant. Each
+              # uploaded artifact directory contains one empty file named after
+              # the digest (sans the "sha256:" prefix).
+              digests=()
+              for dir in /tmp/digests/digests-${channel}-${variant}-*; do
+                [ -d "$dir" ] || continue
+                for f in "$dir"/*; do
+                  digests+=("$(basename "$f")")
+                done
+              done
+              if [ ${#digests[@]} -eq 0 ]; then
+                echo "ERROR: no digests found for ${channel}/${variant}" >&2
+                exit 1
+              fi
 
-      - name: Create and push slim manifest images - Github
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.GITHUB_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          images: ${{ env.GITHUB_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_IMAGE_NAME }}:latest-arm64-slim
-          push: true
-
-      # ====== LTS channel manifests ======
-      - name: Create and push full manifest images - DockerHub (LTS)
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}
-          images: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-amd64,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-arm64
-          push: true
-
-      - name: Create and push slim manifest images - DockerHub (LTS)
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-slim,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          images: ${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-amd64-slim,${{ env.DOCKERHUB_LTS_IMAGE_NAME }}:latest-arm64-slim
-          push: true
-
-      - name: Create and push full manifest images - Github (LTS)
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest,${{ env.GITHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}
-          images: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-amd64,${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-arm64
-          push: true
-
-      - name: Create and push slim manifest images - Github (LTS)
-        uses: Noelware/docker-manifest-action@0.4.3
-        with:
-          inputs: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-slim,${{ env.GITHUB_LTS_IMAGE_NAME }}:${{ github.ref_name }}-slim
-          images: ${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-amd64-slim,${{ env.GITHUB_LTS_IMAGE_NAME }}:latest-arm64-slim
-          push: true
+              for repo in "$dockerhub_repo" "$ghcr_repo"; do
+                sources=()
+                for d in "${digests[@]}"; do
+                  sources+=("${repo}@sha256:${d}")
+                done
+                echo "Creating ${repo}:latest${sfx} and ${repo}:${REF_NAME}${sfx} from ${sources[*]}"
+                docker buildx imagetools create \
+                  -t "${repo}:latest${sfx}" \
+                  -t "${repo}:${REF_NAME}${sfx}" \
+                  "${sources[@]}"
+              done
+            done
+          done
 
   update-homebrew-tap:
     name: Update Homebrew tap (stable + LTS formulas)
