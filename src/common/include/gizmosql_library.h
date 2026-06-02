@@ -109,6 +109,7 @@ enum class BackendType { duckdb, sqlite };
  * @param max_queue_wait_seconds [Enterprise] Maximum seconds a statement may wait in the queue before being rejected with a retriable error. -1 (default) uses the built-in default of 300s; 0 = wait indefinitely. If -1, uses env var GIZMOSQL_MAX_QUEUE_WAIT.
  * @param admin_bypass_queue_default [Enterprise] Whether admin-role sessions bypass the statement queue by default, so diagnostics and KILL SESSION are never stranded behind a saturated queue. Default is std::nullopt (check env var GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT, fallback to true). Admins can still SET SESSION gizmosql.bypass_queue = false to opt into the queue.
  * @param memory_limit DuckDB memory limit applied at startup (e.g. "8GB", "75%"), a passthrough to DuckDB's `memory_limit` setting (global/instance-wide). Default is "" - if so, uses env var GIZMOSQL_MEMORY_LIMIT; if that is unset, DuckDB's built-in default applies (80% of physical RAM). Ignored for the SQLite backend.
+ * @param capture_query_profile [Enterprise] Server default for capturing DuckDB query profiles into the instrumentation `sql_executions.query_profile` column. One of "off" (default), "standard" (per-operator profile), or "detailed" (also times each expression; higher overhead). Requires instrumentation + a valid enterprise license. Overridable per-session or globally via `SET gizmosql.capture_query_profile`. Default is "" - if so, uses env var GIZMOSQL_CAPTURE_QUERY_PROFILE, falling back to "off".
  *
  * @return Returns an integer status code. 0 indicates success, and non-zero values indicate errors.
  */
@@ -185,5 +186,6 @@ int RunFlightSQLServer(
     int32_t max_queued_statements = DEFAULT_MAX_QUEUED_STATEMENTS,
     int32_t max_queue_wait_seconds = DEFAULT_MAX_QUEUE_WAIT_SECONDS,
     std::optional<bool> admin_bypass_queue_default = std::nullopt,
-    std::string memory_limit = "");
+    std::string memory_limit = "",
+    std::string capture_query_profile = "");
 }

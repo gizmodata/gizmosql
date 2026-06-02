@@ -849,6 +849,9 @@ class DuckDBFlightSqlServer::Impl {
   int32_t query_timeout_;
   arrow::util::ArrowLogLevel query_log_level_;
   arrow::util::ArrowLogLevel session_log_level_;
+  // Server default for query profile capture; overridable per-session. Guarded by
+  // config_mutex_ (mutated via SET GLOBAL gizmosql.capture_query_profile).
+  gizmosql::QueryProfileMode capture_query_profile_ = gizmosql::QueryProfileMode::kOff;
   AdmissionController admission_controller_;  // statement-queue admission control
   bool admin_bypass_queue_default_ = true;    // admin sessions bypass the queue by default
 
@@ -1080,6 +1083,7 @@ class DuckDBFlightSqlServer::Impl {
                 const int32_t& max_queued_statements,
                 const int32_t& max_queue_wait_seconds,
                 const bool& admin_bypass_queue_default,
+                const gizmosql::QueryProfileMode& capture_query_profile,
                 std::shared_ptr<InstrumentationManager> instrumentation_manager)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
@@ -1087,6 +1091,7 @@ class DuckDBFlightSqlServer::Impl {
         query_timeout_(query_timeout),
         query_log_level_(query_log_level),
         session_log_level_(session_log_level),
+        capture_query_profile_(capture_query_profile),
         instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())),
         instrumentation_manager_(std::move(instrumentation_manager)) {
     admission_controller_.SetLimit(max_concurrent_statements);
@@ -1118,13 +1123,15 @@ class DuckDBFlightSqlServer::Impl {
                 const int32_t& max_concurrent_statements,
                 const int32_t& max_queued_statements,
                 const int32_t& max_queue_wait_seconds,
-                const bool& admin_bypass_queue_default)
+                const bool& admin_bypass_queue_default,
+                const gizmosql::QueryProfileMode& capture_query_profile)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
         query_timeout_(query_timeout),
         query_log_level_(query_log_level),
         session_log_level_(session_log_level),
+        capture_query_profile_(capture_query_profile),
         instance_id_(boost::uuids::to_string(boost::uuids::random_generator()())) {
     admission_controller_.SetLimit(max_concurrent_statements);
     admission_controller_.SetMaxQueued(max_queued_statements);
@@ -1164,6 +1171,16 @@ class DuckDBFlightSqlServer::Impl {
       return it->second;
     }
     return nullptr;
+  }
+
+  // True if this session id was previously killed (and thus removed from the
+  // active map). Used to make KILL SESSION idempotent: a Flight statement is
+  // created twice (GetFlightInfo schema pass + DoGet execution pass), so the
+  // second HandleKillSession must treat an already-killed target as success
+  // rather than "Session not found".
+  bool WasSessionKilled(const std::string& session_id) {
+    std::shared_lock read_lock(sessions_mutex_);
+    return killed_session_ids_.count(session_id) > 0;
   }
 
   arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false) {
@@ -2134,6 +2151,23 @@ class DuckDBFlightSqlServer::Impl {
     return query_log_level_;
   }
 
+  Status SetCaptureQueryProfile(const ClientSession& client_session,
+                                const gizmosql::QueryProfileMode& capture_query_profile) {
+    if (client_session.role != "admin") {
+      return Status::Invalid(
+          "Only admin users can set the server Query Profile capture mode.");
+    }
+    std::unique_lock write_lock(config_mutex_);
+    capture_query_profile_ = capture_query_profile;
+    return Status::OK();
+  }
+
+  gizmosql::QueryProfileMode GetCaptureQueryProfile(
+      const ClientSession& client_session) {
+    std::shared_lock read_lock(config_mutex_);
+    return capture_query_profile_;
+  }
+
   AdmissionController& GetAdmissionController() { return admission_controller_; }
 };
 
@@ -2144,6 +2178,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const std::string& storage_version, const int32_t& max_concurrent_statements,
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
     const bool& admin_bypass_queue_default, const std::string& memory_limit,
+    const gizmosql::QueryProfileMode& capture_query_profile,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2207,12 +2242,13 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
       session_log_level, max_concurrent_statements, max_queued_statements,
-      max_queue_wait_seconds, admin_bypass_queue_default, instrumentation_manager);
+      max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile,
+      instrumentation_manager);
 #else
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
       session_log_level, max_concurrent_statements, max_queued_statements,
-      max_queue_wait_seconds, admin_bypass_queue_default);
+      max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile);
 #endif
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
@@ -2515,6 +2551,17 @@ arrow::Result<arrow::util::ArrowLogLevel> DuckDBFlightSqlServer::GetQueryLogLeve
   return impl_->GetQueryLogLevel(client_session);
 }
 
+arrow::Status DuckDBFlightSqlServer::SetCaptureQueryProfile(
+    const ClientSession& client_session,
+    const gizmosql::QueryProfileMode& capture_query_profile) {
+  return impl_->SetCaptureQueryProfile(client_session, capture_query_profile);
+}
+
+gizmosql::QueryProfileMode DuckDBFlightSqlServer::GetCaptureQueryProfile(
+    const ClientSession& client_session) const {
+  return impl_->GetCaptureQueryProfile(client_session);
+}
+
 std::string DuckDBFlightSqlServer::GetInstanceId() const {
   return impl_->GetInstanceId();
 }
@@ -2550,6 +2597,10 @@ void DuckDBFlightSqlServer::ReleaseInstanceInstrumentation() {
 
 std::shared_ptr<duckdb::DuckDB> DuckDBFlightSqlServer::GetDuckDBInstance() const {
   return impl_->GetDuckDBInstance();
+}
+
+bool DuckDBFlightSqlServer::WasSessionKilled(const std::string& session_id) {
+  return impl_->WasSessionKilled(session_id);
 }
 
 std::shared_ptr<ClientSession> DuckDBFlightSqlServer::FindSession(

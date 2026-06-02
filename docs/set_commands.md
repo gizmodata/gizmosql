@@ -70,6 +70,26 @@ SET gizmosql.query_timeout = 0;
 SET GLOBAL gizmosql.query_timeout = 60;
 ```
 
+### `gizmosql.capture_query_profile` *(Enterprise)*
+
+Controls whether DuckDB query profiles are captured into the instrumentation `sql_executions.query_profile` column. See [Query profile capture](session_instrumentation.md#query-profile-capture).
+
+| Property | Value |
+|----------|-------|
+| **Type** | String — `off` \| `standard` \| `detailed` |
+| **Default** | `off` (server default via `--capture-query-profile` / `GIZMOSQL_CAPTURE_QUERY_PROFILE`) |
+| **Scope** | Session override (any user) or server-global (`SET GLOBAL`, admin only) |
+
+Requires a valid Enterprise license with the `instrumentation` feature. `standard` records the per-operator profile; `detailed` also times each expression (higher overhead).
+
+```sql
+-- Capture detailed profiles for this session
+SET gizmosql.capture_query_profile = 'detailed';
+
+-- Make 'standard' the live server default for new statements (admin)
+SET GLOBAL gizmosql.capture_query_profile = 'standard';
+```
+
 ### `gizmosql.bypass_queue` *(Enterprise)*
 
 Skips the [statement queue](statement_queuing.md) for the current session.

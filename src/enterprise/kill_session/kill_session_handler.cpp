@@ -88,6 +88,17 @@ arrow::Status HandleKillSession(
 
   auto target = server->FindSession(target_session_id);
   if (!target) {
+    // A Flight statement is created twice — once when GetFlightInfo computes the
+    // schema and again when DoGet streams the result — so this handler runs
+    // twice for a single client KILL SESSION. The first pass removes the target
+    // session; on the second pass FindSession returns null. Treat an
+    // already-killed target as an idempotent success (rather than the spurious
+    // "Session not found" that would fail the DoGet phase). A session id that
+    // was never killed is still a genuine not-found error.
+    if (server->WasSessionKilled(target_session_id)) {
+      record_kill_session();
+      return arrow::Status::OK();
+    }
     std::string error_msg = "Session not found: " + target_session_id;
     record_kill_session(error_msg);
     return arrow::Status::KeyError(error_msg);

@@ -304,6 +304,7 @@ Tracks individual executions of statements (one per execution).
 | `status` | VARCHAR | 'queued', 'executing', 'success', 'error', 'timeout', 'cancelled' |
 | `error_message` | VARCHAR | Error message if failed |
 | `duration_ms` | BIGINT | Execution duration in milliseconds |
+| `query_profile` | JSON | DuckDB native query profile JSON (NULL unless [profile capture](#query-profile-capture) is enabled) |
 
 ### Views
 
@@ -364,6 +365,86 @@ FROM execution_details
 WHERE status = 'error'
 LIMIT 20;
 ```
+
+---
+
+## Query profile capture
+
+*(Enterprise)*
+
+GizmoSQL can persist DuckDB's per-query **profile** (the operator tree with
+per-operator timings, cardinalities, result-set sizes, and memory usage) into the
+`sql_executions.query_profile` column. The value is **DuckDB's native profiling
+JSON** (the same shape produced by `SET enable_profiling = 'json'`), stored
+verbatim — so it can be consumed directly by tooling that renders DuckDB query
+plans graphically.
+
+DuckDB's profiler is per-connection and *last-write-wins* (each query resets the
+previous profile). GizmoSQL captures safely because it runs exactly one statement
+at a time per connection and never shares a session across users, so the profile
+is harvested synchronously immediately after execution — before the next statement
+on that connection can clobber it.
+
+Capture is **opt-in** and off by default. It is governed by a single setting with
+three modes:
+
+| Mode | Meaning |
+|------|---------|
+| `off` (default) | No profile captured. Zero overhead. |
+| `standard` | Per-operator profile. Overhead is negligible on real workloads. |
+| `detailed` | Additionally times every expression (DuckDB `profiling_mode = detailed`). Adds ~15–20% on expression-heavy queries; use deliberately. |
+
+### Configuring capture
+
+Server default — CLI flag or environment variable (the library applies the env
+fallback, so the C API `RunFlightSQLServer(capture_query_profile=...)` behaves
+identically):
+
+```bash
+# off (default) | standard | detailed
+gizmosql_server ... --capture-query-profile=standard
+# or
+export GIZMOSQL_CAPTURE_QUERY_PROFILE=standard
+```
+
+Per session or live server-wide, via [`SET`](set_commands.md):
+
+```sql
+-- This session only (any user)
+SET gizmosql.capture_query_profile = 'detailed';
+
+-- Server-wide default for new statements (admin only)
+SET GLOBAL gizmosql.capture_query_profile = 'standard';
+
+-- Turn it back off
+SET gizmosql.capture_query_profile = 'off';
+```
+
+The session setting overrides the server default; `SET GLOBAL` changes the server
+default for subsequent statements (in-memory; reverts to the configured/env value
+on restart). Requires a valid Enterprise license with the `instrumentation`
+feature (the same gate as the rest of session instrumentation).
+
+### Querying captured profiles
+
+`query_profile` is a JSON column, so DuckDB's JSON functions work directly:
+
+```sql
+-- Most recent profiled executions and their top-level latency
+SELECT
+    e.execution_id,
+    st.sql_text,
+    e.duration_ms,
+    e.query_profile ->> '$.latency' AS profile_latency
+FROM sql_executions e
+JOIN sql_statements st ON e.statement_id = st.statement_id
+WHERE e.query_profile IS NOT NULL
+ORDER BY e.execution_start_time DESC
+LIMIT 20;
+```
+
+`query_profile` is also exposed in the `session_activity` and `execution_details`
+views.
 
 ---
 

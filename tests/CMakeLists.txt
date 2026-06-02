@@ -71,6 +71,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_instrumentation_ducklake.cpp
             integration/test_kill_session.cpp
             integration/test_instance_session_query_tags.cpp
+            integration/test_query_profile_capture.cpp
             integration/test_oauth_server.cpp
     )
 endif()

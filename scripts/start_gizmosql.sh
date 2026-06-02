@@ -51,6 +51,7 @@
 #   GIZMOSQL_MAX_QUEUED_STATEMENTS       --max-queued-statements (Enterprise)
 #   GIZMOSQL_MAX_QUEUE_WAIT              --max-queue-wait (Enterprise)
 #   GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT  --admin-bypass-queue-default (Enterprise)
+#   GIZMOSQL_CAPTURE_QUERY_PROFILE       --capture-query-profile (Enterprise; off|standard|detailed)
 #   GIZMOSQL_MEMORY_LIMIT                --memory-limit (DuckDB only)
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────

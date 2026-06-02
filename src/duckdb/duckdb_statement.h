@@ -102,6 +102,10 @@ class DuckDBStatement {
 #ifdef GIZMOSQL_ENTERPRISE
   std::unique_ptr<StatementInstrumentation> instrumentation_;
   std::unique_ptr<ExecutionInstrumentation> execution_instrumentation_;
+  // Resolved query-profile capture mode for the current Execute() call. Set when
+  // profiling is enabled on the connection before execution, read when harvesting
+  // the profile JSON afterwards.
+  gizmosql::QueryProfileMode query_profile_mode_ = gizmosql::QueryProfileMode::kOff;
 #endif
   std::weak_ptr<ClientSession> client_session_;
   std::string session_id_;  // cached for use after session expires

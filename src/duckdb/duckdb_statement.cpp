@@ -19,8 +19,10 @@
 #include "system_catalog.h"
 
 #include <duckdb.h>
+#include <duckdb/main/client_config.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
+#include <duckdb/main/query_profiler.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
 #include <duckdb/function/table/arrow/arrow_duck_schema.hpp>
 #include <duckdb/parser/parser.hpp>
@@ -688,6 +690,20 @@ arrow::Result<arrow::util::ArrowLogLevel> GetSessionOrServerLogLevel(
   return arrow::Status::Invalid("Unable to get server instance");
 }
 
+// Resolve the effective query-profile-capture mode for a session: the per-session
+// override wins, otherwise fall back to the server default. Returns kOff if the
+// server instance is gone (capture is a best-effort, never-fail feature).
+QueryProfileMode GetSessionOrServerCaptureProfile(
+    const std::shared_ptr<ClientSession>& client_session) {
+  if (client_session->capture_query_profile.has_value()) {
+    return client_session->capture_query_profile.value();
+  }
+  if (auto server = GetServer(*client_session)) {
+    return server->GetCaptureQueryProfile(*client_session);
+  }
+  return QueryProfileMode::kOff;
+}
+
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
     const std::string& sql, const std::optional<arrow::util::ArrowLogLevel>& log_level,
@@ -1286,6 +1302,46 @@ SettingsRegistry::SettingsRegistry() {
   });
 
   settings_.push_back(GizmoSetting{
+      .name = "gizmosql.capture_query_profile",
+      .scope = SetScopeKind::kSessionOrGlobal,
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_CAPTURE_QUERY_PROFILE",
+      .default_value = "off",
+      .description =
+          "Capture DuckDB query profiles into instrumentation "
+          "(off/standard/detailed).",
+      .get_session = [](const ClientSession& s) -> std::optional<std::string> {
+        return s.capture_query_profile
+                   ? std::optional(query_profile_mode_to_string(*s.capture_query_profile))
+                   : std::nullopt;
+      },
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession& s) -> std::optional<std::string> {
+        return query_profile_mode_to_string(srv.GetCaptureQueryProfile(s));
+      },
+      .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
+        try {
+          s.capture_query_profile = query_profile_mode_from_string(val);
+        } catch (const std::invalid_argument& ex) {
+          return arrow::Status::Invalid(ex.what());
+        }
+        return arrow::Status::OK();
+      },
+      .set_global = [](DuckDBFlightSqlServer& srv, ClientSession& s,
+                       const std::string& val) -> arrow::Status {
+        QueryProfileMode mode;
+        try {
+          mode = query_profile_mode_from_string(val);
+        } catch (const std::invalid_argument& ex) {
+          return arrow::Status::Invalid(ex.what());
+        }
+        return srv.SetCaptureQueryProfile(s, mode);
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
       .name = "gizmosql.bypass_queue",
       .scope = SetScopeKind::kSessionOnly,
       .enterprise = true,
@@ -1693,6 +1749,33 @@ arrow::Result<int> DuckDBStatement::Execute() {
       }
     }
   }
+
+  // Configure DuckDB query profiling on this connection's ClientContext. We only
+  // bother when there is an instrumentation record to store the profile into.
+  // Profiling state is per-ClientContext and re-applied every Execute(), so a
+  // session toggling the setting on/off is self-correcting. Capture is harvested
+  // synchronously after execution (below), before the next statement on this
+  // connection clobbers the profiler.
+  //
+  // Cross-version note (LTS v1.4 + stable v1.5): we touch only the ClientConfig
+  // flags that exist in both channels and never reassign profiler_settings or call
+  // MetricsUtils (whose API differs by version) — the default metric set is
+  // version-correct, and enable_detailed_profiling is what enriches the tree.
+  query_profile_mode_ = QueryProfileMode::kOff;
+  if (execution_instrumentation_ && client_context_) {
+    query_profile_mode_ = GetSessionOrServerCaptureProfile(session);
+    auto& cfg = duckdb::ClientConfig::GetConfig(*client_context_);
+    if (query_profile_mode_ == QueryProfileMode::kOff) {
+      cfg.enable_profiler = false;
+      cfg.enable_detailed_profiling = false;
+    } else {
+      cfg.enable_profiler = true;
+      cfg.emit_profiler_output = false;  // no console/file output; harvested via ToJSON()
+      cfg.profiler_print_format = duckdb::ProfilerPrintFormat::JSON;
+      cfg.enable_detailed_profiling =
+          (query_profile_mode_ == QueryProfileMode::kDetailed);
+    }
+  }
 #endif
 
   GIZMOSQL_LOG_SCOPE_STATUS(
@@ -1988,6 +2071,23 @@ arrow::Result<int> DuckDBStatement::Execute() {
   // and the final record will be written when the ExecutionInstrumentation is destroyed
   if (execution_instrumentation_) {
     if (result.ok()) {
+      // Harvest the DuckDB query profile while we still hold this connection and
+      // before the next statement clobbers the per-ClientContext profiler. The
+      // JSON is DuckDB's native profiling format, stored verbatim in
+      // sql_executions.query_profile. Best-effort: never fail a query because
+      // profiling threw, and only when capture is enabled for this execution.
+      if (query_profile_mode_ != QueryProfileMode::kOff && client_context_) {
+        try {
+          std::string profile_json =
+              duckdb::QueryProfiler::Get(*client_context_).ToJSON();
+          execution_instrumentation_->SetQueryProfile(std::move(profile_json));
+        } catch (const std::exception& ex) {
+          GIZMOSQL_LOGKV_SESSION(WARNING, session,
+                                 "Failed to capture query profile",
+                                 {"statement_id", statement_id_},
+                                 {"execution_id", execution_id}, {"error", ex.what()});
+        }
+      }
       execution_instrumentation_->SetCompleted(GetLastExecutionDurationMs());
     } else if (session->kill_requested) {
       // The query was interrupted by KILL SESSION, not a genuine execution error.

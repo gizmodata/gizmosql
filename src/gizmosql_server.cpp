@@ -136,6 +136,13 @@ int main(int argc, char** argv) {
              "DuckDB's `memory_limit` setting (global / instance-wide). Empty leaves DuckDB's "
              "built-in default (80% of physical RAM). If empty, uses env var GIZMOSQL_MEMORY_LIMIT. "
              "Ignored for the SQLite backend.")
+            ("capture-query-profile", po::value<std::string>()->default_value(""),
+             "[Enterprise] Server default for capturing DuckDB query profiles into the "
+             "instrumentation sql_executions.query_profile column: off|standard|detailed. "
+             "'standard' records the per-operator profile; 'detailed' also times each expression "
+             "(higher overhead). Requires instrumentation + a valid enterprise license. "
+             "Overridable per-session/globally via SET gizmosql.capture_query_profile. "
+             "If empty, uses env GIZMOSQL_CAPTURE_QUERY_PROFILE or defaults to off.")
             ("query-log-level",  po::value<std::string>()->default_value(""),
              "Query Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_QUERY_LOG_LEVEL or defaults to info.")
             ("auth-log-level",  po::value<std::string>()->default_value(""),
@@ -359,6 +366,8 @@ int main(int argc, char** argv) {
 
   std::string memory_limit = vm["memory-limit"].as<std::string>();
 
+  std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
+
   std::string query_log_level =
       vm.count("query-log-level") ? vm["query-log-level"].as<std::string>() : "";
   std::string auth_log_level =
@@ -445,5 +454,5 @@ int main(int argc, char** argv) {
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers, max_metadata_size,
       storage_version, max_concurrent_statements, max_queued_statements,
-      max_queue_wait, admin_bypass_queue_default, memory_limit);
+      max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile);
 }

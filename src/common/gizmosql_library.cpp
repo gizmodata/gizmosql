@@ -488,7 +488,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     int32_t max_metadata_size,
     const std::string& storage_version, const int32_t& max_concurrent_statements,
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
-    const bool& admin_bypass_queue_default, const std::string& memory_limit) {
+    const bool& admin_bypass_queue_default, const std::string& memory_limit,
+    const gizmosql::QueryProfileMode& capture_query_profile) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -701,6 +702,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                                              storage_version, max_concurrent_statements,
                                              max_queued_statements, max_queue_wait_seconds,
                                              admin_bypass_queue_default, memory_limit,
+                                             capture_query_profile,
                                              nullptr))  // No instrumentation manager yet
 
     // Set instance_id for all future log entries (enables log correlation)
@@ -1038,7 +1040,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     int32_t max_metadata_size,
     std::string storage_version, int32_t max_concurrent_statements,
     int32_t max_queued_statements, int32_t max_queue_wait_seconds,
-    bool admin_bypass_queue_default, std::string memory_limit) {
+    bool admin_bypass_queue_default, std::string memory_limit,
+    gizmosql::QueryProfileMode capture_query_profile) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1328,7 +1331,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled,
       max_metadata_size, storage_version, max_concurrent_statements,
       max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default,
-      memory_limit);
+      memory_limit, capture_query_profile);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1423,7 +1426,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        int32_t max_queued_statements,
                        int32_t max_queue_wait_seconds,
                        std::optional<bool> admin_bypass_queue_default,
-                       std::string memory_limit) {
+                       std::string memory_limit,
+                       std::string capture_query_profile) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1442,6 +1446,18 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       pick(session_log_level, "GIZMOSQL_SESSION_LOG_LEVEL", "info");
   // DuckDB storage version: empty string => let DuckDB use its built-in default.
   storage_version = pick(storage_version, "GIZMOSQL_STORAGE_VERSION", "");
+
+  // Query profile capture: CLI arg > env var > "off". Parsing rejects invalid
+  // values with a clear message rather than silently defaulting.
+  std::string capture_profile_s =
+      pick(capture_query_profile, "GIZMOSQL_CAPTURE_QUERY_PROFILE", "off");
+  gizmosql::QueryProfileMode capture_profile_mode;
+  try {
+    capture_profile_mode = gizmosql::query_profile_mode_from_string(capture_profile_s);
+  } catch (const std::invalid_argument& ex) {
+    GIZMOSQL_LOG(ERROR) << ex.what();
+    return EXIT_FAILURE;
+  }
 
   auto level = gizmosql::log_level_string_to_arrow_log_level(lvl_s);
   auto query_level = gizmosql::log_level_string_to_arrow_log_level(query_lvl_s);
@@ -1690,7 +1706,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled,
       max_metadata_size, storage_version, max_concurrent_statements,
       max_queued_statements, max_queue_wait_seconds,
-      admin_bypass_queue_default.value_or(true), memory_limit);
+      admin_bypass_queue_default.value_or(true), memory_limit, capture_profile_mode);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
