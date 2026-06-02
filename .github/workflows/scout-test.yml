@@ -13,6 +13,16 @@ name: scout-test
 # digest merge, and the provenance/SBOM attestations, not the C++ build.
 
 on:
+  # Auto-runs on push to the hardening branch (a brand-new workflow_dispatch
+  # workflow isn't dispatchable until it lands on the default branch, so we
+  # self-trigger here instead). Remove this whole file once validation is done.
+  push:
+    branches:
+      - feature/docker-scout-hardening
+    paths:
+      - Dockerfile.ci
+      - Dockerfile-slim.ci
+      - .github/workflows/scout-test.yml
   workflow_dispatch:
     inputs:
       release_tag:
@@ -48,7 +58,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release download "${{ inputs.release_tag }}" \
+          gh release download "${{ inputs.release_tag || 'v1.26.3' }}" \
             --repo "${{ github.repository }}" \
             --pattern "gizmosql_cli_linux_${{ matrix.platform }}.zip"
           unzip -o "gizmosql_cli_linux_${{ matrix.platform }}.zip"
