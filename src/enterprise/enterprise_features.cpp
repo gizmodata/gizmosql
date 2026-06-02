@@ -62,6 +62,10 @@ bool EnterpriseFeatures::IsExternalAuthAvailable() const {
   return IsFeatureAvailable(kFeatureExternalAuth);
 }
 
+bool EnterpriseFeatures::IsStatementQueueAvailable() const {
+  return IsFeatureAvailable(kFeatureStatementQueue);
+}
+
 std::string EnterpriseFeatures::GetCopyrightBanner() const {
   auto now = std::chrono::system_clock::now();
   std::time_t currentTime = std::chrono::system_clock::to_time_t(now);

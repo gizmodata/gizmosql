@@ -19,7 +19,11 @@
 // These tests should pass in both Core and Enterprise builds when no license is provided.
 
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <future>
+#include <optional>
 
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
@@ -278,4 +282,86 @@ TEST_F(EnterpriseGatingTestFixture, SetQueryTagRejectedWithoutLicense) {
               error_msg.find("Enterprise") != std::string::npos ||
               error_msg.find("license") != std::string::npos)
       << "Expected enterprise/license error, got: " << error_msg;
+}
+
+// ============================================================================
+// Statement-queue startup gate
+//
+// Statement queuing (--max-concurrent-statements and its tuning knobs) requires
+// the 'statement_queue' Enterprise feature. Configuring it without a license
+// must HARD-ERROR at startup (RunFlightSQLServer returns non-zero before the
+// server begins serving), rather than silently running with the concurrency cap
+// unenforced. These call RunFlightSQLServer directly (like test_max_metadata_size)
+// because the startup gate lives there, not in CreateFlightSQLServer used by the
+// fixture. They only run without a license (the gate is a no-op when licensed).
+// ============================================================================
+
+namespace {
+
+// Invoke RunFlightSQLServer with the given statement-queue knobs and NO license,
+// returning its exit code. The startup gate returns before serving, so this
+// completes promptly; the 20s timeout guards against a regression where the gate
+// fails to fire and the server actually starts (reported as the -999 sentinel).
+int RunServerStatementQueueGate(int32_t max_concurrent, int32_t max_queued,
+                                int32_t max_queue_wait, int port) {
+  auto fut = std::async(std::launch::async, [=]() {
+    return RunFlightSQLServer(
+        BackendType::duckdb, std::filesystem::path(":memory:"),
+        /*hostname=*/"localhost", port, /*username=*/"gating_user",
+        /*password=*/"gating_pass", /*secret_key=*/"test_secret_key_for_testing",
+        /*tls_cert_path=*/std::filesystem::path(),
+        /*tls_key_path=*/std::filesystem::path(),
+        /*mtls_ca_cert_path=*/std::filesystem::path(),
+        /*init_sql_commands=*/"", /*init_sql_commands_file=*/std::filesystem::path(),
+        /*print_queries=*/false, /*read_only=*/false,
+        /*token_allowed_issuer=*/"", /*token_allowed_audience=*/"",
+        /*token_signature_verify_cert_path=*/std::filesystem::path(),
+        /*token_jwks_uri=*/"", /*token_default_role=*/"",
+        /*token_authorized_emails=*/"", /*log_level=*/"error", /*log_format=*/"text",
+        /*access_log=*/"off", /*log_file=*/"", /*query_timeout=*/0,
+        /*query_log_level=*/"error", /*auth_log_level=*/"error",
+        /*session_log_level=*/"error", /*health_port=*/0, /*health_check_query=*/"",
+        /*enable_instrumentation=*/std::optional<bool>(false),
+        /*instrumentation_db_path=*/"", /*instrumentation_catalog=*/"",
+        /*instrumentation_schema=*/"", /*instance_tag=*/"",
+        /*license_key_file=*/"",
+        /*allow_cross_instance_tokens=*/std::optional<bool>(false),
+        /*oauth_client_id=*/"", /*oauth_client_secret=*/"", /*oauth_scopes=*/"",
+        /*oauth_port=*/0, /*oauth_base_url=*/"", /*oauth_redirect_uri=*/"",
+        /*oauth_instance_id=*/"", /*oauth_disable_tls=*/std::optional<bool>(false),
+        /*otel_enabled=*/std::optional<bool>(false), /*otel_exporter=*/"",
+        /*otel_endpoint=*/"", /*otel_service_name=*/"", /*otel_headers=*/"",
+        /*max_metadata_size=*/0, /*storage_version=*/"",
+        /*max_concurrent_statements=*/max_concurrent,
+        /*max_queued_statements=*/max_queued,
+        /*max_queue_wait_seconds=*/max_queue_wait);
+  });
+  if (fut.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
+    ShutdownFlightServer();  // gate didn't fire and the server is serving; unblock
+    fut.wait();
+    return -999;
+  }
+  return fut.get();
+}
+
+}  // namespace
+
+TEST(StatementQueueLicenseGating, StartupRejectsMaxConcurrentWithoutLicense) {
+  SKIP_IF_LICENSE_PRESENT();
+  int rc = RunServerStatementQueueGate(/*max_concurrent=*/8, /*max_queued=*/-1,
+                                       /*max_queue_wait=*/-1, /*port=*/31352);
+  EXPECT_NE(rc, -999) << "Server must fail fast at startup, not start serving";
+  EXPECT_NE(rc, 0)
+      << "Unlicensed --max-concurrent-statements must hard-error at startup";
+}
+
+TEST(StatementQueueLicenseGating, StartupRejectsQueueTuningKnobWithoutLicense) {
+  SKIP_IF_LICENSE_PRESENT();
+  // Even with concurrency disabled (0), explicitly setting a queue tuning knob
+  // (here --max-queue-wait) signals intent to use the licensed feature and must
+  // hard-error rather than be silently ignored.
+  int rc = RunServerStatementQueueGate(/*max_concurrent=*/0, /*max_queued=*/-1,
+                                       /*max_queue_wait=*/60, /*port=*/31353);
+  EXPECT_NE(rc, -999) << "Server must fail fast at startup, not start serving";
+  EXPECT_NE(rc, 0) << "Unlicensed --max-queue-wait must hard-error at startup";
 }

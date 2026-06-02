@@ -1,6 +1,6 @@
 # Statement Queuing
 
-> **Enterprise feature.** Statement queuing requires a valid GizmoSQL Enterprise license that includes the `statement_queue` feature. Without it the limits are **unenforced** — the feature *fails open*, so a missing or expired license never blocks queries.
+> **Enterprise feature.** Statement queuing requires a valid GizmoSQL Enterprise license that includes the `statement_queue` feature. If you configure any statement-queue flag (`--max-concurrent-statements`, `--max-queued-statements`, `--max-queue-wait`, or their `GIZMOSQL_*` env vars) **without** that license, the server **exits at startup with a clear error** rather than silently running with the concurrency cap unenforced — a silent fail-open would strip the very protection you asked for. To run an unlicensed server, leave the statement-queue flags at their defaults (concurrency `0` = queue disabled / unlimited). The runtime `SET GLOBAL gizmosql.max_concurrent_statements` path is likewise rejected without the license. *(Behavior changed in v1.27.1; prior versions silently fixed open.)*
 
 Statement queuing caps how many SQL statements **execute concurrently** on a GizmoSQL server. Statements submitted beyond the limit **queue** (block) until a slot frees. To JDBC/ADBC/ODBC clients a queued statement is indistinguishable from a slow‑running one, so **no client changes are required**.
 

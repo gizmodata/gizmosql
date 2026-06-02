@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.1] - 2026-06-02
+
+### Changed
+
+- **Statement queuing now hard-errors at startup when configured without a license** [Enterprise]. Previously, setting `--max-concurrent-statements` (or `--max-queued-statements` / `--max-queue-wait`, or their `GIZMOSQL_*` env vars) on a server without the `statement_queue` Enterprise feature was **silently ignored** — the cap was unenforced (fail-open), so an operator who set a concurrency limit *for protection* was unknowingly running with unlimited concurrency, and could be taken down by exactly the overload the limit was meant to prevent. The server now **refuses to start with a clear error** in that case, consistent with the existing instrumentation / `--instance-tag` startup checks and with the runtime `SET GLOBAL gizmosql.max_concurrent_statements` license check (which already rejected unlicensed use). The per-statement admission path still fails open as a defensive backstop, so a license issue never *rejects an in-flight query*. **Upgrade note:** if you were running an unlicensed server with a statement-queue flag set (relying on the old silent fail-open), it will now fail to start — unset those flag(s) to run with unlimited concurrency, or use a license that includes the `statement_queue` feature.
+
 ## [1.27.0] - 2026-06-02
 
 ### Added

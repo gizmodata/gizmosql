@@ -1563,6 +1563,20 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     if (max_concurrent_statements < 0) max_concurrent_statements = 0;
   }
 
+  // Capture whether the operator configured any statement-queue knob BEFORE the
+  // -1 sentinels below are normalized away. `max_concurrent_statements > 0` is the
+  // on-switch (already resolved from CLI + env above); the sub-knobs only have an
+  // effect when the queue is on, but an explicitly-set sub-knob still signals
+  // intent to use the (licensed) statement_queue feature. Used by the startup
+  // license gate further down so an unlicensed operator is told their concurrency
+  // cap will not be enforced, instead of silently running unqueued.
+  const bool statement_queue_subknob_set =
+      max_queued_statements >= 0 || max_queue_wait_seconds >= 0 ||
+      !gizmosql::SafeGetEnvVarValue("GIZMOSQL_MAX_QUEUED_STATEMENTS").empty() ||
+      !gizmosql::SafeGetEnvVarValue("GIZMOSQL_MAX_QUEUE_WAIT").empty();
+  const bool statement_queue_requested =
+      max_concurrent_statements > 0 || statement_queue_subknob_set;
+
   // Integer env var fallback for max_queued_statements (-1 sentinel = "auto").
   // 0 = unbounded waiters; positive = bounded. When left at the sentinel, default
   // to 8 x max_concurrent_statements so blocked statements can't exhaust the gRPC
@@ -1637,6 +1651,26 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     std::cerr << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError("--instance-tag") << std::endl;
     return EXIT_FAILURE;
   }
+
+  // Statement queuing is Enterprise-gated. If the operator asked for it (set
+  // --max-concurrent-statements, or any tuning knob) but the 'statement_queue'
+  // feature is not licensed, hard-error at startup rather than silently running
+  // unqueued — which would strip the concurrency protection the operator
+  // deliberately configured (the cap exists precisely because unlimited
+  // concurrency is unsafe for that deployment). The per-statement admission path
+  // still fails open as a defensive backstop. Consistent with the
+  // instrumentation/instance-tag gates above and with the runtime
+  // `SET GLOBAL gizmosql.max_concurrent_statements` license check.
+  if (statement_queue_requested && !enterprise.IsStatementQueueAvailable()) {
+    std::cerr
+        << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
+               "Statement queuing (--max-concurrent-statements)")
+        << "\n       Or unset the statement-queue flags (--max-concurrent-statements,"
+           " --max-queued-statements, --max-queue-wait) to run with unlimited"
+           " concurrency."
+        << std::endl;
+    return EXIT_FAILURE;
+  }
 #else
   // Core edition banner (no enterprise features compiled)
   (void)license_key_file;  // Suppress unused variable warning
@@ -1657,6 +1691,17 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     std::cerr << "Error: --instance-tag is a commercially licensed enterprise feature.\n"
               << "       Please provide a valid license key file via --license-key-file\n"
               << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
+    return EXIT_FAILURE;
+  }
+  // In core edition, statement queuing is not available at all.
+  if (statement_queue_requested) {
+    std::cerr << "Error: Statement queuing (--max-concurrent-statements) is a "
+                 "commercially licensed enterprise feature.\n"
+              << "       Please provide a valid license key file via --license-key-file\n"
+              << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license.\n"
+              << "       Or unset the statement-queue flags (--max-concurrent-statements,"
+                 " --max-queued-statements, --max-queue-wait) to run with unlimited"
+                 " concurrency." << std::endl;
     return EXIT_FAILURE;
   }
 #endif

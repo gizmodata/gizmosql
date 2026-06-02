@@ -51,6 +51,9 @@ class EnterpriseFeatures {
   /// Check if external auth feature is available (JWKS/OIDC SSO authentication)
   bool IsExternalAuthAvailable() const;
 
+  /// Check if statement queuing (admission control) feature is available
+  bool IsStatementQueueAvailable() const;
+
   /// Get the license manager (for advanced usage)
   LicenseManager* GetLicenseManager() const { return license_manager_.get(); }
 

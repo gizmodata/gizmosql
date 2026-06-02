@@ -115,7 +115,8 @@ int main(int argc, char** argv) {
              "Statements beyond this limit queue (block) until a slot frees; to clients a queued "
              "statement is indistinguishable from a slow-executing one. 0 = unlimited (queue "
              "disabled). Internal/metadata queries are exempt. Requires an enterprise license with "
-             "the \"statement_queue\" feature; without it the limit is unenforced (fails open). "
+             "the \"statement_queue\" feature; without it the server exits at startup with an error "
+             "(set this to 0 / unset it to run with unlimited concurrency). "
              "If 0, uses env var GIZMOSQL_MAX_CONCURRENT_STATEMENTS.")
             ("max-queued-statements", po::value<int32_t>()->default_value(DEFAULT_MAX_QUEUED_STATEMENTS),
              "[Enterprise] Maximum statements that may wait for a slot at once when the concurrency "
