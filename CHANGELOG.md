@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-06-02
+
 ### Added
 
 - **Query profile capture** [Enterprise]. Optionally persists DuckDB's per-query profile (operator tree, timings, cardinalities, memory) into the instrumentation `sql_executions.query_profile` column as **DuckDB's native profiling JSON** (verbatim `QueryProfiler::ToJSON()`), suitable for a future graphical query-plan viewer. DuckDB's profiler is per-connection and last-write-wins, but because GizmoSQL runs exactly one statement at a time per connection and never shares a session across users, the profile is harvested synchronously right after execution — before the next statement clobbers it. Opt-in and controllable at server / session / global scope, mirroring `query_log_level`:
