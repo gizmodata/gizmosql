@@ -11,10 +11,16 @@
 #     entrypoint actually needs. No C/C++ build toolchain — the server and
 #     client binaries are prebuilt in CI and COPYed in.
 
+# NOTE on the base image: it MUST be Debian trixie (13) or newer, NOT bookworm
+# (12). The gizmosql_server / gizmosql_client binaries are built on the CI
+# Ubuntu 24.04 runners (glibc 2.39, libstdc++ GLIBCXX_3.4.32) and require a
+# runtime with at least that glibc/libstdc++. bookworm (glibc 2.36) is too old
+# and fails at runtime with "GLIBC_2.38 not found". trixie ships glibc 2.41.
+
 # ──────────────────────────────────────────────────────────────────────────
 # Builder stage: fetch relocatable CLI tooling
 # ──────────────────────────────────────────────────────────────────────────
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.12-slim-trixie AS builder
 
 ARG TARGETPLATFORM
 
@@ -61,7 +67,7 @@ RUN case ${TARGETPLATFORM} in \
 # ──────────────────────────────────────────────────────────────────────────
 # Final stage: runtime image
 # ──────────────────────────────────────────────────────────────────────────
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-trixie
 
 ARG TARGETPLATFORM
 ARG TARGETARCH
@@ -82,6 +88,7 @@ RUN apt-get update && \
     curl \
     openssl \
     numactl \
+    procps \
     sqlite3 \
     gnupg \
     lsb-release && \
