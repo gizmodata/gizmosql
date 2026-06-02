@@ -19,6 +19,7 @@ constexpr const char* kFeatureInstrumentation = "instrumentation";
 constexpr const char* kFeatureKillSession = "kill_session";
 constexpr const char* kFeatureCatalogPermissions = "catalog_permissions";
 constexpr const char* kFeatureExternalAuth = "external_auth";
+constexpr const char* kFeatureStatementQueue = "statement_queue";
 
 /// Singleton class for managing enterprise feature availability
 class EnterpriseFeatures {

@@ -242,8 +242,41 @@ void ExecutionInstrumentation::SetCancelled() {
   Finalize();
 }
 
+void ExecutionInstrumentation::SetQueued() {
+  status_ = "queued";
+  if (!manager_ || !manager_->IsEnabled()) {
+    return;
+  }
+  manager_->QueueWrite([exec_id = execution_id_](duckdb::Connection& conn) {
+    auto stmt = conn.Prepare(
+        "UPDATE sql_executions SET status = 'queued', enqueue_time = now() "
+        "WHERE execution_id = $1");
+    stmt->Execute(duckdb::Value::UUID(exec_id));
+  });
+}
+
+void ExecutionInstrumentation::SetRunning() {
+  status_ = "executing";
+  // The statement just left the queue; (re)start the execution clock so the
+  // recorded duration excludes time spent waiting for a slot.
+  start_timestamp_ = std::chrono::system_clock::now();
+  if (!manager_ || !manager_->IsEnabled()) {
+    return;
+  }
+  manager_->QueueWrite([exec_id = execution_id_](duckdb::Connection& conn) {
+    auto stmt = conn.Prepare(
+        "UPDATE sql_executions SET status = 'executing', execution_start_time = now() "
+        "WHERE execution_id = $1 AND status = 'queued'");
+    stmt->Execute(duckdb::Value::UUID(exec_id));
+  });
+}
+
 void ExecutionInstrumentation::IncrementRowsFetched(int64_t count) {
   rows_fetched_.fetch_add(count, std::memory_order_relaxed);
+}
+
+void ExecutionInstrumentation::SetQueryProfile(std::string query_profile_json) {
+  query_profile_ = std::move(query_profile_json);
 }
 
 void ExecutionInstrumentation::Finalize() {
@@ -271,15 +304,17 @@ void ExecutionInstrumentation::Finalize() {
 
   manager_->QueueWrite([exec_id = execution_id_, rows = rows_fetched_.load(),
                         status = status_, error_msg = error_message_,
+                        profile = query_profile_,
                         final_duration_ms](duckdb::Connection& conn) {
     auto stmt = conn.Prepare(
         "UPDATE sql_executions SET execution_end_time = now(), "
         "rows_fetched = $2, status = $3, error_message = $4, "
-        "duration_ms = $5 WHERE execution_id = $1");
+        "duration_ms = $5, query_profile = $6 WHERE execution_id = $1");
     stmt->Execute(duckdb::Value::UUID(exec_id),
                   duckdb::Value::BIGINT(rows), duckdb::Value(status),
                   error_msg.empty() ? duckdb::Value() : duckdb::Value(error_msg),
-                  duckdb::Value::BIGINT(final_duration_ms));
+                  duckdb::Value::BIGINT(final_duration_ms),
+                  profile.empty() ? duckdb::Value() : duckdb::Value(profile));
   });
 }
 

@@ -123,16 +123,20 @@ CREATE TABLE IF NOT EXISTS sql_executions (
     bind_parameters VARCHAR,
     execution_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
     execution_end_time TIMESTAMP WITH TIME ZONE,
+    enqueue_time TIMESTAMP WITH TIME ZONE,  -- when the statement entered the admission queue (NULL if never queued)
     rows_fetched BIGINT,
-    status VARCHAR NOT NULL,  -- CHECK not supported in DuckLake
+    status VARCHAR NOT NULL,  -- queued|executing|success|error|timeout|cancelled (CHECK not supported in DuckLake)
     error_message VARCHAR,
-    duration_ms BIGINT
+    duration_ms BIGINT,
+    query_profile JSON  -- DuckDB native query profiling JSON (NULL unless capture enabled)
 );
 
 -- Schema migration: add tag columns to existing tables (safe to re-run)
 ALTER TABLE instances ADD COLUMN IF NOT EXISTS instance_tag JSON;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS session_tag JSON;
 ALTER TABLE sql_statements ADD COLUMN IF NOT EXISTS query_tag JSON;
+ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS enqueue_time TIMESTAMP WITH TIME ZONE;
+ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS query_profile JSON;
 
 -- Indexes not supported in DuckLake, but would be useful for file-based mode:
 -- CREATE INDEX IF NOT EXISTS idx_sessions_instance_id ON sessions(instance_id);
@@ -183,6 +187,7 @@ SELECT
     e.status AS execution_status,
     e.error_message,
     e.duration_ms,
+    e.query_profile,
     st.query_tag
 FROM instances i
 LEFT JOIN sessions s ON i.instance_id = s.instance_id
@@ -253,10 +258,15 @@ SELECT
     e.bind_parameters,
     e.execution_start_time,
     e.execution_end_time,
+    e.enqueue_time,
+    CASE WHEN e.enqueue_time IS NOT NULL
+         THEN CAST(date_diff('millisecond', e.enqueue_time, e.execution_start_time) AS BIGINT)
+    END AS queue_wait_ms,
     e.rows_fetched,
     e.status,
     e.error_message,
     e.duration_ms,
+    e.query_profile,
     s.username,
     s.auth_method,
     s.peer,
@@ -582,13 +592,13 @@ arrow::Status InstrumentationManager::CleanupStaleRecords() {
       instance_ids += "'" + stale_instances->GetValue(0, i).ToString() + "'";
     }
 
-    // Mark any 'executing' executions from stale instances as 'error'
+    // Mark any 'executing' or 'queued' executions from stale instances as 'error'
     auto exec_result = writer_connection_->Get().Query(
         "UPDATE " + prefix + ".sql_executions "
         "SET execution_end_time = now(), "
         "    status = 'error', "
         "    error_message = 'Server shutdown unexpectedly' "
-        "WHERE status = 'executing' "
+        "WHERE status IN ('executing', 'queued') "
         "  AND statement_id IN ("
         "    SELECT statement_id FROM " + prefix + ".sql_statements "
         "    WHERE session_id IN ("

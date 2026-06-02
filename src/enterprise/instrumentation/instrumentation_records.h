@@ -134,7 +134,17 @@ class ExecutionInstrumentation {
   void SetError(const std::string& error_message);
   void SetTimeout();
   void SetCancelled();
+  /// Mark the execution as waiting in the admission queue (status='queued',
+  /// records enqueue_time). Paired with SetRunning() once a slot is acquired.
+  void SetQueued();
+  /// Transition queued -> executing and (re)start the execution clock, so the
+  /// recorded duration reflects execution time rather than time spent queued.
+  void SetRunning();
   void IncrementRowsFetched(int64_t count);
+
+  /// Sets the DuckDB query profile JSON to persist in sql_executions.query_profile.
+  /// Stored verbatim (DuckDB's native profiling JSON). Empty => column left NULL.
+  void SetQueryProfile(std::string query_profile_json);
 
  private:
   void Finalize();
@@ -145,6 +155,7 @@ class ExecutionInstrumentation {
   std::atomic<int64_t> rows_fetched_{0};
   std::string status_{"executing"};
   std::string error_message_;
+  std::string query_profile_;  // DuckDB native profiling JSON (empty => NULL column)
   int64_t duration_ms_{0};
   // Wall-clock timestamps captured synchronously (not affected by async queue delays)
   std::chrono::system_clock::time_point start_timestamp_;

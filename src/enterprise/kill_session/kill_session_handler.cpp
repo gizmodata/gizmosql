@@ -88,6 +88,17 @@ arrow::Status HandleKillSession(
 
   auto target = server->FindSession(target_session_id);
   if (!target) {
+    // A Flight statement is created twice — once when GetFlightInfo computes the
+    // schema and again when DoGet streams the result — so this handler runs
+    // twice for a single client KILL SESSION. The first pass removes the target
+    // session; on the second pass FindSession returns null. Treat an
+    // already-killed target as an idempotent success (rather than the spurious
+    // "Session not found" that would fail the DoGet phase). A session id that
+    // was never killed is still a genuine not-found error.
+    if (server->WasSessionKilled(target_session_id)) {
+      record_kill_session();
+      return arrow::Status::OK();
+    }
     std::string error_msg = "Session not found: " + target_session_id;
     record_kill_session(error_msg);
     return arrow::Status::KeyError(error_msg);
@@ -96,6 +107,12 @@ arrow::Status HandleKillSession(
   // Mark session for termination and interrupt its connection
   target->kill_requested = true;
   target->connection->Get().Interrupt();
+
+  // Wake any statements this session has queued in the admission controller so they
+  // abandon the queue immediately (recorded as cancelled) instead of holding a gRPC
+  // handler thread until a slot frees. Each waiter re-checks its own session's
+  // kill_requested, so only this session's queued statements are cancelled.
+  server->GetAdmissionController().WakeWaiters();
 
   // Update instrumentation stop reason
   if (target->instrumentation) {

@@ -42,6 +42,7 @@ GizmoSQL is available in two editions:
 | Per-Catalog Permissions | ❌ | ✅ |
 | SSO/OIDC Authentication (JWKS) | ❌ | ✅ |
 | Authorized Email Filtering | ❌ | ✅ |
+| Statement Queuing | ❌ | ✅ |
 
 **GizmoSQL Core** is free and open source under the Apache 2.0 license.
 

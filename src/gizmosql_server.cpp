@@ -110,6 +110,39 @@ int main(int argc, char** argv) {
              "the Apache Flight SQL JDBC driver forwards as gRPC headers, large bearer tokens, "
              "accumulated cookies, or proxy-injected trace headers). 0 = use the gRPC default. "
              "If 0, uses env var GIZMOSQL_MAX_METADATA_SIZE.")
+            ("max-concurrent-statements", po::value<int32_t>()->default_value(DEFAULT_MAX_CONCURRENT_STATEMENTS),
+             "[Enterprise] Maximum number of SQL statements allowed to execute concurrently. "
+             "Statements beyond this limit queue (block) until a slot frees; to clients a queued "
+             "statement is indistinguishable from a slow-executing one. 0 = unlimited (queue "
+             "disabled). Internal/metadata queries are exempt. Requires an enterprise license with "
+             "the \"statement_queue\" feature; without it the limit is unenforced (fails open). "
+             "If 0, uses env var GIZMOSQL_MAX_CONCURRENT_STATEMENTS.")
+            ("max-queued-statements", po::value<int32_t>()->default_value(DEFAULT_MAX_QUEUED_STATEMENTS),
+             "[Enterprise] Maximum statements that may wait for a slot at once when the concurrency "
+             "limit is reached; beyond this they are rejected with a retriable error rather than "
+             "queued. -1 (default) auto-sizes to 8x --max-concurrent-statements; 0 = unbounded. "
+             "If -1, uses env var GIZMOSQL_MAX_QUEUED_STATEMENTS.")
+            ("max-queue-wait", po::value<int32_t>()->default_value(DEFAULT_MAX_QUEUE_WAIT_SECONDS),
+             "[Enterprise] Maximum seconds a statement may wait in the queue before being rejected "
+             "with a retriable error. -1 (default) uses the built-in 300s default; 0 = wait "
+             "indefinitely. If -1, uses env var GIZMOSQL_MAX_QUEUE_WAIT.")
+            ("admin-bypass-queue-default", po::value<bool>()->default_value(true),
+             "[Enterprise] Whether admin-role sessions bypass the statement queue by default, so "
+             "diagnostics and KILL SESSION are never stranded behind a saturated queue. Admins can "
+             "still SET SESSION gizmosql.bypass_queue = false to opt in. If not set, uses env var "
+             "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT (1/true to enable).")
+            ("memory-limit", po::value<std::string>()->default_value(""),
+             "DuckDB memory limit applied at startup (e.g. \"8GB\", \"75%\"); a passthrough to "
+             "DuckDB's `memory_limit` setting (global / instance-wide). Empty leaves DuckDB's "
+             "built-in default (80% of physical RAM). If empty, uses env var GIZMOSQL_MEMORY_LIMIT. "
+             "Ignored for the SQLite backend.")
+            ("capture-query-profile", po::value<std::string>()->default_value(""),
+             "[Enterprise] Server default for capturing DuckDB query profiles into the "
+             "instrumentation sql_executions.query_profile column: off|standard|detailed. "
+             "'standard' records the per-operator profile; 'detailed' also times each expression "
+             "(higher overhead). Requires instrumentation + a valid enterprise license. "
+             "Overridable per-session/globally via SET gizmosql.capture_query_profile. "
+             "If empty, uses env GIZMOSQL_CAPTURE_QUERY_PROFILE or defaults to off.")
             ("query-log-level",  po::value<std::string>()->default_value(""),
              "Query Log level: debug|info|warn|error|fatal. If empty, uses env GIZMOSQL_QUERY_LOG_LEVEL or defaults to info.")
             ("auth-log-level",  po::value<std::string>()->default_value(""),
@@ -320,6 +353,21 @@ int main(int argc, char** argv) {
 
   int32_t max_metadata_size = vm["max-metadata-size"].as<int32_t>();
 
+  int32_t max_concurrent_statements = vm["max-concurrent-statements"].as<int32_t>();
+
+  int32_t max_queued_statements = vm["max-queued-statements"].as<int32_t>();
+
+  int32_t max_queue_wait = vm["max-queue-wait"].as<int32_t>();
+
+  std::optional<bool> admin_bypass_queue_default =
+      vm["admin-bypass-queue-default"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["admin-bypass-queue-default"].as<bool>());
+
+  std::string memory_limit = vm["memory-limit"].as<std::string>();
+
+  std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
+
   std::string query_log_level =
       vm.count("query-log-level") ? vm["query-log-level"].as<std::string>() : "";
   std::string auth_log_level =
@@ -405,5 +453,6 @@ int main(int argc, char** argv) {
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers, max_metadata_size,
-      storage_version);
+      storage_version, max_concurrent_statements, max_queued_statements,
+      max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile);
 }

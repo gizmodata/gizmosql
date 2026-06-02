@@ -27,6 +27,7 @@
 #include <arrow/util/logger.h>
 #include "flight_sql_fwd.h"
 #include "session_context.h"
+#include "admission_controller.h"
 
 namespace gizmosql::ddb {
 
@@ -54,7 +55,10 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
       const std::string& path, const bool& read_only, const bool& print_queries,
       const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
       const arrow::util::ArrowLogLevel& session_log_level,
-      const std::string& storage_version,
+      const std::string& storage_version, const int32_t& max_concurrent_statements,
+      const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
+      const bool& admin_bypass_queue_default, const std::string& memory_limit,
+      const gizmosql::QueryProfileMode& capture_query_profile,
 #ifdef GIZMOSQL_ENTERPRISE
       std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr);
 #else
@@ -233,6 +237,14 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   arrow::Result<arrow::util::ArrowLogLevel> GetQueryLogLevel(
       const ClientSession& client_session);
 
+  // Server default for query profile capture (Enterprise). SetCaptureQueryProfile
+  // is admin-only (server-wide change via `SET GLOBAL gizmosql.capture_query_profile`).
+  arrow::Status SetCaptureQueryProfile(const ClientSession& client_session,
+                                       const gizmosql::QueryProfileMode& capture_query_profile);
+
+  gizmosql::QueryProfileMode GetCaptureQueryProfile(
+      const ClientSession& client_session) const;
+
   // Server instance ID (available in all editions)
   std::string GetInstanceId() const;
 
@@ -254,9 +266,15 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   // Get the underlying DuckDB instance (for instrumentation setup)
   std::shared_ptr<duckdb::DuckDB> GetDuckDBInstance() const;
 
+  // Statement-queue admission controller (server-wide, shared across sessions).
+  AdmissionController& GetAdmissionController();
+
   // Session management for KILL SESSION
   std::shared_ptr<ClientSession> FindSession(const std::string& session_id);
   arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false);
+  // True if the session id was previously killed (makes KILL SESSION idempotent
+  // across Flight's GetFlightInfo + DoGet two-phase execution).
+  bool WasSessionKilled(const std::string& session_id);
 
  private:
   class Impl;
