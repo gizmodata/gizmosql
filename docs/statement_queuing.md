@@ -82,7 +82,7 @@ A queued statement simply takes longer to return — the client sees normal late
 
 When session instrumentation is enabled, the queue is fully visible in the audit tables:
 
-- `sql_executions.status` includes `queued` (waiting for a slot) and `executing`; `KILL SESSION`‑interrupted statements are recorded as `cancelled`.
+- `sql_executions.status` includes `queued` (waiting for a slot) and `executing`; `KILL SESSION`‑interrupted statements are recorded as `cancelled` — including a statement killed *while still queued*, which is cancelled immediately (it abandons the queue without waiting for a slot) rather than running to completion.
 - `sql_executions.enqueue_time` and the computed `execution_details.queue_wait_ms` show when a statement entered the queue and how long it waited.
 
 ```sql

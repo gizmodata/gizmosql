@@ -97,6 +97,12 @@ arrow::Status HandleKillSession(
   target->kill_requested = true;
   target->connection->Get().Interrupt();
 
+  // Wake any statements this session has queued in the admission controller so they
+  // abandon the queue immediately (recorded as cancelled) instead of holding a gRPC
+  // handler thread until a slot frees. Each waiter re-checks its own session's
+  // kill_requested, so only this session's queued statements are cancelled.
+  server->GetAdmissionController().WakeWaiters();
+
   // Update instrumentation stop reason
   if (target->instrumentation) {
     target->instrumentation->SetStopReason("killed");

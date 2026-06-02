@@ -330,3 +330,48 @@ TEST(AdmissionControllerTest, TimedOutWaiterIsRemovedFifoContinues) {
   EXPECT_EQ(controller.QueuedCount(), 0);
   EXPECT_EQ(controller.ActiveCount(), 0);
 }
+
+// A queued statement whose abort predicate fires is cancelled promptly when
+// WakeWaiters() is called — no slot frees, and the waiter takes no slot. This is
+// the mechanism behind KILL SESSION reclaiming a statement that is still queued.
+TEST(AdmissionControllerTest, AbortedWaiterIsCancelledViaWakeWaiters) {
+  AdmissionController controller;
+  controller.SetLimit(1);
+  auto held = AcquireOk(controller);  // occupy the only slot
+
+  std::atomic<bool> abort{false};
+  std::atomic<bool> done{false};
+  std::atomic<bool> cancelled{false};
+  std::thread waiter([&] {
+    auto r = controller.Acquire(/*enforce=*/true, /*max_queue_wait_seconds=*/0,
+                                [&] { return abort.load(); });
+    cancelled.store(!r.ok() && r.status().IsCancelled());
+    done.store(true);
+  });
+
+  ASSERT_TRUE(WaitFor([&] { return controller.QueuedCount() == 1; }));
+  EXPECT_FALSE(done.load());  // blocked; the abort hasn't fired yet
+
+  abort.store(true);
+  controller.WakeWaiters();  // nudge the waiter to re-check its abort predicate
+  ASSERT_TRUE(WaitFor([&] { return done.load(); }));
+  EXPECT_TRUE(cancelled.load());           // returned a Cancelled status
+  EXPECT_EQ(controller.QueuedCount(), 0);  // left the FIFO
+  EXPECT_EQ(controller.ActiveCount(), 1);  // took no slot (only `held` remains)
+  waiter.join();
+}
+
+// An abort predicate that is already true on entry short-circuits: Cancelled,
+// never queued, no slot taken.
+TEST(AdmissionControllerTest, AbortBeforeQueuingReturnsCancelled) {
+  AdmissionController controller;
+  controller.SetLimit(1);
+  auto held = AcquireOk(controller);  // slot full
+
+  auto result = controller.Acquire(/*enforce=*/true, /*max_queue_wait_seconds=*/0,
+                                   [] { return true; });
+  EXPECT_FALSE(result.ok());
+  EXPECT_TRUE(result.status().IsCancelled());
+  EXPECT_EQ(controller.QueuedCount(), 0);
+  EXPECT_EQ(controller.ActiveCount(), 1);
+}

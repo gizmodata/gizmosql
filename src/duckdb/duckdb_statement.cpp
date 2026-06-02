@@ -1771,20 +1771,48 @@ arrow::Result<int> DuckDBStatement::Execute() {
           execution_instrumentation_->SetQueued();
         }
 #endif
-        auto slot_result = controller.Acquire(/*enforce=*/true, max_queue_wait);
+        // Pass an abort predicate so that if this session is killed while the
+        // statement is queued, KILL SESSION's WakeWaiters() lets it abandon the
+        // queue immediately (Cancelled) instead of waiting for a slot it will
+        // never use.
+        auto slot_result = controller.Acquire(
+            /*enforce=*/true, max_queue_wait,
+            /*is_aborted=*/[kr = &session->kill_requested] { return kr->load(); });
         if (!slot_result.ok()) {
-          // Rejected (queue full, or the queue wait elapsed): surface as a
-          // retriable Flight UNAVAILABLE so clients can back off and retry.
+          // Cancelled => the session was killed while we were queued: record a
+          // cancellation and surface a Flight CANCELLED. Otherwise the queue was
+          // full or the wait elapsed: surface a retriable Flight UNAVAILABLE so
+          // clients can back off and retry.
+          const bool killed =
+              slot_result.status().code() == arrow::StatusCode::Cancelled;
 #ifdef GIZMOSQL_ENTERPRISE
           if (execution_instrumentation_) {
-            execution_instrumentation_->SetError(slot_result.status().message());
+            if (killed) {
+              execution_instrumentation_->SetCancelled();
+            } else {
+              execution_instrumentation_->SetError(slot_result.status().message());
+            }
           }
 #endif
           return arrow::flight::MakeFlightError(
-              arrow::flight::FlightStatusCode::Unavailable,
+              killed ? arrow::flight::FlightStatusCode::Cancelled
+                     : arrow::flight::FlightStatusCode::Unavailable,
               slot_result.status().message());
         }
         admission_slot = std::move(slot_result).ValueOrDie();
+        // A kill can race the slot grant: if we were killed just as we were
+        // admitted, don't execute the doomed statement — record it cancelled and
+        // bail (the slot releases via admission_slot's destructor on return).
+        if (session->kill_requested.load()) {
+#ifdef GIZMOSQL_ENTERPRISE
+          if (execution_instrumentation_) {
+            execution_instrumentation_->SetCancelled();
+          }
+#endif
+          return arrow::flight::MakeFlightError(
+              arrow::flight::FlightStatusCode::Cancelled,
+              "Statement cancelled: session was killed");
+        }
 #ifdef GIZMOSQL_ENTERPRISE
         // Slot acquired: queued -> executing (restarts the execution clock).
         if (execution_instrumentation_) {

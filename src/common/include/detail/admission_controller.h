@@ -20,6 +20,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <mutex>
 #include <string>
@@ -78,6 +79,12 @@ class AdmissionSlot {
 /// is already queued (the fast path is taken only when the queue is empty). This
 /// gives fairness and bounds worst-case wait — no statement can be starved by a
 /// steady stream of later arrivals.
+///
+/// A waiter can also be **cancelled while queued** via an optional abort predicate
+/// passed to Acquire() (e.g. "was this session killed?"). Flip the condition and
+/// call WakeWaiters(), and the affected statement abandons the queue immediately —
+/// returning Cancelled and taking no slot — instead of waiting for a slot it would
+/// never use. This is how KILL SESSION reclaims a queued statement promptly.
 ///
 /// Thread-safe. Backed by a counter guarded by a mutex plus a FIFO list of
 /// per-waiter wait nodes — each waiter parks on its *own* condition variable, so a
@@ -155,22 +162,36 @@ class AdmissionController {
   ///
   /// If \p enforce is false or the limit is <= 0, returns immediately with an
   /// inert handle (no gating, nothing tracked). Otherwise:
+  ///   * if \p is_aborted already returns true, returns Cancelled without queuing;
   ///   * if a slot is free and nobody is queued ahead, takes it and returns a
   ///     holding handle;
   ///   * else, if a waiter bound is set and already reached, returns a
   ///     "queue full" error without waiting;
   ///   * else joins the back of the FIFO queue and blocks until it reaches the
-  ///     front and a slot frees, or — when \p max_queue_wait_seconds > 0 and that
-  ///     wait elapses first — returns a "queue wait timeout" error.
+  ///     front and a slot frees, the bounded wait elapses (when
+  ///     \p max_queue_wait_seconds > 0), or \p is_aborted fires.
+  ///
+  /// \p is_aborted, when set, is an external cancellation predicate — e.g. "has
+  /// this statement's session been killed?". It is checked on entry and re-checked
+  /// each time the waiter wakes, so a caller that flips it true and then calls
+  /// WakeWaiters() cancels a queued statement *promptly*, without waiting for a
+  /// slot it will never use. A cancelled acquire returns arrow::StatusCode::Cancelled
+  /// and holds no slot. The predicate runs while the internal mutex is held, so it
+  /// must be cheap and must not call back into the controller.
   ///
   /// Waiters are admitted in strict FIFO order. The returned handle releases its
   /// slot on destruction (RAII); hold it for the full duration of execution.
-  arrow::Result<AdmissionSlot> Acquire(bool enforce, int32_t max_queue_wait_seconds) {
+  arrow::Result<AdmissionSlot> Acquire(bool enforce, int32_t max_queue_wait_seconds,
+                                       std::function<bool()> is_aborted = {}) {
     if (!enforce) return AdmissionSlot{};
 
     std::unique_lock<std::mutex> lock(mutex_);
 
     if (limit_ <= 0) return AdmissionSlot{};  // disabled => unlimited
+
+    // Already cancelled (e.g. the session was killed before we got here) — bail
+    // out without taking a slot or joining the queue.
+    if (is_aborted && is_aborted()) return AbortedStatus();
 
     // Fast path: capacity is available right now AND nobody is queued ahead of us.
     // The empty-queue check is what makes admission FIFO — a fresh arrival never
@@ -192,21 +213,32 @@ class AdmissionController {
     }
 
     // Join the back of the FIFO and block on our own condition variable until a
-    // granter (ReleaseSlot / SetLimit) hands us a slot, or our bounded wait
-    // elapses. A granter signals us by setting `status` and removing us from the
-    // queue, so the predicate is simply "status changed".
+    // granter (ReleaseSlot / SetLimit) hands us a slot, our bounded wait elapses,
+    // or our abort predicate fires (WakeWaiters() nudges us to notice it). A
+    // granter signals us by setting `status` and removing us from the queue.
     Waiter self;
     waiters_.push_back(&self);
     const auto it = std::prev(waiters_.end());
-    const auto granted = [&self] { return self.status != WaiterStatus::kWaiting; };
+    const auto done = [&] {
+      return self.status != WaiterStatus::kWaiting || (is_aborted && is_aborted());
+    };
 
     bool signaled;
     if (max_queue_wait_seconds <= 0) {
-      self.cv.wait(lock, granted);
+      self.cv.wait(lock, done);
       signaled = true;
     } else {
       signaled = self.cv.wait_for(
-          lock, std::chrono::seconds(max_queue_wait_seconds), granted);
+          lock, std::chrono::seconds(max_queue_wait_seconds), done);
+    }
+
+    // Cancelled while queued: the abort predicate fired but no granter touched our
+    // status. We still hold `mutex_` and remain in the FIFO, so `it` is valid and
+    // removing ourselves is ours to do. (Checked before the timeout branch so a
+    // kill that races the deadline is reported as cancelled, not a wait timeout.)
+    if (self.status == WaiterStatus::kWaiting && is_aborted && is_aborted()) {
+      waiters_.erase(it);
+      return AbortedStatus();
     }
 
     if (!signaled) {
@@ -229,6 +261,17 @@ class AdmissionController {
     return AdmissionSlot{};
   }
 
+  /// Wake every blocked waiter so it re-evaluates its abort predicate. Call this
+  /// right after flipping an external abort condition (e.g. KILL SESSION sets
+  /// kill_requested) so the affected queued statement cancels promptly instead of
+  /// waiting for a slot it will never use. Rare (admin-triggered); the hot
+  /// per-release path stays a single targeted wakeup, so this broadcast is the
+  /// only place the queue is woken en masse.
+  void WakeWaiters() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (Waiter* w : waiters_) w->cv.notify_one();
+  }
+
  private:
   friend class AdmissionSlot;
 
@@ -241,6 +284,15 @@ class AdmissionController {
     std::condition_variable cv;
     WaiterStatus status = WaiterStatus::kWaiting;
   };
+
+  // Status returned when a queued statement is cancelled via its abort predicate
+  // (e.g. its session was killed). A distinct StatusCode (Cancelled) lets the
+  // caller map it to a Flight CANCELLED, separate from the UNAVAILABLE used for
+  // queue-full / wait-timeout rejections.
+  static arrow::Status AbortedStatus() {
+    return arrow::Status::Cancelled(
+        "Statement cancelled while queued (session was killed)");
+  }
 
   /// Hand free capacity to the oldest waiters, in FIFO order, until the limit is
   /// reached or the queue drains. Caller must hold `mutex_`. Each promoted waiter
