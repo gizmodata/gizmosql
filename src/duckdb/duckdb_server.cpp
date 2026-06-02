@@ -887,6 +887,46 @@ class DuckDBFlightSqlServer::Impl {
     }
   }
 
+  // Non-creating session lookup. Unlike GetClientSession(), this never lazily
+  // materialises a session: when the session_id is unknown (e.g. it was evicted,
+  // or the bearer token's connection was re-routed to a pod that never saw this
+  // session) it returns an Unauthenticated Flight error instead of silently
+  // creating a fresh session in the default ("memory") catalog.
+  //
+  // This is what makes a lightweight liveness probe possible: a client (such as
+  // the JDBC driver's Connection.isValid()) can call GetSessionOptions and treat
+  // a Flight error as "this pooled connection is stale — discard it". Discarding
+  // forces a fresh connection through the full Handshake + SetSessionOptions
+  // sequence, so the replacement session starts in the correct catalog.
+  //
+  // Read-only on purpose: it takes only the shared lock and does not mutate the
+  // session map (a kill_requested session is reported as gone but its cleanup is
+  // left to the normal GetClientSession() / KILL paths).
+  arrow::Result<std::shared_ptr<ClientSession>> GetExistingClientSession(
+      const flight::ServerCallContext& context) {
+    ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
+
+    std::shared_lock read_lock(sessions_mutex_);
+
+    if (killed_session_ids_.count(session_id) > 0) {
+      return flight::MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                                     "Your session has been killed. Please re-connect.");
+    }
+
+    if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
+      if (it->second->kill_requested) {
+        return flight::MakeFlightError(
+            flight::FlightStatusCode::Unauthenticated,
+            "Your session has been killed. Please re-connect.");
+      }
+      return it->second;
+    }
+
+    return flight::MakeFlightError(
+        flight::FlightStatusCode::Unauthenticated,
+        "Session not found — it may have been evicted. Please re-connect.");
+  }
+
   arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(
       const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
@@ -1950,7 +1990,11 @@ class DuckDBFlightSqlServer::Impl {
       const flight::GetSessionOptionsRequest& request) {
     flight::GetSessionOptionsResult res;
 
-    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    // Non-creating lookup: GetSessionOptions doubles as a liveness probe (see
+    // GetExistingClientSession). If the session no longer exists, surface an
+    // error rather than lazily creating one in the wrong catalog, so clients can
+    // detect and recycle a stale pooled connection.
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetExistingClientSession(context));
 
     auto catalog_result = ExecuteSqlAndGetStringVector(client_session->connection->Get(),
                                                        "SELECT current_catalog()");

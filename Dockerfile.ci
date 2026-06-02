@@ -1,4 +1,73 @@
-FROM python:3.12.11
+# syntax=docker/dockerfile:1
+#
+# Full ("fat") GizmoSQL image — ships convenience utilities (Python, AWS CLI,
+# Azure CLI, azcopy, DuckDB CLI, TLS cert generation) alongside the server.
+#
+# Multi-stage layout for a smaller attack surface:
+#   * builder stage downloads/installs the relocatable CLIs (AWS CLI v2,
+#     azcopy, DuckDB CLI) using throwaway download tooling (curl/unzip/tar)
+#     that never lands in the shipped image.
+#   * final stage is python:3.12-slim with only the runtime packages the
+#     entrypoint actually needs. No C/C++ build toolchain — the server and
+#     client binaries are prebuilt in CI and COPYed in.
+
+# NOTE on the base image: it MUST be Debian trixie (13) or newer, NOT bookworm
+# (12). The gizmosql_server / gizmosql_client binaries are built on the CI
+# Ubuntu 24.04 runners (glibc 2.39, libstdc++ GLIBCXX_3.4.32) and require a
+# runtime with at least that glibc/libstdc++. bookworm (glibc 2.36) is too old
+# and fails at runtime with "GLIBC_2.38 not found". trixie ships glibc 2.41.
+
+# ──────────────────────────────────────────────────────────────────────────
+# Builder stage: fetch relocatable CLI tooling
+# ──────────────────────────────────────────────────────────────────────────
+FROM python:3.12-slim-trixie AS builder
+
+ARG TARGETPLATFORM
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    unzip \
+    tar \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# AWS CLI v2 — self-contained install under /usr/local/aws-cli with symlinks
+# in /usr/local/bin (relocatable; bundles its own Python runtime).
+RUN case ${TARGETPLATFORM} in \
+         "linux/amd64")  AWSCLI_FILE=https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip  ;; \
+         "linux/arm64")  AWSCLI_FILE=https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip  ;; \
+    esac && \
+    curl --location "${AWSCLI_FILE}" -o "awscliv2.zip" && \
+    unzip -q awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws
+
+# azcopy — single static binary.
+RUN case ${TARGETPLATFORM} in \
+         "linux/amd64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux  ;; \
+         "linux/arm64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux-arm64  ;; \
+    esac && \
+    curl --location "${AZCOPY_FILE}" -o "azcopy.tar.gz" && \
+    tar -xf azcopy.tar.gz && \
+    mv azcopy_linux_*/azcopy /usr/local/bin/azcopy && \
+    chmod +x /usr/local/bin/azcopy && \
+    rm -rf azcopy_linux_* azcopy.tar.gz
+
+# DuckDB CLI — single binary, handy for ad-hoc shell use.
+ARG DUCKDB_VERSION="1.5.3"
+RUN case ${TARGETPLATFORM} in \
+         "linux/amd64")  DUCKDB_FILE=https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip  ;; \
+         "linux/arm64")  DUCKDB_FILE=https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-arm64.zip  ;; \
+    esac && \
+    curl --location "${DUCKDB_FILE}" -o /tmp/duckdb.zip && \
+    unzip -q /tmp/duckdb.zip -d /usr/local/bin && \
+    rm /tmp/duckdb.zip
+
+# ──────────────────────────────────────────────────────────────────────────
+# Final stage: runtime image
+# ──────────────────────────────────────────────────────────────────────────
+FROM python:3.12-slim-trixie
 
 ARG TARGETPLATFORM
 ARG TARGETARCH
@@ -9,42 +78,32 @@ RUN printf "I'm building for TARGETPLATFORM=${TARGETPLATFORM}" \
     && printf "With uname -s : " && uname -s \
     && printf "and  uname -m : " && uname -m
 
+# Runtime packages only. dist-upgrade pulls the latest base security fixes.
+# Azure CLI is installed via Microsoft's official apt repository; the repo
+# tooling (gnupg/lsb-release) is purged afterwards to keep the surface small.
 RUN apt-get update && \
     apt-get dist-upgrade --yes && \
-    apt-get install -y \
-    build-essential \
-    wget \
-    gcc \
-    git \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    openssl \
     numactl \
+    procps \
     sqlite3 \
-    vim \
-    zip && \
+    gnupg \
+    lsb-release && \
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
+    apt-get purge -y gnupg lsb-release && \
+    apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Setup the AWS Client (so we can copy S3 files to the container if needed)
-RUN case ${TARGETPLATFORM} in \
-         "linux/amd64")  AWSCLI_FILE=https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip  ;; \
-         "linux/arm64")  AWSCLI_FILE=https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip  ;; \
-    esac && \
-    curl "${AWSCLI_FILE}" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    aws/install && \
-    rm -f awscliv2.zip
-
-# Setup Azure Client (so we can copy Azure files to the container if needed)
-RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-
-# Install AZCopy
-RUN case ${TARGETPLATFORM} in \
-         "linux/amd64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux  ;; \
-         "linux/arm64")  AZCOPY_FILE=https://aka.ms/downloadazcopy-v10-linux-arm64  ;; \
-    esac && \
-    curl --location "${AZCOPY_FILE}" -o "azcopy.tar.gz" && \
-    tar -xvf azcopy.tar.gz && \
-    mv azcopy_linux_*/azcopy /usr/bin/azcopy && \
-    rm -rf azcopy_linux_* azcopy.tar.gz
+# Copy the relocatable CLIs from the builder stage.
+COPY --from=builder /usr/local/aws-cli /usr/local/aws-cli
+COPY --from=builder /usr/local/bin/aws /usr/local/bin/aws
+COPY --from=builder /usr/local/bin/aws_completer /usr/local/bin/aws_completer
+COPY --from=builder /usr/local/bin/azcopy /usr/local/bin/azcopy
+COPY --from=builder /usr/local/bin/duckdb /usr/local/bin/duckdb
 
 # Create an application user
 RUN useradd app_user --create-home
@@ -65,7 +124,7 @@ ENV VIRTUAL_ENV=${APP_DIR}/.venv
 RUN python3 -m venv ${VIRTUAL_ENV} && \
     echo ". ${VIRTUAL_ENV}/bin/activate" >> ~/.bashrc && \
     . ~/.bashrc && \
-    pip install --upgrade pip setuptools wheel
+    pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Set the PATH so that the Python Virtual environment is referenced for subsequent RUN steps (hat tip: https://pythonspeed.com/articles/activate-virtualenv-dockerfile/)
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
@@ -74,12 +133,11 @@ ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 COPY --chown=app_user:app_user scripts scripts
 
 # Get the SQLite3 database file
-RUN mkdir data && \
-    wget https://github.com/lovasoa/TPCH-sqlite/releases/download/v1.0/TPC-H-small.db -O data/TPC-H-small.db
+RUN curl --location https://github.com/lovasoa/TPCH-sqlite/releases/download/v1.0/TPC-H-small.db -o data/TPC-H-small.db --create-dirs
 
 # Install Python requirements
 COPY --chown=app_user:app_user requirements.txt .
-RUN pip install --requirement requirements.txt
+RUN pip install --no-cache-dir --requirement requirements.txt
 
 # Create DuckDB database file
 RUN python "scripts/create_duckdb_database_file.py" \
@@ -95,17 +153,6 @@ COPY --chown=app_user:app_user gizmosql_client /usr/local/bin/gizmosql_client
 RUN chmod +x /usr/local/bin/gizmosql_client
 
 COPY --chown=app_user:app_user tls tls
-
-# Install DuckDB CLI for troubleshooting, etc.
-ARG DUCKDB_VERSION="1.5.3"
-
-RUN case ${TARGETPLATFORM} in \
-         "linux/amd64")  DUCKDB_FILE=https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip  ;; \
-         "linux/arm64")  DUCKDB_FILE=https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-arm64.zip  ;; \
-    esac && \
-    curl --output /tmp/duckdb.zip --location ${DUCKDB_FILE} && \
-    unzip /tmp/duckdb.zip -d /usr/local/bin && \
-    rm /tmp/duckdb.zip
 
 EXPOSE 31337
 EXPOSE 31339

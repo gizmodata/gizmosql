@@ -11,10 +11,10 @@ RUN printf "I'm building for TARGETPLATFORM=${TARGETPLATFORM}" \
 
 RUN apt-get update && \
     apt-get dist-upgrade --yes && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
-    numactl \
-    zip && \
+    numactl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

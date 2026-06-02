@@ -32,6 +32,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_internal_query_log_level.cpp
         integration/test_log_level_filtering.cpp
         integration/test_max_metadata_size.cpp
+        integration/test_session_options_probe.cpp
         integration/test_set_query_log_level.cpp
         integration/test_sqlite_backend.cpp
         integration/test_system_catalog.cpp
@@ -64,6 +65,7 @@ set(GIZMOSQL_CLIENT_LIB_SRCS
 # Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)
 if(GIZMOSQL_ENTERPRISE)
     set(GIZMOSQL_ENTERPRISE_TEST_SRCS
+            integration/test_catalog_wildcards.cpp
             integration/test_statement_queue.cpp
             integration/test_instrumentation.cpp
             integration/test_instrumentation_ducklake.cpp
