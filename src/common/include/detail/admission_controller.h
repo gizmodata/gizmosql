@@ -20,6 +20,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <list>
 #include <mutex>
 #include <string>
 
@@ -72,11 +73,19 @@ class AdmissionSlot {
 /// limit. Statements beyond the limit block until a slot frees and — once the
 /// optional waiter bound or per-call wait timeout is exceeded — are rejected.
 ///
-/// Thread-safe. Backed by a condition-variable-guarded counter (deliberately
-/// **not** a std::counting_semaphore) so that (1) the limit can be resized at
-/// runtime via SET GLOBAL, and (2) the active/queued counts can be introspected
-/// for a SQL-monitor view. A single controller is owned by the server and shared
-/// across all sessions.
+/// Admission is **strict FIFO**: waiters are admitted in the exact order they
+/// began waiting, and a newly-arriving statement never barges ahead of one that
+/// is already queued (the fast path is taken only when the queue is empty). This
+/// gives fairness and bounds worst-case wait — no statement can be starved by a
+/// steady stream of later arrivals.
+///
+/// Thread-safe. Backed by a counter guarded by a mutex plus a FIFO list of
+/// per-waiter wait nodes — each waiter parks on its *own* condition variable, so a
+/// freed slot wakes exactly the one oldest waiter (targeted wakeup, no thundering
+/// herd). Deliberately **not** a std::counting_semaphore so that (1) the limit can
+/// be resized at runtime via SET GLOBAL, (2) the active/queued counts can be
+/// introspected for a SQL-monitor view, and (3) admission order is fair. A single
+/// controller is owned by the server and shared across all sessions.
 class AdmissionController {
  public:
   AdmissionController() = default;
@@ -87,13 +96,20 @@ class AdmissionController {
 
   /// Max concurrently executing statements. <= 0 means unlimited (disabled).
   void SetLimit(int32_t limit) {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      limit_ = limit < 0 ? 0 : limit;
+    std::lock_guard<std::mutex> lock(mutex_);
+    limit_ = limit < 0 ? 0 : limit;
+    if (limit_ <= 0) {
+      // Disabled => unlimited: release every blocked waiter as an inert handle,
+      // oldest first (order is immaterial here — they all proceed untracked).
+      for (Waiter* w : waiters_) {
+        w->status = WaiterStatus::kGrantedInert;
+        w->cv.notify_one();
+      }
+      waiters_.clear();
+    } else {
+      // Raising the limit can free capacity; hand it to the oldest waiters first.
+      PromoteWaiters();
     }
-    // Raising the limit (or disabling it) can free capacity for blocked waiters,
-    // so wake them all to re-check the predicate.
-    cv_.notify_all();
   }
 
   /// Max statements that may wait for a slot at once. <= 0 means unbounded.
@@ -130,7 +146,7 @@ class AdmissionController {
   /// Number of statements currently blocked waiting for a slot.
   int32_t QueuedCount() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return waiting_;
+    return static_cast<int32_t>(waiters_.size());
   }
 
   // --- admission ---
@@ -139,14 +155,16 @@ class AdmissionController {
   ///
   /// If \p enforce is false or the limit is <= 0, returns immediately with an
   /// inert handle (no gating, nothing tracked). Otherwise:
-  ///   * if a slot is free, takes it and returns a holding handle;
+  ///   * if a slot is free and nobody is queued ahead, takes it and returns a
+  ///     holding handle;
   ///   * else, if a waiter bound is set and already reached, returns a
   ///     "queue full" error without waiting;
-  ///   * else blocks until a slot frees, or — when \p max_queue_wait_seconds > 0
-  ///     and that wait elapses first — returns a "queue wait timeout" error.
+  ///   * else joins the back of the FIFO queue and blocks until it reaches the
+  ///     front and a slot frees, or — when \p max_queue_wait_seconds > 0 and that
+  ///     wait elapses first — returns a "queue wait timeout" error.
   ///
-  /// The returned handle releases its slot on destruction (RAII). Hold it for the
-  /// full duration of statement execution.
+  /// Waiters are admitted in strict FIFO order. The returned handle releases its
+  /// slot on destruction (RAII); hold it for the full duration of execution.
   arrow::Result<AdmissionSlot> Acquire(bool enforce, int32_t max_queue_wait_seconds) {
     if (!enforce) return AdmissionSlot{};
 
@@ -154,14 +172,17 @@ class AdmissionController {
 
     if (limit_ <= 0) return AdmissionSlot{};  // disabled => unlimited
 
-    // Fast path: capacity is available right now.
-    if (active_ < limit_) {
+    // Fast path: capacity is available right now AND nobody is queued ahead of us.
+    // The empty-queue check is what makes admission FIFO — a fresh arrival never
+    // jumps the queue. (Invariant: whenever capacity is free, the queue is empty,
+    // because ReleaseSlot/SetLimit always drain free capacity to waiters first.)
+    if (active_ < limit_ && waiters_.empty()) {
       ++active_;
       return AdmissionSlot{this};
     }
 
-    // No capacity. Enforce the waiter bound before we block.
-    if (max_queued_ > 0 && waiting_ >= max_queued_) {
+    // No slot for us right now. Enforce the waiter bound before we block.
+    if (max_queued_ > 0 && static_cast<int32_t>(waiters_.size()) >= max_queued_) {
       // TODO(phase 2): surface this as a Flight UNAVAILABLE (retriable) error.
       return arrow::Status::Invalid(
           "Statement queue is full (max_concurrent_statements=" +
@@ -170,51 +191,84 @@ class AdmissionController {
           "); retry shortly.");
     }
 
-    // "Capacity" includes the case where the limit was disabled while we waited.
-    const auto has_capacity = [this]() { return limit_ <= 0 || active_ < limit_; };
+    // Join the back of the FIFO and block on our own condition variable until a
+    // granter (ReleaseSlot / SetLimit) hands us a slot, or our bounded wait
+    // elapses. A granter signals us by setting `status` and removing us from the
+    // queue, so the predicate is simply "status changed".
+    Waiter self;
+    waiters_.push_back(&self);
+    const auto it = std::prev(waiters_.end());
+    const auto granted = [&self] { return self.status != WaiterStatus::kWaiting; };
 
-    ++waiting_;
-    bool got_capacity;
+    bool signaled;
     if (max_queue_wait_seconds <= 0) {
-      cv_.wait(lock, has_capacity);
-      got_capacity = true;
+      self.cv.wait(lock, granted);
+      signaled = true;
     } else {
-      got_capacity = cv_.wait_for(
-          lock, std::chrono::seconds(max_queue_wait_seconds), has_capacity);
+      signaled = self.cv.wait_for(
+          lock, std::chrono::seconds(max_queue_wait_seconds), granted);
     }
-    --waiting_;
 
-    if (!got_capacity) {
+    if (!signaled) {
+      // Bounded wait elapsed and we were never granted. We still hold `mutex_`
+      // and our status is still kWaiting (the predicate-returning wait_for
+      // re-checks under the lock, so a concurrent grant would have flipped it to
+      // true), which means no granter has touched us — `it` is valid and removing
+      // ourselves from the FIFO is ours to do.
+      waiters_.erase(it);
       // TODO(phase 2): surface this as a Flight UNAVAILABLE (retriable) error.
       return arrow::Status::Invalid(
           "Statement queued longer than max_queue_wait (" +
           std::to_string(max_queue_wait_seconds) + "s); retry shortly.");
     }
 
-    // Re-check under the lock: the limit may have been disabled while we waited.
-    if (limit_ <= 0) return AdmissionSlot{};  // became unlimited => inert handle
-    ++active_;
-    return AdmissionSlot{this};
+    // Granted: the granter already removed us from the FIFO and accounted for the
+    // slot (kGrantedSlot => ++active_ done on our behalf; kGrantedInert => the
+    // limit was disabled while we waited, so we proceed untracked/unlimited).
+    if (self.status == WaiterStatus::kGrantedSlot) return AdmissionSlot{this};
+    return AdmissionSlot{};
   }
 
  private:
   friend class AdmissionSlot;
 
-  void ReleaseSlot() {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (active_ > 0) --active_;
+  enum class WaiterStatus {
+    kWaiting,       // still blocked in the FIFO
+    kGrantedSlot,   // handed a real, tracked slot (active_ already incremented)
+    kGrantedInert,  // released into unlimited mode; return an inert handle
+  };
+  struct Waiter {
+    std::condition_variable cv;
+    WaiterStatus status = WaiterStatus::kWaiting;
+  };
+
+  /// Hand free capacity to the oldest waiters, in FIFO order, until the limit is
+  /// reached or the queue drains. Caller must hold `mutex_`. Each promoted waiter
+  /// is removed from the FIFO and counted into `active_` here, then woken via its
+  /// own condition variable — a targeted wakeup, never a broadcast.
+  void PromoteWaiters() {
+    while (limit_ > 0 && active_ < limit_ && !waiters_.empty()) {
+      Waiter* w = waiters_.front();
+      waiters_.pop_front();
+      w->status = WaiterStatus::kGrantedSlot;
+      ++active_;
+      w->cv.notify_one();
     }
-    cv_.notify_one();  // exactly one slot freed => wake exactly one waiter
+  }
+
+  void ReleaseSlot() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (active_ > 0) --active_;
+    // The freed slot belongs to the oldest waiter (FIFO), if any.
+    PromoteWaiters();
   }
 
   mutable std::mutex mutex_;
-  std::condition_variable cv_;
   int32_t limit_ = 0;       // 0 => unlimited / disabled
   int32_t max_queued_ = 0;  // 0 => unbounded waiters
   int32_t default_max_queue_wait_seconds_ = 0;  // 0 => wait indefinitely
   int32_t active_ = 0;      // statements currently holding a slot
-  int32_t waiting_ = 0;     // statements currently blocked in Acquire()
+  std::list<Waiter*> waiters_;  // FIFO order; front() == oldest waiter
 };
 
 inline void AdmissionSlot::Release() {

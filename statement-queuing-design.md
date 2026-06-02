@@ -161,12 +161,15 @@ and `KILL`/`SET` short-circuit before it for free.
 
 ### 5.1 The admission gate
 
-A **CV-guarded counter** (`std::mutex` + `std::condition_variable` + `int active_` +
-`int limit_`) of depth `N = max_concurrent_statements` — **not** a
-`std::counting_semaphore`. The counter form is mandated for two reasons: (1) it is
-introspectable for live `queue_position`, and (2) its `limit_` is **runtime-resizable**
+A **FIFO admission queue** — a `std::mutex`-guarded counter (`int active_` +
+`int limit_`) of depth `N = max_concurrent_statements`, paired with a FIFO list of
+per-waiter wait nodes (each parking on its **own** `std::condition_variable`) —
+**not** a `std::counting_semaphore`. This form is mandated for three reasons: (1) it
+is introspectable for live `queue_position`, (2) its `limit_` is **runtime-resizable**
 (see §5.6), which `std::counting_semaphore` cannot do (its maximum is fixed at
-construction). Acquired immediately before the `std::async` launch
+construction), and (3) it admits waiters in **strict FIFO order**, waking exactly the
+one oldest waiter when a slot frees (targeted wakeup — no thundering herd, no
+barging by fresh arrivals) — a fairness guarantee a semaphore does not provide. Acquired immediately before the `std::async` launch
 (`duckdb_statement.cpp:~1360`), released after `future.get()` and on every exit path
 (timeout-interrupt branch ~`:1480–1508`, exceptions). RAII guard strongly preferred
 so the slot is released on any unwind.
@@ -273,8 +276,9 @@ because it follows what the knob actually governs:**
 | `gizmosql.bypass_queue` | ✓ (admin may set `true`/`false`; non-admin may not set `true`) | — | Per-session. |
 
 **Live-resize semantics (the `AdmissionController`'s `SetLimit(n)` / `SetMaxQueued(m)`):**
-because the gate is a CV-guarded counter (§5.1), resizing is just mutating `limit_`
-under the lock + `notify_all()`:
+because the gate is the FIFO counter (§5.1), resizing is just mutating `limit_`
+under the lock and then promoting the oldest waiters into any freed capacity — each
+woken via its own condition variable (targeted; no `notify_all` broadcast):
 
 - **Raise `N`:** waiting statements wake and proceed up to the new limit.
 - **Lower `N` below `active_`:** running queries are **not** preempted; new
@@ -611,7 +615,8 @@ All follow the existing plumbing conventions (see §10). Booleans use the
 - Licensed vs unlicensed: cap enforced/queues vs cap ignored (use
   `license_keys/license_GizmoData_LLC.txt`).
 - `N` slots: `N+k` concurrent statements → exactly `N` execute, `k` queue, all
-  eventually complete; FIFO-ish ordering.
+  eventually complete; **strict FIFO** admission order (oldest waiter first),
+  covered by a dedicated unit test plus a timeout-removal test.
 - Internal-query exemption: metadata RPCs never block even when slots are full.
 - Admin bypass: with slots full, an admin session's `SELECT` + `KILL SESSION` run
   immediately; non-admin `SET bypass_queue=true` is rejected.

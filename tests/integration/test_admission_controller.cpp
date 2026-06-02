@@ -253,3 +253,80 @@ TEST(AdmissionControllerTest, ConcurrencyNeverExceedsLimit) {
   EXPECT_EQ(controller.ActiveCount(), 0);
   EXPECT_EQ(controller.QueuedCount(), 0);
 }
+
+// Strict FIFO: with the slot occupied, waiters that queue in a known order are
+// admitted in exactly that order — no barging, no reordering. Each waiter records
+// the global rank at which it was admitted; that rank must equal its enqueue
+// position. Enqueue order is made deterministic by waiting for each waiter to
+// register in the queue before launching the next.
+TEST(AdmissionControllerTest, AdmitsInFifoOrder) {
+  AdmissionController controller;
+  controller.SetLimit(1);
+  auto held = AcquireOk(controller);  // occupy the only slot
+
+  constexpr int kWaiters = 8;
+  std::vector<int> admit_rank(kWaiters, -1);
+  std::atomic<int> next_rank{0};
+  std::vector<std::thread> threads;
+  threads.reserve(kWaiters);
+
+  for (int i = 0; i < kWaiters; ++i) {
+    threads.emplace_back([&, i] {
+      auto slot = AcquireOk(controller);       // blocks until admitted
+      admit_rank[i] = next_rank.fetch_add(1);  // rank at which we were admitted
+      // Slot released as the handle leaves scope, admitting the next waiter.
+    });
+    // Waiter i must be fully enqueued before i+1 starts, so the FIFO order is
+    // deterministically [0, 1, ..., kWaiters-1].
+    ASSERT_TRUE(WaitFor([&] { return controller.QueuedCount() == i + 1; }));
+  }
+
+  held = AdmissionSlot{};  // release: admissions cascade in FIFO order
+  for (auto& t : threads) t.join();
+
+  for (int i = 0; i < kWaiters; ++i) {
+    EXPECT_EQ(admit_rank[i], i) << "waiter " << i << " admitted out of FIFO order";
+  }
+  EXPECT_EQ(controller.QueuedCount(), 0);
+  EXPECT_EQ(controller.ActiveCount(), 0);
+}
+
+// A queued waiter that times out is cleanly removed from the FIFO without
+// consuming a slot, and the waiter behind it is still admitted once a slot frees.
+TEST(AdmissionControllerTest, TimedOutWaiterIsRemovedFifoContinues) {
+  AdmissionController controller;
+  controller.SetLimit(1);
+  auto held = AcquireOk(controller);  // occupy the only slot
+
+  // Waiter A: bounded wait, will time out while B waits behind it.
+  std::atomic<bool> a_rejected{false};
+  std::thread a([&] {
+    auto r = controller.Acquire(/*enforce=*/true, /*max_queue_wait_seconds=*/1);
+    a_rejected.store(!r.ok());
+  });
+  ASSERT_TRUE(WaitFor([&] { return controller.QueuedCount() == 1; }));
+
+  // Waiter B: unbounded, enqueued strictly behind A.
+  std::atomic<bool> b_holds_slot{false};
+  std::thread b([&] {
+    auto slot = AcquireOk(controller);
+    b_holds_slot.store(slot.holds_slot());
+  });
+  ASSERT_TRUE(WaitFor([&] { return controller.QueuedCount() == 2; }));
+
+  // A times out (~1s) and drops out; the queue shrinks to just B, and the timeout
+  // consumed no slot.
+  ASSERT_TRUE(
+      WaitFor([&] { return a_rejected.load(); }, std::chrono::milliseconds(3000)));
+  ASSERT_TRUE(WaitFor([&] { return controller.QueuedCount() == 1; }));
+  EXPECT_FALSE(b_holds_slot.load());  // B still blocked: the slot is still held
+
+  // Releasing the held slot admits B — proving the slot survived A's timeout and
+  // FIFO continued to the next waiter.
+  held = AdmissionSlot{};
+  b.join();
+  a.join();
+  EXPECT_TRUE(b_holds_slot.load());
+  EXPECT_EQ(controller.QueuedCount(), 0);
+  EXPECT_EQ(controller.ActiveCount(), 0);
+}

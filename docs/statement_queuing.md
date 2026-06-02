@@ -37,6 +37,7 @@ All settings are available as CLI flags, environment variables, and `RunFlightSQ
 | Memory limit (partner knob) | `--memory-limit` | `GIZMOSQL_MEMORY_LIMIT` | unset → DuckDB default (80% RAM) | server |
 
 - **Concurrency limit (`N`)** — execution slots. `0` disables the queue entirely (unlimited concurrency). Internal/metadata introspection queries (`GetTables`, `GetCatalogs`, …) are **exempt** and never consume a slot.
+- **Admission order** — strictly **FIFO**. When a slot frees it goes to the statement that has waited longest, and a newly‑arriving statement never barges ahead of one already queued. This guarantees fairness and bounds worst‑case wait — no statement can be starved by a steady stream of later arrivals.
 - **Waiter bound (`M`)** — how many statements may *wait* for a slot at once. Beyond it, a statement is **rejected** with a retriable Flight `UNAVAILABLE` error rather than queued. This protects the gRPC handler thread pool. The default auto‑sizes to `8 × N`.
 - **Queue wait** — how long a statement may wait before being rejected with a retriable error. `0` waits indefinitely. Override per session with `SET SESSION gizmosql.max_queue_wait = <seconds>`.
 - **Memory limit** — not part of the queue itself, but its natural partner: set `memory_limit`, then size `max_concurrent_statements` so that *N × (typical peak query memory)* fits the budget.
