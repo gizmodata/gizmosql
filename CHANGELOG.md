@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **PostgreSQL-backed instrumentation** [Enterprise]. Instrumentation can now target a plain **PostgreSQL** database as its catalog — the recommended store for multi-instance deployments where several GizmoSQL servers share one instrumentation catalog. Attach a PostgreSQL database in `--init-sql-commands` (e.g. `ATTACH 'host=… dbname=… user=…' AS instr (TYPE postgres)`) and point `--instrumentation-catalog` at it; GizmoSQL **auto-detects** the backend (via `duckdb_databases().type`) and builds a full relational schema. Unlike DuckLake, PostgreSQL has row-level MVCC: each instance writes its own (disjoint) rows, so concurrent instances don't conflict and finalize/stop updates aren't lost to cross-instance contention (the DuckLake failure mode). The schema adds:
+  - **Primary keys** on every table and **foreign keys with `ON DELETE CASCADE`**, so time-based retention pruning is a single delete on the parent — `DELETE FROM <catalog>.<schema>.instances WHERE stop_time < <cutoff>` cascades to that instance's sessions, statements, and executions.
+  - **`CHECK` constraints** on the status columns (instance/session/execution status).
+  - **Indexes** on every foreign-key column and every `TIMESTAMPTZ` lifecycle column (start/stop/created/execution/enqueue times), so time-range queries and time-based deletes stay fast.
+  - PostgreSQL objects are created with native SQL via `postgres_execute()` (bypassing DuckDB's DDL translation), and the convenience views (`session_activity`, `active_sessions`, `session_stats`, `execution_details`) use portable SQL. JSON-valued columns (tags, query profile) are stored as `VARCHAR` on PostgreSQL — they hold JSON strings; query them with a `::json` cast.
+- **Constraints and indexes restored for file-based instrumentation** [Enterprise]. The default file-based (DuckDB) instrumentation database now also gets primary keys, `CHECK` constraints on status columns, and indexes on foreign-key and `TIMESTAMPTZ` columns — all of which had been removed for DuckLake compatibility. (Foreign keys are added on PostgreSQL but **not** on DuckDB, which implements UPDATE as delete+insert and so rejects updates to a still-referenced parent row, which the instrumentation lifecycle performs.) New constraints apply to newly-created instrumentation databases; existing databases keep working and pick up the indexes.
+
+### Deprecated
+
+- **DuckLake-backed instrumentation** [Enterprise]. Using a DuckLake catalog as the instrumentation store is **deprecated**. DuckLake's table-level optimistic concurrency cannot reliably absorb concurrent UPDATEs from multiple GizmoSQL instances sharing one catalog: a finalize/stop UPDATE that loses a commit conflict is silently dropped, leaving records **permanently stuck** (e.g. an execution stuck at `status='executing'`, never cleaned up in shared-catalog mode). The server now logs a startup **WARNING** when instrumentation resolves to a DuckLake catalog. Use the default **file-based** instrumentation (single instance) or a plain **PostgreSQL** catalog (multiple instances) instead. DuckLake support remains until the upstream concurrent-UPDATE issue is resolved — data loss is not acceptable for observability.
+
+### Fixed
+
+- **Instrumentation writes are now explicitly transactional** [Enterprise]. The dedicated instrumentation writer thread previously executed each queued write under DuckDB's implicit auto-commit. It now wraps each write in an **explicit transaction** with a guaranteed `COMMIT` on success and `ROLLBACK` on error (RAII-guarded), giving a deterministic commit boundary so the writer connection is never left parked inside an open transaction between writes. This matters when instrumentation targets an external **DuckLake catalog backed by PostgreSQL**: a writer connection sitting on an unclosed catalog transaction across its idle wait can surface as a long-lived **`idle in transaction`** session on the PostgreSQL catalog. A failed write is isolated to its own transaction and never affects the writes queued around it.
+
 ## [1.27.1] - 2026-06-02
 
 ### Changed

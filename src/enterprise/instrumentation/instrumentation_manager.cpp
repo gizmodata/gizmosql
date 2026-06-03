@@ -295,6 +295,239 @@ std::string GetSchemaSQL(const std::string& catalog, const std::string& schema) 
   return sql;
 }
 
+// ---------------------------------------------------------------------------
+// Full relational schema (file-based DuckDB and PostgreSQL)
+//
+// The DuckLake template above is intentionally constraint-free (DuckLake cannot
+// enforce keys or indexes). Backends that DO support them — file-based DuckDB
+// and plain PostgreSQL — get primary keys, foreign keys, CHECK constraints on
+// status columns, and indexes on foreign-key + hot query columns. The schema is
+// built from a single source of truth, parameterized by a qualification
+// `prefix`, so the two backends never drift:
+//   * DuckDB: prefix = "" — statements run after `USE <catalog>.<schema>`.
+//   * PostgreSQL: prefix = "<schema>." — statements are schema-qualified and run
+//     as native PG SQL via postgres_execute().
+// Column types (UUID, VARCHAR, TIMESTAMP WITH TIME ZONE, BOOLEAN, INTEGER,
+// BIGINT, JSON) and CHECK/EXTRACT(EPOCH ...) expressions are valid on both
+// engines, so the same text works verbatim for each.
+
+/// The four convenience views, parameterized by qualification prefix. Uses only
+/// portable SQL: EXTRACT(EPOCH FROM ...) (not DuckDB's epoch()/date_diff()) and
+/// an explicit GROUP BY (not GROUP BY ALL), so it creates on PostgreSQL too.
+std::vector<std::string> BuildViewStatements(const std::string& p) {
+  return {
+      "CREATE OR REPLACE VIEW " + p + "session_activity AS SELECT "
+      "i.instance_id, i.gizmosql_version, i.gizmosql_edition, i.duckdb_version, "
+      "i.arrow_version, i.hostname, i.hostname_arg, i.server_ip, i.port, "
+      "i.database_path, i.start_time AS instance_start_time, "
+      "i.stop_time AS instance_stop_time, i.status AS instance_status, "
+      "i.stop_reason AS instance_stop_reason, i.instance_tag, s.session_id, "
+      "s.username, s.role, s.auth_method, s.peer, "
+      "s.start_time AS session_start_time, s.stop_time AS session_stop_time, "
+      "s.status AS session_status, s.stop_reason AS session_stop_reason, "
+      "s.session_tag, st.statement_id, st.sql_text, "
+      "st.created_time AS statement_created_time, e.execution_id, "
+      "e.bind_parameters, e.execution_start_time, e.execution_end_time, "
+      "e.rows_fetched, e.status AS execution_status, e.error_message, "
+      "e.duration_ms, e.query_profile, st.query_tag "
+      "FROM " + p + "instances i "
+      "LEFT JOIN " + p + "sessions s ON i.instance_id = s.instance_id "
+      "LEFT JOIN " + p + "sql_statements st ON s.session_id = st.session_id "
+      "LEFT JOIN " + p + "sql_executions e ON st.statement_id = e.statement_id",
+
+      "CREATE OR REPLACE VIEW " + p + "active_sessions AS SELECT "
+      "s.session_id, s.instance_id, s.username, s.role, s.auth_method, s.peer, "
+      "s.peer_identity, s.user_agent, s.connection_protocol, s.start_time, "
+      "s.status, i.hostname, i.hostname_arg, i.server_ip, i.port, "
+      "i.database_path, s.session_tag, i.instance_tag, "
+      "EXTRACT(EPOCH FROM (now() - s.start_time)) AS session_duration_seconds "
+      "FROM " + p + "sessions s "
+      "JOIN " + p + "instances i ON s.instance_id = i.instance_id "
+      "WHERE s.status = 'active' AND i.status = 'running'",
+
+      "CREATE OR REPLACE VIEW " + p + "session_stats AS SELECT "
+      "s.session_id, s.instance_id, s.username, s.role, s.auth_method, s.peer, "
+      "s.start_time, s.stop_time, s.status AS session_status, "
+      "COUNT(DISTINCT st.statement_id) AS total_statements, "
+      "COUNT(e.execution_id) AS total_executions, "
+      "SUM(CASE WHEN e.status = 'success' THEN 1 ELSE 0 END) AS successful_executions, "
+      "SUM(CASE WHEN e.status = 'error' THEN 1 ELSE 0 END) AS failed_executions, "
+      "SUM(CASE WHEN e.status = 'timeout' THEN 1 ELSE 0 END) AS timed_out_executions, "
+      "SUM(CASE WHEN e.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_executions, "
+      "SUM(e.rows_fetched) AS total_rows_fetched, "
+      "AVG(e.duration_ms) AS avg_duration_ms, MAX(e.duration_ms) AS max_duration_ms "
+      "FROM " + p + "sessions s "
+      "LEFT JOIN " + p + "sql_statements st ON s.session_id = st.session_id "
+      "LEFT JOIN " + p + "sql_executions e ON st.statement_id = e.statement_id "
+      "GROUP BY s.session_id, s.instance_id, s.username, s.role, s.auth_method, "
+      "s.peer, s.start_time, s.stop_time, s.status",
+
+      "CREATE OR REPLACE VIEW " + p + "execution_details AS SELECT "
+      "e.execution_id, e.statement_id, st.session_id, s.instance_id, st.sql_text, "
+      "e.bind_parameters, e.execution_start_time, e.execution_end_time, "
+      "e.enqueue_time, CASE WHEN e.enqueue_time IS NOT NULL THEN "
+      "CAST(EXTRACT(EPOCH FROM (e.execution_start_time - e.enqueue_time)) * 1000 AS BIGINT) "
+      "END AS queue_wait_ms, e.rows_fetched, e.status, e.error_message, "
+      "e.duration_ms, e.query_profile, s.username, s.auth_method, s.peer, "
+      "st.query_tag, s.session_tag "
+      "FROM " + p + "sql_executions e "
+      "JOIN " + p + "sql_statements st ON e.statement_id = st.statement_id "
+      "JOIN " + p + "sessions s ON st.session_id = s.session_id",
+  };
+}
+
+/// All schema statements (tables, additive migrations, indexes, views) for a
+/// constraint-capable backend.
+///
+/// Parameters:
+///  - `p`: qualification prefix ("" for DuckDB after USE, "<schema>." for PG).
+///  - `json_type`: type for JSON-valued columns. DuckDB uses its native JSON
+///    type; PostgreSQL uses VARCHAR, because DuckDB's postgres extension cannot
+///    bind a VARCHAR value to a PG json column in an UPDATE (the values are JSON
+///    strings either way — query them on PG with a `::json` cast).
+///  - `with_fk`: emit FOREIGN KEY clauses. Enabled for PostgreSQL; DISABLED for
+///    file-based DuckDB, because DuckDB implements UPDATE as delete+insert and
+///    so rejects updates to a parent row that is still referenced by a child
+///    (its documented foreign-key limitation) — and the instrumentation
+///    lifecycle updates parent rows (session/instance stop, stale cleanup).
+std::vector<std::string> BuildSchemaStatements(const std::string& p,
+                                               const std::string& json_type,
+                                               bool with_fk) {
+  // ON DELETE CASCADE so retention pruning is a single delete on the parent:
+  // e.g. DELETE FROM <catalog>.<schema>.instances WHERE stop_time < <cutoff>
+  // cascades to that instance's sessions, statements, and executions.
+  auto fk = [&](const char* parent, const char* col) -> std::string {
+    return with_fk ? (" REFERENCES " + p + parent + "(" + col + ") ON DELETE CASCADE")
+                   : std::string();
+  };
+  std::vector<std::string> stmts = {
+      "CREATE TABLE IF NOT EXISTS " + p + "instances ("
+      "instance_id UUID PRIMARY KEY, gizmosql_version VARCHAR NOT NULL, "
+      "gizmosql_edition VARCHAR NOT NULL, duckdb_version VARCHAR NOT NULL, "
+      "arrow_version VARCHAR NOT NULL, hostname VARCHAR, hostname_arg VARCHAR, "
+      "server_ip VARCHAR, port INTEGER, database_path VARCHAR, "
+      "tls_enabled BOOLEAN NOT NULL, tls_cert_path VARCHAR, tls_key_path VARCHAR, "
+      "mtls_required BOOLEAN NOT NULL, mtls_ca_cert_path VARCHAR, "
+      "readonly BOOLEAN NOT NULL, os_platform VARCHAR, os_name VARCHAR, "
+      "os_version VARCHAR, cpu_arch VARCHAR, cpu_model VARCHAR, cpu_count INTEGER, "
+      "memory_total_bytes BIGINT, start_time TIMESTAMP WITH TIME ZONE NOT NULL, "
+      "stop_time TIMESTAMP WITH TIME ZONE, "
+      "status VARCHAR NOT NULL CHECK (status IN ('running', 'stopped')), "
+      "stop_reason VARCHAR, instance_tag JSON)",
+
+      "CREATE TABLE IF NOT EXISTS " + p + "sessions ("
+      "session_id UUID PRIMARY KEY, "
+      "instance_id UUID NOT NULL" + fk("instances", "instance_id") + ", "
+      "username VARCHAR NOT NULL, role VARCHAR NOT NULL, auth_method VARCHAR NOT NULL, "
+      "peer VARCHAR NOT NULL, peer_identity VARCHAR, user_agent VARCHAR, "
+      "connection_protocol VARCHAR NOT NULL, "
+      "start_time TIMESTAMP WITH TIME ZONE NOT NULL, "
+      "stop_time TIMESTAMP WITH TIME ZONE, "
+      "status VARCHAR NOT NULL CHECK (status IN ('active', 'closed', 'killed', 'timeout', 'error')), "
+      "stop_reason VARCHAR, session_tag JSON)",
+
+      "CREATE TABLE IF NOT EXISTS " + p + "sql_statements ("
+      "statement_id UUID PRIMARY KEY, "
+      "session_id UUID NOT NULL" + fk("sessions", "session_id") + ", "
+      "sql_text VARCHAR NOT NULL, flight_method VARCHAR, is_internal BOOLEAN NOT NULL, "
+      "prepare_success BOOLEAN NOT NULL, prepare_error VARCHAR, "
+      "created_time TIMESTAMP WITH TIME ZONE NOT NULL, query_tag JSON)",
+
+      "CREATE TABLE IF NOT EXISTS " + p + "sql_executions ("
+      "execution_id UUID PRIMARY KEY, "
+      "statement_id UUID NOT NULL" + fk("sql_statements", "statement_id") + ", "
+      "bind_parameters VARCHAR, "
+      "execution_start_time TIMESTAMP WITH TIME ZONE NOT NULL, "
+      "execution_end_time TIMESTAMP WITH TIME ZONE, "
+      "enqueue_time TIMESTAMP WITH TIME ZONE, rows_fetched BIGINT, "
+      "status VARCHAR NOT NULL CHECK (status IN ('queued', 'executing', 'success', 'error', 'timeout', 'cancelled')), "
+      "error_message VARCHAR, duration_ms BIGINT, query_profile JSON)",
+
+      // Additive migrations (safe to re-run on an existing schema)
+      "ALTER TABLE " + p + "instances ADD COLUMN IF NOT EXISTS instance_tag JSON",
+      "ALTER TABLE " + p + "sessions ADD COLUMN IF NOT EXISTS session_tag JSON",
+      "ALTER TABLE " + p + "sql_statements ADD COLUMN IF NOT EXISTS query_tag JSON",
+      "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS enqueue_time TIMESTAMP WITH TIME ZONE",
+      "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS query_profile JSON",
+
+      // Indexes on foreign-key (child) columns, status, and every TIMESTAMPTZ
+      // lifecycle column. Indexing the timestamps keeps time-range queries and
+      // time-based retention deletes fast — in particular the stop_time /
+      // execution_end_time columns used to prune old data (e.g. DELETE FROM
+      // instances WHERE stop_time < <cutoff>, which cascades to children).
+      "CREATE INDEX IF NOT EXISTS idx_instances_start_time ON " + p + "instances(start_time)",
+      "CREATE INDEX IF NOT EXISTS idx_instances_stop_time ON " + p + "instances(stop_time)",
+      "CREATE INDEX IF NOT EXISTS idx_sessions_instance_id ON " + p + "sessions(instance_id)",
+      "CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON " + p + "sessions(start_time)",
+      "CREATE INDEX IF NOT EXISTS idx_sessions_stop_time ON " + p + "sessions(stop_time)",
+      "CREATE INDEX IF NOT EXISTS idx_sessions_status ON " + p + "sessions(status)",
+      "CREATE INDEX IF NOT EXISTS idx_sql_statements_session_id ON " + p + "sql_statements(session_id)",
+      "CREATE INDEX IF NOT EXISTS idx_sql_statements_created_time ON " + p + "sql_statements(created_time)",
+      "CREATE INDEX IF NOT EXISTS idx_sql_executions_statement_id ON " + p + "sql_executions(statement_id)",
+      "CREATE INDEX IF NOT EXISTS idx_sql_executions_execution_start_time ON " + p + "sql_executions(execution_start_time)",
+      "CREATE INDEX IF NOT EXISTS idx_sql_executions_execution_end_time ON " + p + "sql_executions(execution_end_time)",
+      "CREATE INDEX IF NOT EXISTS idx_sql_executions_enqueue_time ON " + p + "sql_executions(enqueue_time)",
+      "CREATE INDEX IF NOT EXISTS idx_sql_executions_status ON " + p + "sql_executions(status)",
+  };
+  // Substitute the JSON column type (the literals above use " JSON", which
+  // only ever appears as a type token here — never in a value or identifier).
+  if (json_type != "JSON") {
+    const std::string from = " JSON";
+    const std::string to = " " + json_type;
+    for (auto& stmt : stmts) {
+      size_t pos = 0;
+      while ((pos = stmt.find(from, pos)) != std::string::npos) {
+        stmt.replace(pos, from.size(), to);
+        pos += to.size();
+      }
+    }
+  }
+
+  auto views = BuildViewStatements(p);
+  stmts.insert(stmts.end(), views.begin(), views.end());
+  return stmts;
+}
+
+/// Full relational schema as a single multi-statement DuckDB script (file-based
+/// backend). Statements are unqualified and rely on the leading USE.
+std::string GetDuckDBSchemaSQL(const std::string& catalog, const std::string& schema) {
+  std::string sql = "USE " + catalog + "." + schema + ";\n";
+  // No foreign keys on DuckDB: it implements UPDATE as delete+insert and rejects
+  // updates to a referenced parent row, which the instrumentation lifecycle does.
+  for (const auto& stmt :
+       BuildSchemaStatements(/*prefix=*/"", /*json_type=*/"JSON", /*with_fk=*/false)) {
+    sql += stmt + ";\n";
+  }
+  return sql;
+}
+
+/// Run one native PostgreSQL DDL statement on the attached catalog via
+/// postgres_execute(), escaping single quotes for the SQL-string argument. This
+/// bypasses DuckDB's DDL translation, which mistranslates view functions
+/// (epoch()/date_diff()) and rejects catalog-qualified references.
+arrow::Status RunPostgresDDL(duckdb::Connection& conn, const std::string& catalog,
+                             const std::string& sql) {
+  // Both arguments of postgres_execute() are SQL string literals, so double any
+  // single quotes in each (the catalog is an operator-supplied attach name).
+  auto sql_quote = [](const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 16);
+    for (char c : s) {
+      out += c;
+      if (c == '\'') out += '\'';
+    }
+    return out;
+  };
+  auto result = conn.Query("CALL postgres_execute('" + sql_quote(catalog) + "', '" +
+                           sql_quote(sql) + "')");
+  if (result->HasError()) {
+    return arrow::Status::Invalid(
+        "Failed to execute PostgreSQL instrumentation DDL [", sql.substr(0, 60),
+        "...]: ", result->GetError());
+  }
+  return arrow::Status::OK();
+}
+
 }  // namespace
 
 InstrumentationManager::InstrumentationManager(
@@ -494,6 +727,21 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
         db_path, catalog, schema, use_external_catalog,
         std::move(db_instance), std::move(writer_connection)));
 
+    // Resolve the storage backend now that the catalog is attached; it selects
+    // the schema dialect in InitializeSchema().
+    manager->backend_ = manager->DetectBackend();
+    if (manager->backend_ == Backend::kDuckLake) {
+      GIZMOSQL_LOG(WARNING)
+          << "DuckLake-backed instrumentation is DEPRECATED and not recommended: "
+             "concurrent writes from multiple GizmoSQL instances to a shared "
+             "DuckLake catalog can lose UPDATEs (e.g. execution finalization), "
+             "leaving records permanently stuck (e.g. status='executing'). Use the "
+             "default file-based instrumentation, or a plain PostgreSQL catalog "
+             "(--instrumentation-catalog pointing at an attached postgres "
+             "database) for multi-instance deployments. DuckLake support remains "
+             "until the upstream concurrent-UPDATE issue is resolved.";
+    }
+
     ARROW_RETURN_NOT_OK(manager->InitializeSchema());
 
     // Restore staged rows from the TIMESTAMPTZ migration. InitializeSchema has
@@ -533,6 +781,39 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
   }
 }
 
+InstrumentationManager::Backend InstrumentationManager::DetectBackend() {
+  // Resolve the storage backend from the attached catalog's database type.
+  // duckdb_databases().type is e.g. 'duckdb' (file/memory), 'postgres', or
+  // 'ducklake'. Anything unrecognized is treated as a file-based DuckDB
+  // catalog (the safe default — full schema, no postgres_execute).
+  try {
+    auto stmt = writer_connection_->Get().Prepare(
+        "SELECT lower(type) FROM duckdb_databases() WHERE database_name = $1");
+    if (!stmt || stmt->HasError()) {
+      return Backend::kDuckDBFile;
+    }
+    duckdb::vector<duckdb::Value> args{duckdb::Value(catalog_)};
+    auto raw = stmt->Execute(args, /*allow_stream_result=*/false);
+    if (!raw || raw->HasError()) {
+      return Backend::kDuckDBFile;
+    }
+    auto& result = raw->Cast<duckdb::MaterializedQueryResult>();
+    if (result.RowCount() == 0) {
+      return Backend::kDuckDBFile;
+    }
+    const std::string type = result.GetValue(0, 0).ToString();
+    if (type.find("postgres") != std::string::npos) {
+      return Backend::kPostgres;
+    }
+    if (type.find("ducklake") != std::string::npos) {
+      return Backend::kDuckLake;
+    }
+    return Backend::kDuckDBFile;
+  } catch (const std::exception&) {
+    return Backend::kDuckDBFile;
+  }
+}
+
 arrow::Status InstrumentationManager::InitializeSchema() {
   try {
     // Ensure the json extension is loaded (required for JSON column type)
@@ -542,8 +823,18 @@ arrow::Status InstrumentationManager::InitializeSchema() {
                                     json_result->GetError());
     }
 
-    // Generate schema SQL with actual catalog and schema names
-    std::string schema_sql = GetSchemaSQL(catalog_, schema_);
+    // PostgreSQL gets the full relational schema built with native PG SQL via
+    // postgres_execute() (see InitializePostgresSchema for why).
+    if (backend_ == Backend::kPostgres) {
+      return InitializePostgresSchema();
+    }
+
+    // File-based DuckDB gets the full relational schema (keys, CHECKs,
+    // indexes); DuckLake keeps the constraint-free schema (it cannot enforce
+    // them). Both run as a single multi-statement DuckDB script.
+    const std::string schema_sql = (backend_ == Backend::kDuckLake)
+                                       ? GetSchemaSQL(catalog_, schema_)
+                                       : GetDuckDBSchemaSQL(catalog_, schema_);
     auto result = writer_connection_->Get().Query(schema_sql);
     if (result->HasError()) {
       return arrow::Status::Invalid("Failed to initialize instrumentation schema: ",
@@ -554,6 +845,40 @@ arrow::Status InstrumentationManager::InitializeSchema() {
     return arrow::Status::Invalid("Failed to initialize instrumentation schema: ",
                                   ex.what());
   }
+}
+
+arrow::Status InstrumentationManager::InitializePostgresSchema() {
+  auto& conn = writer_connection_->Get();
+
+  // Ensure the target schema exists, then create every relational object with
+  // native PostgreSQL SQL (schema-qualified) so DuckDB never has to translate
+  // the DDL.
+  ARROW_RETURN_NOT_OK(
+      RunPostgresDDL(conn, catalog_, "CREATE SCHEMA IF NOT EXISTS " + schema_));
+  for (const auto& stmt :
+       BuildSchemaStatements(schema_ + ".", /*json_type=*/"VARCHAR", /*with_fk=*/true)) {
+    ARROW_RETURN_NOT_OK(RunPostgresDDL(conn, catalog_, stmt));
+  }
+
+  // postgres_execute() created the schema and tables directly in PostgreSQL,
+  // bypassing DuckDB — so DuckDB's catalog cache (populated at ATTACH) does not
+  // yet know about them. Clear it so the USE below and the unqualified writes
+  // can resolve the freshly-created objects.
+  auto clear_cache = conn.Query("CALL pg_clear_cache()");
+  if (clear_cache->HasError()) {
+    return arrow::Status::Invalid("Failed to refresh PostgreSQL catalog cache: ",
+                                  clear_cache->GetError());
+  }
+
+  // The queued write_fns reference tables unqualified, so set the writer
+  // connection's default catalog/schema to the instrumentation catalog.
+  auto use_result = conn.Query("USE " + catalog_ + "." + schema_);
+  if (use_result->HasError()) {
+    return arrow::Status::Invalid(
+        "Failed to set default PostgreSQL instrumentation schema: ",
+        use_result->GetError());
+  }
+  return arrow::Status::OK();
 }
 
 arrow::Status InstrumentationManager::CleanupStaleRecords() {
@@ -653,6 +978,48 @@ void InstrumentationManager::QueueWrite(
   queue_cv_.notify_one();
 }
 
+namespace {
+
+// RAII transaction guard for the dedicated instrumentation writer connection.
+// BEGINs on construction (throwing if BEGIN fails) and, unless Commit()
+// succeeds first, ROLLBACKs on destruction. This guarantees the writer
+// connection is never parked inside an open transaction — leaving one open
+// across the writer thread's idle wait is what surfaces as a long-lived
+// "idle in transaction" session on a DuckLake catalog's backing PostgreSQL
+// connection.
+class WriterTxnGuard {
+ public:
+  explicit WriterTxnGuard(duckdb::Connection& conn) : conn_(conn) {
+    conn_.BeginTransaction();
+    active_ = true;
+  }
+
+  ~WriterTxnGuard() {
+    if (active_) {
+      try {
+        conn_.Rollback();
+      } catch (...) {
+        // Nothing actionable from a destructor; the connection returns to
+        // auto-commit on its next statement regardless.
+      }
+    }
+  }
+
+  WriterTxnGuard(const WriterTxnGuard&) = delete;
+  WriterTxnGuard& operator=(const WriterTxnGuard&) = delete;
+
+  void Commit() {
+    conn_.Commit();
+    active_ = false;
+  }
+
+ private:
+  duckdb::Connection& conn_;
+  bool active_{false};
+};
+
+}  // namespace
+
 void InstrumentationManager::WriterThreadLoop() {
   while (true) {
     std::function<void(duckdb::Connection&)> write_fn;
@@ -674,8 +1041,27 @@ void InstrumentationManager::WriterThreadLoop() {
     }
 
     if (write_fn) {
+      // Run each write in its own explicit transaction. The guard commits on
+      // success; on any failure the write throws (see ExecuteInstrumentationWrite)
+      // and the guard's destructor rolls back — so the writer connection is never
+      // left parked inside an open transaction while it waits for the next write
+      // (the deterministic commit boundary that keeps a DuckLake catalog's
+      // backing PostgreSQL connection from sitting "idle in transaction"), and a
+      // failed write is rolled back in isolation without affecting its neighbors.
+      // Rolling back explicitly (rather than relying on DuckDB discarding an
+      // aborted transaction on COMMIT) keeps this correct for writes routed to
+      // PostgreSQL via the postgres extension too.
+      //
+      // Commit/serialization conflicts are NOT retried here: DuckLake performs
+      // its own optimistic-concurrency retry (ducklake_max_retry_count etc.), and
+      // on PostgreSQL each instance writes its own (disjoint) rows so cross-
+      // instance conflicts are rare. A failure that still surfaces is a
+      // best-effort instrumentation drop, logged below.
       try {
-        write_fn(writer_connection_->Get());
+        auto& conn = writer_connection_->Get();
+        WriterTxnGuard txn(conn);
+        write_fn(conn);
+        txn.Commit();
       } catch (const std::exception& ex) {
         GIZMOSQL_LOG(WARNING) << "Instrumentation write failed: " << ex.what();
       }
