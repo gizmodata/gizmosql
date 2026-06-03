@@ -61,6 +61,13 @@ struct GlobalState {
   // Registered secondary sinks (e.g. a catalog log table), guarded by sinks_mu.
   std::mutex sinks_mu;
   std::vector<LogSink> sinks;
+  // Lock-free fast-path mirror of `!sinks.empty()`. The hot Log() path reads
+  // this (relaxed) to skip taking sinks_mu entirely when no sink is registered
+  // — the common case — making catalog logging a true no-op when disabled.
+  // Authoritative state is still `sinks` under sinks_mu; this is only a gate, so
+  // a brief stale read (right as the first sink registers) can at worst skip
+  // forking a single record, never cause a data race.
+  std::atomic<bool> has_sinks{false};
 };
 
 GlobalState G;
@@ -339,7 +346,7 @@ public:
     // Fork the record to any registered secondary sinks (e.g. a catalog log
     // table), in addition to the primary stdout/file sink above. The guard
     // stops a sink (or its writer thread) from recursively logging into itself.
-    if (!g_in_log_sink) {
+    if (!g_in_log_sink && G.has_sinks.load(std::memory_order_relaxed)) {
       DispatchToSinks(lvl, file, line, msg);
     }
   }
@@ -568,11 +575,13 @@ void SetClusterId(const std::string& cluster_id) {
 void RegisterLogSink(LogSink sink) {
   std::lock_guard<std::mutex> lk(G.sinks_mu);
   G.sinks.push_back(std::move(sink));
+  G.has_sinks.store(true, std::memory_order_relaxed);
 }
 
 void ClearLogSinks() {
   std::lock_guard<std::mutex> lk(G.sinks_mu);
   G.sinks.clear();
+  G.has_sinks.store(false, std::memory_order_relaxed);
 }
 
 ScopedLogSinkGuard::ScopedLogSinkGuard() : previous_(g_in_log_sink) {
