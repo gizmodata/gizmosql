@@ -248,6 +248,18 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   // Server instance ID (available in all editions)
   std::string GetInstanceId() const;
 
+  // Optional cluster grouping UUID (--cluster-id); empty when unset. Backs the
+  // GIZMOSQL_CURRENT_CLUSTER() pseudo-function and the instances.cluster_id column.
+  std::string GetClusterId() const;
+  void SetClusterId(const std::string& cluster_id);
+
+  // Name of the attached catalog the server forks its logs into (catalog
+  // logging), or empty when catalog logging is off. Like the instrumentation
+  // catalog, this catalog is treated as system-managed and admin-read-only by
+  // the catalog-permissions handler. Enterprise-only; empty in Core.
+  std::string GetLogCatalog() const;
+  void SetLogCatalog(const std::string& log_catalog);
+
   // Number of currently active client sessions
   size_t GetActiveSessionCount() const;
 

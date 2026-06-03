@@ -85,6 +85,7 @@ You can store instrumentation data in a DuckLake catalog. This enables:
 | `instrumentation_catalog` | `--instrumentation-catalog` | `GIZMOSQL_INSTRUMENTATION_CATALOG` | (empty) | Catalog name for instrumentation. If set, uses pre-attached catalog instead of file. |
 | `instrumentation_schema` | `--instrumentation-schema` | `GIZMOSQL_INSTRUMENTATION_SCHEMA` | `main` | Schema within the catalog |
 | `instance_tag` | `--instance-tag` | `GIZMOSQL_INSTANCE_TAG` | (empty) | JSON-formatted tag attached to the instance record |
+| `cluster_id` | `--cluster-id` | `GIZMOSQL_CLUSTER_ID` | (empty) | Cluster grouping UUID. Recorded on the `instances` row, injected into every log entry, and exposed via `GIZMOSQL_CURRENT_CLUSTER()`. Must be a UUID. |
 
 When `instrumentation_catalog` is set:
 - The catalog must be pre-attached via `--init-sql-commands`
@@ -205,7 +206,7 @@ When instrumentation is disabled:
 - Session, statement, and execution tracking is disabled
 - Queries to `_gizmosql_instr.*` tables/views will fail (schema doesn't exist)
 
-Note that `GIZMOSQL_CURRENT_SESSION()`, `GIZMOSQL_CURRENT_INSTANCE()`, `GIZMOSQL_VERSION()`, `GIZMOSQL_USER()`, `GIZMOSQL_ROLE()`, and `KILL SESSION` still work when instrumentation is disabled - they just won't be recorded in the instrumentation tables.
+Note that `GIZMOSQL_CURRENT_SESSION()`, `GIZMOSQL_CURRENT_INSTANCE()`, `GIZMOSQL_CURRENT_CLUSTER()`, `GIZMOSQL_VERSION()`, `GIZMOSQL_USER()`, `GIZMOSQL_ROLE()`, and `KILL SESSION` still work when instrumentation is disabled - they just won't be recorded in the instrumentation tables. `GIZMOSQL_CURRENT_CLUSTER()` returns the `--cluster-id` UUID, or `NULL` when no cluster id is configured.
 
 Disabling instrumentation may be useful for:
 - Development/testing environments where audit trails are not needed
@@ -252,6 +253,7 @@ Tracks server instance lifecycle.
 | Column | Type | Description |
 |--------|------|-------------|
 | `instance_id` | UUID | Primary key |
+| `cluster_id` | UUID | Cluster grouping UUID from `--cluster-id` (nullable; NULL when unset) |
 | `gizmosql_version` | VARCHAR | GizmoSQL version |
 | `gizmosql_edition` | VARCHAR | GizmoSQL edition ('Core' or 'Enterprise') |
 | `duckdb_version` | VARCHAR | DuckDB version |

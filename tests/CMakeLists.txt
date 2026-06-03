@@ -69,6 +69,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_statement_queue.cpp
             integration/test_instrumentation.cpp
             integration/test_instrumentation_ducklake.cpp
+            integration/test_catalog_logging.cpp
             integration/test_kill_session.cpp
             integration/test_instance_session_query_tags.cpp
             integration/test_query_profile_capture.cpp

@@ -69,6 +69,7 @@
 #include "health_service.h"
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/enterprise_features.h"
+#include "enterprise/catalog_logging/catalog_log_sink.h"
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/jwks/jwks_manager.h"
@@ -95,6 +96,8 @@ static std::shared_ptr<flight::sql::FlightSqlServerBase> g_flight_server;
 #ifdef GIZMOSQL_ENTERPRISE
 // Static storage for instrumentation (Enterprise feature)
 static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_manager;
+// Static storage for the catalog log sink (Enterprise feature)
+static std::shared_ptr<gizmosql::enterprise::CatalogLogSink> g_catalog_log_sink;
 // Static storage for OAuth HTTP server (Enterprise feature)
 static std::unique_ptr<gizmosql::enterprise::OAuthHttpServer> g_oauth_http_server;
 #endif
@@ -489,7 +492,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& storage_version, const int32_t& max_concurrent_statements,
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
     const bool& admin_bypass_queue_default, const std::string& memory_limit,
-    const gizmosql::QueryProfileMode& capture_query_profile) {
+    const gizmosql::QueryProfileMode& capture_query_profile,
+    const std::string& cluster_id,
+    const bool& enable_catalog_logging,
+    const std::string& log_catalog,
+    const std::string& log_schema,
+    const std::string& log_catalog_db_path) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -681,6 +689,13 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         "Instrumentation is only supported with the DuckDB backend. "
         "Please use the default DuckDB backend or disable instrumentation.");
   }
+  // Catalog logging is only supported with the DuckDB backend (it forks logs
+  // into an attached DuckDB/PostgreSQL/DuckLake catalog).
+  if (enable_catalog_logging && backend != BackendType::duckdb) {
+    return arrow::Status::Invalid(
+        "Catalog logging is only supported with the DuckDB backend. "
+        "Please use the default DuckDB backend or disable catalog logging.");
+  }
 #endif
 
   std::string db_type = "";
@@ -708,6 +723,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // Set instance_id for all future log entries (enables log correlation)
     auto instance_id = duckdb_server->GetInstanceId();
     gizmosql::SetInstanceId(instance_id);
+
+    // Cluster ID is a first-class server attribute (like instance_id); it also
+    // appears in every log entry and the instrumentation instances row, so a
+    // cluster's logs and records can be filtered together.
+    duckdb_server->SetClusterId(cluster_id);
+    gizmosql::SetClusterId(duckdb_server->GetClusterId());
 
     // Set instance_id on auth middleware for JWT token creation and validation
     header_middleware->SetInstanceId(instance_id);
@@ -813,6 +834,38 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     }
 #endif
 
+#ifdef GIZMOSQL_ENTERPRISE
+    // Catalog logging setup (Enterprise feature, conditional). Mirrors the
+    // instrumentation catalog handling: an external (pre-attached) catalog when
+    // --log-catalog is given, otherwise a file-based default that we ATTACH here
+    // so client connections (admins) can read it and the writer connection can
+    // resolve it.
+    std::string log_db_path;
+    std::string log_cat = log_catalog;
+    std::string log_sch = log_schema.empty() ? "main" : log_schema;
+    bool log_use_external_catalog = false;
+    if (enable_catalog_logging) {
+      if (!log_cat.empty()) {
+        log_use_external_catalog = true;
+        GIZMOSQL_LOG(INFO) << "Catalog logging using external catalog: " << log_cat << "."
+                           << log_sch;
+      } else {
+        if (!log_catalog_db_path.empty()) {
+          log_db_path = log_catalog_db_path;
+        } else {
+          // Checks GIZMOSQL_LOG_DB_PATH env var internally, else sibling/cwd.
+          log_db_path = gizmosql::enterprise::CatalogLogSink::GetDefaultDbPath(
+              database_filename.string());
+        }
+        log_cat = "_gizmosql_logs";
+        GIZMOSQL_LOG(INFO) << "Catalog logging database path: " << log_db_path;
+        // (READ_WRITE) lets the sink record logs even when the main DB is read-only.
+        duckdb_init_sql_commands +=
+            "ATTACH '" + log_db_path + "' AS _gizmosql_logs (READ_WRITE);";
+      }
+    }
+#endif
+
     duckdb_init_sql_commands += init_sql_commands;
     RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands);
 
@@ -838,6 +891,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
         auto sys_info = GetSystemInfo();
         gizmosql::ddb::InstanceConfig instance_config{
             .instance_id = duckdb_server->GetInstanceId(),
+            .cluster_id = cluster_id,
             .gizmosql_version = PROJECT_VERSION,
             .gizmosql_edition = gizmosql::enterprise::EnterpriseFeatures::Instance().GetEditionName(),
             .duckdb_version = duckdb_library_version(),
@@ -868,6 +922,34 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
       } else {
         return instr_result.status();
+      }
+    }
+#endif
+
+#ifdef GIZMOSQL_ENTERPRISE
+    // Initialize the catalog log sink (if enabled) and register it as a secondary
+    // log sink: every emitted log record is forked to the catalog's `logs` table
+    // IN ADDITION to stdout/file. The sink owns its writer thread + connection.
+    if (enable_catalog_logging) {
+      auto db_instance = duckdb_server->GetDuckDBInstance();
+      auto sink_result = gizmosql::enterprise::CatalogLogSink::Create(
+          db_instance, log_db_path, log_cat, log_sch, log_use_external_catalog);
+      if (sink_result.ok()) {
+        g_catalog_log_sink = *sink_result;
+        // Treat the log catalog as system-managed (admin-read-only) in the
+        // catalog-permissions handler — exactly like the instrumentation catalog.
+        duckdb_server->SetLogCatalog(g_catalog_log_sink->GetCatalog());
+        // Register the fork. The global keeps the sink alive; shutdown calls
+        // ClearLogSinks() before destroying it, so this raw pointer stays valid
+        // for as long as records are dispatched. Enqueue() is cheap/non-blocking.
+        gizmosql::RegisterLogSink(
+            [sink = g_catalog_log_sink.get()](const gizmosql::LogRecord& record) {
+              sink->Enqueue(record);
+            });
+        GIZMOSQL_LOG(INFO) << "Catalog logging enabled to catalog: " << log_cat << "."
+                           << log_sch << ".logs";
+      } else {
+        return sink_result.status();
       }
     }
 #endif
@@ -1041,7 +1123,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string storage_version, int32_t max_concurrent_statements,
     int32_t max_queued_statements, int32_t max_queue_wait_seconds,
     bool admin_bypass_queue_default, std::string memory_limit,
-    gizmosql::QueryProfileMode capture_query_profile) {
+    gizmosql::QueryProfileMode capture_query_profile,
+    std::string cluster_id,
+    bool enable_catalog_logging,
+    std::string log_catalog,
+    std::string log_schema,
+    std::string log_catalog_db_path) {
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1261,6 +1348,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     }
   }
 
+  // Resolve catalog-logging catalog/schema: CLI arg > env var > default. An empty
+  // log_catalog selects the file-based default (_gizmosql_logs) in the builder.
+  if (log_catalog.empty()) {
+    log_catalog = SafeGetEnvVarValue("GIZMOSQL_LOG_CATALOG");
+  }
+  if (log_schema.empty()) {
+    log_schema = SafeGetEnvVarValue("GIZMOSQL_LOG_SCHEMA");
+    if (log_schema.empty()) {
+      log_schema = "main";
+    }
+  }
+
   // Resolve instance tag: CLI arg > env var
   if (instance_tag.empty()) {
     instance_tag = SafeGetEnvVarValue("GIZMOSQL_INSTANCE_TAG");
@@ -1269,6 +1368,22 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     auto parsed = nlohmann::json::parse(instance_tag, nullptr, false);
     if (parsed.is_discarded()) {
       return arrow::Status::Invalid("Invalid JSON for --instance-tag: " + instance_tag);
+    }
+  }
+
+  // Resolve cluster ID: CLI arg > env var. Validate as a UUID when set (it is
+  // written to a UUID column and injected into every log entry, so a non-UUID
+  // would otherwise fail the instances write). Unset is fine (NULL).
+  if (cluster_id.empty()) {
+    cluster_id = SafeGetEnvVarValue("GIZMOSQL_CLUSTER_ID");
+  }
+  if (!cluster_id.empty()) {
+    static const std::regex kClusterUuidRe(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+    if (!std::regex_match(cluster_id, kClusterUuidRe)) {
+      return arrow::Status::Invalid(
+          "--cluster-id must be a UUID (e.g. 123e4567-e89b-12d3-a456-426614174000), got: " +
+          cluster_id);
     }
   }
 
@@ -1331,7 +1446,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled,
       max_metadata_size, storage_version, max_concurrent_statements,
       max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default,
-      memory_limit, capture_query_profile);
+      memory_limit, capture_query_profile, cluster_id, enable_catalog_logging,
+      log_catalog, log_schema, log_catalog_db_path);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1354,6 +1470,18 @@ void CleanupServerResources() {
   }
 
 #ifdef GIZMOSQL_ENTERPRISE
+  // Tear down the catalog log sink (Enterprise feature). Unregister it FIRST so
+  // no further records are dispatched into it, then drain + join its writer
+  // thread, then release. Without this, the sink stays registered in the global
+  // logger's sink list after the server is gone, and a log emitted later (or at
+  // static teardown) would dereference a destroyed sink. Mirrors the inline
+  // shutdown ordering in RunFlightSQLServer().
+  if (g_catalog_log_sink) {
+    gizmosql::ClearLogSinks();
+    g_catalog_log_sink->Shutdown();
+    g_catalog_log_sink.reset();
+  }
+
   // Shutdown and reset instrumentation manager (Enterprise feature)
   if (g_instrumentation_manager) {
     g_instrumentation_manager->Shutdown();
@@ -1427,7 +1555,12 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        int32_t max_queue_wait_seconds,
                        std::optional<bool> admin_bypass_queue_default,
                        std::string memory_limit,
-                       std::string capture_query_profile) {
+                       std::string capture_query_profile,
+                       std::string cluster_id,
+                       std::optional<bool> enable_catalog_logging,
+                       std::string log_catalog,
+                       std::string log_schema,
+                       std::string log_catalog_db_path) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1512,6 +1645,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     }
   };
   resolve_bool_env(enable_instrumentation, "GIZMOSQL_ENABLE_INSTRUMENTATION");
+  resolve_bool_env(enable_catalog_logging, "GIZMOSQL_ENABLE_CATALOG_LOGGING");
   resolve_bool_env(allow_cross_instance_tokens, "GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS");
   resolve_bool_env(oauth_disable_tls, "GIZMOSQL_OAUTH_DISABLE_TLS");
   resolve_bool_env(otel_enabled, "GIZMOSQL_OTEL_ENABLED");
@@ -1652,6 +1786,18 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     return EXIT_FAILURE;
   }
 
+  // Catalog logging is Enterprise-gated. It currently rides on the
+  // instrumentation license feature (both fork server observability data into an
+  // attached catalog); if it becomes a separate SKU, add a `catalog_logging`
+  // license feature and gate on IsCatalogLoggingAvailable() instead. Hard-error
+  // at startup rather than silently not forking the logs the operator asked for.
+  if (enable_catalog_logging.value() && !enterprise.IsInstrumentationAvailable()) {
+    std::cerr << gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
+                     "Catalog logging (--enable-catalog-logging)")
+              << std::endl;
+    return EXIT_FAILURE;
+  }
+
   // Statement queuing is Enterprise-gated. If the operator asked for it (set
   // --max-concurrent-statements, or any tuning knob) but the 'statement_queue'
   // feature is not licensed, hard-error at startup rather than silently running
@@ -1689,6 +1835,14 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   }
   if (!instance_tag.empty()) {
     std::cerr << "Error: --instance-tag is a commercially licensed enterprise feature.\n"
+              << "       Please provide a valid license key file via --license-key-file\n"
+              << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
+    return EXIT_FAILURE;
+  }
+  // In core edition, catalog logging is not available at all.
+  if (enable_catalog_logging.value()) {
+    std::cerr << "Error: Catalog logging (--enable-catalog-logging) is a "
+                 "commercially licensed enterprise feature.\n"
               << "       Please provide a valid license key file via --license-key-file\n"
               << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license." << std::endl;
     return EXIT_FAILURE;
@@ -1751,7 +1905,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled,
       max_metadata_size, storage_version, max_concurrent_statements,
       max_queued_statements, max_queue_wait_seconds,
-      admin_bypass_queue_default.value_or(true), memory_limit, capture_profile_mode);
+      admin_bypass_queue_default.value_or(true), memory_limit, capture_profile_mode,
+      cluster_id, enable_catalog_logging.value(), log_catalog, log_schema,
+      log_catalog_db_path);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
@@ -1793,6 +1949,17 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       gizmosql::g_instrumentation_manager->Shutdown();
       gizmosql::g_instrumentation_manager.reset();
       GIZMOSQL_LOG(INFO) << "Instrumentation manager shutdown complete";
+    }
+
+    if (gizmosql::g_catalog_log_sink) {
+      // Stop forking new records FIRST (ClearLogSinks), then drain + join the
+      // writer thread, then release. This ordering guarantees no log record is
+      // dispatched into a half-torn-down sink. Records emitted after this point
+      // still reach stdout/file; they are simply no longer forked to the catalog.
+      gizmosql::ClearLogSinks();
+      gizmosql::g_catalog_log_sink->Shutdown();
+      gizmosql::g_catalog_log_sink.reset();
+      GIZMOSQL_LOG(INFO) << "Catalog log sink shutdown complete";
     }
 
     if (gizmosql::g_oauth_http_server) {

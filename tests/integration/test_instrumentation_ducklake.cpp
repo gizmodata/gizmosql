@@ -59,7 +59,9 @@
 
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/enterprise_features.h"
+#include "enterprise/catalog_logging/catalog_log_sink.h"
 #include "instrumentation/instrumentation_manager.h"
+#include "detail/gizmosql_logging.h"
 #endif
 
 using arrow::flight::sql::FlightSqlClient;
@@ -1468,4 +1470,126 @@ TEST(PostgresInstrumentation, SchemaWritesAndCascade) {
   fs::remove("pg_instr_test.db.wal", ec);
 
   std::cerr << "\n=== PostgreSQL Instrumentation Test PASSED ===" << std::endl;
+}
+
+// Catalog logging against a real PostgreSQL catalog. Drives the CatalogLogSink's
+// PostgreSQL path directly (InitializePostgresSchema via postgres_execute, then
+// batched transactional INSERTs) without standing up a full Flight server, then
+// verifies the rows landed via a direct PG connection. This validates the
+// PostgreSQL backend of the same sink that test_catalog_logging.cpp covers for
+// the file-based backend (the DuckLake backend reuses the plain-DuckDB script
+// path, exercised by the DuckLakeInstrumentation suite's shared schema code).
+TEST(PostgresCatalogLogging, ForkLogsToPostgres) {
+  if (!IsInstrumentationPostgresAvailable()) {
+    GTEST_SKIP() << "Instrumentation PostgreSQL not available. Start it with: "
+                 << "docker compose -f docker-compose.test.yml up -d";
+  }
+#ifdef GIZMOSQL_ENTERPRISE
+  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  if (!license_file || !fs::exists(license_file)) {
+    GTEST_SKIP() << "License key file not found, skipping PostgreSQL catalog logging test";
+  }
+  auto& enterprise = gizmosql::enterprise::EnterpriseFeatures::Instance();
+  auto license_status = enterprise.Initialize(license_file);
+  if (!license_status.ok()) {
+    GTEST_SKIP() << "Failed to initialize enterprise license: " << license_status.ToString();
+  }
+
+  std::cerr << "\n=== PostgreSQL Catalog Logging Test ===" << std::endl;
+
+  const std::string catalog_name = "pg_log_cat";
+  const std::string schema_name = "gizmosql_logs";  // NB: avoid the reserved "pg_" prefix
+  const std::string cluster_id = "abcdef01-2345-6789-abcd-ef0123456789";
+  const std::string pg_conn =
+      "host=localhost port=" + std::to_string(POSTGRES_INSTR_PORT) +
+      " dbname=instrumentation_catalog user=postgres password=testpassword";
+
+  auto with_pg_admin = [&](const std::function<void(duckdb::Connection&)>& body) {
+    duckdb::DuckDB admin_db(":memory:");
+    duckdb::Connection admin(admin_db);
+    ASSERT_FALSE(admin.Query("INSTALL postgres; LOAD postgres;")->HasError());
+    ASSERT_FALSE(admin.Query("ATTACH '" + pg_conn + "' AS pgadmin (TYPE postgres);")->HasError());
+    body(admin);
+  };
+
+  // Start from a clean schema for deterministic assertions.
+  with_pg_admin([&](duckdb::Connection& admin) {
+    ASSERT_FALSE(admin
+                     .Query("CALL postgres_execute('pgadmin', 'DROP SCHEMA IF EXISTS " +
+                            schema_name + " CASCADE')")
+                     ->HasError());
+  });
+
+  // Build a DuckDB instance with the PG catalog attached, then create the sink
+  // in external-catalog mode (the sink resolves the backend as PostgreSQL).
+  auto db = std::make_shared<duckdb::DuckDB>(":memory:");
+  {
+    duckdb::Connection setup(*db);
+    ASSERT_FALSE(setup.Query("INSTALL postgres; LOAD postgres;")->HasError());
+    ASSERT_FALSE(
+        setup.Query("ATTACH '" + pg_conn + "' AS " + catalog_name + " (TYPE postgres);")
+            ->HasError());
+  }
+
+  auto sink_res = gizmosql::enterprise::CatalogLogSink::Create(
+      db, /*db_path=*/"", catalog_name, schema_name, /*use_external_catalog=*/true);
+  ASSERT_TRUE(sink_res.ok()) << "Sink create failed: " << sink_res.status().ToString();
+  auto sink = *sink_res;
+
+  // Enqueue synthetic records that exercise the promoted columns + JSON catch-all.
+  for (int i = 0; i < 5; ++i) {
+    gizmosql::LogRecord r;
+    r.timestamp = "2026-06-03T12:00:0" + std::to_string(i) + ".000000Z";
+    r.level = arrow::util::ArrowLogLevel::ARROW_INFO;
+    r.instance_id = "11111111-1111-1111-1111-111111111111";
+    r.cluster_id = cluster_id;
+    r.session_id = "22222222-2222-2222-2222-222222222222";
+    r.username = "tester";
+    r.role = "admin";
+    r.peer = "127.0.0.1:5555";
+    r.component = "test";
+    r.pid = 4242;
+    r.tid = "tid-1";
+    r.source_file = "test_instrumentation_ducklake.cpp";
+    r.source_line = i;
+    r.message = "pg catalog log probe " + std::to_string(i);
+    r.fields_json = R"({"probe":)" + std::to_string(i) + "}";
+    sink->Enqueue(r);
+  }
+
+  // Shutdown drains the queue and joins the writer thread, so the catalog is
+  // complete and stable before verification.
+  sink->Shutdown();
+  sink.reset();
+  db.reset();
+
+  with_pg_admin([&](duckdb::Connection& admin) {
+    const std::string p = "pgadmin." + schema_name + ".";
+    auto scalar = [&](const std::string& sql) -> int64_t {
+      auto r = admin.Query(sql);
+      EXPECT_FALSE(r->HasError()) << sql << ": " << r->GetError();
+      if (r->HasError() || r->RowCount() == 0) return -1;
+      return r->GetValue(0, 0).GetValue<int64_t>();
+    };
+
+    EXPECT_EQ(scalar("SELECT COUNT(*) FROM " + p + "logs"), 5)
+        << "Expected all 5 forked log rows in PostgreSQL";
+    EXPECT_EQ(scalar("SELECT COUNT(*) FROM " + p + "logs WHERE level <> 'INFO'"), 0);
+    EXPECT_EQ(scalar("SELECT COUNT(*) FROM " + p + "logs WHERE CAST(cluster_id AS VARCHAR) <> '" +
+                     cluster_id + "'"),
+              0)
+        << "Every row should carry the cluster_id";
+    EXPECT_EQ(scalar("SELECT COUNT(*) FROM " + p + "logs WHERE fields IS NULL"), 0)
+        << "Every row should carry the JSON catch-all (VARCHAR on PostgreSQL)";
+    EXPECT_EQ(scalar("SELECT COUNT(*) FROM " + p + "logs WHERE log_time IS NULL"), 0)
+        << "log_time (TIMESTAMPTZ) must be populated on every row";
+
+    admin.Query("CALL postgres_execute('pgadmin', 'DROP SCHEMA IF EXISTS " + schema_name +
+                " CASCADE')");
+  });
+
+  std::cerr << "\n=== PostgreSQL Catalog Logging Test PASSED ===" << std::endl;
+#else
+  GTEST_SKIP() << "Enterprise features not available";
+#endif
 }

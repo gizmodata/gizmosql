@@ -51,6 +51,7 @@ USE {CATALOG}.{SCHEMA};
 -- Server instance lifecycle
 CREATE TABLE IF NOT EXISTS instances (
     instance_id UUID NOT NULL,  -- PRIMARY KEY (not supported in DuckLake)
+    cluster_id UUID,  -- nullable: user-supplied cluster grouping (--cluster-id)
     gizmosql_version VARCHAR NOT NULL,
     gizmosql_edition VARCHAR NOT NULL,
     duckdb_version VARCHAR NOT NULL,
@@ -133,6 +134,7 @@ CREATE TABLE IF NOT EXISTS sql_executions (
 
 -- Schema migration: add tag columns to existing tables (safe to re-run)
 ALTER TABLE instances ADD COLUMN IF NOT EXISTS instance_tag JSON;
+ALTER TABLE instances ADD COLUMN IF NOT EXISTS cluster_id UUID;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS session_tag JSON;
 ALTER TABLE sql_statements ADD COLUMN IF NOT EXISTS query_tag JSON;
 ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS enqueue_time TIMESTAMP WITH TIME ZONE;
@@ -402,7 +404,7 @@ std::vector<std::string> BuildSchemaStatements(const std::string& p,
   };
   std::vector<std::string> stmts = {
       "CREATE TABLE IF NOT EXISTS " + p + "instances ("
-      "instance_id UUID PRIMARY KEY, gizmosql_version VARCHAR NOT NULL, "
+      "instance_id UUID PRIMARY KEY, cluster_id UUID, gizmosql_version VARCHAR NOT NULL, "
       "gizmosql_edition VARCHAR NOT NULL, duckdb_version VARCHAR NOT NULL, "
       "arrow_version VARCHAR NOT NULL, hostname VARCHAR, hostname_arg VARCHAR, "
       "server_ip VARCHAR, port INTEGER, database_path VARCHAR, "
@@ -445,6 +447,7 @@ std::vector<std::string> BuildSchemaStatements(const std::string& p,
 
       // Additive migrations (safe to re-run on an existing schema)
       "ALTER TABLE " + p + "instances ADD COLUMN IF NOT EXISTS instance_tag JSON",
+      "ALTER TABLE " + p + "instances ADD COLUMN IF NOT EXISTS cluster_id UUID",
       "ALTER TABLE " + p + "sessions ADD COLUMN IF NOT EXISTS session_tag JSON",
       "ALTER TABLE " + p + "sql_statements ADD COLUMN IF NOT EXISTS query_tag JSON",
       "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS enqueue_time TIMESTAMP WITH TIME ZONE",
@@ -499,33 +502,6 @@ std::string GetDuckDBSchemaSQL(const std::string& catalog, const std::string& sc
     sql += stmt + ";\n";
   }
   return sql;
-}
-
-/// Run one native PostgreSQL DDL statement on the attached catalog via
-/// postgres_execute(), escaping single quotes for the SQL-string argument. This
-/// bypasses DuckDB's DDL translation, which mistranslates view functions
-/// (epoch()/date_diff()) and rejects catalog-qualified references.
-arrow::Status RunPostgresDDL(duckdb::Connection& conn, const std::string& catalog,
-                             const std::string& sql) {
-  // Both arguments of postgres_execute() are SQL string literals, so double any
-  // single quotes in each (the catalog is an operator-supplied attach name).
-  auto sql_quote = [](const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 16);
-    for (char c : s) {
-      out += c;
-      if (c == '\'') out += '\'';
-    }
-    return out;
-  };
-  auto result = conn.Query("CALL postgres_execute('" + sql_quote(catalog) + "', '" +
-                           sql_quote(sql) + "')");
-  if (result->HasError()) {
-    return arrow::Status::Invalid(
-        "Failed to execute PostgreSQL instrumentation DDL [", sql.substr(0, 60),
-        "...]: ", result->GetError());
-  }
-  return arrow::Status::OK();
 }
 
 }  // namespace
@@ -782,36 +758,8 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
 }
 
 InstrumentationManager::Backend InstrumentationManager::DetectBackend() {
-  // Resolve the storage backend from the attached catalog's database type.
-  // duckdb_databases().type is e.g. 'duckdb' (file/memory), 'postgres', or
-  // 'ducklake'. Anything unrecognized is treated as a file-based DuckDB
-  // catalog (the safe default — full schema, no postgres_execute).
-  try {
-    auto stmt = writer_connection_->Get().Prepare(
-        "SELECT lower(type) FROM duckdb_databases() WHERE database_name = $1");
-    if (!stmt || stmt->HasError()) {
-      return Backend::kDuckDBFile;
-    }
-    duckdb::vector<duckdb::Value> args{duckdb::Value(catalog_)};
-    auto raw = stmt->Execute(args, /*allow_stream_result=*/false);
-    if (!raw || raw->HasError()) {
-      return Backend::kDuckDBFile;
-    }
-    auto& result = raw->Cast<duckdb::MaterializedQueryResult>();
-    if (result.RowCount() == 0) {
-      return Backend::kDuckDBFile;
-    }
-    const std::string type = result.GetValue(0, 0).ToString();
-    if (type.find("postgres") != std::string::npos) {
-      return Backend::kPostgres;
-    }
-    if (type.find("ducklake") != std::string::npos) {
-      return Backend::kDuckLake;
-    }
-    return Backend::kDuckDBFile;
-  } catch (const std::exception&) {
-    return Backend::kDuckDBFile;
-  }
+  // Delegate to the shared detector (the same logic the catalog log sink uses).
+  return DetectCatalogBackend(writer_connection_->Get(), catalog_);
 }
 
 arrow::Status InstrumentationManager::InitializeSchema() {
@@ -978,48 +926,6 @@ void InstrumentationManager::QueueWrite(
   queue_cv_.notify_one();
 }
 
-namespace {
-
-// RAII transaction guard for the dedicated instrumentation writer connection.
-// BEGINs on construction (throwing if BEGIN fails) and, unless Commit()
-// succeeds first, ROLLBACKs on destruction. This guarantees the writer
-// connection is never parked inside an open transaction — leaving one open
-// across the writer thread's idle wait is what surfaces as a long-lived
-// "idle in transaction" session on a DuckLake catalog's backing PostgreSQL
-// connection.
-class WriterTxnGuard {
- public:
-  explicit WriterTxnGuard(duckdb::Connection& conn) : conn_(conn) {
-    conn_.BeginTransaction();
-    active_ = true;
-  }
-
-  ~WriterTxnGuard() {
-    if (active_) {
-      try {
-        conn_.Rollback();
-      } catch (...) {
-        // Nothing actionable from a destructor; the connection returns to
-        // auto-commit on its next statement regardless.
-      }
-    }
-  }
-
-  WriterTxnGuard(const WriterTxnGuard&) = delete;
-  WriterTxnGuard& operator=(const WriterTxnGuard&) = delete;
-
-  void Commit() {
-    conn_.Commit();
-    active_ = false;
-  }
-
- private:
-  duckdb::Connection& conn_;
-  bool active_{false};
-};
-
-}  // namespace
-
 void InstrumentationManager::WriterThreadLoop() {
   while (true) {
     std::function<void(duckdb::Connection&)> write_fn;
@@ -1059,7 +965,7 @@ void InstrumentationManager::WriterThreadLoop() {
       // best-effort instrumentation drop, logged below.
       try {
         auto& conn = writer_connection_->Get();
-        WriterTxnGuard txn(conn);
+        CatalogTxnGuard txn(conn);
         write_fn(conn);
         txn.Commit();
       } catch (const std::exception& ex) {

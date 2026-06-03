@@ -59,11 +59,31 @@ bool MatchesCatalogPattern(const std::string& pattern, const std::string& catalo
   return p == pattern.size();
 }
 
+// A system-managed catalog is one GizmoSQL writes into itself on a dedicated
+// connection and exposes to operators read-only: the instrumentation catalog and
+// the catalog-logging catalog. Both share identical access semantics — readable
+// only by admins, never client-writable — so they are matched by one helper.
+// Names are resolved dynamically because both are configurable (file-based names
+// or external PostgreSQL/DuckLake catalogs).
+static bool IsSystemManagedCatalog(
+    const std::string& catalog_name,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+    const std::string& log_catalog) {
+  if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
+    return true;
+  }
+  if (!log_catalog.empty() && catalog_name == log_catalog) {
+    return true;
+  }
+  return false;
+}
+
 CatalogAccessLevel GetCatalogAccess(
     const std::string& catalog_name,
     const std::string& role,
     const std::vector<CatalogAccessRule>& catalog_access,
-    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+    const std::string& log_catalog) {
   // The system catalog is read-only for everyone, always. Bypass all
   // role/license/rule logic — clients (regardless of role) need to be able
   // to read its metadata helper views, and writes are denied separately at
@@ -73,10 +93,10 @@ CatalogAccessLevel GetCatalogAccess(
     return CatalogAccessLevel::kRead;
   }
 
-  // The instrumentation catalog is special: system-managed, read-only for admins.
-  // This protection ALWAYS applies, regardless of licensing or token rules.
-  // The catalog name is configurable (e.g., DuckLake catalogs), so we check dynamically.
-  if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
+  // System-managed catalogs (instrumentation + catalog logging) are special:
+  // read-only for admins, invisible to everyone else. This protection ALWAYS
+  // applies, regardless of licensing or token rules.
+  if (IsSystemManagedCatalog(catalog_name, instrumentation_manager, log_catalog)) {
     return (role == "admin") ? CatalogAccessLevel::kRead : CatalogAccessLevel::kNone;
   }
 
@@ -105,16 +125,18 @@ CatalogAccessLevel GetCatalogAccess(
 }
 
 bool HasReadAccess(const ClientSession& client_session, const std::string& catalog_name,
-                   const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+                   const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+                   const std::string& log_catalog) {
   auto access = GetCatalogAccess(catalog_name, client_session.role, client_session.catalog_access,
-                                 instrumentation_manager);
+                                 instrumentation_manager, log_catalog);
   return access >= CatalogAccessLevel::kRead;
 }
 
 bool HasWriteAccess(const ClientSession& client_session, const std::string& catalog_name,
-                    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+                    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+                    const std::string& log_catalog) {
   auto access = GetCatalogAccess(catalog_name, client_session.role, client_session.catalog_access,
-                                 instrumentation_manager);
+                                 instrumentation_manager, log_catalog);
   return access >= CatalogAccessLevel::kWrite;
 }
 
@@ -133,20 +155,23 @@ arrow::Status CheckCatalogWriteAccess(
     const std::string& statement_id,
     const std::string& logged_sql,
     const std::string& flight_method,
-    bool is_internal) {
+    bool is_internal,
+    const std::string& log_catalog) {
 
   for (const auto& [catalog_name, catalog_identity] : modified_databases) {
-    // Block writes to the instrumentation catalog (regardless of other rules)
-    // This protects both file-based (_gizmosql_instr) and external catalogs (e.g., DuckLake)
-    if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
+    // Block writes to any system-managed catalog (instrumentation or catalog
+    // logging), regardless of other rules. This protects both file-based
+    // (_gizmosql_instr / _gizmosql_logs) and external catalogs (e.g. DuckLake,
+    // PostgreSQL). GizmoSQL writes these itself on dedicated connections.
+    if (IsSystemManagedCatalog(catalog_name, instrumentation_manager, log_catalog)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
-                             "Access denied: instrumentation catalog is read-only",
+                             "Access denied: system-managed catalog is read-only",
                              {"kind", "sql"}, {"status", "rejected"},
                              {"catalog", catalog_name}, {"statement_id", statement_id},
                              {"sql", logged_sql});
 
       std::string error_msg =
-          "Access denied: The instrumentation catalog '" + catalog_name + "' is read-only.";
+          "Access denied: The system-managed catalog '" + catalog_name + "' is read-only.";
 
       // Record the rejected modification attempt
       gizmosql::ddb::StatementInstrumentation(
@@ -156,7 +181,7 @@ arrow::Status CheckCatalogWriteAccess(
       return arrow::Status::Invalid(error_msg);
     }
 
-    if (!HasWriteAccess(*client_session, catalog_name, instrumentation_manager)) {
+    if (!HasWriteAccess(*client_session, catalog_name, instrumentation_manager, log_catalog)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Access denied: user lacks write access to catalog",
                              {"kind", "sql"}, {"status", "rejected"},
@@ -187,21 +212,23 @@ arrow::Status CheckCatalogReadAccess(
     const std::string& statement_id,
     const std::string& logged_sql,
     const std::string& flight_method,
-    bool is_internal) {
+    bool is_internal,
+    const std::string& log_catalog) {
 
   for (const auto& [catalog_name, catalog_identity] : read_databases) {
-    // For the instrumentation catalog, only admins can read
-    // This protects both file-based (_gizmosql_instr) and external catalogs (e.g., DuckLake)
-    if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
+    // For system-managed catalogs (instrumentation + catalog logging), only
+    // admins can read. This protects both file-based (_gizmosql_instr /
+    // _gizmosql_logs) and external catalogs (e.g. DuckLake, PostgreSQL).
+    if (IsSystemManagedCatalog(catalog_name, instrumentation_manager, log_catalog)) {
       if (client_session->role != "admin") {
         GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
-                               "Access denied: only admins can read instrumentation catalog",
+                               "Access denied: only admins can read system-managed catalog",
                                {"kind", "sql"}, {"status", "rejected"},
                                {"catalog", catalog_name}, {"statement_id", statement_id},
                                {"sql", logged_sql});
 
         std::string error_msg =
-            "Access denied: Only administrators can read the instrumentation catalog '" + catalog_name + "'.";
+            "Access denied: Only administrators can read the system-managed catalog '" + catalog_name + "'.";
 
         // Record the rejected read attempt
         gizmosql::ddb::StatementInstrumentation(
@@ -210,11 +237,11 @@ arrow::Status CheckCatalogReadAccess(
 
         return arrow::Status::Invalid(error_msg);
       }
-      // Admin can read instrumentation catalog, skip other checks for this catalog
+      // Admin can read this catalog; skip other checks for it
       continue;
     }
 
-    if (!HasReadAccess(*client_session, catalog_name, instrumentation_manager)) {
+    if (!HasReadAccess(*client_session, catalog_name, instrumentation_manager, log_catalog)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Access denied: user lacks read access to catalog",
                              {"kind", "sql"}, {"status", "rejected"},
@@ -245,11 +272,12 @@ arrow::Status EnsureCatalogReadAccess(
     const std::string& statement_id,
     const std::string& logged_sql,
     const std::string& flight_method,
-    bool is_internal) {
-  if (instrumentation_manager && catalog_name == instrumentation_manager->GetCatalog()) {
+    bool is_internal,
+    const std::string& log_catalog) {
+  if (IsSystemManagedCatalog(catalog_name, instrumentation_manager, log_catalog)) {
     if (client_session->role != "admin") {
       std::string error_msg =
-          "Access denied: Only administrators can read the instrumentation catalog '" +
+          "Access denied: Only administrators can read the system-managed catalog '" +
           catalog_name + "'.";
       if (instrumentation_manager) {
         gizmosql::ddb::StatementInstrumentation(
@@ -261,7 +289,7 @@ arrow::Status EnsureCatalogReadAccess(
     return arrow::Status::OK();
   }
 
-  if (!HasReadAccess(*client_session, catalog_name, instrumentation_manager)) {
+  if (!HasReadAccess(*client_session, catalog_name, instrumentation_manager, log_catalog)) {
     std::string error_msg =
         "Access denied: You do not have read access to catalog '" + catalog_name + "'.";
     if (instrumentation_manager) {
@@ -282,7 +310,8 @@ arrow::Status EnsureCatalogReadAccess(
 std::vector<std::string> GetAllowedCatalogs(
     const ClientSession& client_session,
     duckdb::Connection& connection,
-    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager) {
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+    const std::string& log_catalog) {
   // No filtering if feature not licensed or no rules defined
   if (!EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
     return {};
@@ -310,7 +339,7 @@ std::vector<std::string> GetAllowedCatalogs(
     }
     auto access = GetCatalogAccess(db_name, client_session.role,
                                    client_session.catalog_access,
-                                   instrumentation_manager);
+                                   instrumentation_manager, log_catalog);
     if (access >= CatalogAccessLevel::kRead) {
       allowed.push_back(std::move(db_name));
     }

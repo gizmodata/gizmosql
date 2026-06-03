@@ -52,13 +52,23 @@ struct GlobalState {
   std::atomic<ArrowLogLevel> level{ArrowLogLevel::ARROW_INFO};
   LogConfig cfg;
 
-  // Instance ID for log correlation (set once after server creation)
+  // Instance ID + optional cluster ID for log correlation (set once after
+  // server creation), both guarded by instance_id_mu.
   std::mutex instance_id_mu;
   std::string instance_id;
+  std::string cluster_id;
+
+  // Registered secondary sinks (e.g. a catalog log table), guarded by sinks_mu.
+  std::mutex sinks_mu;
+  std::vector<LogSink> sinks;
 };
 
 GlobalState G;
 thread_local std::optional<TraceCorrelationIds> g_log_correlation_override;
+// Recursion guard: true while delivering a record to secondary sinks, so any
+// log emitted from within sink delivery (or the sink's own writer thread) is
+// NOT re-delivered to the sinks (it still goes to stdout/file).
+thread_local bool g_in_log_sink = false;
 
 // ---------- helpers
 
@@ -103,6 +113,11 @@ inline const char* LevelName(ArrowLogLevel lvl) {
 inline std::string GetInstanceId() {
   std::lock_guard<std::mutex> lk(G.instance_id_mu);
   return G.instance_id;
+}
+
+inline std::string GetClusterId() {
+  std::lock_guard<std::mutex> lk(G.instance_id_mu);
+  return G.cluster_id;
 }
 
 inline std::optional<TraceCorrelationIds> GetOtelTraceCorrelationIds() {
@@ -219,6 +234,85 @@ inline std::optional<nlohmann::json> TryExtractFieldsFromMessage(std::string& te
 }
 
 
+// Assemble a structured LogRecord for delivery to secondary sinks. Promotes the
+// common session fields (session_id/user/role/peer) out of the KV bag into
+// dedicated members; the rest stay in fields_json. Mirrors the field set that
+// WriteJson emits, but materialized as a struct rather than rendered output.
+LogRecord BuildLogRecord(ArrowLogLevel level, const std::string& file, int line,
+                         const std::string_view& message) {
+  LogRecord r;
+  r.timestamp = NowIso8601Utc();
+  r.level = level;
+  r.instance_id = GetInstanceId();
+  r.cluster_id = GetClusterId();
+  r.pid = gizmosql_getpid();
+  {
+    std::ostringstream tid;
+    tid << std::this_thread::get_id();
+    r.tid = tid.str();
+  }
+  if (auto trace_ids = GetEffectiveTraceCorrelationIds()) {
+    r.trace_id = trace_ids->trace_id;
+    r.span_id = trace_ids->span_id;
+  }
+  if (G.cfg.component) r.component = *G.cfg.component;
+  r.source_file = file;
+  r.source_line = line;
+
+  std::string text = std::string(message);
+  nlohmann::json kv = nlohmann::json::object();
+  if (auto extracted = TryExtractFieldsFromMessage(text)) {
+    kv = std::move(*extracted);
+  }
+
+  // Extract the [func=...] tag (same convention WriteJson uses).
+  constexpr char kTag[] = "[func=";
+  if (auto pos = text.find(kTag); pos != std::string::npos) {
+    auto end = text.find(']', pos);
+    if (end != std::string::npos) {
+      r.func = text.substr(pos + sizeof(kTag) - 1, end - (pos + sizeof(kTag) - 1));
+      text.erase(pos, (end - pos) + 1);
+      if (!text.empty() && text.front() == ' ') text.erase(0, 1);
+    }
+  }
+  r.message = text;
+
+  // Promote the common session fields into columns; keep the rest as JSON.
+  auto take = [&](const char* key, std::string& dst) {
+    auto it = kv.find(key);
+    if (it == kv.end()) return;
+    dst = it->is_string() ? it->get<std::string>() : it->dump();
+    kv.erase(it);
+  };
+  take("session_id", r.session_id);
+  take("user", r.username);
+  take("role", r.role);
+  take("peer", r.peer);
+  if (!kv.empty()) r.fields_json = kv.dump();
+  return r;
+}
+
+// Deliver a record to all registered secondary sinks (best-effort). Guarded so a
+// sink (or its writer thread) cannot recursively log back into the sinks.
+void DispatchToSinks(ArrowLogLevel level, const std::string& file, int line,
+                     const std::string_view& message) {
+  std::vector<LogSink> sinks_copy;
+  {
+    std::lock_guard<std::mutex> lk(G.sinks_mu);
+    if (G.sinks.empty()) return;
+    sinks_copy = G.sinks;
+  }
+  LogRecord record = BuildLogRecord(level, file, line, message);
+  ScopedLogSinkGuard sink_guard;  // suppress re-dispatch of logs emitted by a sink
+  for (auto& sink : sinks_copy) {
+    try {
+      sink(record);
+    } catch (...) {
+      // Best-effort: a sink failure must never disrupt logging or the server.
+    }
+  }
+}
+
 // ---------- custom logger (Arrow v21+)
 
 class GizmoSQLLogger final : public Logger {
@@ -238,9 +332,16 @@ public:
 
     if (G.cfg.format == LogFormat::kJson) {
       WriteJson(lvl, file, line, msg);
-      return;
+    } else {
+      WriteText(lvl, file, line, msg);
     }
-    WriteText(lvl, file, line, msg);
+
+    // Fork the record to any registered secondary sinks (e.g. a catalog log
+    // table), in addition to the primary stdout/file sink above. The guard
+    // stops a sink (or its writer thread) from recursively logging into itself.
+    if (!g_in_log_sink) {
+      DispatchToSinks(lvl, file, line, msg);
+    }
   }
 
 private:
@@ -259,6 +360,10 @@ private:
     auto inst_id = GetInstanceId();
     if (!inst_id.empty()) {
       j["instance_id"] = inst_id;
+    }
+    auto cluster_id = GetClusterId();
+    if (!cluster_id.empty()) {
+      j["cluster_id"] = cluster_id;
     }
     if (auto trace_ids = GetEffectiveTraceCorrelationIds()) {
       j["trace_id"] = trace_ids->trace_id;
@@ -342,6 +447,10 @@ private:
     auto inst_id = GetInstanceId();
     if (!inst_id.empty()) {
       oss << " instance_id=" << inst_id;
+    }
+    auto cluster_id = GetClusterId();
+    if (!cluster_id.empty()) {
+      oss << " cluster_id=" << cluster_id;
     }
     if (auto trace_ids = GetEffectiveTraceCorrelationIds()) {
       oss << " trace_id=" << trace_ids->trace_id;
@@ -450,6 +559,27 @@ void SetInstanceId(const std::string& instance_id) {
   std::lock_guard<std::mutex> lk(G.instance_id_mu);
   G.instance_id = instance_id;
 }
+
+void SetClusterId(const std::string& cluster_id) {
+  std::lock_guard<std::mutex> lk(G.instance_id_mu);
+  G.cluster_id = cluster_id;
+}
+
+void RegisterLogSink(LogSink sink) {
+  std::lock_guard<std::mutex> lk(G.sinks_mu);
+  G.sinks.push_back(std::move(sink));
+}
+
+void ClearLogSinks() {
+  std::lock_guard<std::mutex> lk(G.sinks_mu);
+  G.sinks.clear();
+}
+
+ScopedLogSinkGuard::ScopedLogSinkGuard() : previous_(g_in_log_sink) {
+  g_in_log_sink = true;
+}
+
+ScopedLogSinkGuard::~ScopedLogSinkGuard() { g_in_log_sink = previous_; }
 
 std::optional<TraceCorrelationIds> GetCurrentTraceCorrelationIds() {
   return GetEffectiveTraceCorrelationIds();

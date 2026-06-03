@@ -66,9 +66,9 @@ InstanceInstrumentation::InstanceInstrumentation(
         "duckdb_version, arrow_version, hostname, hostname_arg, server_ip, port, database_path, "
         "tls_enabled, tls_cert_path, tls_key_path, mtls_required, mtls_ca_cert_path, readonly, "
         "os_platform, os_name, os_version, cpu_arch, cpu_model, cpu_count, memory_total_bytes, "
-        "start_time, status, instance_tag) "
+        "start_time, status, instance_tag, cluster_id) "
         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, "
-        "$17, $18, $19, $20, $21, $22, $23, now(), 'running', $24)",
+        "$17, $18, $19, $20, $21, $22, $23, now(), 'running', $24, $25)",
         {
             duckdb::Value::UUID(config.instance_id),
             duckdb::Value(config.gizmosql_version),
@@ -94,6 +94,8 @@ InstanceInstrumentation::InstanceInstrumentation(
             duckdb::Value(config.cpu_count),
             duckdb::Value::BIGINT(config.memory_total_bytes),
             config.instance_tag.empty() ? duckdb::Value() : duckdb::Value(config.instance_tag),
+            config.cluster_id.empty() ? duckdb::Value()
+                                      : duckdb::Value::UUID(config.cluster_id),
         });
   });
 }

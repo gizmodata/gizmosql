@@ -187,5 +187,23 @@ int RunFlightSQLServer(
     int32_t max_queue_wait_seconds = DEFAULT_MAX_QUEUE_WAIT_SECONDS,
     std::optional<bool> admin_bypass_queue_default = std::nullopt,
     std::string memory_limit = "",
-    std::string capture_query_profile = "");
+    std::string capture_query_profile = "",
+    /// Optional cluster grouping UUID (--cluster-id / GIZMOSQL_CLUSTER_ID). When
+    /// set, recorded on the instrumentation instances row and injected into every
+    /// log entry so a cluster's logs and records can be filtered together.
+    std::string cluster_id = "",
+    /// Fork logs to an attached catalog's `logs` table in addition to
+    /// stdout/file (--enable-catalog-logging / GIZMOSQL_ENABLE_CATALOG_LOGGING).
+    /// Enterprise-only. nullopt = consult env var, then default off.
+    std::optional<bool> enable_catalog_logging = std::nullopt,
+    /// Name of a pre-attached catalog (PostgreSQL/DuckLake/DuckDB) to write logs
+    /// into (--log-catalog / GIZMOSQL_LOG_CATALOG). Empty selects a file-based
+    /// default catalog (_gizmosql_logs) that the server attaches itself.
+    std::string log_catalog = "",
+    /// Schema within the log catalog (--log-schema / GIZMOSQL_LOG_SCHEMA,
+    /// default "main").
+    std::string log_schema = "",
+    /// File path for the file-based default log database (--log-catalog-db-path /
+    /// GIZMOSQL_LOG_DB_PATH). Ignored when log_catalog names an external catalog.
+    std::string log_catalog_db_path = "");
 }

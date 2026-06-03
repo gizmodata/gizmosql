@@ -43,28 +43,35 @@ bool MatchesCatalogPattern(const std::string& pattern, const std::string& catalo
 /// @param role The user's role (e.g., "admin", "readonly")
 /// @param catalog_access The catalog access rules from the JWT token
 /// @param instrumentation_manager Optional instrumentation manager to resolve the catalog name
+/// @param log_catalog Optional catalog-logging catalog name (empty if off); like
+///        the instrumentation catalog, it is admin-read-only and never client-writable
 /// @return The access level granted for the catalog
 CatalogAccessLevel GetCatalogAccess(
     const std::string& catalog_name,
     const std::string& role,
     const std::vector<CatalogAccessRule>& catalog_access,
-    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
+    const std::string& log_catalog = "");
 
 /// Check if the session has read access to a catalog.
 /// @param client_session The session to check
 /// @param catalog_name The catalog to check access for
 /// @param instrumentation_manager Optional instrumentation manager to resolve the catalog name
+/// @param log_catalog Optional catalog-logging catalog name (empty if off)
 /// @return true if read access is granted
 bool HasReadAccess(const ClientSession& client_session, const std::string& catalog_name,
-                   const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
+                   const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
+                   const std::string& log_catalog = "");
 
 /// Check if the session has write access to a catalog.
 /// @param client_session The session to check
 /// @param catalog_name The catalog to check access for
 /// @param instrumentation_manager Optional instrumentation manager to resolve the catalog name
+/// @param log_catalog Optional catalog-logging catalog name (empty if off)
 /// @return true if write access is granted
 bool HasWriteAccess(const ClientSession& client_session, const std::string& catalog_name,
-                    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
+                    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
+                    const std::string& log_catalog = "");
 
 /// Check catalog-level write access for all databases a statement will modify.
 /// This is an enterprise feature that requires a valid license with catalog_permissions.
@@ -92,7 +99,8 @@ arrow::Status CheckCatalogWriteAccess(
     const std::string& statement_id,
     const std::string& logged_sql,
     const std::string& flight_method,
-    bool is_internal);
+    bool is_internal,
+    const std::string& log_catalog = "");
 
 /// Check catalog-level read access for all databases a statement will read.
 /// This is an enterprise feature that requires a valid license with catalog_permissions.
@@ -112,7 +120,8 @@ arrow::Status CheckCatalogReadAccess(
     const std::string& statement_id,
     const std::string& logged_sql,
     const std::string& flight_method,
-    bool is_internal);
+    bool is_internal,
+    const std::string& log_catalog = "");
 
 /// Check read access for a single catalog name.
 /// This is used for commands like USE/SetSessionOptions where DuckDB's statement
@@ -124,7 +133,8 @@ arrow::Status EnsureCatalogReadAccess(
     const std::string& statement_id = "",
     const std::string& logged_sql = "",
     const std::string& flight_method = "",
-    bool is_internal = false);
+    bool is_internal = false,
+    const std::string& log_catalog = "");
 
 // ============================================================================
 // Catalog Visibility Filtering (metadata row filtering)
@@ -141,7 +151,8 @@ arrow::Status EnsureCatalogReadAccess(
 std::vector<std::string> GetAllowedCatalogs(
     const ClientSession& client_session,
     duckdb::Connection& connection,
-    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr);
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
+    const std::string& log_catalog = "");
 
 /// Build an SQL IN clause for allowed catalogs.
 /// Returns e.g. IN ('production','staging','system','temp')

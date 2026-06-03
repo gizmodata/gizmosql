@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <arrow/util/logger.h>  // Arrow v21+
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -100,6 +101,74 @@ std::optional<TraceCorrelationIds> GetCurrentTraceCorrelationIds();
 /// in every log entry (both JSON and text formats). Call this as early as possible
 /// after the server instance is created.
 void SetInstanceId(const std::string& instance_id);
+
+/// Set the (optional) cluster ID for log correlation. When non-empty, this UUID
+/// is included in every log entry (both formats), so logs and instrumentation
+/// records from all instances in a cluster can be filtered together. Sourced
+/// from the --cluster-id flag / GIZMOSQL_CLUSTER_ID env var.
+void SetClusterId(const std::string& cluster_id);
+
+// -----------------------------------------------------------------------------
+// Secondary log sinks (e.g. forking logs to a catalog table)
+// -----------------------------------------------------------------------------
+
+/// A fully-assembled log record delivered to registered secondary sinks. The
+/// common/queryable fields are promoted to members; any remaining structured
+/// key/value fields are carried as a JSON object string in `fields_json`.
+struct LogRecord {
+  std::string timestamp;  // ISO8601 UTC; also the source for a TIMESTAMPTZ column
+  arrow::util::ArrowLogLevel level = arrow::util::ArrowLogLevel::ARROW_INFO;
+  std::string instance_id;  // empty if unset
+  std::string cluster_id;   // empty if unset
+  std::string session_id;   // promoted from KV (empty if absent)
+  std::string username;     // promoted from KV "user"
+  std::string role;         // promoted from KV
+  std::string peer;         // promoted from KV
+  std::string trace_id;
+  std::string span_id;
+  std::string component;
+  std::string func;
+  std::string source_file;
+  int source_line = 0;
+  int pid = 0;
+  std::string tid;
+  std::string message;
+  std::string fields_json;  // remaining KV fields as a JSON object (empty if none)
+};
+
+using LogSink = std::function<void(const LogRecord&)>;
+
+/// Register a secondary log sink. Every emitted record (one that passes the
+/// level gate) is delivered to each registered sink IN ADDITION to stdout/file
+/// — this is the "fork". Sinks MUST be cheap and non-blocking (e.g. enqueue to
+/// a writer thread); a thread-local recursion guard drops any log emitted from
+/// within sink delivery so a sink can never recursively log into itself.
+/// Thread-safe.
+void RegisterLogSink(LogSink sink);
+
+/// Remove all registered sinks. Call before a sink object is destroyed (e.g. at
+/// shutdown) so no further records are delivered to it.
+void ClearLogSinks();
+
+/// RAII guard that marks the CURRENT thread as "executing inside a log sink" for
+/// its lifetime. While active, any log emitted on this thread is delivered only
+/// to the primary stdout/file sink and is NEVER re-dispatched to the secondary
+/// sinks. Construct one at the top of a sink's own writer-thread loop so that a
+/// log the sink emits (e.g. reporting a failed catalog write) cannot recursively
+/// enqueue back into the sink. The dispatch path sets the same guard around
+/// each sink callback, so synchronous re-entry from a sink callback is also
+/// covered. Nesting-safe: restores the previous value on destruction.
+class ScopedLogSinkGuard {
+ public:
+  ScopedLogSinkGuard();
+  ~ScopedLogSinkGuard();
+
+  ScopedLogSinkGuard(const ScopedLogSinkGuard&) = delete;
+  ScopedLogSinkGuard& operator=(const ScopedLogSinkGuard&) = delete;
+
+ private:
+  bool previous_;
+};
 
 // Temporarily override trace correlation IDs for logs on the current thread.
 // This is used by async statement execution paths when OTel runtime context

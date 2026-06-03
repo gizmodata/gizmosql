@@ -7,6 +7,7 @@
 #include <duckdb.hpp>
 
 #include <atomic>
+#include "../catalog_backend.h"
 #include "detail/tracked_duckdb_connection.h"
 #include <condition_variable>
 #include <functional>
@@ -63,13 +64,13 @@ class InstrumentationManager {
   bool IsEnabled() const { return enabled_; }
 
  private:
-  /// The storage backend the instrumentation catalog resolves to. Detected at
-  /// startup from `duckdb_databases().type`. Determines the schema dialect:
+  /// Storage backend of the instrumentation catalog (shared enum, detected at
+  /// startup from `duckdb_databases().type`). Selects the schema dialect:
   /// DuckDBFile and Postgres get the full relational schema (primary/foreign
-  /// keys, CHECK constraints, indexes); DuckLake gets the constraint-free
-  /// schema and is deprecated (concurrent multi-instance UPDATEs can be lost —
-  /// see InitializeSchema).
-  enum class Backend { kDuckDBFile, kPostgres, kDuckLake };
+  /// keys, CHECK constraints, indexes); DuckLake gets the constraint-free schema
+  /// and is deprecated (concurrent multi-instance UPDATEs can be lost — see
+  /// InitializeSchema).
+  using Backend = ::gizmosql::CatalogBackend;
 
   InstrumentationManager(const std::string& db_path,
                          const std::string& catalog,
