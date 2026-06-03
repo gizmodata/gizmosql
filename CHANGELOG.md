@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-06-03
+
 ### Added
 
 - **Catalog logging — fork server logs to an attached catalog** [Enterprise]. Server logs can now be written to a `logs` table in an attached catalog (**file-based DuckDB**, **PostgreSQL**, or **DuckLake**) **in addition to** stdout/file — the same log stream, forked. Because logs are append-only, DuckLake is a fine fit here (no concurrent-UPDATE hazard, unlike instrumentation). The `logs` table mirrors the JSON log shape: the popular/queryable fields are promoted to typed columns (`log_time TIMESTAMPTZ`, `level`, `instance_id`, `cluster_id`, `session_id`, `username`, `role`, `peer`, `component`, `trace_id`, `span_id`, `pid`, `tid`, `source_file`, `source_line`, `func`, `message`) and everything else rides along in a `fields` JSON catch-all. There is no primary key (append-only); file-based DuckDB and PostgreSQL also get indexes on `log_time` and the common filter columns so time-range queries and time-based retention deletes stay fast. Writes happen on a dedicated connection + writer thread off the session path (bounded, drop-and-count queue; each batch in an explicit transaction — never auto-commit), so a slow/unreachable log catalog can never block or fail a client query. Like the instrumentation catalog, **the log catalog is system-managed: readable only by admins, never client-writable, and cannot be `DETACH`ed**. Backend is auto-detected (`duckdb_databases().type`). Gated on the `instrumentation` Enterprise license feature.
