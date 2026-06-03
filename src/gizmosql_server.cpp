@@ -173,6 +173,28 @@ int main(int argc, char** argv) {
               "[Enterprise] JSON-formatted tag to attach to this server instance in the instrumentation database. "
               "Must be valid JSON (e.g., '{\"env\":\"prod\",\"region\":\"us-east-1\"}'). "
               "If not set, uses env var GIZMOSQL_INSTANCE_TAG.")
+            ("cluster-id", po::value<std::string>()->default_value(""),
+              "[Enterprise] Cluster grouping UUID for this server. When set, it is recorded on the "
+              "instrumentation instances record and included in every log entry (and the catalog log "
+              "table), so logs and instrumentation across a cluster of instances can be filtered "
+              "together. Must be a UUID. If not set, uses env var GIZMOSQL_CLUSTER_ID.")
+            ("enable-catalog-logging", po::value<bool>()->default_value(false),
+              "[Enterprise] Fork server logs to a 'logs' table in an attached catalog (DuckDB, "
+              "PostgreSQL, or DuckLake) IN ADDITION to stdout/file. Like the instrumentation catalog, "
+              "the log catalog is admin-read-only. Requires a valid enterprise license. If not set, "
+              "uses env var GIZMOSQL_ENABLE_CATALOG_LOGGING (1/true to enable).")
+            ("log-catalog", po::value<std::string>()->default_value(""),
+              "[Enterprise] Catalog name to fork logs into (e.g., a pre-attached PostgreSQL or DuckLake "
+              "catalog). If set, uses that pre-attached catalog (attach it via --init-sql-commands) "
+              "instead of a file. If not set, uses env var GIZMOSQL_LOG_CATALOG, else a file-based "
+              "default catalog (_gizmosql_logs).")
+            ("log-schema", po::value<std::string>()->default_value(""),
+              "[Enterprise] Schema within the log catalog. If not set, uses env var GIZMOSQL_LOG_SCHEMA, "
+              "or defaults to 'main'.")
+            ("log-catalog-db-path", po::value<std::string>()->default_value(""),
+              "[Enterprise] Path for the file-based default log database. If not set, uses env var "
+              "GIZMOSQL_LOG_DB_PATH. If that isn't set, defaults to gizmosql_logs.db in the same "
+              "directory as the main database. Ignored if --log-catalog is set.")
             ("license-key-file,L", po::value<std::string>()->default_value(""),
               "Path to the GizmoSQL Enterprise license key file (JWT format). "
               "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
@@ -397,6 +419,23 @@ int main(int argc, char** argv) {
   std::string instance_tag =
       vm.count("instance-tag") ? vm["instance-tag"].as<std::string>() : "";
 
+  std::string cluster_id =
+      vm.count("cluster-id") ? vm["cluster-id"].as<std::string>() : "";
+
+  std::optional<bool> enable_catalog_logging =
+      vm["enable-catalog-logging"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["enable-catalog-logging"].as<bool>());
+
+  std::string log_catalog =
+      vm.count("log-catalog") ? vm["log-catalog"].as<std::string>() : "";
+
+  std::string log_schema =
+      vm.count("log-schema") ? vm["log-schema"].as<std::string>() : "";
+
+  std::string log_catalog_db_path =
+      vm.count("log-catalog-db-path") ? vm["log-catalog-db-path"].as<std::string>() : "";
+
   std::string license_key_file =
       vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
 
@@ -455,5 +494,6 @@ int main(int argc, char** argv) {
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers, max_metadata_size,
       storage_version, max_concurrent_statements, max_queued_statements,
-      max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile);
+      max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile,
+      cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path);
 }

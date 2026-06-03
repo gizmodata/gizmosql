@@ -30,10 +30,51 @@ You can override the location using the environment variable:
 export GIZMOSQL_INSTRUMENTATION_DB_PATH=/custom/path/instrumentation.db
 ```
 
-### Using DuckLake as Instrumentation Backend
+### Choosing a backend
 
-For enterprise deployments, you can store instrumentation data in a DuckLake catalog instead of a local file. This enables:
-- Centralized instrumentation across multiple GizmoSQL instances
+GizmoSQL stores instrumentation in one of three backends, **auto-detected** from the catalog `--instrumentation-catalog` points at (it reads `duckdb_databases().type` at startup):
+
+| Backend | Use when | Constraints / indexes |
+|---------|----------|-----------------------|
+| **File-based DuckDB** (default) | Single instance | Primary keys, CHECK constraints, indexes |
+| **PostgreSQL** (recommended for multiple instances) | Several instances share one catalog | Primary keys, **foreign keys (`ON DELETE CASCADE`)**, CHECK constraints, indexes |
+| **DuckLake** (⚠️ deprecated) | — | None — see the warning below |
+
+### Using PostgreSQL as Instrumentation Backend (recommended for multiple instances)
+
+For multi-instance deployments, store instrumentation in a plain **PostgreSQL** database. Each instance writes its **own** (disjoint) rows — its own sessions, statements, and executions — and PostgreSQL's row-level MVCC lets those concurrent writes proceed without conflict. So, unlike DuckLake (whose table-level optimistic concurrency can drop a finalize/stop update on a commit conflict and strand a record), a finalize update is not lost to cross-instance contention. Attach the database in `--init-sql-commands` and point `--instrumentation-catalog` at it; GizmoSQL detects that it is PostgreSQL and creates the full relational schema (primary keys, foreign keys with `ON DELETE CASCADE`, CHECK constraints on status columns, and indexes on every foreign-key and timestamp column).
+
+```bash
+GIZMOSQL_PASSWORD="password" gizmosql_server \
+  --database-filename mydb.db \
+  --enable-instrumentation=true \
+  --instrumentation-catalog=instr_pg \
+  --instrumentation-schema=gizmosql_instr \
+  --init-sql-commands="
+    INSTALL postgres; LOAD postgres;
+    ATTACH 'host=localhost port=5432 dbname=instrumentation user=postgres password=password' AS instr_pg (TYPE postgres);
+  "
+```
+
+Notes:
+- Choose a schema name that is **not** prefixed with `pg_` (reserved by PostgreSQL). The default is `main`.
+- **Retention pruning** is a single cascading delete on the parent — `DELETE FROM instr_pg.gizmosql_instr.instances WHERE stop_time < now() - INTERVAL '30 days'` removes that instance's sessions, statements, and executions via `ON DELETE CASCADE`. The timestamp columns are indexed so the delete is fast.
+- JSON-valued columns (`*_tag`, `query_profile`) are stored as `VARCHAR` on PostgreSQL — they hold JSON strings; query them with a `::json` cast (e.g. `query_profile::json`).
+- Use a simple identifier for `--instrumentation-schema` (the default is `main`); exotic names with hyphens/spaces are not quoted in the generated DDL.
+- Instrumentation writes are **best-effort**: under heavy concurrency a write can rarely hit a transient PostgreSQL serialization error (the postgres extension uses `REPEATABLE READ`); it is logged at `WARNING` and **not** retried, so a finalize update could in principle be dropped. To find any execution left mid-flight, query for `executing` rows belonging to an instance that has since stopped:
+  ```sql
+  SELECT e.* FROM instr_pg.gizmosql_instr.sql_executions e
+  JOIN instr_pg.gizmosql_instr.sql_statements st ON e.statement_id = st.statement_id
+  JOIN instr_pg.gizmosql_instr.sessions s        ON st.session_id  = s.session_id
+  JOIN instr_pg.gizmosql_instr.instances i       ON s.instance_id  = i.instance_id
+  WHERE e.status = 'executing' AND i.status = 'stopped';
+  ```
+
+### Using DuckLake as Instrumentation Backend (⚠️ Deprecated)
+
+> **Deprecated.** DuckLake-backed instrumentation is deprecated and not recommended. DuckLake uses table-level optimistic concurrency, so concurrent UPDATEs from multiple instances sharing one catalog can be **lost** — a finalize/stop update that loses a commit conflict is dropped, leaving records permanently stuck (e.g. an execution stuck at `status='executing'`, never reaped in shared-catalog mode). The server logs a startup **WARNING** when instrumentation resolves to a DuckLake catalog. Use **file-based** (single instance) or **PostgreSQL** (multiple instances) instead. DuckLake support remains until the upstream concurrent-UPDATE issue is resolved.
+
+You can store instrumentation data in a DuckLake catalog. This enables:
 - Cloud-based storage (S3, Azure Blob, etc.) for instrumentation data
 - Transactional consistency with ACID guarantees from DuckLake
 
@@ -44,6 +85,7 @@ For enterprise deployments, you can store instrumentation data in a DuckLake cat
 | `instrumentation_catalog` | `--instrumentation-catalog` | `GIZMOSQL_INSTRUMENTATION_CATALOG` | (empty) | Catalog name for instrumentation. If set, uses pre-attached catalog instead of file. |
 | `instrumentation_schema` | `--instrumentation-schema` | `GIZMOSQL_INSTRUMENTATION_SCHEMA` | `main` | Schema within the catalog |
 | `instance_tag` | `--instance-tag` | `GIZMOSQL_INSTANCE_TAG` | (empty) | JSON-formatted tag attached to the instance record |
+| `cluster_id` | `--cluster-id` | `GIZMOSQL_CLUSTER_ID` | (empty) | Cluster grouping UUID. Recorded on the `instances` row, injected into every log entry, and exposed via `GIZMOSQL_CURRENT_CLUSTER()`. Must be a UUID. |
 
 When `instrumentation_catalog` is set:
 - The catalog must be pre-attached via `--init-sql-commands`
@@ -136,11 +178,10 @@ a Postgres scanner attach) when the server is in read-only mode.
 
 #### Multiple GizmoSQL Instances
 
-When running multiple GizmoSQL instances with shared DuckLake instrumentation:
-- All instances can share the same DuckLake catalog for centralized monitoring
-- DuckLake provides transactional isolation between concurrent writers
-- Each instance gets a unique `instance_id` for correlation
-- Use the `instances` table to track all connected servers
+When running multiple GizmoSQL instances that share one instrumentation catalog:
+- Use a **PostgreSQL** catalog (above), not DuckLake. PostgreSQL's row-level MVCC lets the instances write concurrently without losing updates; DuckLake can drop concurrent UPDATEs and is deprecated for this reason.
+- All instances share the catalog for centralized monitoring; each gets a unique `instance_id` for correlation.
+- Use the `instances` table to track all connected servers, and `DELETE FROM …instances WHERE stop_time < …` (cascading) to prune old data.
 
 **Note:** Persistent secrets are stored in unencrypted binary format in `~/.duckdb/stored_secrets`. You can customize this location with `SET secret_directory = '/path/to/secrets';` if needed.
 
@@ -165,7 +206,7 @@ When instrumentation is disabled:
 - Session, statement, and execution tracking is disabled
 - Queries to `_gizmosql_instr.*` tables/views will fail (schema doesn't exist)
 
-Note that `GIZMOSQL_CURRENT_SESSION()`, `GIZMOSQL_CURRENT_INSTANCE()`, `GIZMOSQL_VERSION()`, `GIZMOSQL_USER()`, `GIZMOSQL_ROLE()`, and `KILL SESSION` still work when instrumentation is disabled - they just won't be recorded in the instrumentation tables.
+Note that `GIZMOSQL_CURRENT_SESSION()`, `GIZMOSQL_CURRENT_INSTANCE()`, `GIZMOSQL_CURRENT_CLUSTER()`, `GIZMOSQL_VERSION()`, `GIZMOSQL_USER()`, `GIZMOSQL_ROLE()`, and `KILL SESSION` still work when instrumentation is disabled - they just won't be recorded in the instrumentation tables. `GIZMOSQL_CURRENT_CLUSTER()` returns the `--cluster-id` UUID, or `NULL` when no cluster id is configured.
 
 Disabling instrumentation may be useful for:
 - Development/testing environments where audit trails are not needed
@@ -183,7 +224,10 @@ The location of instrumentation tables depends on your configuration:
 | Mode | Table Location | Example Query |
 |------|----------------|---------------|
 | File-based (default) | `_gizmosql_instr.main.*` | `SELECT * FROM _gizmosql_instr.sessions` |
+| PostgreSQL | `{catalog}.{schema}.*` | `SELECT * FROM instr_pg.gizmosql_instr.sessions` |
 | DuckLake/External catalog | `{catalog}.{schema}.*` | `SELECT * FROM instr_ducklake.main.sessions` |
+
+The four tables below have the same columns on every backend. The **constraints and indexes** differ by backend: file-based DuckDB and PostgreSQL add primary keys, `CHECK` constraints on status columns, and indexes on foreign-key and timestamp columns; PostgreSQL additionally adds foreign keys with `ON DELETE CASCADE` (DuckDB cannot, as it implements UPDATE as delete+insert and the lifecycle updates parent rows). DuckLake has none of these. On PostgreSQL, the JSON-valued columns (`*_tag`, `query_profile`) are `VARCHAR` (JSON strings — cast with `::json`).
 
 When using file-based instrumentation, GizmoSQL automatically attaches the instrumentation database as `_gizmosql_instr` and all examples in this documentation use that name.
 
@@ -209,6 +253,7 @@ Tracks server instance lifecycle.
 | Column | Type | Description |
 |--------|------|-------------|
 | `instance_id` | UUID | Primary key |
+| `cluster_id` | UUID | Cluster grouping UUID from `--cluster-id` (nullable; NULL when unset) |
 | `gizmosql_version` | VARCHAR | GizmoSQL version |
 | `gizmosql_edition` | VARCHAR | GizmoSQL edition ('Core' or 'Enterprise') |
 | `duckdb_version` | VARCHAR | DuckDB version |

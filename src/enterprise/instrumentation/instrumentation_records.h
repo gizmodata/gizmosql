@@ -16,6 +16,7 @@ class InstrumentationManager;
 /// Configuration for instance instrumentation record
 struct InstanceConfig {
   std::string instance_id;
+  std::string cluster_id;       // User-supplied cluster grouping UUID (empty if not set)
   std::string gizmosql_version;
   std::string gizmosql_edition;
   std::string duckdb_version;

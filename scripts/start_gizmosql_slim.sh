@@ -35,6 +35,11 @@
 #   GIZMOSQL_INSTRUMENTATION_CATALOG --instrumentation-catalog
 #   GIZMOSQL_INSTRUMENTATION_SCHEMA  --instrumentation-schema
 #   GIZMOSQL_INSTANCE_TAG            --instance-tag
+#   GIZMOSQL_CLUSTER_ID              --cluster-id
+#   GIZMOSQL_ENABLE_CATALOG_LOGGING  --enable-catalog-logging
+#   GIZMOSQL_LOG_CATALOG             --log-catalog
+#   GIZMOSQL_LOG_SCHEMA              --log-schema
+#   GIZMOSQL_LOG_DB_PATH             --log-catalog-db-path
 #   GIZMOSQL_LICENSE_KEY_FILE        --license-key-file
 #   GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS --allow-cross-instance-tokens
 #   GIZMOSQL_TOKEN_JWKS_URI              --token-jwks-uri

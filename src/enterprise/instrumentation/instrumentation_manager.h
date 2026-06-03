@@ -7,6 +7,7 @@
 #include <duckdb.hpp>
 
 #include <atomic>
+#include "../catalog_backend.h"
 #include "detail/tracked_duckdb_connection.h"
 #include <condition_variable>
 #include <functional>
@@ -63,6 +64,14 @@ class InstrumentationManager {
   bool IsEnabled() const { return enabled_; }
 
  private:
+  /// Storage backend of the instrumentation catalog (shared enum, detected at
+  /// startup from `duckdb_databases().type`). Selects the schema dialect:
+  /// DuckDBFile and Postgres get the full relational schema (primary/foreign
+  /// keys, CHECK constraints, indexes); DuckLake gets the constraint-free schema
+  /// and is deprecated (concurrent multi-instance UPDATEs can be lost — see
+  /// InitializeSchema).
+  using Backend = ::gizmosql::CatalogBackend;
+
   InstrumentationManager(const std::string& db_path,
                          const std::string& catalog,
                          const std::string& schema,
@@ -70,7 +79,17 @@ class InstrumentationManager {
                          std::shared_ptr<duckdb::DuckDB> db_instance,
                          std::unique_ptr<gizmosql::TrackedDuckDBConnection> writer_connection);
 
+  /// Resolve the storage backend of the (already-attached) instrumentation
+  /// catalog from `duckdb_databases().type`. Defaults to kDuckDBFile.
+  Backend DetectBackend();
+
   arrow::Status InitializeSchema();
+
+  /// Create the relational schema on a plain PostgreSQL catalog. PostgreSQL
+  /// objects (tables, constraints, indexes, views) are created with native SQL
+  /// via `postgres_execute()` to bypass DuckDB's DDL translation (which
+  /// mistranslates view functions and rejects catalog-qualified references).
+  arrow::Status InitializePostgresSchema();
 
   /// Clean up any stale 'running' instances and 'active' sessions from previous
   /// unclean shutdowns. Called during startup.
@@ -82,6 +101,7 @@ class InstrumentationManager {
   std::string catalog_;
   std::string schema_;
   bool use_external_catalog_;
+  Backend backend_{Backend::kDuckDBFile};
   std::shared_ptr<duckdb::DuckDB> db_instance_;
   std::unique_ptr<gizmosql::TrackedDuckDBConnection> writer_connection_;
 

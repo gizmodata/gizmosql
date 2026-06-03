@@ -6,6 +6,8 @@
 
 #include "instrumentation_manager.h"
 
+#include <stdexcept>
+
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -16,6 +18,32 @@ namespace {
 
 std::string GenerateUUID() {
   return boost::uuids::to_string(boost::uuids::random_generator()());
+}
+
+// Execute one instrumentation write. The result is materialized
+// (allow_stream_result=false) so a DML error is observed here, rather than
+// deferred to an unfetched streaming result and then lost when it is destroyed.
+// On any error this THROWS: the writer thread runs each write inside an explicit
+// transaction (WriterTxnGuard), so the throw unwinds through the guard's
+// destructor (rolling back this write) and is logged by the writer loop's
+// handler. Throwing — rather than logging-and-returning — makes the rollback
+// explicit and backend-independent, instead of relying on DuckDB silently
+// discarding an aborted transaction on COMMIT (which is not guaranteed for
+// writes routed to PostgreSQL via the postgres extension). Instrumentation is
+// best-effort, so the writer never lets the throw escape the thread.
+void ExecuteInstrumentationWrite(duckdb::Connection& conn, const char* operation,
+                                 const std::string& sql,
+                                 duckdb::vector<duckdb::Value> params) {
+  auto stmt = conn.Prepare(sql);
+  if (stmt->HasError()) {
+    throw std::runtime_error(std::string("instrumentation write [") + operation +
+                             "] failed to prepare: " + stmt->GetError());
+  }
+  auto result = stmt->Execute(params, /*allow_stream_result=*/false);
+  if (result->HasError()) {
+    throw std::runtime_error(std::string("instrumentation write [") + operation +
+                             "] failed: " + result->GetError());
+  }
 }
 
 }  // namespace
@@ -32,39 +60,43 @@ InstanceInstrumentation::InstanceInstrumentation(
   }
 
   manager_->QueueWrite([config](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record instance start",
         "INSERT INTO instances (instance_id, gizmosql_version, gizmosql_edition, "
         "duckdb_version, arrow_version, hostname, hostname_arg, server_ip, port, database_path, "
         "tls_enabled, tls_cert_path, tls_key_path, mtls_required, mtls_ca_cert_path, readonly, "
         "os_platform, os_name, os_version, cpu_arch, cpu_model, cpu_count, memory_total_bytes, "
-        "start_time, status, instance_tag) "
+        "start_time, status, instance_tag, cluster_id) "
         "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, "
-        "$17, $18, $19, $20, $21, $22, $23, now(), 'running', $24)");
-    stmt->Execute(
-        duckdb::Value::UUID(config.instance_id),
-        duckdb::Value(config.gizmosql_version),
-        duckdb::Value(config.gizmosql_edition),
-        duckdb::Value(config.duckdb_version),
-        duckdb::Value(config.arrow_version),
-        config.hostname.empty() ? duckdb::Value() : duckdb::Value(config.hostname),
-        config.hostname_arg.empty() ? duckdb::Value() : duckdb::Value(config.hostname_arg),
-        config.server_ip.empty() ? duckdb::Value() : duckdb::Value(config.server_ip),
-        duckdb::Value(config.port),
-        duckdb::Value(config.database_path),
-        duckdb::Value::BOOLEAN(config.tls_enabled),
-        config.tls_cert_path.empty() ? duckdb::Value() : duckdb::Value(config.tls_cert_path),
-        config.tls_key_path.empty() ? duckdb::Value() : duckdb::Value(config.tls_key_path),
-        duckdb::Value::BOOLEAN(config.mtls_required),
-        config.mtls_ca_cert_path.empty() ? duckdb::Value() : duckdb::Value(config.mtls_ca_cert_path),
-        duckdb::Value::BOOLEAN(config.readonly),
-        config.os_platform.empty() ? duckdb::Value() : duckdb::Value(config.os_platform),
-        config.os_name.empty() ? duckdb::Value() : duckdb::Value(config.os_name),
-        config.os_version.empty() ? duckdb::Value() : duckdb::Value(config.os_version),
-        config.cpu_arch.empty() ? duckdb::Value() : duckdb::Value(config.cpu_arch),
-        config.cpu_model.empty() ? duckdb::Value() : duckdb::Value(config.cpu_model),
-        duckdb::Value(config.cpu_count),
-        duckdb::Value::BIGINT(config.memory_total_bytes),
-        config.instance_tag.empty() ? duckdb::Value() : duckdb::Value(config.instance_tag));
+        "$17, $18, $19, $20, $21, $22, $23, now(), 'running', $24, $25)",
+        {
+            duckdb::Value::UUID(config.instance_id),
+            duckdb::Value(config.gizmosql_version),
+            duckdb::Value(config.gizmosql_edition),
+            duckdb::Value(config.duckdb_version),
+            duckdb::Value(config.arrow_version),
+            config.hostname.empty() ? duckdb::Value() : duckdb::Value(config.hostname),
+            config.hostname_arg.empty() ? duckdb::Value() : duckdb::Value(config.hostname_arg),
+            config.server_ip.empty() ? duckdb::Value() : duckdb::Value(config.server_ip),
+            duckdb::Value(config.port),
+            duckdb::Value(config.database_path),
+            duckdb::Value::BOOLEAN(config.tls_enabled),
+            config.tls_cert_path.empty() ? duckdb::Value() : duckdb::Value(config.tls_cert_path),
+            config.tls_key_path.empty() ? duckdb::Value() : duckdb::Value(config.tls_key_path),
+            duckdb::Value::BOOLEAN(config.mtls_required),
+            config.mtls_ca_cert_path.empty() ? duckdb::Value() : duckdb::Value(config.mtls_ca_cert_path),
+            duckdb::Value::BOOLEAN(config.readonly),
+            config.os_platform.empty() ? duckdb::Value() : duckdb::Value(config.os_platform),
+            config.os_name.empty() ? duckdb::Value() : duckdb::Value(config.os_name),
+            config.os_version.empty() ? duckdb::Value() : duckdb::Value(config.os_version),
+            config.cpu_arch.empty() ? duckdb::Value() : duckdb::Value(config.cpu_arch),
+            config.cpu_model.empty() ? duckdb::Value() : duckdb::Value(config.cpu_model),
+            duckdb::Value(config.cpu_count),
+            duckdb::Value::BIGINT(config.memory_total_bytes),
+            config.instance_tag.empty() ? duckdb::Value() : duckdb::Value(config.instance_tag),
+            config.cluster_id.empty() ? duckdb::Value()
+                                      : duckdb::Value::UUID(config.cluster_id),
+        });
   });
 }
 
@@ -74,10 +106,11 @@ InstanceInstrumentation::~InstanceInstrumentation() {
   }
 
   manager_->QueueWrite([id = instance_id_, reason = stop_reason_](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record instance stop",
         "UPDATE instances SET stop_time = now(), status = 'stopped', stop_reason = $2 "
-        "WHERE instance_id = $1");
-    stmt->Execute(duckdb::Value::UUID(id), duckdb::Value(reason));
+        "WHERE instance_id = $1",
+        {duckdb::Value::UUID(id), duckdb::Value(reason)});
   });
 }
 
@@ -102,16 +135,17 @@ SessionInstrumentation::SessionInstrumentation(
   manager_->QueueWrite([instance_id, session_id, username, role, auth_method,
                         peer, peer_identity, user_agent,
                         connection_protocol](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record session start",
         "INSERT INTO sessions (session_id, instance_id, username, role, "
         "auth_method, peer, peer_identity, user_agent, connection_protocol, start_time, status) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), 'active')");
-    stmt->Execute(duckdb::Value::UUID(session_id), duckdb::Value::UUID(instance_id),
-                  duckdb::Value(username), duckdb::Value(role), duckdb::Value(auth_method),
-                  duckdb::Value(peer),
-                  peer_identity.empty() ? duckdb::Value() : duckdb::Value(peer_identity),
-                  user_agent.empty() ? duckdb::Value() : duckdb::Value(user_agent),
-                  duckdb::Value(connection_protocol));
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), 'active')",
+        {duckdb::Value::UUID(session_id), duckdb::Value::UUID(instance_id),
+         duckdb::Value(username), duckdb::Value(role), duckdb::Value(auth_method),
+         duckdb::Value(peer),
+         peer_identity.empty() ? duckdb::Value() : duckdb::Value(peer_identity),
+         user_agent.empty() ? duckdb::Value() : duckdb::Value(user_agent),
+         duckdb::Value(connection_protocol)});
   });
 }
 
@@ -128,10 +162,11 @@ SessionInstrumentation::~SessionInstrumentation() {
   }
 
   manager_->QueueWrite([id = session_id_, status, reason = stop_reason_](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record session stop",
         "UPDATE sessions SET stop_time = now(), status = $2, stop_reason = $3 "
-        "WHERE session_id = $1");
-    stmt->Execute(duckdb::Value::UUID(id), duckdb::Value(status), duckdb::Value(reason));
+        "WHERE session_id = $1",
+        {duckdb::Value::UUID(id), duckdb::Value(status), duckdb::Value(reason)});
   });
 }
 
@@ -145,10 +180,11 @@ void SessionInstrumentation::UpdateSessionTag(const std::string& tag) {
   }
 
   manager_->QueueWrite([id = session_id_, tag](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
-        "UPDATE sessions SET session_tag = $2 WHERE session_id = $1");
-    stmt->Execute(duckdb::Value::UUID(id),
-                  tag.empty() ? duckdb::Value() : duckdb::Value(tag));
+    ExecuteInstrumentationWrite(
+        conn, "update session tag",
+        "UPDATE sessions SET session_tag = $2 WHERE session_id = $1",
+        {duckdb::Value::UUID(id),
+         tag.empty() ? duckdb::Value() : duckdb::Value(tag)});
   });
 }
 
@@ -170,17 +206,18 @@ StatementInstrumentation::StatementInstrumentation(
   manager_->QueueWrite([statement_id, session_id, sql_text, flight_method,
                         is_internal, prepare_success, prepare_error,
                         query_tag](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record statement",
         "INSERT INTO sql_statements (statement_id, session_id, sql_text, "
         "flight_method, is_internal, prepare_success, prepare_error, created_time, query_tag) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)");
-    stmt->Execute(duckdb::Value::UUID(statement_id), duckdb::Value::UUID(session_id),
-                  duckdb::Value(sql_text),
-                  flight_method.empty() ? duckdb::Value() : duckdb::Value(flight_method),
-                  duckdb::Value::BOOLEAN(is_internal),
-                  duckdb::Value::BOOLEAN(prepare_success),
-                  prepare_error.empty() ? duckdb::Value() : duckdb::Value(prepare_error),
-                  query_tag.empty() ? duckdb::Value() : duckdb::Value(query_tag));
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)",
+        {duckdb::Value::UUID(statement_id), duckdb::Value::UUID(session_id),
+         duckdb::Value(sql_text),
+         flight_method.empty() ? duckdb::Value() : duckdb::Value(flight_method),
+         duckdb::Value::BOOLEAN(is_internal),
+         duckdb::Value::BOOLEAN(prepare_success),
+         prepare_error.empty() ? duckdb::Value() : duckdb::Value(prepare_error),
+         query_tag.empty() ? duckdb::Value() : duckdb::Value(query_tag)});
   });
 }
 
@@ -200,12 +237,13 @@ ExecutionInstrumentation::ExecutionInstrumentation(
   }
 
   manager_->QueueWrite([execution_id, statement_id, bind_parameters](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record execution start",
         "INSERT INTO sql_executions (execution_id, statement_id, "
         "bind_parameters, execution_start_time, status, rows_fetched) "
-        "VALUES ($1, $2, $3, now(), 'executing', 0)");
-    stmt->Execute(duckdb::Value::UUID(execution_id), duckdb::Value::UUID(statement_id),
-                  bind_parameters.empty() ? duckdb::Value() : duckdb::Value(bind_parameters));
+        "VALUES ($1, $2, $3, now(), 'executing', 0)",
+        {duckdb::Value::UUID(execution_id), duckdb::Value::UUID(statement_id),
+         bind_parameters.empty() ? duckdb::Value() : duckdb::Value(bind_parameters)});
   });
 }
 
@@ -248,10 +286,11 @@ void ExecutionInstrumentation::SetQueued() {
     return;
   }
   manager_->QueueWrite([exec_id = execution_id_](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record execution queued",
         "UPDATE sql_executions SET status = 'queued', enqueue_time = now() "
-        "WHERE execution_id = $1");
-    stmt->Execute(duckdb::Value::UUID(exec_id));
+        "WHERE execution_id = $1",
+        {duckdb::Value::UUID(exec_id)});
   });
 }
 
@@ -264,10 +303,11 @@ void ExecutionInstrumentation::SetRunning() {
     return;
   }
   manager_->QueueWrite([exec_id = execution_id_](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record execution running",
         "UPDATE sql_executions SET status = 'executing', execution_start_time = now() "
-        "WHERE execution_id = $1 AND status = 'queued'");
-    stmt->Execute(duckdb::Value::UUID(exec_id));
+        "WHERE execution_id = $1 AND status = 'queued'",
+        {duckdb::Value::UUID(exec_id)});
   });
 }
 
@@ -306,15 +346,16 @@ void ExecutionInstrumentation::Finalize() {
                         status = status_, error_msg = error_message_,
                         profile = query_profile_,
                         final_duration_ms](duckdb::Connection& conn) {
-    auto stmt = conn.Prepare(
+    ExecuteInstrumentationWrite(
+        conn, "record execution end",
         "UPDATE sql_executions SET execution_end_time = now(), "
         "rows_fetched = $2, status = $3, error_message = $4, "
-        "duration_ms = $5, query_profile = $6 WHERE execution_id = $1");
-    stmt->Execute(duckdb::Value::UUID(exec_id),
-                  duckdb::Value::BIGINT(rows), duckdb::Value(status),
-                  error_msg.empty() ? duckdb::Value() : duckdb::Value(error_msg),
-                  duckdb::Value::BIGINT(final_duration_ms),
-                  profile.empty() ? duckdb::Value() : duckdb::Value(profile));
+        "duration_ms = $5, query_profile = $6 WHERE execution_id = $1",
+        {duckdb::Value::UUID(exec_id),
+         duckdb::Value::BIGINT(rows), duckdb::Value(status),
+         error_msg.empty() ? duckdb::Value() : duckdb::Value(error_msg),
+         duckdb::Value::BIGINT(final_duration_ms),
+         profile.empty() ? duckdb::Value() : duckdb::Value(profile)});
   });
 }
 

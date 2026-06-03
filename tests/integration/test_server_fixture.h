@@ -79,7 +79,12 @@ CreateFlightSQLServer(
     int32_t max_queue_wait_seconds = -1,
     bool admin_bypass_queue_default = true,
     std::string memory_limit = "",
-    gizmosql::QueryProfileMode capture_query_profile = gizmosql::QueryProfileMode::kOff);
+    gizmosql::QueryProfileMode capture_query_profile = gizmosql::QueryProfileMode::kOff,
+    std::string cluster_id = "",
+    bool enable_catalog_logging = false,
+    std::string log_catalog = "",
+    std::string log_schema = "",
+    std::string log_catalog_db_path = "");
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -131,6 +136,11 @@ struct TestServerConfig {
   std::string memory_limit = "";                 // [DuckDB] memory_limit (e.g. "8GB","75%"); empty => DuckDB default
   gizmosql::QueryProfileMode capture_query_profile =
       gizmosql::QueryProfileMode::kOff;          // [Enterprise] server default for query profile capture
+  std::string cluster_id = "";                   // [Enterprise] cluster grouping UUID (--cluster-id)
+  bool enable_catalog_logging = false;           // [Enterprise] fork logs to an attached catalog
+  std::string log_catalog = "";                  // [Enterprise] external log catalog name (empty => file-based _gizmosql_logs)
+  std::string log_schema = "";                   // [Enterprise] schema within the log catalog (empty => "main")
+  std::string log_catalog_db_path = "";          // [Enterprise] file-based log DB path (empty => default sibling)
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -238,7 +248,12 @@ class ServerTestFixture : public ::testing::Test {
         /*max_queue_wait_seconds=*/config_.max_queue_wait_seconds,
         /*admin_bypass_queue_default=*/config_.admin_bypass_queue_default,
         /*memory_limit=*/config_.memory_limit,
-        /*capture_query_profile=*/config_.capture_query_profile);
+        /*capture_query_profile=*/config_.capture_query_profile,
+        /*cluster_id=*/config_.cluster_id,
+        /*enable_catalog_logging=*/config_.enable_catalog_logging,
+        /*log_catalog=*/config_.log_catalog,
+        /*log_schema=*/config_.log_schema,
+        /*log_catalog_db_path=*/config_.log_catalog_db_path);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;
@@ -305,6 +320,18 @@ class ServerTestFixture : public ::testing::Test {
     std::error_code ec;
     fs::remove(instr_path, ec);
     fs::remove(instr_path.string() + ".wal", ec);
+
+    // Remove catalog-logging database files: the configured path (if any) and
+    // the file-based default (gizmosql_logs.db sibling of the main database).
+    if (!config_.log_catalog_db_path.empty()) {
+      fs::remove(config_.log_catalog_db_path, ec);
+      fs::remove(config_.log_catalog_db_path + ".wal", ec);
+    }
+    fs::path log_path = db_path.has_parent_path()
+                            ? (db_path.parent_path() / "gizmosql_logs.db")
+                            : fs::path("gizmosql_logs.db");
+    fs::remove(log_path, ec);
+    fs::remove(log_path.string() + ".wal", ec);
   }
 
   bool IsServerReady() const { return server_ready_; }

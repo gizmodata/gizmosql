@@ -865,6 +865,15 @@ class DuckDBFlightSqlServer::Impl {
   // Server instance ID - generated on server creation, independent of instrumentation
   std::string instance_id_;
 
+  // Optional cluster grouping UUID (--cluster-id); empty when unset. Set once at
+  // startup (via SetClusterId) before serving begins, then read-only.
+  std::string cluster_id_;
+
+  // Name of the attached catalog the server forks logs into (catalog logging),
+  // empty when off. Set once at startup; read by the catalog-permissions handler
+  // to gate the log catalog as admin-read-only.
+  std::string log_catalog_;
+
 #ifdef GIZMOSQL_ENTERPRISE
   // Instrumentation (Enterprise feature)
   std::shared_ptr<InstrumentationManager> instrumentation_manager_;
@@ -1154,6 +1163,12 @@ class DuckDBFlightSqlServer::Impl {
   std::string GetInstanceId() const {
     return instance_id_;
   }
+
+  std::string GetClusterId() const { return cluster_id_; }
+  void SetClusterId(const std::string& cluster_id) { cluster_id_ = cluster_id; }
+
+  std::string GetLogCatalog() const { return log_catalog_; }
+  void SetLogCatalog(const std::string& log_catalog) { log_catalog_ = log_catalog; }
 
   size_t GetActiveSessionCount() const {
     std::shared_lock read_lock(sessions_mutex_);
@@ -1983,12 +1998,14 @@ class DuckDBFlightSqlServer::Impl {
         if (name == "catalog" &&
             CatalogExistsOnConnection(client_session->connection->Get(), sanitized)) {
           std::shared_ptr<InstrumentationManager> instr_mgr;
+          std::string log_catalog;
           if (auto server = GetServer(*client_session)) {
             instr_mgr = server->GetInstrumentationManager();
+            log_catalog = server->GetLogCatalog();
           }
           ARROW_RETURN_NOT_OK(gizmosql::enterprise::EnsureCatalogReadAccess(
               client_session, sanitized, instr_mgr, "", "USE \"" + sanitized + "\"",
-              "SetSessionOptions", false));
+              "SetSessionOptions", false, log_catalog));
         }
 #endif
         std::string quoted_identifier = "\"" + sanitized + "\"";
@@ -2564,6 +2581,22 @@ gizmosql::QueryProfileMode DuckDBFlightSqlServer::GetCaptureQueryProfile(
 
 std::string DuckDBFlightSqlServer::GetInstanceId() const {
   return impl_->GetInstanceId();
+}
+
+std::string DuckDBFlightSqlServer::GetClusterId() const {
+  return impl_->GetClusterId();
+}
+
+void DuckDBFlightSqlServer::SetClusterId(const std::string& cluster_id) {
+  impl_->SetClusterId(cluster_id);
+}
+
+std::string DuckDBFlightSqlServer::GetLogCatalog() const {
+  return impl_->GetLogCatalog();
+}
+
+void DuckDBFlightSqlServer::SetLogCatalog(const std::string& log_catalog) {
+  impl_->SetLogCatalog(log_catalog);
 }
 
 size_t DuckDBFlightSqlServer::GetActiveSessionCount() const {

@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <cstdio>
+#include <stdexcept>
 
 #ifdef _WIN32
 #define popen _popen
@@ -1173,4 +1174,73 @@ TEST(InstrumentationManagerTest, AutoMigratesNaiveTimestampToTimestampTz) {
   (*mgr)->Shutdown();
   fs::remove(instr_db, ec);
   fs::remove(instr_db + ".wal", ec);
+}
+
+// The writer thread runs each queued write in its own explicit transaction, so
+// the writer connection is never left "idle in transaction" between writes and
+// a write that fails is isolated — it must not stop the writes queued around it
+// from committing. This drives the writer thread through the public QueueWrite
+// API against a neutral scratch table (NOT the system-managed instrumentation
+// schema), so it stays decoupled from the instrumentation table layout.
+TEST(InstrumentationManagerTest, FailedWriteDoesNotAffectOtherWrites) {
+  namespace fs = std::filesystem;
+
+  std::string test_db_path = "writer_isolation_test_instr.db";
+  std::error_code ec;
+  fs::remove(test_db_path, ec);
+  fs::remove(test_db_path + ".wal", ec);
+
+  auto shared_db = std::make_shared<duckdb::DuckDB>(":memory:");
+
+  auto result = gizmosql::ddb::InstrumentationManager::Create(shared_db, test_db_path);
+  ASSERT_TRUE(result.ok()) << result.status().ToString();
+  auto manager = result.ValueOrDie();
+
+  // Scratch table in the default in-memory catalog (not the instrumentation
+  // schema). id is NOT NULL, so inserting NULL is a runtime error that aborts
+  // that write's transaction — the "poison" write.
+  {
+    duckdb::Connection setup(*shared_db);
+    auto r = setup.Query(
+        "CREATE TABLE memory.main.writer_scratch (id INTEGER NOT NULL)");
+    ASSERT_FALSE(r->HasError()) << r->GetError();
+  }
+
+  // Mirror the production write path (ExecuteInstrumentationWrite): a failed
+  // write throws, so the writer thread's transaction guard rolls it back. The
+  // poison write below therefore exercises that exact throw -> rollback path.
+  auto make_insert = [](const std::string& value_sql) {
+    return [value_sql](duckdb::Connection& conn) {
+      auto r = conn.Query("INSERT INTO memory.main.writer_scratch VALUES (" +
+                          value_sql + ")");
+      if (r->HasError()) throw std::runtime_error(r->GetError());
+    };
+  };
+
+  manager->QueueWrite(make_insert("1"));     // good
+  manager->QueueWrite(make_insert("NULL"));  // poison: NOT NULL violation aborts its txn
+  manager->QueueWrite(make_insert("2"));     // good
+
+  // Shutdown drains the queue and joins the writer thread, so every write has
+  // been processed once it returns.
+  manager->Shutdown();
+  manager.reset();
+
+  // Both good writes must have committed despite the poison write between them.
+  {
+    duckdb::Connection conn(*shared_db);
+    auto total_q = conn.Query("SELECT COUNT(*) FROM memory.main.writer_scratch");
+    ASSERT_FALSE(total_q->HasError()) << total_q->GetError();
+    EXPECT_EQ(total_q->GetValue(0, 0).GetValue<int64_t>(), 2)
+        << "A failed write must not discard the writes queued around it";
+
+    auto ids_q = conn.Query(
+        "SELECT COUNT(*) FROM memory.main.writer_scratch WHERE id IN (1, 2)");
+    ASSERT_FALSE(ids_q->HasError()) << ids_q->GetError();
+    EXPECT_EQ(ids_q->GetValue(0, 0).GetValue<int64_t>(), 2);
+  }
+
+  shared_db.reset();
+  fs::remove(test_db_path, ec);
+  fs::remove(test_db_path + ".wal", ec);
 }

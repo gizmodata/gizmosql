@@ -19,6 +19,7 @@
 * Features
   * [SET Commands](set_commands.md)
   * [Session Instrumentation](session_instrumentation.md) *(Enterprise)*
+  * [Catalog Logging](catalog_logging.md) *(Enterprise)*
   * [Statement Queuing](statement_queuing.md) *(Enterprise)*
   * [OpenTelemetry Integration](opentelemetry.md)
 

@@ -159,6 +159,18 @@ bool IsDetachInstrumentationDb(const std::string& sql, const std::string& instru
   return false;
 }
 
+// Generic DETACH guard: true if `sql` is a DETACH that mentions `catalog`
+// (same substring heuristic as IsDetachInstrumentationDb). Used to also protect
+// the catalog-logging catalog from being detached out from under the sink.
+bool SqlDetachesCatalog(const std::string& sql, const std::string& catalog) {
+  if (catalog.empty()) return false;
+  std::string upper = boost::to_upper_copy(sql);
+  if (upper.find("DETACH") == std::string::npos) {
+    return false;
+  }
+  return upper.find(boost::to_upper_copy(catalog)) != std::string::npos;
+}
+
 #ifndef GIZMOSQL_ENTERPRISE
 // Core edition: local implementation for detection only
 bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id) {
@@ -228,6 +240,7 @@ bool CatalogExistsOnConnection(duckdb::Connection& connection,
 // Replace GizmoSQL pseudo-functions with actual values:
 //   GIZMOSQL_CURRENT_SESSION() -> current session UUID
 //   GIZMOSQL_CURRENT_INSTANCE() -> current server instance UUID
+//   GIZMOSQL_CURRENT_CLUSTER() -> current cluster UUID (NULL if --cluster-id unset)
 //   GIZMOSQL_VERSION() -> GizmoSQL version string
 //   GIZMOSQL_USER() -> current username
 //   GIZMOSQL_ROLE() -> current user's role
@@ -340,6 +353,7 @@ bool ShouldAddAlias(const std::string& sql, size_t func_start, size_t func_end) 
 std::string ReplaceGizmoSQLFunctions(const std::string& sql,
                                      const std::string& session_id,
                                      const std::string& instance_id,
+                                     const std::string& cluster_id,
                                      const std::string& username,
                                      const std::string& role,
                                      const std::string& edition,
@@ -419,6 +433,27 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
           result += " AS \"GIZMOSQL_CURRENT_INSTANCE()\"";
         }
         i += kInstanceFuncLen;
+        continue;
+      }
+    }
+
+    // Check for GIZMOSQL_CURRENT_CLUSTER() at this position
+    constexpr size_t kClusterFuncLen = 26;  // length of "GIZMOSQL_CURRENT_CLUSTER()"
+    if (i + kClusterFuncLen <= sql.size()) {
+      std::string candidate = sql.substr(i, kClusterFuncLen);
+      std::string upper_candidate = boost::to_upper_copy(candidate);
+      if (upper_candidate == "GIZMOSQL_CURRENT_CLUSTER()") {
+        if (cluster_id.empty()) {
+          result += "NULL";
+        } else {
+          result += '\'';
+          result += cluster_id;
+          result += '\'';
+        }
+        if (ShouldAddAlias(sql, i, i + kClusterFuncLen)) {
+          result += " AS \"GIZMOSQL_CURRENT_CLUSTER()\"";
+        }
+        i += kClusterFuncLen;
         continue;
       }
     }
@@ -725,10 +760,13 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   client_session->active_sql_handle = handle;
 
-  // Get instance_id from server for GIZMOSQL_CURRENT_INSTANCE()
+  // Get instance_id + cluster_id from the server for the
+  // GIZMOSQL_CURRENT_INSTANCE() / GIZMOSQL_CURRENT_CLUSTER() pseudo-functions.
   std::string instance_id;
+  std::string cluster_id;
   if (auto server = GetServer(*client_session)) {
     instance_id = server->GetInstanceId();
+    cluster_id = server->GetClusterId();
   }
 
   // Get edition name for GIZMOSQL_EDITION()
@@ -754,7 +792,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   // Replace GIZMOSQL_* pseudo-functions with actual values
   std::string effective_sql = ReplaceGizmoSQLFunctions(
-      sql, client_session->session_id, instance_id, client_session->username,
+      sql, client_session->session_id, instance_id, cluster_id, client_session->username,
       client_session->role, edition, instrumentation_enabled,
       instrumentation_catalog, instrumentation_schema);
 
@@ -770,8 +808,10 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
 #ifdef GIZMOSQL_ENTERPRISE
   std::shared_ptr<InstrumentationManager> instr_mgr;
+  std::string log_catalog;
   if (auto server = GetServer(*client_session)) {
     instr_mgr = server->GetInstrumentationManager();
+    log_catalog = server->GetLogCatalog();
   }
 
   if (!is_internal) {
@@ -779,7 +819,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       if (CatalogExistsOnConnection(client_session->connection->Get(), *use_catalog_name)) {
         ARROW_RETURN_NOT_OK(gizmosql::enterprise::EnsureCatalogReadAccess(
             client_session, *use_catalog_name, instr_mgr, handle, logged_sql,
-            flight_method, is_internal));
+            flight_method, is_internal, log_catalog));
       }
     }
   }
@@ -788,7 +828,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
   if (!client_session->catalog_access.empty() &&
       enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
     auto allowed = enterprise::GetAllowedCatalogs(
-        *client_session, client_session->connection->Get(), instr_mgr);
+        *client_session, client_session->connection->Get(), instr_mgr, log_catalog);
     if (!allowed.empty()) {
       auto filter_in = enterprise::BuildCatalogFilterIN(allowed);
       std::string rewritten;
@@ -821,21 +861,31 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
         {"flight_method", flight_method});
   }
 
-  // Prevent DETACH of instrumentation database (only relevant when enterprise is enabled)
+  // Prevent DETACH of the system-managed catalogs — instrumentation and
+  // catalog-logging — including externally-attached ones (e.g. DuckLake/PostgreSQL).
 #ifdef GIZMOSQL_ENTERPRISE
   {
-    // Get the instrumentation catalog name to also protect external catalogs (e.g., DuckLake)
     std::string instr_catalog;
+    std::string log_catalog;
     if (auto server = GetServer(*client_session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
         instr_catalog = mgr->GetCatalog();
       }
+      log_catalog = server->GetLogCatalog();
     }
+    const char* detach_target = nullptr;
     if (IsDetachInstrumentationDb(sql, instr_catalog)) {
-      GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Client attempted to DETACH instrumentation database",
-                     {"kind", "sql"}, {"status", "rejected"},
+      detach_target = "instrumentation";
+    } else if (SqlDetachesCatalog(sql, log_catalog)) {
+      detach_target = "catalog-logging";
+    }
+    if (detach_target != nullptr) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                     "Client attempted to DETACH a system-managed database",
+                     {"kind", "sql"}, {"status", "rejected"}, {"catalog", detach_target},
                      {"statement_id", handle}, {"sql", logged_sql});
-      std::string error_msg = "Cannot DETACH the instrumentation database";
+      std::string error_msg =
+          std::string("Cannot DETACH the ") + detach_target + " database";
       // Record the rejected DETACH attempt
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {
@@ -971,14 +1021,16 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     // Check catalog-level access permissions (Enterprise feature)
     // These checks enforce per-catalog read/write permissions from JWT token claims
     std::shared_ptr<InstrumentationManager> instr_mgr;
+    std::string log_catalog;
     if (auto server = GetServer(*client_session)) {
       instr_mgr = server->GetInstrumentationManager();
+      log_catalog = server->GetLogCatalog();
     }
 
     // Check write access for all catalogs the statement will modify
     auto write_status = gizmosql::enterprise::CheckCatalogWriteAccess(
         client_session, stmt->data->properties.modified_databases,
-        instr_mgr, handle, logged_sql, flight_method, is_internal);
+        instr_mgr, handle, logged_sql, flight_method, is_internal, log_catalog);
     if (!write_status.ok()) {
       return write_status;
     }
@@ -986,7 +1038,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     // Check read access for all catalogs the statement will read
     auto read_status = gizmosql::enterprise::CheckCatalogReadAccess(
         client_session, stmt->data->properties.read_databases,
-        instr_mgr, handle, logged_sql, flight_method, is_internal);
+        instr_mgr, handle, logged_sql, flight_method, is_internal, log_catalog);
     if (!read_status.ok()) {
       return read_status;
     }

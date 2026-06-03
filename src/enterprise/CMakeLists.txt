@@ -11,6 +11,7 @@ set(GIZMOSQL_ENTERPRISE_SRCS
     instrumentation/instrumentation_manager.cpp
     instrumentation/instrumentation_records.cpp
     kill_session/kill_session_handler.cpp
+    catalog_logging/catalog_log_sink.cpp
 )
 
 # Create the enterprise library
@@ -22,6 +23,7 @@ target_include_directories(gizmosql_enterprise PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/license_mgr
     ${CMAKE_CURRENT_SOURCE_DIR}/instrumentation
     ${CMAKE_CURRENT_SOURCE_DIR}/kill_session
+    ${CMAKE_CURRENT_SOURCE_DIR}/catalog_logging
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/common/include
     ${CMAKE_SOURCE_DIR}/src/duckdb

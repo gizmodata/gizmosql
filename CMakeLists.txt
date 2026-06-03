@@ -586,6 +586,7 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/instrumentation/instrumentation_records.cpp
             src/enterprise/kill_session/kill_session_handler.cpp
             src/enterprise/catalog_permissions/catalog_permissions_handler.cpp
+            src/enterprise/catalog_logging/catalog_log_sink.cpp
             src/enterprise/jwks/jwks_manager.cpp
             src/enterprise/oauth/oauth_http_server.cpp)
 endif()
@@ -649,6 +650,7 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/instrumentation
             src/enterprise/kill_session
             src/enterprise/catalog_permissions
+            src/enterprise/catalog_logging
             src/enterprise/jwks
             src/enterprise/oauth
             ${HTTPLIB_INCLUDE_DIR}

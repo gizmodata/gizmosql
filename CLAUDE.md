@@ -40,7 +40,7 @@ Before committing any change, ensure you have completed ALL of the following:
 - `src/common/` - Shared code (security, logging, library API)
 - `src/duckdb/` - DuckDB backend implementation
 - `src/sqlite/` - SQLite backend implementation
-- `src/enterprise/` - Enterprise-only features (instrumentation, kill session, catalog permissions)
+- `src/enterprise/` - Enterprise-only features (instrumentation, kill session, catalog permissions, catalog logging)
 - `tests/integration/` - Integration tests
 - `docs/` - Documentation (served via Docsify)
 
@@ -50,6 +50,14 @@ Before committing any change, ensure you have completed ALL of the following:
 - `src/gizmosql_server.cpp` - CLI entry point with Boost.ProgramOptions
 - `src/common/include/detail/gizmosql_security.h` - Authentication middleware
 - `tests/integration/test_server_fixture.h` - Test fixture template for integration tests
+- `src/enterprise/catalog_backend.h` - **Shared** catalog backend helpers used by BOTH the instrumentation manager and the catalog log sink: `CatalogBackend` enum, `DetectCatalogBackend()` (resolves duckdb/postgres/ducklake from `duckdb_databases().type`), `CatalogTxnGuard` (RAII BEGIN/COMMIT/ROLLBACK — never auto-commit), `RunPostgresDDL()` (native PG DDL via `postgres_execute()`). DRY: change schema-dialect logic here, not per-feature.
+- `src/enterprise/catalog_logging/catalog_log_sink.{h,cpp}` - `CatalogLogSink`: forks server logs to a `logs` table in an attached catalog (own connection + writer thread + bounded drop-and-count queue + batched transactional append-only INSERTs). Registered via `gizmosql::RegisterLogSink`.
+
+### System-managed catalogs (admin-only)
+The instrumentation catalog AND the catalog-logging catalog are **system-managed**: admin-read-only, never client-writable, hidden from non-admins, non-`DETACH`able. This is enforced in `src/enterprise/catalog_permissions/catalog_permissions_handler.cpp` via `IsSystemManagedCatalog(catalog_name, instrumentation_manager, log_catalog)` — one helper covering both. The log catalog name reaches the handler through `DuckDBFlightSqlServer::GetLogCatalog()` (set at startup), threaded as the trailing `log_catalog` param of the handler functions. When adding another system-managed catalog, extend `IsSystemManagedCatalog` rather than duplicating the special-case.
+
+### Secondary log sinks (the "fork")
+`gizmosql_logging.{h,cpp}` exposes a sink hook: `RegisterLogSink(LogSink)`, `ClearLogSinks()`, the assembled `LogRecord` struct, and `ScopedLogSinkGuard` (suppresses re-dispatch of logs emitted on a sink's own writer thread). Every record that reaches `GizmoSQLLogger::Log()` is forked to registered sinks after the primary stdout/file write. **Gotcha:** `InitLogging()` (which installs `GizmoSQLLogger`) is called only by `RunFlightSQLServer()`, NOT `CreateFlightSQLServer()`. Integration tests that build the server via the fixture (`CreateFlightSQLServer`) must call `gizmosql::InitLogging()` themselves (e.g. in `SetUp()`) to exercise sink forking — otherwise the default Arrow logger is active and `Log()` (hence dispatch) never runs.
 
 ### Environment Variable Handling — Design Principle
 **All environment variable fallback logic belongs in the library** (`src/common/gizmosql_library.cpp`), NOT in the CLI executable (`src/gizmosql_server.cpp`). The executable should only parse CLI flags via Boost.ProgramOptions and pass them through to `RunFlightSQLServer()`. This ensures that anyone using the C API (`RunFlightSQLServer()`) directly gets the same env var fallback behavior as the CLI.
