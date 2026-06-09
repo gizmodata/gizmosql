@@ -74,6 +74,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_instance_session_query_tags.cpp
             integration/test_query_profile_capture.cpp
             integration/test_oauth_server.cpp
+            integration/test_inline_license_key.cpp
     )
 endif()
 

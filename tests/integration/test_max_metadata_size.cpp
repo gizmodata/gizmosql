@@ -262,7 +262,7 @@ TEST(MaxMetadataEnvVar, EnvVarRaisesLimit) {
         /*instrumentation_catalog=*/"",
         /*instrumentation_schema=*/"",
         /*instance_tag=*/"",
-        /*license_key_file=*/"",
+        /*license_key_file=*/"", /*license_key=*/"",
         /*allow_cross_instance_tokens=*/std::optional<bool>(false),
         /*oauth_client_id=*/"",
         /*oauth_client_secret=*/"",

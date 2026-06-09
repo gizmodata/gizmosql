@@ -457,6 +457,7 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | instrumentation-catalog / GIZMOSQL_INSTRUMENTATION_CATALOG | *[Enterprise]* Pre-attached DuckLake catalog name for instrumentation | none | --instrumentation-catalog |
 | instrumentation-schema / GIZMOSQL_INSTRUMENTATION_SCHEMA | *[Enterprise]* Schema within the instrumentation catalog | main | --instrumentation-schema |
 | license-key-file / GIZMOSQL_LICENSE_KEY_FILE | *[Enterprise]* Path to license key file (JWT format) | none | --license-key-file, -L |
+| license-key / GIZMOSQL_LICENSE_KEY | *[Enterprise]* Inline license key (literal JWT value, not a path). Takes precedence over license-key-file when both are set | none | --license-key |
 | allow-cross-instance-tokens / GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS | Accept tokens issued by other GizmoSQL instances sharing the same secret key | false | --allow-cross-instance-tokens |
 
 Notes and best practices:

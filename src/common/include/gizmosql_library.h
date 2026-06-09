@@ -88,7 +88,8 @@ enum class BackendType { duckdb, sqlite };
  * @param instrumentation_db_path [Enterprise] Path for the instrumentation database. If empty, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH, or defaults to gizmosql_instrumentation.db in the same directory as the main database. Ignored if instrumentation_catalog is set.
  * @param instrumentation_catalog [Enterprise] Catalog name for instrumentation. If set, uses a pre-attached catalog (e.g., DuckLake) instead of a file. The catalog must be attached via init_sql_commands. If empty, uses env var GIZMOSQL_INSTRUMENTATION_CATALOG.
  * @param instrumentation_schema [Enterprise] Schema within the instrumentation catalog. Default is "main". If empty, uses env var GIZMOSQL_INSTRUMENTATION_SCHEMA, or defaults to "main".
- * @param license_key_file Path to the GizmoSQL Enterprise license key file (JWT format). If empty, uses env var GIZMOSQL_LICENSE_KEY_FILE. Required for enterprise features.
+ * @param license_key_file Path to the GizmoSQL Enterprise license key file (JWT format). If empty, uses env var GIZMOSQL_LICENSE_KEY_FILE. Required for enterprise features (unless license_key is supplied).
+ * @param license_key Inline GizmoSQL Enterprise license key (the literal JWT value, not a path). If empty, uses env var GIZMOSQL_LICENSE_KEY. Takes precedence over license_key_file when both are provided. Useful for container/secret-manager deployments that inject the key directly as an env var.
  * @param allow_cross_instance_tokens Allow tokens issued by other server instances (with the same secret key) to be accepted. Default is std::nullopt (check env var GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS, fallback to false). Pass true/false to override env var. Useful for load-balanced deployments where clients may reconnect to different instances.
  * @param oauth_client_id [Enterprise] OAuth client ID. Setting this enables the server-side OAuth code exchange flow via a dedicated HTTP server. The server becomes a confidential OAuth client, handling browser redirects and token exchange. Requires --token-allowed-issuer and --token-allowed-audience. If not set, uses env var GIZMOSQL_OAUTH_CLIENT_ID.
  * @param oauth_client_secret [Enterprise] OAuth client secret (confidential, stays on server). If not set, uses env var GIZMOSQL_OAUTH_CLIENT_SECRET.
@@ -168,6 +169,7 @@ int RunFlightSQLServer(
     std::string instrumentation_schema = "",
     std::string instance_tag = "",
     std::string license_key_file = "",
+    std::string license_key = "",
     std::optional<bool> allow_cross_instance_tokens = std::nullopt,
     std::string oauth_client_id = "",
     std::string oauth_client_secret = "",

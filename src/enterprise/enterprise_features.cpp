@@ -18,15 +18,26 @@ EnterpriseFeatures& EnterpriseFeatures::Instance() {
   return instance;
 }
 
-arrow::Status EnterpriseFeatures::Initialize(const std::string& license_file_path) {
+arrow::Status EnterpriseFeatures::Initialize(const std::string& license_file_path,
+                                             const std::string& license_key) {
   initialized_ = true;
 
-  if (license_file_path.empty()) {
-    // No license file provided - running as Core edition
+  // An inline license key (--license-key / GIZMOSQL_LICENSE_KEY) takes
+  // precedence over the file-based key for backward compatibility.
+  if (!license_key.empty()) {
+    auto result = license_manager_->LoadLicenseFromString(license_key);
+    if (!result.ok()) {
+      return result.status();
+    }
     return arrow::Status::OK();
   }
 
-  // Load and validate license
+  if (license_file_path.empty()) {
+    // No license provided - running as Core edition
+    return arrow::Status::OK();
+  }
+
+  // Load and validate license from file
   auto result = license_manager_->LoadLicenseFromFile(license_file_path);
   if (!result.ok()) {
     return result.status();
@@ -100,7 +111,8 @@ std::string EnterpriseFeatures::GetEditionName() const {
 std::string EnterpriseFeatures::GetLicenseRequiredError(const std::string& feature_name) {
   std::ostringstream oss;
   oss << "Error: " << feature_name << " is a commercially licensed enterprise feature.\n";
-  oss << "       Please provide a valid license key file via --license-key-file\n";
+  oss << "       Please provide a valid license key via --license-key-file (file path)\n";
+  oss << "       or --license-key (inline JWT, or GIZMOSQL_LICENSE_KEY env var),\n";
   oss << "       or contact GizmoData sales at sales@gizmodata.com to obtain a license.";
   return oss.str();
 }

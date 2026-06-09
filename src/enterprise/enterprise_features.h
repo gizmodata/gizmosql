@@ -27,10 +27,14 @@ class EnterpriseFeatures {
   /// Get the singleton instance
   static EnterpriseFeatures& Instance();
 
-  /// Initialize enterprise features with a license file
-  /// @param license_file_path Path to the JWT license file (empty = no license)
+  /// Initialize enterprise features with a license.
+  /// An inline license key takes precedence over the file path; if both are
+  /// empty the server runs as Core edition.
+  /// @param license_file_path Path to the JWT license file (empty = none)
+  /// @param license_key Inline JWT license string (empty = none). Wins over the file.
   /// @return Status indicating success or failure
-  arrow::Status Initialize(const std::string& license_file_path);
+  arrow::Status Initialize(const std::string& license_file_path,
+                           const std::string& license_key = "");
 
   /// Check if running in enterprise edition (valid license loaded)
   bool IsEnterpriseEdition() const;

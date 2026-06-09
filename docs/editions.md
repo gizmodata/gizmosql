@@ -58,6 +58,22 @@ export GIZMOSQL_ENABLE_INSTRUMENTATION=1
 ./gizmosql_server --database-filename mydb.db
 ```
 
+#### Inline license key (no file needed)
+
+If you'd rather inject the license **value** directly — handy for secret
+managers and orchestrators that hand you a secret as an environment variable —
+pass the literal JWT instead of a path with `--license-key` / `GIZMOSQL_LICENSE_KEY`:
+
+```bash
+export GIZMOSQL_LICENSE_KEY="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...."
+./gizmosql_server --database-filename mydb.db
+```
+
+> The two forms are mutually exclusive in practice: if **both** the inline key
+> and a key file are provided, the **inline key wins** (and a warning is logged
+> that the file is ignored). Existing `--license-key-file` deployments are
+> unaffected.
+
 **Docker example:**
 ```bash
 docker run --name gizmosql \
@@ -65,6 +81,15 @@ docker run --name gizmosql \
     -e GIZMOSQL_ENABLE_INSTRUMENTATION=1 \
     -e GIZMOSQL_PASSWORD=mypassword \
     -v /path/to/license.jwt:/opt/gizmosql/license.jwt:ro \
+    gizmodata/gizmosql:latest
+```
+
+**Docker with an inline key** (e.g. from a Docker/Kubernetes secret), no volume mount:
+```bash
+docker run --name gizmosql \
+    -e GIZMOSQL_LICENSE_KEY="$(cat /path/to/license.jwt)" \
+    -e GIZMOSQL_ENABLE_INSTRUMENTATION=1 \
+    -e GIZMOSQL_PASSWORD=mypassword \
     gizmodata/gizmosql:latest
 ```
 

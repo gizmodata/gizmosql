@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--license-key` / `GIZMOSQL_LICENSE_KEY` — supply the Enterprise license as an inline JWT value.** *[Enterprise]* Operators can now pass the literal license JWT directly instead of a file path, which is convenient for container/secret-manager deployments that inject secrets as environment variables. The existing `--license-key-file` / `GIZMOSQL_LICENSE_KEY_FILE` continues to work unchanged; when both are provided the inline key takes precedence and a warning is logged that the file is ignored. Available via the CLI flag, env var, and the `RunFlightSQLServer()` library API (new `license_key` parameter, defaulted for backward compatibility). Implemented as `LicenseManager::LoadLicenseFromString()` + a second argument to `EnterpriseFeatures::Initialize()`.
 - **Quick Start docs now auto-track the latest release.** The example server-startup banner and `GIZMOSQL_VERSION()` output in `docs/quickstart.md` are rewritten to the released version by `scripts/update_docs_version.sh`, run by a new `sync-docs-version` CI job on every tag push (which commits the update to `main` and redeploys the docs site). The Quick Start also now notes that starting a second server on the default port `31337` fails with an "address already in use" error, and how to pick a different `--port`.
 
 ### Changed

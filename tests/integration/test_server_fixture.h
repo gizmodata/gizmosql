@@ -191,8 +191,11 @@ class ServerTestFixture : public ::testing::Test {
 #ifdef GIZMOSQL_ENTERPRISE
     const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
     std::string license_path = license_file ? license_file : "";
-    auto license_status = gizmosql::enterprise::EnterpriseFeatures::Instance().Initialize(license_path);
-    if (!license_status.ok() && !license_path.empty()) {
+    const char* license_key_env = std::getenv("GIZMOSQL_LICENSE_KEY");
+    std::string license_key = license_key_env ? license_key_env : "";
+    auto license_status = gizmosql::enterprise::EnterpriseFeatures::Instance().Initialize(
+        license_path, license_key);
+    if (!license_status.ok() && (!license_path.empty() || !license_key.empty())) {
       std::cerr << "Warning: Failed to initialize enterprise license: "
                 << license_status.ToString() << std::endl;
     }

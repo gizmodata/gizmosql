@@ -199,6 +199,11 @@ int main(int argc, char** argv) {
               "Path to the GizmoSQL Enterprise license key file (JWT format). "
               "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
               "Required for enterprise features like instrumentation and kill session.")
+            ("license-key", po::value<std::string>()->default_value(""),
+              "GizmoSQL Enterprise license key as an inline JWT value (not a file path). "
+              "If not set, uses env var GIZMOSQL_LICENSE_KEY. "
+              "Takes precedence over --license-key-file when both are set. "
+              "Handy for container/secret-manager deployments that inject the key as an env var.")
             ("allow-cross-instance-tokens", po::value<bool>()->default_value(false),
               "Allow tokens issued by other server instances (with the same secret key) to be accepted. "
               "Default is false (strict mode - tokens must be from this instance). "
@@ -439,6 +444,9 @@ int main(int argc, char** argv) {
   std::string license_key_file =
       vm.count("license-key-file") ? vm["license-key-file"].as<std::string>() : "";
 
+  std::string license_key =
+      vm.count("license-key") ? vm["license-key"].as<std::string>() : "";
+
   std::optional<bool> allow_cross_instance_tokens =
       vm["allow-cross-instance-tokens"].defaulted() ? std::nullopt
                                                     : std::optional(vm["allow-cross-instance-tokens"].as<bool>());
@@ -490,6 +498,7 @@ int main(int argc, char** argv) {
       session_log_level, health_port,
       health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, instance_tag, license_key_file,
+      license_key,
       allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
       oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
       otel_endpoint, otel_service_name, otel_headers, max_metadata_size,

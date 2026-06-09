@@ -45,6 +45,12 @@ class LicenseManager {
   /// @return LicenseInfo if valid, or error status if invalid/expired
   arrow::Result<LicenseInfo> LoadLicenseFromFile(const std::string& license_file_path);
 
+  /// Load and validate a license from an in-memory JWT string (e.g. supplied
+  /// directly via --license-key / GIZMOSQL_LICENSE_KEY). Whitespace is trimmed.
+  /// @param license_jwt The JWT license string
+  /// @return LicenseInfo if valid, or error status if invalid/expired/empty
+  arrow::Result<LicenseInfo> LoadLicenseFromString(const std::string& license_jwt);
+
   /// Load and validate a license from a JWT string
   /// @param license_jwt The JWT license string
   /// @return LicenseInfo if valid, or error status if invalid/expired

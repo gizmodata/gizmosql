@@ -42,6 +42,22 @@ arrow::Result<LicenseInfo> LicenseManager::LoadLicenseFromFile(
   return ValidateLicense(license_jwt);
 }
 
+arrow::Result<LicenseInfo> LicenseManager::LoadLicenseFromString(
+    const std::string& raw_license_jwt) {
+  std::string license_jwt = raw_license_jwt;
+
+  // Trim whitespace (matches LoadLicenseFromFile so a value with a trailing
+  // newline — e.g. from `$(cat license.jwt)` — validates the same way).
+  license_jwt.erase(0, license_jwt.find_first_not_of(" \t\n\r"));
+  license_jwt.erase(license_jwt.find_last_not_of(" \t\n\r") + 1);
+
+  if (license_jwt.empty()) {
+    return arrow::Status::Invalid("License key is empty");
+  }
+
+  return ValidateLicense(license_jwt);
+}
+
 arrow::Result<LicenseInfo> LicenseManager::ValidateLicense(const std::string& license_jwt) {
   try {
     // Decode the JWT first to inspect it

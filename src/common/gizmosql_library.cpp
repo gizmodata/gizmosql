@@ -1536,6 +1536,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string instrumentation_schema,
                        std::string instance_tag,
                        std::string license_key_file,
+                       std::string license_key,
                        std::optional<bool> allow_cross_instance_tokens,
                        std::string oauth_client_id,
                        std::string oauth_client_secret,
@@ -1758,14 +1759,26 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   std::tm* localTime = std::localtime(&currentTime);
 
 #ifdef GIZMOSQL_ENTERPRISE
-  // Resolve license key file: CLI arg > env var
+  // Resolve license key file and inline license key: CLI arg > env var.
   if (license_key_file.empty()) {
     license_key_file = gizmosql::SafeGetEnvVarValue("GIZMOSQL_LICENSE_KEY_FILE");
+  }
+  if (license_key.empty()) {
+    license_key = gizmosql::SafeGetEnvVarValue("GIZMOSQL_LICENSE_KEY");
+  }
+
+  // The inline key wins over the file (backward-compatible). Warn if both are
+  // set so the operator isn't surprised that the file is ignored.
+  if (!license_key.empty() && !license_key_file.empty()) {
+    GIZMOSQL_LOG(WARNING)
+        << "Both an inline license key (--license-key / GIZMOSQL_LICENSE_KEY) and a "
+           "license key file (--license-key-file / GIZMOSQL_LICENSE_KEY_FILE) were "
+           "provided; using the inline key and ignoring the file.";
   }
 
   // Initialize enterprise features with license
   auto& enterprise = gizmosql::enterprise::EnterpriseFeatures::Instance();
-  auto license_status = enterprise.Initialize(license_key_file);
+  auto license_status = enterprise.Initialize(license_key_file, license_key);
   if (!license_status.ok()) {
     std::cerr << "License Error: " << license_status.ToString() << std::endl;
     return EXIT_FAILURE;

@@ -38,6 +38,7 @@
 #   GIZMOSQL_LOG_SCHEMA              --log-schema
 #   GIZMOSQL_LOG_DB_PATH             --log-catalog-db-path
 #   GIZMOSQL_LICENSE_KEY_FILE        --license-key-file
+#   GIZMOSQL_LICENSE_KEY             --license-key   (inline JWT; wins over the file)
 #   GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS --allow-cross-instance-tokens
 #   GIZMOSQL_TOKEN_JWKS_URI              --token-jwks-uri
 #   GIZMOSQL_TOKEN_DEFAULT_ROLE          --token-default-role
