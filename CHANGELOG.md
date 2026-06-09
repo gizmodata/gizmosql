@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Quick Start docs now auto-track the latest release.** The example server-startup banner and `GIZMOSQL_VERSION()` output in `docs/quickstart.md` are rewritten to the released version by `scripts/update_docs_version.sh`, run by a new `sync-docs-version` CI job on every tag push (which commits the update to `main` and redeploys the docs site). The Quick Start also now notes that starting a second server on the default port `31337` fails with an "address already in use" error, and how to pick a different `--port`.
+
+### Changed
+
+- Updated the Quick Start example version strings from `v1.25.1` to `v1.28.0`.
+
 ## [1.28.0] - 2026-06-03
 
 ### Added

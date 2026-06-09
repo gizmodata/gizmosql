@@ -914,6 +914,47 @@ jobs:
             artifacts/GizmoSQL-*.msi
             LICENSE
 
+  sync-docs-version:
+    name: Sync Quick Start docs version
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update example version in docs/quickstart.md
+        run: ./scripts/update_docs_version.sh "${{ github.ref_name }}"
+
+      - name: Commit and push if changed
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- docs/quickstart.md; then
+            echo "Docs already on ${{ github.ref_name }}; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git add docs/quickstart.md
+            git commit -m "docs: sync Quick Start example version to ${{ github.ref_name }}"
+            git push origin main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A push made with GITHUB_TOKEN does not trigger other workflows, so
+      # explicitly dispatch the docs deploy to publish the updated version.
+      - name: Trigger docs deploy
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run deploy-docs.yml --ref main
+
   update-image-manifest:
     name: Merge per-platform images into multi-arch manifests (with attestations)
     if: startsWith(github.ref, 'refs/tags/')
