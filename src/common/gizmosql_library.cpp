@@ -1833,6 +1833,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
 #else
   // Core edition banner (no enterprise features compiled)
   (void)license_key_file;  // Suppress unused variable warning
+  (void)license_key;       // Suppress unused variable warning
 
   GIZMOSQL_LOG(INFO) << "GizmoSQL Core - Copyright (c) " << (1900 + localTime->tm_year)
                      << " GizmoData LLC"

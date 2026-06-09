@@ -73,6 +73,7 @@ int gizmosql_server_start(const GizmoSQLServerConfig* config) {
         "",                       // instrumentation_schema
         "",                       // instance_tag
         "",                       // license_key_file
+        "",                       // license_key
         // Accept tokens signed by previous server instances. iOS starts a
         // fresh instance_id on every launch / background-resume, but the
         // secret_key is Keychain-backed and stable across launches — so
