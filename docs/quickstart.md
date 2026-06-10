@@ -40,7 +40,7 @@ GIZMOSQL_PASSWORD=tiger gizmosql_server --username scott
 You'll see a startup banner ending in something like:
 
 ```
-INFO ... GizmoSQL server version: v1.28.0 - with engine: DuckDB - will listen on grpc+tcp://0.0.0.0:31337
+INFO ... GizmoSQL server version: v1.29.0 - with engine: DuckDB - will listen on grpc+tcp://0.0.0.0:31337
 ```
 
 > **Already have a server running?** GizmoSQL binds port `31337` by default, so if another GizmoSQL instance (or anything else) is already listening there, startup fails with an "address already in use" / bind error instead of starting. Stop the other server, or pick a different port with `--port 31338` (and pass the same `--port` to `gizmosql_client` when you connect).
@@ -70,7 +70,7 @@ SELECT GIZMOSQL_VERSION(), GIZMOSQL_EDITION();
 │ GIZMOSQL_VERSION() │ GIZMOSQL_EDITION() │
 │      varchar       │      varchar       │
 ├────────────────────┼────────────────────┤
-│ v1.28.0            │ Core               │
+│ v1.29.0            │ Core               │
 ├────────────────────┴────────────────────┤
 │ 1 row  2 columns                        │
 └─────────────────────────────────────────┘

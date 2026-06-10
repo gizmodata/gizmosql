@@ -5,16 +5,22 @@ All notable changes to GizmoSQL will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Quick Start version auto-sync now happens at docs-publish time instead of via a commit to `main`.** The `deploy-docs` workflow runs `scripts/update_docs_version.sh` against the latest release tag right before publishing GitHub Pages, and is triggered after a successful release via `workflow_run`. This replaces the `sync-docs-version` CI job, which tried to push the version bump to `main` and was rejected by the branch-protection ruleset (`github-actions[bot]` is not exempt). The live docs always reflect the newest release with no secrets and no push to the protected branch.
+
 ## [1.29.0] - 2026-06-09
 
 ### Added
 
 - **`--license-key` / `GIZMOSQL_LICENSE_KEY` — supply the Enterprise license as an inline JWT value.** *[Enterprise]* Operators can now pass the literal license JWT directly instead of a file path, which is convenient for container/secret-manager deployments that inject secrets as environment variables. The existing `--license-key-file` / `GIZMOSQL_LICENSE_KEY_FILE` continues to work unchanged; when both are provided the inline key takes precedence and a warning is logged that the file is ignored. Available via the CLI flag, env var, and the `RunFlightSQLServer()` library API (new `license_key` parameter, defaulted for backward compatibility). Implemented as `LicenseManager::LoadLicenseFromString()` + a second argument to `EnterpriseFeatures::Initialize()`.
-- **Quick Start docs now auto-track the latest release.** The example server-startup banner and `GIZMOSQL_VERSION()` output in `docs/quickstart.md` are rewritten to the released version by `scripts/update_docs_version.sh`, run by a new `sync-docs-version` CI job on every tag push (which commits the update to `main` and redeploys the docs site). The Quick Start also now notes that starting a second server on the default port `31337` fails with an "address already in use" error, and how to pick a different `--port`.
+- **Quick Start docs now auto-track the latest release.** The example server-startup banner and `GIZMOSQL_VERSION()` output in `docs/quickstart.md` are rewritten to the released version by `scripts/update_docs_version.sh` at docs-publish time. The Quick Start also now notes that starting a second server on the default port `31337` fails with an "address already in use" error, and how to pick a different `--port`.
 
 ### Changed
 
-- Updated the Quick Start example version strings from `v1.25.1` to `v1.28.0`.
+- Updated the Quick Start example version strings from `v1.25.1` to `v1.29.0`.
 
 ## [1.28.0] - 2026-06-03
 

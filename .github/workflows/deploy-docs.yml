@@ -7,6 +7,15 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/deploy-docs.yml'
+  # Redeploy after a successful release so the Quick Start version (injected
+  # below from the latest git tag) tracks the newest release automatically.
+  # Using workflow_run (not a gh workflow_dispatch from the CI job) because a
+  # workflow_dispatch triggered by GITHUB_TOKEN is suppressed by GitHub's
+  # recursion guard and would never fire.
+  workflow_run:
+    workflows: ["ci"]
+    types:
+      - completed
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -25,7 +34,15 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     runs-on: ubuntu-latest
-    
+    # For workflow_run, only deploy after a SUCCESSFUL release CI run (a tag
+    # push — head_branch is the tag name, e.g. "v1.29.0"). This keeps regular
+    # main-branch commits from redeploying via this path (the push trigger
+    # above already handles docs/** changes).
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -43,6 +60,12 @@ jobs:
         run: |
           touch docs/.nojekyll
           echo "Created .nojekyll file to bypass Jekyll processing"
+
+      # Rewrite the Quick Start example version to the latest release tag at
+      # publish time (not committed), so the live docs always match the newest
+      # release without pushing to the protected main branch.
+      - name: Sync Quick Start version to latest release
+        run: ./scripts/update_docs_version.sh
 
       - name: Verify documentation structure
         run: |
