@@ -144,7 +144,7 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename your.d
 
 ### Option 4: Windows Installer (MSI)
 
-Download the latest MSI installer from the [GitHub Releases](https://github.com/gizmodata/gizmosql/releases) page. The installer adds `gizmosql_server.exe` and `gizmosql_client.exe` to `C:\Program Files\GizmoSQL` and updates the system PATH.
+Download the latest MSI installer from the [GitHub Releases](https://github.com/gizmodata/gizmosql/releases) page — `GizmoSQL-amd64.msi` for x64 machines, or `GizmoSQL-arm64.msi` for Windows on Arm (e.g. Snapdragon X-class devices). The installer adds `gizmosql_server.exe` and `gizmosql_client.exe` to `C:\Program Files\GizmoSQL` and updates the system PATH.
 
 Then run the server from PowerShell or Command Prompt:
 

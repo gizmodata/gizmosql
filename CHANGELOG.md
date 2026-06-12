@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Windows ARM64 builds** — native `arm64` Windows binaries (for Snapdragon X-class and other Windows-on-Arm machines) now ship alongside the existing `amd64` ones, in both the stable and LTS channels: signed CLI zips (`gizmosql_cli_windows_arm64.zip`, `gizmosql_cli_windows_arm64_lts.zip`) and signed MSI installers (`GizmoSQL-arm64.msi`, `GizmoSQL-arm64-lts.msi`), all with build-provenance attestations. Built natively on GitHub's `windows-11-arm` hosted runners (no cross-compilation), with the integration test suite running on ARM64 in CI. The MSI now packages the VC++ runtime DLLs captured from the build runner's VC redist (matching the binary architecture) instead of the MSI runner's x64 `System32` copies.
+
 ### Changed
 
 - **Quick Start version auto-sync now happens at docs-publish time instead of via a commit to `main`.** The `deploy-docs` workflow runs `scripts/update_docs_version.sh` against the latest release tag right before publishing GitHub Pages, and is triggered after a successful release via `workflow_run`. This replaces the `sync-docs-version` CI job, which tried to push the version bump to `main` and was rejected by the branch-protection ruleset (`github-actions[bot]` is not exempt). The live docs always reflect the newest release with no secrets and no push to the protected branch.

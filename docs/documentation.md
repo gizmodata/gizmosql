@@ -338,7 +338,11 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename your.d
 Download (and unzip) the latest release of the **gizmosql_server** CLI executable from these currently supported platforms:
 [Linux x86-64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_amd64.zip)
 [Linux arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_linux_arm64.zip)
-[MacOS arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_macos_arm64.zip)   
+[MacOS arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_macos_arm64.zip)
+[Windows x64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_windows_amd64.zip)
+[Windows arm64](https://github.com/gizmodata/gizmosql/releases/latest/download/gizmosql_cli_windows_arm64.zip)
+
+> **Windows:** prefer the signed MSI installers — `GizmoSQL-amd64.msi` (x64) or `GizmoSQL-arm64.msi` (Windows on Arm, e.g. Snapdragon X-class) — from the [GitHub Releases](https://github.com/gizmodata/gizmosql/releases) page. The installer adds the binaries to `C:\Program Files\GizmoSQL` and updates the system PATH.
 
 Then from a terminal - you can run:
 ```bash
