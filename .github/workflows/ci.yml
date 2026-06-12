@@ -607,7 +607,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=sccache `
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=$env:VCPKG_DEFAULT_TRIPLET `
+            -DVCPKG_TARGET_TRIPLET=${{ env.VCPKG_DEFAULT_TRIPLET }} `
             -DVCPKG_MANIFEST_MODE=OFF `
             -DGIZMOSQL_ENTERPRISE=ON `
             -DGIZMOSQL_DUCKDB_CHANNEL=${{ matrix.duckdb_channel }}
