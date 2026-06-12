@@ -522,19 +522,32 @@ jobs:
           retention-days: 1
 
   build-project-windows:
-    name: Build Project - Windows (x64, ${{ matrix.duckdb_channel }})
-    runs-on: windows-2022
+    name: Build Project - Windows (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         duckdb_channel: [stable, lts]
+        # platform = release-artifact arch label (matches Linux naming);
+        # vc_arch = the MSVC/vcpkg arch token (vcvarsall arg, vcpkg triplet
+        # prefix, VC redist subdir, cache keys).
+        platform: [amd64, arm64]
+        include:
+          - platform: amd64
+            runner: windows-2022
+            vc_arch: x64
+          - platform: arm64
+            # Native ARM64 hosted runner (free for public repos). The image
+            # ships VS 2022 Enterprise + vcpkg at C:\vcpkg like windows-2022.
+            runner: windows-11-arm
+            vc_arch: arm64
     env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows-static
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.vc_arch }}-windows-static
       # VS 2022 sets VCPKG_ROOT to its own vcpkg copy, conflicting with the
       # runner's vcpkg at C:\vcpkg. Override to suppress the mismatch warning.
       VCPKG_ROOT: C:\vcpkg
       bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
-      unsigned_artifact: gizmosql-windows-amd64-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
+      unsigned_artifact: gizmosql-windows-${{ matrix.platform }}-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -562,26 +575,29 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
-          key: vcpkg-x64-windows-static-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: vcpkg-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('.github/workflows/ci.yml') }}
           restore-keys: |
-            vcpkg-x64-windows-static-
+            vcpkg-${{ env.VCPKG_DEFAULT_TRIPLET }}-
 
       - name: Install vcpkg dependencies
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet x64-windows-static --clean-after-build --x-install-root="$env:VCPKG_ROOT\installed"
+          & "$env:VCPKG_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet $env:VCPKG_DEFAULT_TRIPLET --clean-after-build --x-install-root="$env:VCPKG_ROOT\installed"
 
       - name: Save vcpkg cache
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
-          key: vcpkg-x64-windows-static-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: vcpkg-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('.github/workflows/ci.yml') }}
 
+      # ilammy passes the arch through to vcvarsall.bat verbatim. On the
+      # windows-11-arm runner `arm64` selects the native ARM64-hosted
+      # toolchain (host arch is auto-detected from PROCESSOR_ARCHITECTURE).
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: amd64
+          arch: ${{ matrix.vc_arch }}
 
       # vcvarsall.bat (run by ilammy/msvc-dev-cmd) exports VCPKG_ROOT pointing
       # to VS's own vcpkg copy, overriding our job-level env. Re-set it.
@@ -594,9 +610,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: build/third_party
-          key: arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
           restore-keys: |
-            arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
+            arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -608,7 +624,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=sccache `
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DVCPKG_TARGET_TRIPLET=${{ env.VCPKG_DEFAULT_TRIPLET }} `
             -DVCPKG_MANIFEST_MODE=OFF `
             -DGIZMOSQL_ENTERPRISE=ON `
             -DGIZMOSQL_DUCKDB_CHANNEL=${{ matrix.duckdb_channel }}
@@ -621,11 +637,11 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: build/third_party
-          key: arrow-windows-x64-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Copy VC++ runtime DLLs for DuckDB extension compatibility
         run: |
-          $crtDir = Join-Path $env:VCToolsRedistDir "x64\Microsoft.VC143.CRT"
+          $crtDir = Join-Path $env:VCToolsRedistDir "${{ matrix.vc_arch }}\Microsoft.VC143.CRT"
           Copy-Item "$crtDir\vcruntime140.dll" build\
           Copy-Item "$crtDir\vcruntime140_1.dll" build\
           Copy-Item "$crtDir\msvcp140.dll" build\
@@ -645,7 +661,7 @@ jobs:
             build/msvcp140.dll
 
   sign-windows:
-    name: Sign Windows (amd64, ${{ matrix.duckdb_channel }})
+    name: Sign Windows (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
     needs: build-project-windows
     runs-on: windows-latest
     environment: production
@@ -653,10 +669,11 @@ jobs:
       fail-fast: false
       matrix:
         duckdb_channel: [stable, lts]
+        platform: [amd64, arm64]
     env:
-      unsigned_artifact: gizmosql-windows-amd64-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
-      signed_artifact: gizmosql-windows-amd64-signed${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
-      cli_zip_name: gizmosql_cli_windows_amd64${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}.zip
+      unsigned_artifact: gizmosql-windows-${{ matrix.platform }}-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
+      signed_artifact: gizmosql-windows-${{ matrix.platform }}-signed${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
+      cli_zip_name: gizmosql_cli_windows_${{ matrix.platform }}${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}.zip
     permissions:
       id-token: write
       contents: read
@@ -691,11 +708,17 @@ jobs:
               $_.FullName
           }
 
+      # Include the VC++ runtime DLLs (already Microsoft-signed) alongside our
+      # signed exes: the MSI job packages them from this artifact so the DLL
+      # arch always matches the binaries (the MSI runner's own System32 DLLs
+      # are x64 and would silently break the arm64 installer).
       - name: Upload signed executables
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.signed_artifact }}
-          path: unsigned/**/*.exe
+          path: |
+            unsigned/**/*.exe
+            unsigned/**/*.dll
           if-no-files-found: error
 
       - name: Create signed zip
@@ -709,7 +732,7 @@ jobs:
           path: ${{ env.cli_zip_name }}
 
   build-msi:
-    name: Build MSI (amd64, ${{ matrix.duckdb_channel }})
+    name: Build MSI (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
     needs: sign-windows
     runs-on: windows-latest
     environment: production
@@ -717,11 +740,14 @@ jobs:
       fail-fast: false
       matrix:
         duckdb_channel: [stable, lts]
+        platform: [amd64, arm64]
     env:
-      signed_artifact: gizmosql-windows-amd64-signed${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
-      msi_artifact: GizmoSQL-amd64${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}-msi.zip
-      msi_filename: GizmoSQL-amd64${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}.msi
+      signed_artifact: gizmosql-windows-${{ matrix.platform }}-signed${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
+      msi_artifact: GizmoSQL-${{ matrix.platform }}${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}-msi.zip
+      msi_filename: GizmoSQL-${{ matrix.platform }}${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}.msi
       bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
+      # WiX arch token: x64 for amd64, arm64 as-is.
+      wix_arch: ${{ matrix.platform == 'arm64' && 'arm64' || 'x64' }}
     permissions:
       id-token: write
       contents: read
@@ -729,17 +755,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # The signed artifact already carries the arch-matched VC++ runtime
+      # DLLs (vcruntime140, vcruntime140_1, msvcp140) from the build runner's
+      # VC redist — do NOT copy them from this runner's System32, which is
+      # always x64.
       - name: Download signed executables
         uses: actions/download-artifact@v8
         with:
           name: ${{ env.signed_artifact }}
           path: installer/bin
-
-      - name: Copy VC++ runtime DLLs
-        run: |
-          Copy-Item "$env:SystemRoot\System32\vcruntime140.dll" installer\bin\
-          Copy-Item "$env:SystemRoot\System32\vcruntime140_1.dll" installer\bin\
-          Copy-Item "$env:SystemRoot\System32\msvcp140.dll" installer\bin\
 
       - name: Stage binaries for WiX (LTS strips the _lts suffix)
         # GizmoSQL.wxs references gizmosql_server.exe / gizmosql_client.exe
@@ -786,7 +810,7 @@ jobs:
         run: |
           wix build `
             "${{ github.workspace }}\installer\GizmoSQL.wxs" `
-            -arch x64 `
+            -arch ${{ env.wix_arch }} `
             -b BinDir="${{ github.workspace }}\installer\bin" `
             -b "${{ github.workspace }}\installer" `
             -o "${{ github.workspace }}\installer\${{ env.msi_filename }}" `
@@ -873,6 +897,16 @@ jobs:
         with:
           subject-path: artifacts/GizmoSQL-amd64.msi
 
+      - name: Attest build provenance - Windows ARM64
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/gizmosql_cli_windows_arm64.zip
+
+      - name: Attest build provenance - Windows ARM64 MSI
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/GizmoSQL-arm64.msi
+
       # ----- LTS channel artifacts -----
       - name: Attest build provenance - Linux AMD64 (LTS)
         uses: actions/attest-build-provenance@v4
@@ -898,6 +932,16 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: artifacts/GizmoSQL-amd64-lts.msi
+
+      - name: Attest build provenance - Windows ARM64 (LTS)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/gizmosql_cli_windows_arm64_lts.zip
+
+      - name: Attest build provenance - Windows ARM64 MSI (LTS)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/GizmoSQL-arm64-lts.msi
 
       - name: Extract release notes from CHANGELOG.md
         id: changelog

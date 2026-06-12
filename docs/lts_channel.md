@@ -57,8 +57,8 @@ LTS artifacts are suffixed so they coexist with stable on the same machine, imag
 |-------------------|------------------------------------------------|--------------------------------------------------|
 | Server binary     | `gizmosql_server`                              | `gizmosql_server_lts`                            |
 | Client binary     | `gizmosql_client`                              | `gizmosql_client_lts`                            |
-| Linux/macOS zip   | `gizmosql_cli_<os>_<arch>.zip`                 | `gizmosql_cli_<os>_<arch>_lts.zip`               |
-| Windows MSI       | `GizmoSQL-amd64.msi`                           | `GizmoSQL-amd64-lts.msi`                         |
+| CLI zip           | `gizmosql_cli_<os>_<arch>.zip`                 | `gizmosql_cli_<os>_<arch>_lts.zip`               |
+| Windows MSI       | `GizmoSQL-<arch>.msi` *(amd64, arm64)*         | `GizmoSQL-<arch>-lts.msi` *(amd64, arm64)*       |
 | Docker (Hub)      | `gizmodata/gizmosql:<ver>` *(+ `-slim`)*       | `gizmodata/gizmosql-lts:<ver>` *(+ `-slim`)*     |
 | Docker (GHCR)     | `ghcr.io/gizmodata/gizmosql:<ver>`             | `ghcr.io/gizmodata/gizmosql-lts:<ver>`           |
 | Homebrew formula  | `gizmodata/tap` → `gizmosql`                   | `gizmodata/tap` → `gizmosql-lts` *(same tap)*    |

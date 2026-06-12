@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Windows ARM64 builds** — native `arm64` Windows binaries (for Snapdragon X-class and other Windows-on-Arm machines) now ship alongside the existing `amd64` ones, in both the stable and LTS channels: signed CLI zips (`gizmosql_cli_windows_arm64.zip`, `gizmosql_cli_windows_arm64_lts.zip`) and signed MSI installers (`GizmoSQL-arm64.msi`, `GizmoSQL-arm64-lts.msi`), all with build-provenance attestations. Built natively on GitHub's `windows-11-arm` hosted runners (no cross-compilation), with the integration test suite running on ARM64 in CI. The MSI now packages the VC++ runtime DLLs captured from the build runner's VC redist (matching the binary architecture) instead of the MSI runner's x64 `System32` copies.
+
 ### Fixed
 
 - **Linux release binaries now run out of the box on Raspberry Pi OS, Amazon Linux 2023, Ubuntu 20.04+, and Debian 11+.** The Linux CLI binaries (both arches, both channels) are now compiled in a `manylinux_2_28` container (AlmaLinux 8, glibc 2.28 baseline, gcc-toolset-14) instead of directly on the Ubuntu 24.04 runners — previously they required `GLIBC_2.38` / `GLIBCXX_3.4.32`, which made them fail on any distro older than ~mid-2024 (e.g. Raspberry Pi OS bookworm, Amazon Linux 2023) with "GLIBC_2.38 not found". No performance impact: the same gcc 14 code generation is used, and glibc selects its optimized routines at runtime on the target machine (IFUNC). CI now enforces the glibc 2.28 ceiling on every build (symbol-version check in `scripts/build_portable_linux.sh`) and smoke-tests the produced binaries in `debian:bookworm` (the Raspberry Pi OS userland) and `amazonlinux:2023` containers, so a portability regression can never ship silently.
