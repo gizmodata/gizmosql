@@ -34,6 +34,13 @@ NPROC=$(nproc)
 OPENSSL_VERSION=3.5.1
 BOOST_VERSION=1.89.0
 
+# The workspace (and any cache-restored ExternalProject clones) are owned by
+# the host runner user, while this container runs as root. Without this, git
+# fails with "detected dubious ownership" — which silently breaks GizmoSQL's
+# own `git describe` version detection AND DuckDB's (DuckDB then falls back
+# to v0.0.1, making every runtime extension install 404).
+git config --global --add safe.directory '*'
+
 cd "${REPO_ROOT}"
 
 # ---------------------------------------------------------------------------
