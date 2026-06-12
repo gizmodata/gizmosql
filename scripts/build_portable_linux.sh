@@ -8,9 +8,13 @@
 # gcc-toolset statically links the newer-than-EL8 libstdc++/libgcc pieces,
 # so the binary's dynamic GLIBCXX requirement stays at the EL8 baseline.
 #
-# Usage (from the repo root, mounted at /work):
-#   docker run --rm -v "$PWD":/work quay.io/pypa/manylinux_2_28_$(uname -m) \
-#     bash /work/scripts/build_portable_linux.sh <duckdb_channel> [build_dir]
+# Usage (from the repo root; mount the workspace at the SAME path as the
+# host and pass it via REPO_ROOT, so absolute paths baked into artifacts —
+# e.g. the client path compiled into the integration test binary — stay
+# valid when tests run on the host afterwards):
+#   docker run --rm -v "$PWD":"$PWD" -e REPO_ROOT="$PWD" \
+#     quay.io/pypa/manylinux_2_28_$(uname -m) \
+#     bash "$PWD/scripts/build_portable_linux.sh" <duckdb_channel> [build_dir]
 #
 #   duckdb_channel : stable | lts
 #   build_dir      : CMake build dir relative to the repo root

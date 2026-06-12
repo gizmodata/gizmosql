@@ -291,17 +291,22 @@ jobs:
         # build on any baseline regression. sccache (a static musl binary,
         # arch-matched) is mounted in and the GHA cache env forwarded so
         # compile caching keeps working inside the container.
+        # The workspace is mounted at the SAME path as on the host so that
+        # absolute paths CMake bakes into build artifacts (e.g. the
+        # $<TARGET_FILE:gizmosql_client> path compiled into the integration
+        # test binary) remain valid when the tests later run on the host.
         run: |
           docker run --rm \
-            -v "$PWD":/work \
+            -v "$PWD":"$PWD" \
             -v "$SCCACHE_PATH":/usr/local/bin/sccache:ro \
+            -e REPO_ROOT="$PWD" \
             -e CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} \
             -e SCCACHE_GHA_ENABLED \
             -e ACTIONS_CACHE_URL \
             -e ACTIONS_RESULTS_URL \
             -e ACTIONS_RUNTIME_TOKEN \
             "quay.io/pypa/manylinux_2_28_$(uname -m)" \
-            bash /work/scripts/build_portable_linux.sh ${{ matrix.duckdb_channel }} build
+            bash "$PWD/scripts/build_portable_linux.sh" ${{ matrix.duckdb_channel }} build
           sudo chown -R "$(id -u):$(id -g)" build
 
       - name: Smoke test out-of-the-box startup (Raspberry Pi OS userland + Amazon Linux 2023)
