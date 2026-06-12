@@ -273,9 +273,9 @@ jobs:
           path: |
             build/third_party
             build/portable-deps
-          key: arrow-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
+          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
           restore-keys: |
-            arrow-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
+            arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -326,7 +326,7 @@ jobs:
           path: |
             build/third_party
             build/portable-deps
-          key: arrow-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
+          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
 
       - name: Start MinIO and setup bucket
         run: |
