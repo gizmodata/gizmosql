@@ -261,55 +261,67 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install build requirements
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            ninja-build \
-            automake \
-            cmake \
-            gcc \
-            git \
-            libboost-all-dev \
-            libcurl4-openssl-dev \
-            libgflags-dev \
-            libssl-dev \
-            zlib1g-dev
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-
+      # Build deps (compilers, Boost, OpenSSL, ...) live inside the manylinux
+      # build container — the host only needs docker, python, and zip (all
+      # preinstalled on the runner image).
       - name: Restore Arrow cache
         id: arrow-cache
         uses: actions/cache/restore@v5
         with:
-          path: build/third_party
-          key: arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          # portable-deps holds the static OpenSSL + Boost prefixes built by
+          # scripts/build_portable_linux.sh (stamp-file guarded).
+          path: |
+            build/third_party
+            build/portable-deps
+          key: arrow-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
           restore-keys: |
-            arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
+            arrow-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
 
-      - name: Configure Project
-        uses: threeal/cmake-action@v2.1.0
-        with:
-          generator: Ninja
-          run-build: true
-          options: |
-            CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }}
-            GIZMOSQL_ENTERPRISE=ON
-            WITH_OPENTELEMETRY=ON
-            GIZMOSQL_DUCKDB_CHANNEL=${{ matrix.duckdb_channel }}
-            CMAKE_C_COMPILER_LAUNCHER=sccache
-            CMAKE_CXX_COMPILER_LAUNCHER=sccache
+      - name: Build (manylinux_2_28 container — glibc 2.28 baseline)
+        # Compile inside AlmaLinux 8 (glibc 2.28) with gcc-toolset-14 so the
+        # released binaries run out of the box on Raspberry Pi OS (bullseye+),
+        # Amazon Linux 2023, Ubuntu 20.04+, Debian 11+, etc. Same gcc 14
+        # codegen as the Ubuntu runner — only the glibc *baseline* changes;
+        # glibc's optimized routines are chosen at runtime on the target via
+        # IFUNC, so there is no performance cost. The script self-checks the
+        # produced binaries' max GLIBC/GLIBCXX symbol versions and fails the
+        # build on any baseline regression. sccache (a static musl binary,
+        # arch-matched) is mounted in and the GHA cache env forwarded so
+        # compile caching keeps working inside the container.
+        run: |
+          docker run --rm \
+            -v "$PWD":/work \
+            -v "$SCCACHE_PATH":/usr/local/bin/sccache:ro \
+            -e CMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} \
+            -e SCCACHE_GHA_ENABLED \
+            -e ACTIONS_CACHE_URL \
+            -e ACTIONS_RESULTS_URL \
+            -e ACTIONS_RUNTIME_TOKEN \
+            "quay.io/pypa/manylinux_2_28_$(uname -m)" \
+            bash /work/scripts/build_portable_linux.sh ${{ matrix.duckdb_channel }} build
+          sudo chown -R "$(id -u):$(id -g)" build
+
+      - name: Smoke test out-of-the-box startup (Raspberry Pi OS userland + Amazon Linux 2023)
+        # debian:bookworm-slim is the same userland as Raspberry Pi OS
+        # (bookworm). Both targets were broken before the manylinux build
+        # (binaries needed GLIBC_2.38 / GLIBCXX_3.4.32).
+        run: |
+          docker run --rm -v "$PWD/build:/bin-under-test:ro" debian:bookworm-slim bash -c \
+            "apt-get update -qq >/dev/null && apt-get install -y -qq libcurl4 >/dev/null && /bin-under-test/gizmosql_server${{ env.bin_suffix }} --version"
+          docker run --rm -v "$PWD/build:/bin-under-test:ro" amazonlinux:2023 bash -c \
+            "/bin-under-test/gizmosql_server${{ env.bin_suffix }} --version"
 
       - name: Save Arrow cache
         if: steps.arrow-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: build/third_party
-          key: arrow-linux-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          path: |
+            build/third_party
+            build/portable-deps
+          key: arrow-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-23.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
 
       - name: Start MinIO and setup bucket
         run: |

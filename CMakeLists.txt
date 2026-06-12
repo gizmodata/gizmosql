@@ -213,6 +213,20 @@ if(WIN32 AND VCPKG_TARGET_TRIPLET)
     endif()
 endif()
 
+# Forward OpenSSL hints into the OpenSSL-consuming ExternalProjects (Arrow,
+# jwt-cpp; cpp-httplib has its own forwarding below). On standard Linux/macOS
+# hosts they find the system OpenSSL on their own; in the portable manylinux
+# build (scripts/build_portable_linux.sh) the static OpenSSL 3 lives in a
+# custom prefix, so pass it down when the caller set it.
+set(GIZMOSQL_EP_OPENSSL_ROOT_ARG "")
+set(GIZMOSQL_EP_OPENSSL_STATIC_ARG "")
+if(OPENSSL_ROOT_DIR)
+    set(GIZMOSQL_EP_OPENSSL_ROOT_ARG "-DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}")
+endif()
+if(DEFINED OPENSSL_USE_STATIC_LIBS)
+    set(GIZMOSQL_EP_OPENSSL_STATIC_ARG "-DOPENSSL_USE_STATIC_LIBS=${OPENSSL_USE_STATIC_LIBS}")
+endif()
+
 # Forward iOS cross-compilation settings to Arrow ExternalProject
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(ARROW_SIMD_LEVEL "NONE")

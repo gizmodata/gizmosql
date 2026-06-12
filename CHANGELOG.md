@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux release binaries now run out of the box on Raspberry Pi OS, Amazon Linux 2023, Ubuntu 20.04+, and Debian 11+.** The Linux CLI binaries (both arches, both channels) are now compiled in a `manylinux_2_28` container (AlmaLinux 8, glibc 2.28 baseline, gcc-toolset-14) instead of directly on the Ubuntu 24.04 runners — previously they required `GLIBC_2.38` / `GLIBCXX_3.4.32`, which made them fail on any distro older than ~mid-2024 (e.g. Raspberry Pi OS bookworm, Amazon Linux 2023) with "GLIBC_2.38 not found". No performance impact: the same gcc 14 code generation is used, and glibc selects its optimized routines at runtime on the target machine (IFUNC). CI now enforces the glibc 2.28 ceiling on every build (symbol-version check in `scripts/build_portable_linux.sh`) and smoke-tests the produced binaries in `debian:bookworm` (the Raspberry Pi OS userland) and `amazonlinux:2023` containers, so a portability regression can never ship silently.
+
 ### Changed
 
 - **Quick Start version auto-sync now happens at docs-publish time instead of via a commit to `main`.** The `deploy-docs` workflow runs `scripts/update_docs_version.sh` against the latest release tag right before publishing GitHub Pages, and is triggered after a successful release via `workflow_run`. This replaces the `sync-docs-version` CI job, which tried to push the version bump to `main` and was rejected by the branch-protection ruleset (`github-actions[bot]` is not exempt). The live docs always reflect the newest release with no secrets and no push to the protected branch.
