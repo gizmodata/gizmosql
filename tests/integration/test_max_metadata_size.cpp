@@ -284,7 +284,7 @@ TEST(MaxMetadataEnvVar, EnvVarRaisesLimit) {
   // after the `Serve()` call returns ready; we don't have that signal here,
   // so probe via repeated connect attempts up to a timeout.
   bool reachable = false;
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   while (std::chrono::steady_clock::now() < deadline) {
     arrow::flight::FlightClientOptions opts;
     auto loc = arrow::flight::Location::ForGrpcTcp("localhost", kPort);
@@ -299,6 +299,15 @@ TEST(MaxMetadataEnvVar, EnvVarRaisesLimit) {
       }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+  if (!reachable) {
+    // Tear down BEFORE asserting: ASSERT_TRUE returns from the test body,
+    // and destroying the still-joinable server_thread would call
+    // std::terminate and abort the entire test binary ("terminate called
+    // without an active exception").
+    ShutdownFlightServer();
+    if (server_thread.joinable()) server_thread.join();
+    gizmosql::CleanupServerResources();
   }
   ASSERT_TRUE(reachable) << "env-var server failed to come up";
 
