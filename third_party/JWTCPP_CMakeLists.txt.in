@@ -14,5 +14,7 @@ ExternalProject_Add(
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/jwt-cpp
       -DJWT_BUILD_EXAMPLES=OFF
+      ${GIZMOSQL_EP_OPENSSL_ROOT_ARG}
+      ${GIZMOSQL_EP_OPENSSL_STATIC_ARG}
     BUILD_COMMAND ""  # This is a header only library
 )
