@@ -291,7 +291,7 @@ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_client \
   --command "SELECT version()"
 ```
 
-For full details, see the [Client Shell documentation](https://docs.gizmosql.com/#/client).
+For full details, see the [Client Shell documentation](client.md).
 
 ### Connecting via&nbsp;[Ibis](https://ibis-project.org)
 See: https://github.com/gizmodata/ibis-gizmosql

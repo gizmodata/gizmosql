@@ -157,7 +157,7 @@ For the full 22-query TPC-H benchmark suite (and our 1 TB result on a single mac
 | Set up TLS / authentication | [Security Guide](security.md) |
 | Use OAuth / SSO tokens | [Token Authentication](token_authentication.md) |
 | Pin a slower-moving DuckDB engine | [LTS Channel](lts_channel.md) |
-| See every CLI flag and env var | [Configuration reference](documentation.md#%EF%B8%8F-configuration--environment-variables) |
+| See every CLI flag and env var | [Configuration reference](index.md#configuration-environment-variables) |
 | Compare Core vs. Enterprise | [Editions](editions.md) |
 
 ---

@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'docs/**'
+      - 'mkdocs.yml'
       - '.github/workflows/deploy-docs.yml'
   # Redeploy after a successful release so the Quick Start version (injected
   # below from the latest git tag) tracks the newest release automatically.
@@ -56,10 +57,13 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v6
 
-      - name: Create .nojekyll file
-        run: |
-          touch docs/.nojekyll
-          echo "Created .nojekyll file to bypass Jekyll processing"
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install MkDocs Material
+        run: pip install 'mkdocs-material>=9,<10'
 
       # Rewrite the Quick Start example version to the latest release tag at
       # publish time (not committed), so the live docs always match the newest
@@ -67,20 +71,33 @@ jobs:
       - name: Sync Quick Start version to latest release
         run: ./scripts/update_docs_version.sh
 
-      - name: Verify documentation structure
+      - name: Build site
+        run: mkdocs build --strict
+
+      # Publish the raw Markdown sources alongside the rendered HTML so AI
+      # crawlers (which prefer Markdown and don't execute JS) can read pages
+      # directly — docs/llms.txt indexes these URLs.
+      - name: Publish raw Markdown for AI crawlers
         run: |
-          echo "Documentation structure:"
-          ls -la docs/
-          echo ""
-          echo "Checking for required files..."
-          test -f docs/index.html && echo "✓ index.html found" || echo "✗ index.html missing"
-          test -f docs/documentation.md && echo "✓ documentation.md found" || echo "✗ documentation.md missing"
-          test -f docs/_sidebar.md && echo "✓ _sidebar.md found" || echo "✗ _sidebar.md missing"
+          find docs -maxdepth 1 -name '*.md' \
+            ! -name 'VIEW_DOCS_LOCALLY.md' \
+            ! -name 'websocket-migration-plan.md' \
+            -exec cp {} site/ \;
+          touch site/.nojekyll
+
+      - name: Verify site structure
+        run: |
+          test -f site/index.html
+          test -f site/CNAME
+          test -f site/sitemap.xml
+          test -f site/llms.txt
+          test -f site/quickstart/index.html
+          echo "✓ site structure OK"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: 'docs'
+          path: 'site'
 
       - name: Deploy to GitHub Pages
         id: deployment

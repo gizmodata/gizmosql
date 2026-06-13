@@ -1,0 +1,39 @@
+# GizmoSQL
+
+> GizmoSQL is a high-performance SQL server for the cloud, built on Apache Arrow Flight SQL with DuckDB and SQLite backends. It provides authenticated, TLS-secured, remote SQL execution with JDBC, ADBC, Python, and CLI clients.
+
+Each page below is available as raw Markdown at the listed URL (the rendered
+HTML version lives at the same path without the `.md` extension).
+
+## Getting Started
+
+- [Documentation home](https://docs.gizmosql.com/index.md): overview, installation, deployment, configuration, and client connection examples
+- [Quick Start](https://docs.gizmosql.com/quickstart.md): get a GizmoSQL server running in minutes
+- [Editions](https://docs.gizmosql.com/editions.md): Core vs Enterprise feature comparison
+- [LTS Channel](https://docs.gizmosql.com/lts_channel.md): long-term support release channel
+- [Security Guide](https://docs.gizmosql.com/security.md): TLS, authentication, and hardening guidance
+- [Python ADBC Driver](https://docs.gizmosql.com/python_adbc.md): connect from Python via ADBC
+- [Python Library](https://docs.gizmosql.com/python_library.md): run a GizmoSQL server from Python
+- [Client Shell](https://docs.gizmosql.com/client.md): the gizmosql_client command-line shell
+- [Token Authentication](https://docs.gizmosql.com/token_authentication.md): JWT and external identity token auth
+- [OAuth / SSO Setup](https://docs.gizmosql.com/oauth_sso_setup.md): OAuth/SSO with external identity providers (Enterprise)
+- [Bulk Ingestion](https://docs.gizmosql.com/bulk_ingestion.md): high-throughput data loading
+- [DuckLake Integration](https://docs.gizmosql.com/ducklake.md): lakehouse catalogs with DuckLake
+- [Geometry & Spatial](https://docs.gizmosql.com/geometry.md): spatial data support
+
+## Features
+
+- [SET Commands](https://docs.gizmosql.com/set_commands.md): runtime server/session settings
+- [Session Instrumentation](https://docs.gizmosql.com/session_instrumentation.md): session and query observability (Enterprise)
+- [Catalog Logging](https://docs.gizmosql.com/catalog_logging.md): fork server logs to an attached catalog (Enterprise)
+- [Statement Queuing](https://docs.gizmosql.com/statement_queuing.md): admission control for concurrent statements (Enterprise)
+- [OpenTelemetry Integration](https://docs.gizmosql.com/opentelemetry.md): traces and metrics export
+
+## Integrations
+
+- [Extensions & Tools](https://docs.gizmosql.com/integrations.md): ecosystem integrations
+- [ADBC Scanner extension for DuckDB](https://docs.gizmosql.com/adbc_scanner_duckdb.md): query remote ADBC sources from DuckDB
+
+## Optional
+
+- [One Trillion Row Challenge](https://docs.gizmosql.com/one_trillion_row_challenge.md): benchmark write-up

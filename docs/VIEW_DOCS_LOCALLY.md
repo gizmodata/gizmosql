@@ -1,69 +1,42 @@
 # Viewing Documentation Locally
 
-This guide shows you how to preview the Docsify documentation on your local machine.
+The documentation site is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).
+The configuration lives in `mkdocs.yml` at the repo root; the page sources are
+the Markdown files in this directory.
 
 ## Quick Start
 
-### Option 1: Python (Simplest)
-
 ```bash
-cd docs
-python3 -m http.server 3000
+# Install MkDocs Material (one time, ideally in a virtualenv)
+pip install 'mkdocs-material>=9,<10'
+
+# Serve with live reload (run from the repo root)
+mkdocs serve
 ```
 
-Then open: http://localhost:3000
+Then open: http://localhost:8000
 
-### Option 2: Node.js
+Changes to the Markdown files reload in the browser automatically.
 
-```bash
-# Install http-server (one time)
-npm install -g http-server
-
-# Run server
-cd docs
-http-server -p 3000
-```
-
-Then open: http://localhost:3000
-
-### Option 3: Docsify CLI (Best for development)
+## Building the static site
 
 ```bash
-# Install docsify-cli (one time)
-npm install -g docsify-cli
-
-# Run server with hot reload
-docsify serve docs
+# From the repo root — outputs to site/ (gitignored)
+mkdocs build --strict
 ```
 
-Then open: http://localhost:3000
+`--strict` fails the build on broken internal links and anchors; CI runs the
+same command, so build locally before pushing docs changes.
 
-## Features
+## Adding a new page
 
-- Live reload (with docsify-cli)
-- Search functionality
-- Dark/Light theme toggle
-- Code syntax highlighting
-- Responsive design
+1. Add the Markdown file to `docs/`
+2. Add it to the `nav:` section of `mkdocs.yml`
+3. If it's a published page, add it to `docs/llms.txt` (the AI-crawler index)
 
-## Troubleshooting
+## Deployment
 
-**Port already in use?**
-```bash
-# Use different port
-python3 -m http.server 3001
-```
-
-**Browser cache issues?**
-- Press Cmd+Shift+R (Mac) or Ctrl+Shift+R (Windows/Linux)
-- Or open in incognito/private window
-
-**Files not updating?**
-- Clear browser cache
-- Use docsify-cli for auto-reload
-
-## Next Steps
-
-- Edit `.md` files in `docs/` directory
-- Changes reflect immediately (with auto-reload)
-- Push to GitHub to deploy to GitHub Pages
+Pushing docs changes to `main` triggers `.github/workflows/deploy-docs.yml`,
+which builds the site and deploys it to GitHub Pages at
+https://docs.gizmosql.com. The raw Markdown files are published alongside the
+rendered HTML (e.g. `https://docs.gizmosql.com/quickstart.md`) for AI crawlers.
