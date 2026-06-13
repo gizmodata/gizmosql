@@ -17,7 +17,7 @@ GizmoSQL provides seamless integration with:
 - ⚙️ [dbt Adapter](https://github.com/gizmodata/dbt-gizmosql)
 - 🥅 [SQLMesh Adapter](https://github.com/gizmodata/sqlmesh-gizmosql) 🚀 **NEW!**
 - ✨ [PySpark SQLFrame adapter](https://github.com/gizmodata/sqlframe)
-- 🪩 [ADBC Scanner by Query.Farm](docs/adbc_scanner_duckdb.md) 🚀 **NEW!**
+- 🪩 [ADBC Scanner by Query.Farm](adbc_scanner_duckdb.md) 🚀 **NEW!**
 - ⚓️ [Kubernetes Operator](https://github.com/gizmodata/gizmosql-operator) 🚀 **NEW!**
 - 📺 [GizmoSQLLine JDBC CLI Client](https://github.com/gizmodata/gizmosqlline) **NEW!**
 - 🔥 [Grafana Plugin](https://github.com/gizmodata/grafana-gizmosql-datasource) **NEW!**

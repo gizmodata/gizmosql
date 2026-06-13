@@ -3,6 +3,9 @@ arrow
 # build is out
 build
 
+# MkDocs output
+site/
+
 # and so it temp (playground)
 temp
 

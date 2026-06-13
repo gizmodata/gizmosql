@@ -1,0 +1,96 @@
+site_name: GizmoSQL
+site_url: https://docs.gizmosql.com/
+site_description: High-Performance SQL Server for the Cloud
+repo_url: https://github.com/gizmodata/gizmosql
+repo_name: gizmodata/gizmosql
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  icon:
+    logo: material/database-search
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+# Internal/contributor docs that should not be published
+exclude_docs: |
+  VIEW_DOCS_LOCALLY.md
+  websocket-migration-plan.md
+
+# Redirects legacy Docsify hash URLs (e.g. /#/quickstart) to real page URLs
+extra_javascript:
+  - js/hash-redirect.js
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: quickstart.md
+      - Editions: editions.md
+      - LTS Channel: lts_channel.md
+      - Security Guide: security.md
+      - Python ADBC Driver: python_adbc.md
+      - Python Library (run a server): python_library.md
+      - Client Shell: client.md
+      - Token Authentication: token_authentication.md
+      - OAuth / SSO Setup (Enterprise): oauth_sso_setup.md
+      - Bulk Ingestion: bulk_ingestion.md
+      - DuckLake Integration: ducklake.md
+      - Geometry & Spatial: geometry.md
+  - Features:
+      - SET Commands: set_commands.md
+      - Session Instrumentation (Enterprise): session_instrumentation.md
+      - Catalog Logging (Enterprise): catalog_logging.md
+      - Statement Queuing (Enterprise): statement_queuing.md
+      - OpenTelemetry Integration: opentelemetry.md
+  - Integrations:
+      - Extensions & Tools: integrations.md
+      - ADBC Scanner extension DuckDB: adbc_scanner_duckdb.md
+  - Additional Resources:
+      - One Trillion Row Challenge: one_trillion_row_challenge.md
+  - Links:
+      - GitHub: https://github.com/gizmodata/gizmosql
+      - Docker Hub: https://hub.docker.com/r/gizmodata/gizmosql
+      - GizmoData™: https://gizmodata.com

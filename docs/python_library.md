@@ -94,7 +94,7 @@ gizmosql.Server(
 )
 ```
 
-Any flag accepted by the `gizmosql_server` binary can be passed via `extra_args` — see the [Configuration & Environment Variables reference](documentation.md#%EF%B8%8F-configuration--environment-variables) for the full list.
+Any flag accepted by the `gizmosql_server` binary can be passed via `extra_args` — see the [Configuration & Environment Variables reference](index.md#configuration-environment-variables) for the full list.
 
 ## pytest fixture pattern
 
