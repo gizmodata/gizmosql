@@ -970,15 +970,55 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: release_notes.md
+          # Published as a prerelease first: the assets are public (so the
+          # installer smoke tests can download them by tag), but
+          # releases/latest — what install.gizmosql.com and the Homebrew tap
+          # point users at — keeps resolving to the previous release until
+          # test-installers passes on every platform and promote-release
+          # flips this to latest.
+          prerelease: true
           files: |
             artifacts/gizmosql_cli_*.zip
             artifacts/GizmoSQL-*.msi
             LICENSE
 
+  test-installers:
+    name: Smoke-test installers on all platforms
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: create-release
+    # Runs the install.gizmosql.com scripts end-to-end on native runners for
+    # every supported platform/arch (linux amd64/arm64, macos arm64, windows
+    # amd64/arm64): install both channels pinned to this tag, start
+    # gizmosql_server, connect with gizmosql_client, and verify a query.
+    uses: gizmodata/gizmosql-install/.github/workflows/test-install.yml@main
+    with:
+      version: ${{ github.ref_name }}
+
+  promote-release:
+    name: Promote release to latest (all platforms passed)
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: test-installers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Mark the release as latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --prerelease=false --latest
+          echo "✓ ${GITHUB_REF_NAME} promoted to latest"
+
   update-image-manifest:
     name: Merge per-platform images into multi-arch manifests (with attestations)
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build-project-linux
+    # build-project-linux supplies the per-platform digests; promote-release
+    # gates publishing the public manifest tags on the installer smoke tests
+    # passing on every platform.
+    needs: [build-project-linux, promote-release]
     runs-on: ubuntu-latest
     steps:
       - name: Set up Docker Buildx
@@ -1059,7 +1099,9 @@ jobs:
   update-homebrew-tap:
     name: Update Homebrew tap (stable + LTS formulas)
     if: startsWith(github.ref, 'refs/tags/')
-    needs: create-release
+    # Gated behind promote-release: the tap only advertises a version once
+    # the installer smoke tests passed on every platform.
+    needs: promote-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1245,7 +1287,9 @@ jobs:
   trigger-gizmosql-py-release:
     name: Trigger gizmosql-py release (PyPI)
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: create-release
+    # Gated behind promote-release: PyPI only ships a version once the
+    # installer smoke tests passed on every platform.
+    needs: promote-release
     runs-on: ubuntu-latest
     steps:
       - name: Fire repository_dispatch on gizmosql-py
