@@ -108,7 +108,9 @@ enforcement in GizmoSQL 2.0:
 
 - **Views / macros.** A view or macro that *wraps* a gated function is not
   inspected — selecting from it is not caught. (Creating such a wrapper still
-  requires running the gated function once, which is itself gated.)
+  requires running the gated function once, which is itself gated.) `PREPARE`
+  that stages a gated statement *is* caught (at prepare time), so the
+  `PREPARE`/`EXECUTE` indirection is closed.
 - **Replacement scans** of string-literal paths are caught by a path-shape
   heuristic, not by binding, so an unusual real table named like a file path
   could be mis-flagged (rare).

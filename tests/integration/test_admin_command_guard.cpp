@@ -224,6 +224,13 @@ TEST(AdminCommandGuard, ReadFunctionsNestedAreGated) {
       "SELECT * FROM read_csv('a.csv') UNION ALL SELECT * FROM my_table"));
 }
 
+TEST(AdminCommandGuard, PrepareIndirectionIsGated) {
+  // PREPARE staging a gated read is caught at prepare time, closing the
+  // PREPARE/EXECUTE indirection (a non-admin can't then EXECUTE it).
+  EXPECT_TRUE(Gated("PREPARE p AS SELECT * FROM read_csv('/etc/passwd')"));
+  EXPECT_FALSE(Gated("PREPARE p AS SELECT * FROM my_table"));
+}
+
 // =============================================================================
 // duckdb_secrets() — always gated.
 // =============================================================================

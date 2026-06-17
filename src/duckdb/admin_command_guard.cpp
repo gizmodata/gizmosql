@@ -39,6 +39,7 @@
 #include <duckdb/parser/statement/load_statement.hpp>
 #include <duckdb/parser/statement/call_statement.hpp>
 #include <duckdb/parser/statement/export_statement.hpp>
+#include <duckdb/parser/statement/prepare_statement.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 
@@ -272,24 +273,19 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
   return walker.violation;
 }
 
-}  // namespace
-
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
-  dd::Parser parser;
-  try {
-    parser.ParseQuery(sql);
-  } catch (...) {
-    // Unparseable here — let DuckDB surface the real parse error during
-    // preparation. (The standalone parser uses the same core grammar as the
-    // engine for the gated statement types.)
-    return std::nullopt;
-  }
-
-  for (auto& stmt_ptr : parser.statements) {
-    if (!stmt_ptr) continue;
-    dd::SQLStatement& stmt = *stmt_ptr;
-
+// Classify a single statement. Recurses into PREPARE so that
+// `PREPARE p AS SELECT * FROM read_csv('/etc/passwd')` is gated at prepare time
+// — a non-admin therefore cannot stage a gated statement and EXECUTE it later
+// (prepared statements are per-session/connection).
+std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     switch (stmt.type) {
+      case dd::StatementType::PREPARE_STATEMENT: {
+        auto& ps = stmt.Cast<dd::PrepareStatement>();
+        if (ps.statement) {
+          if (auto v = ClassifyStatement(*ps.statement)) return v;
+        }
+        break;
+      }
       case dd::StatementType::ATTACH_STATEMENT:
         return "ATTACH";
       case dd::StatementType::DETACH_STATEMENT:
@@ -359,8 +355,26 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
 
     // Embedded read_*/duckdb_secrets in SELECT / CTAS / INSERT ... SELECT.
     if (auto v = WalkStatementForGatedFunctions(stmt)) return v;
+    return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
+  dd::Parser parser;
+  try {
+    parser.ParseQuery(sql);
+  } catch (...) {
+    // Unparseable here — let DuckDB surface the real parse error during
+    // preparation. (The standalone parser uses the same core grammar as the
+    // engine for the gated statement types.)
+    return std::nullopt;
   }
 
+  for (auto& stmt_ptr : parser.statements) {
+    if (!stmt_ptr) continue;
+    if (auto v = ClassifyStatement(*stmt_ptr)) return v;
+  }
   return std::nullopt;
 }
 
