@@ -1056,6 +1056,68 @@ jobs:
             done
           done
 
+  build-adbc-images:
+    name: Build "-adbc" image tags (GizmoSQL + bundled ADBC drivers)
+    if: startsWith(github.ref, 'refs/tags/')
+    # Must run after the base multi-arch tags are published — the ADBC layer
+    # builds FROM the just-released gizmodata/gizmosql:<version>{,-slim} image.
+    needs: update-image-manifest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            sfx: ""
+          - variant: slim
+            sfx: "-slim"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Bundle the public ADBC drivers on top of the stable full / slim base and
+      # publish as additional "-adbc" tags on the SAME repos (no separate repo):
+      #   gizmodata/gizmosql:{latest,<version>}-adbc        (from the full base)
+      #   gizmodata/gizmosql:{latest,<version>}-slim-adbc   (from the slim base)
+      # plus the matching ghcr.io tags. Built multi-arch in one shot (the layer
+      # only downloads prebuilt, per-arch driver binaries — nothing is compiled).
+      - name: Build and push ADBC image (multi-arch)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          file: Dockerfile-adbc.ci
+          build-args: |
+            BASE_IMAGE=${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}${{ matrix.sfx }}
+          provenance: mode=max
+          sbom: true
+          push: true
+          tags: |
+            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest${{ matrix.sfx }}-adbc
+            ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}${{ matrix.sfx }}-adbc
+            ${{ env.GITHUB_IMAGE_NAME }}:latest${{ matrix.sfx }}-adbc
+            ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}${{ matrix.sfx }}-adbc
+
   update-homebrew-tap:
     name: Update Homebrew tap (stable + LTS formulas)
     if: startsWith(github.ref, 'refs/tags/')

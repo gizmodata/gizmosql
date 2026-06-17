@@ -22,6 +22,7 @@
 #include <arrow/record_batch.h>
 #include "duckdb_statement.h"
 #include "flight_sql_fwd.h"
+#include "shutdown_state.h"
 
 namespace gizmosql::ddb {
 class DuckDBStatementBatchReader : public arrow::RecordBatchReader {
@@ -50,6 +51,9 @@ private:
   int rc_;
   bool already_executed_;
   bool results_read_;
+  // Counts this query's execution + result streaming as in-flight work for the
+  // whole lifetime of the reader, so a graceful drain waits for it to finish.
+  gizmosql::InFlightGuard inflight_guard_;
 
   DuckDBStatementBatchReader(std::shared_ptr<DuckDBStatement> statement,
                              std::shared_ptr<arrow::Schema> schema);

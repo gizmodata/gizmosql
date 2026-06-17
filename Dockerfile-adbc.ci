@@ -1,0 +1,32 @@
+# GizmoSQL + bundled ADBC drivers (the "-adbc" image tags)
+#
+# Layers a curated set of publicly available ADBC drivers on top of an already
+# built GizmoSQL image (full or slim) via dbc (https://columnar.tech/dbc/).
+# Drivers are installed system-wide to /etc/adbc/drivers so any ADBC driver
+# manager running in the container can discover them by name.
+#
+# BASE_IMAGE is supplied by CI as the just-published image for this release,
+# e.g. gizmodata/gizmosql:v1.30.2 (full) or gizmodata/gizmosql:v1.30.2-slim.
+#
+# Excludes datafusion, sqlite, and duckdb (GizmoSQL already speaks DuckDB/SQLite
+# natively) and the private-registry drivers oracle/teradata (need credentials).
+
+ARG BASE_IMAGE=gizmodata/gizmosql:latest-slim
+FROM ${BASE_IMAGE}
+
+ARG ADBC_DRIVERS="bigquery databricks exasol flightsql mssql mysql postgresql redshift snowflake trino"
+
+USER root
+
+# Install dbc, install the drivers system-wide, then remove dbc and all download
+# caches in the same layer so only the driver payload (/etc/adbc/drivers) remains.
+RUN curl -LsSf https://dbc.columnar.tech/install.sh | sh \
+    && export PATH="/root/.local/bin:${PATH}" \
+    && for d in ${ADBC_DRIVERS}; do \
+         echo ">>> installing ADBC driver: $d"; \
+         dbc install --level system "$d"; \
+       done \
+    && dbc list --level system \
+    && rm -rf /root/.local /root/.cache
+
+USER app_user

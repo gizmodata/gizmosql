@@ -19,9 +19,12 @@
 #include "system_catalog.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <csignal>
 #include <fstream>
+#include <thread>
 #include <iomanip>
 #include <iostream>
 #include <filesystem>
@@ -63,6 +66,7 @@
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 #include "gizmosql_security.h"
+#include "shutdown_state.h"
 #include "gizmosql_telemetry.h"
 #include "access_log_middleware.h"
 #include "telemetry_middleware.h"
@@ -92,6 +96,16 @@ static std::unique_ptr<PlaintextHealthServer> g_plaintext_health_server;
 
 // Static storage for server reference (for querying active session count, etc.)
 static std::shared_ptr<flight::sql::FlightSqlServerBase> g_flight_server;
+
+// --- Graceful shutdown coordination -----------------------------------------
+// Count of shutdown signals received (SIGINT/SIGTERM) when graceful shutdown is
+// enabled, or programmatic requests via RequestGracefulShutdown(). The async
+// signal handler may only touch this atomic (async-signal-safe); the drain
+// watcher thread observes it and performs the real work. A second signal forces
+// an immediate stop. See shutdown_state.h for g_draining / g_inflight_requests.
+static std::atomic<int> g_shutdown_signal_count{0};
+// True while the drain watcher thread is running (graceful shutdown enabled).
+static std::atomic<bool> g_drain_watcher_active{false};
 
 #ifdef GIZMOSQL_ENTERPRISE
 // Static storage for instrumentation (Enterprise feature)
@@ -1129,6 +1143,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string log_catalog,
     std::string log_schema,
     std::string log_catalog_db_path) {
+  // Reset graceful-shutdown drain state for every fresh server. The drain flags
+  // are process-global; without this, a prior server that entered the draining
+  // state (e.g. a previous server in the same process, as in the test binary)
+  // would leave g_draining latched true and the new server would reject every
+  // statement with "instance is shutting down".
+  gizmosql::g_draining.store(false, std::memory_order_release);
+  gizmosql::g_shutdown_signal_count.store(0, std::memory_order_release);
+
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
@@ -1495,9 +1517,115 @@ void CleanupServerResources() {
   }
 #endif
 }
+
+// --- Graceful shutdown: signal handler + drain watcher ----------------------
+
+// Async-signal-safe handler: only bumps an atomic counter. The drain watcher
+// thread observes the counter and does all the real work (logging, waiting for
+// in-flight queries, calling Shutdown()). Installed in place of Arrow's
+// SetShutdownOnSignals() when --graceful-shutdown is enabled.
+extern "C" void GizmoSQLGracefulSignalHandler(int /*signum*/) {
+  g_shutdown_signal_count.fetch_add(1, std::memory_order_release);
+}
+
+// Install our graceful-shutdown signal handlers, overriding Arrow's
+// SetShutdownOnSignals() handlers (installed during server Init). SIGINT on all
+// platforms; SIGTERM additionally on non-Windows (Windows has no SIGTERM).
+static void InstallGracefulSignalHandlers() {
+#ifdef _WIN32
+  std::signal(SIGINT, GizmoSQLGracefulSignalHandler);
+#else
+  struct sigaction sa {};
+  sa.sa_handler = GizmoSQLGracefulSignalHandler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;  // no SA_RESTART: let blocking calls observe the signal
+  sigaction(SIGINT, &sa, nullptr);
+  sigaction(SIGTERM, &sa, nullptr);
+#endif
+}
+
+// Watcher thread body. Blocks until the first shutdown signal/request, marks the
+// server as draining (which makes request handlers reject new sessions and new
+// statements), then waits for all in-flight queries + fetches to finish — bounded
+// by `grace_period_seconds` (0 = wait indefinitely). A second signal forces an
+// immediate stop. In every exit path it calls Shutdown() on the Flight server,
+// which unblocks Serve() and runs the normal teardown sequence.
+static void RunDrainWatcher(int grace_period_seconds) {
+  using namespace std::chrono;
+  g_drain_watcher_active.store(true, std::memory_order_release);
+
+  // Wait for the first shutdown signal / programmatic request.
+  while (g_shutdown_signal_count.load(std::memory_order_acquire) == 0) {
+    std::this_thread::sleep_for(milliseconds(100));
+  }
+
+  // Enter the draining state: handlers now reject new work.
+  g_draining.store(true, std::memory_order_release);
+  GIZMOSQL_LOG(INFO)
+      << "GizmoSQL server - graceful shutdown requested; draining (rejecting new "
+         "sessions/statements, waiting for in-flight queries to finish)"
+      << (grace_period_seconds > 0
+              ? std::string(" — grace period ") + std::to_string(grace_period_seconds) + "s"
+              : std::string(" — no grace cap"));
+
+  const auto start = steady_clock::now();
+  const auto deadline = grace_period_seconds > 0
+                            ? start + seconds(grace_period_seconds)
+                            : steady_clock::time_point::max();
+  int last_logged_bucket = -1;
+  while (true) {
+    const int64_t inflight = InFlightRequestCount();
+    if (inflight <= 0) {
+      GIZMOSQL_LOG(INFO)
+          << "GizmoSQL server - all in-flight queries drained; stopping";
+      break;
+    }
+    if (g_shutdown_signal_count.load(std::memory_order_acquire) >= 2) {
+      GIZMOSQL_LOG(WARNING)
+          << "GizmoSQL server - second shutdown signal received; forcing immediate "
+             "shutdown with "
+          << inflight << " query(ies) still in flight";
+      break;
+    }
+    if (grace_period_seconds > 0 && steady_clock::now() >= deadline) {
+      GIZMOSQL_LOG(WARNING)
+          << "GizmoSQL server - graceful shutdown grace period (" << grace_period_seconds
+          << "s) elapsed with " << inflight
+          << " query(ies) still in flight; forcing shutdown";
+      break;
+    }
+    // Periodic progress log (~every 5s).
+    const int bucket =
+        static_cast<int>(duration_cast<seconds>(steady_clock::now() - start).count()) / 5;
+    if (bucket != last_logged_bucket) {
+      last_logged_bucket = bucket;
+      GIZMOSQL_LOG(INFO) << "GizmoSQL server - draining: " << inflight
+                         << " in-flight query(ies) remaining";
+    }
+    std::this_thread::sleep_for(milliseconds(100));
+  }
+
+  // Trigger the real shutdown: unblocks Serve(), running the existing teardown.
+  if (g_flight_server) {
+    (void)g_flight_server->Shutdown();
+  }
+  g_drain_watcher_active.store(false, std::memory_order_release);
+}
 }  // namespace gizmosql
 
 extern "C" {
+
+void RequestGracefulShutdown() {
+  // Mirrors a SIGINT/SIGTERM: the drain watcher (started only when graceful
+  // shutdown is enabled) observes the counter and drains. When graceful
+  // shutdown is NOT enabled there is no watcher, so fall back to an immediate
+  // stop for embedders that call this directly.
+  gizmosql::g_shutdown_signal_count.fetch_add(1, std::memory_order_release);
+  if (!gizmosql::g_drain_watcher_active.load(std::memory_order_acquire) &&
+      gizmosql::g_flight_server) {
+    (void)gizmosql::g_flight_server->Shutdown();
+  }
+}
 
 void ShutdownFlightServer() {
   if (gizmosql::g_flight_server) {
@@ -1561,7 +1689,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::optional<bool> enable_catalog_logging,
                        std::string log_catalog,
                        std::string log_schema,
-                       std::string log_catalog_db_path) {
+                       std::string log_catalog_db_path,
+                       std::optional<bool> graceful_shutdown,
+                       int32_t shutdown_grace_period_seconds) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1651,7 +1781,25 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   resolve_bool_env(oauth_disable_tls, "GIZMOSQL_OAUTH_DISABLE_TLS");
   resolve_bool_env(otel_enabled, "GIZMOSQL_OTEL_ENABLED");
   resolve_bool_env(admin_bypass_queue_default, "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT");
+  resolve_bool_env(graceful_shutdown, "GIZMOSQL_GRACEFUL_SHUTDOWN");
   // ----------------------------------------------------------
+
+  // Graceful shutdown grace-period cap. Sentinel -1 (default) => consult env,
+  // then fall back to 300s. 0 means "wait indefinitely" (rely on per-query
+  // timeouts), so 0 is a valid explicit value and must NOT trigger the env
+  // fallback — hence the -1 sentinel rather than 0.
+  if (shutdown_grace_period_seconds < 0) {
+    auto env = gizmosql::SafeGetEnvVarValue("GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS");
+    if (!env.empty()) {
+      try {
+        shutdown_grace_period_seconds = std::stoi(env);
+      } catch (const std::exception&) {
+        std::cerr << "GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS is not a valid integer ('"
+                  << env << "'), using default 300." << std::endl;
+      }
+    }
+    if (shutdown_grace_period_seconds < 0) shutdown_grace_period_seconds = 300;
+  }
 
   // Integer env var fallback for max_metadata_size: only consult env when the
   // CLI/library caller left it at the sentinel default (0). Negative values
@@ -1926,8 +2074,41 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
     gizmosql::g_flight_server = server_ptr;
+
+    // Graceful shutdown: install our own SIGINT/SIGTERM handlers (overriding the
+    // immediate-stop handlers Arrow installed via SetShutdownOnSignals during
+    // Init) and start a drain watcher thread. On the first signal the watcher
+    // marks the server as draining — new sessions/statements are rejected while
+    // in-flight queries and their fetches finish (or hit the grace cap) — then
+    // calls Shutdown() to unblock Serve(). When disabled, Arrow's handlers run
+    // as before and the server stops immediately on signal.
+    std::thread drain_watcher_thread;
+    const bool graceful = graceful_shutdown.value_or(false);
+    if (graceful) {
+      // Reset drain state so a second RunFlightSQLServer() call in the same
+      // process (embedders, tests) starts clean rather than inheriting a prior
+      // run's signal count / draining flag.
+      gizmosql::g_shutdown_signal_count.store(0, std::memory_order_release);
+      gizmosql::g_draining.store(false, std::memory_order_release);
+      gizmosql::InstallGracefulSignalHandlers();
+      drain_watcher_thread =
+          std::thread(gizmosql::RunDrainWatcher, shutdown_grace_period_seconds);
+      GIZMOSQL_LOG(INFO) << "GizmoSQL server - graceful shutdown enabled (grace period "
+                         << (shutdown_grace_period_seconds > 0
+                                 ? std::to_string(shutdown_grace_period_seconds) + "s)"
+                                 : std::string("unlimited)"));
+    }
+
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - started";
     ARROW_CHECK_OK(server_ptr->Serve());
+
+    // Serve() returned: either a signal (immediate mode) or the drain watcher
+    // called Shutdown() (graceful mode). Join the watcher if we started one.
+    if (drain_watcher_thread.joinable()) {
+      // Ensure the watcher wakes even if Serve() returned for another reason.
+      gizmosql::g_shutdown_signal_count.fetch_add(1, std::memory_order_release);
+      drain_watcher_thread.join();
+    }
 
     // Server has received shutdown signal (SIGTERM/SIGINT)
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - shutdown signal received, stopping...";

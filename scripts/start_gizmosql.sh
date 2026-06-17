@@ -59,6 +59,8 @@
 #   GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT  --admin-bypass-queue-default (Enterprise)
 #   GIZMOSQL_CAPTURE_QUERY_PROFILE       --capture-query-profile (Enterprise; off|standard|detailed)
 #   GIZMOSQL_MEMORY_LIMIT                --memory-limit (DuckDB only)
+#   GIZMOSQL_GRACEFUL_SHUTDOWN           --graceful-shutdown (drain on SIGINT/SIGTERM)
+#   GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS  --shutdown-grace-period-seconds
 #
 # ── Escape hatch ────────────────────────────────────────────────────────────
 #   GIZMOSQL_EXTRA_ARGS       Appended verbatim to the command line.

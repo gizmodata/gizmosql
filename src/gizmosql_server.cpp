@@ -195,6 +195,19 @@ int main(int argc, char** argv) {
               "[Enterprise] Path for the file-based default log database. If not set, uses env var "
               "GIZMOSQL_LOG_DB_PATH. If that isn't set, defaults to gizmosql_logs.db in the same "
               "directory as the main database. Ignored if --log-catalog is set.")
+            ("graceful-shutdown", po::value<bool>()->default_value(false),
+              "Drain in-flight queries on SIGINT/SIGTERM instead of stopping immediately. When "
+              "enabled, the first signal puts the server into a draining state: new sessions and "
+              "statements are rejected with an UNAVAILABLE error while already-running queries and "
+              "their result fetches finish (or hit their query timeout). A second signal forces an "
+              "immediate stop. Recommended for Kubernetes/container deployments. If not set, uses "
+              "env var GIZMOSQL_GRACEFUL_SHUTDOWN (1/true to enable).")
+            ("shutdown-grace-period-seconds", po::value<int32_t>()->default_value(-1),
+              "Maximum seconds to wait for in-flight queries to drain during a graceful shutdown "
+              "before forcing a stop. 0 = wait indefinitely (rely on per-query timeouts). -1 "
+              "(default) uses env var GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS, then a built-in 300s "
+              "default. Set the container/pod terminationGracePeriodSeconds >= this value so the "
+              "orchestrator's SIGKILL does not preempt the drain. Only used with --graceful-shutdown.")
             ("license-key-file,L", po::value<std::string>()->default_value(""),
               "Path to the GizmoSQL Enterprise license key file (JWT format). "
               "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
@@ -392,6 +405,13 @@ int main(int argc, char** argv) {
           ? std::nullopt
           : std::optional(vm["admin-bypass-queue-default"].as<bool>());
 
+  std::optional<bool> graceful_shutdown =
+      vm["graceful-shutdown"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["graceful-shutdown"].as<bool>());
+
+  int32_t shutdown_grace_period_seconds = vm["shutdown-grace-period-seconds"].as<int32_t>();
+
   std::string memory_limit = vm["memory-limit"].as<std::string>();
 
   std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
@@ -504,5 +524,6 @@ int main(int argc, char** argv) {
       otel_endpoint, otel_service_name, otel_headers, max_metadata_size,
       storage_version, max_concurrent_statements, max_queued_statements,
       max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile,
-      cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path);
+      cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path,
+      graceful_shutdown, shutdown_grace_period_seconds);
 }

@@ -47,6 +47,7 @@
 #endif
 #include "duckdb_server.h"
 #include "session_context.h"
+#include "admin_command_guard.h"
 #include "gizmosql_telemetry.h"
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -759,6 +760,36 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       {"role", client_session->role}, {"statement_id", handle});
 
   client_session->active_sql_handle = handle;
+
+  // Rudimentary admin-command gate (Core): block dangerous filesystem- and
+  // instance-level commands (ATTACH/DETACH, SET GLOBAL, INSTALL/LOAD, CHECKPOINT,
+  // COPY/EXPORT to local files, read_* of local files, duckdb_secrets()) for
+  // non-admin sessions, ahead of the full RBAC model (GizmoSQL 2.0). Basic-auth
+  // users are always "admin", so this only affects token deployments with
+  // non-admin roles. Internal/system queries are exempt. Admins and internal
+  // queries skip the parse entirely (fast path).
+  if (!is_internal && client_session->role != "admin") {
+    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql)) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                             "Client attempted a gated admin command",
+                             {"kind", "sql"}, {"status", "rejected"},
+                             {"gated", *gated_category}, {"statement_id", handle},
+                             {"sql", logged_sql});
+#ifdef GIZMOSQL_ENTERPRISE
+      std::string gate_error_msg =
+          "Permission denied: " + *gated_category +
+          " requires the 'admin' role. This GizmoSQL instance restricts "
+          "filesystem- and instance-level commands to admin users.";
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, gate_error_msg);
+        }
+      }
+#endif
+      return gizmosql::ddb::CheckNonAdminCommandAllowed(sql);
+    }
+  }
 
   // Get instance_id + cluster_id from the server for the
   // GIZMOSQL_CURRENT_INSTANCE() / GIZMOSQL_CURRENT_CLUSTER() pseudo-functions.

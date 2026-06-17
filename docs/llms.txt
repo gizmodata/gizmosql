@@ -27,6 +27,8 @@ HTML version lives at the same path without the `.md` extension).
 - [Session Instrumentation](https://docs.gizmosql.com/session_instrumentation.md): session and query observability (Enterprise)
 - [Catalog Logging](https://docs.gizmosql.com/catalog_logging.md): fork server logs to an attached catalog (Enterprise)
 - [Statement Queuing](https://docs.gizmosql.com/statement_queuing.md): admission control for concurrent statements (Enterprise)
+- [Admin Command Gating](https://docs.gizmosql.com/admin_command_gating.md): dangerous instance-level commands (ATTACH/DETACH, SET GLOBAL, INSTALL/LOAD, local filesystem reads/COPY, duckdb_secrets) require the admin role — interim guardrail ahead of GizmoSQL 2.0 RBAC
+- [Graceful Shutdown](https://docs.gizmosql.com/graceful_shutdown.md): drain in-flight queries on SIGINT/SIGTERM before stopping (for Kubernetes/containers)
 - [OpenTelemetry Integration](https://docs.gizmosql.com/opentelemetry.md): traces and metrics export
 
 ## Integrations

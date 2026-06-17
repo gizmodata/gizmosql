@@ -139,6 +139,18 @@ extern "C" {
  */
 void ShutdownFlightServer();
 
+/**
+ * @brief Request a graceful (draining) server shutdown.
+ *
+ * Equivalent to delivering one SIGINT/SIGTERM: when graceful shutdown is enabled
+ * (graceful_shutdown / --graceful-shutdown), the server enters its draining
+ * state — rejecting new sessions and statements while letting in-flight queries
+ * and fetches finish — then stops once drained or the grace period elapses.
+ * Calling this twice forces an immediate stop. If graceful shutdown is NOT
+ * enabled, this falls back to an immediate Shutdown(). Thread-safe.
+ */
+void RequestGracefulShutdown();
+
 size_t GetActiveSessionCount();
 
 int RunFlightSQLServer(
@@ -207,5 +219,20 @@ int RunFlightSQLServer(
     std::string log_schema = "",
     /// File path for the file-based default log database (--log-catalog-db-path /
     /// GIZMOSQL_LOG_DB_PATH). Ignored when log_catalog names an external catalog.
-    std::string log_catalog_db_path = "");
+    std::string log_catalog_db_path = "",
+    /// Drain in-flight queries on SIGINT/SIGTERM instead of stopping immediately
+    /// (--graceful-shutdown / GIZMOSQL_GRACEFUL_SHUTDOWN). When enabled, the first
+    /// signal puts the server into a draining state: new sessions and new
+    /// statements are rejected with an UNAVAILABLE error while already-running
+    /// queries and their result fetches finish (or hit their query timeout). A
+    /// second signal forces an immediate stop. nullopt = consult env var, then
+    /// default off.
+    std::optional<bool> graceful_shutdown = std::nullopt,
+    /// Maximum seconds to wait for in-flight queries to drain during a graceful
+    /// shutdown before forcing a stop (--shutdown-grace-period-seconds /
+    /// GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS). 0 = wait indefinitely (rely on
+    /// per-query timeouts). Sentinel -1 = consult env var, then default 300.
+    /// Set the container/pod terminationGracePeriodSeconds >= this value so the
+    /// orchestrator's SIGKILL does not preempt the drain.
+    int32_t shutdown_grace_period_seconds = -1);
 }
