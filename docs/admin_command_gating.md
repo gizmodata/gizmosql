@@ -47,15 +47,15 @@ For **non-admin** sessions, the following are rejected with a Flight
 | **Dangerous bare `SET`** of a global-only setting | `SET memory_limit='100GB'`, `SET threads=1`, `SET enable_external_access=false`, `SET temp_directory='…'` |
 | **INSTALL / LOAD** extensions | `INSTALL httpfs`, `LOAD spatial`, `FORCE INSTALL …` |
 | **CHECKPOINT** | `CHECKPOINT`, `FORCE CHECKPOINT` |
+| **EXPORT DATABASE / IMPORT DATABASE** (any destination) | `EXPORT DATABASE '/tmp/dump'`, `EXPORT DATABASE 's3://bucket/dump'`, `IMPORT DATABASE '/tmp/dump'` |
 | **COPY** to/from a **local** file | `COPY t TO '/tmp/x.csv'`, `COPY t FROM '/etc/passwd'` |
-| **EXPORT DATABASE** to a **local** directory | `EXPORT DATABASE '/tmp/dump'` |
 | **`read_*` / `glob` / `sniff_csv`** of the **local** filesystem | `SELECT * FROM read_csv('/etc/passwd')`, `read_parquet('/data/x.parquet')`, `glob('/home/*')` |
 | **Replacement scans** of a **local** path | `SELECT * FROM '/etc/passwd'`, `FROM 'data.parquet'` |
 | **`duckdb_secrets()`** (always) | `SELECT * FROM duckdb_secrets()` |
 
 ### Local vs. remote
 
-For filesystem reads and `COPY`/`EXPORT`, the gate distinguishes **local** from
+For filesystem reads and `COPY`, the gate distinguishes **local** from
 **remote object-storage / HTTP** paths. Non-admins **may** read from and write to
 proven-remote URLs — `s3://`, `s3a://`, `gs://`/`gcs://`, `r2://`, `az://`/
 `azure://`/`abfs://`/`abfss://`, `http://`, `https://`, `hf://` — but **not** local
@@ -63,14 +63,25 @@ paths. A path that cannot be *proven* remote (a bare/relative path, `file://`, o
 a computed/non-literal path) is treated as local and **gated** — the gate fails
 closed.
 
+**`EXPORT DATABASE` and `IMPORT DATABASE` are the exception: they are gated for
+non-admins regardless of destination (local *or* remote).** `EXPORT DATABASE`
+dumps the **entire** database — every schema and table — to a location, so
+unlike `COPY (SELECT …) TO` (bounded by what you can `SELECT`) it is a
+full-database egress; `IMPORT DATABASE` runs arbitrary DDL + DML from a dump.
+Both are admin-only.
+
 ```sql
--- non-admin: allowed (remote object storage)
+-- non-admin: allowed (remote object storage, bounded reads/writes)
 SELECT * FROM read_parquet('s3://bucket/data.parquet');
 COPY my_table TO 's3://bucket/out.parquet';
 
 -- non-admin: rejected (local filesystem)
 SELECT * FROM read_csv('/etc/passwd');
 COPY my_table TO '/tmp/out.csv';
+
+-- non-admin: rejected (full-database egress/ingress — local OR remote)
+EXPORT DATABASE 's3://bucket/dump';
+IMPORT DATABASE '/tmp/dump';
 ```
 
 ### What is *not* gated

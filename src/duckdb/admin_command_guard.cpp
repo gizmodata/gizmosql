@@ -38,7 +38,7 @@
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/load_statement.hpp>
 #include <duckdb/parser/statement/call_statement.hpp>
-#include <duckdb/parser/statement/export_statement.hpp>
+#include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/parser/statement/prepare_statement.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
@@ -342,11 +342,19 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         }
         break;
       }
-      case dd::StatementType::EXPORT_STATEMENT: {
-        auto& es = stmt.Cast<dd::ExportStatement>();
-        auto path = es.info ? CopyPathLiteral(*es.info) : std::nullopt;
-        const bool remote = path && IsProvenRemotePath(ToLower(*path));
-        if (!remote) return "EXPORT DATABASE (local filesystem)";
+      case dd::StatementType::EXPORT_STATEMENT:
+        // EXPORT DATABASE dumps the ENTIRE database (every schema/table) to a
+        // location — full-database egress, NOT bounded by object grants — so it
+        // is gated unconditionally, local or remote.
+        return "EXPORT DATABASE";
+      case dd::StatementType::PRAGMA_STATEMENT: {
+        // IMPORT DATABASE is parsed as `PRAGMA import_database('dir')`. It runs
+        // arbitrary DDL + DML from a dump (and reads the filesystem), so it is
+        // gated unconditionally, local or remote. Other pragmas are allowed.
+        auto& ps = stmt.Cast<dd::PragmaStatement>();
+        if (ps.info && ToLower(ps.info->name) == "import_database") {
+          return "IMPORT DATABASE";
+        }
         break;
       }
       default:

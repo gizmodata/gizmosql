@@ -36,7 +36,8 @@
 //   * INSTALL / LOAD (extensions)
 //   * CHECKPOINT / FORCE CHECKPOINT
 //   * COPY ... TO/FROM a LOCAL file (remote object-storage/HTTP paths allowed)
-//   * EXPORT DATABASE to a LOCAL directory
+//   * EXPORT DATABASE / IMPORT DATABASE (ANY destination — full-database
+//     egress/ingress is not bounded by object grants, so it is always gated)
 //   * read_*() / glob() / sniff_csv() table functions reading the LOCAL
 //     filesystem (remote object-storage/HTTP paths allowed), at any nesting
 //   * duckdb_secrets() (always — it exposes secret material)

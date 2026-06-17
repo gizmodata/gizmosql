@@ -168,15 +168,18 @@ TEST(AdminCommandGuard, CopyRemoteButNestedLocalReadIsGated) {
 // EXPORT DATABASE.
 // =============================================================================
 
-TEST(AdminCommandGuard, ExportDatabaseLocalIsGated) {
+TEST(AdminCommandGuard, ExportImportDatabaseAlwaysGated) {
+  // Full-database egress (EXPORT) / ingress (IMPORT) is gated regardless of
+  // local vs remote — it is not bounded by object grants.
   EXPECT_TRUE(Gated("EXPORT DATABASE '/tmp/dump'"));
   EXPECT_TRUE(Gated("EXPORT DATABASE 'dump_dir' (FORMAT parquet)"));
-  EXPECT_EQ(Category("EXPORT DATABASE '/tmp/dump'"),
-            "EXPORT DATABASE (local filesystem)");
-}
+  EXPECT_TRUE(Gated("EXPORT DATABASE 's3://bucket/dump'"));
+  EXPECT_EQ(Category("EXPORT DATABASE '/tmp/dump'"), "EXPORT DATABASE");
+  EXPECT_EQ(Category("EXPORT DATABASE 's3://bucket/dump'"), "EXPORT DATABASE");
 
-TEST(AdminCommandGuard, ExportDatabaseRemoteIsAllowed) {
-  EXPECT_FALSE(Gated("EXPORT DATABASE 's3://bucket/dump'"));
+  EXPECT_TRUE(Gated("IMPORT DATABASE '/tmp/dump'"));
+  EXPECT_TRUE(Gated("IMPORT DATABASE 's3://bucket/dump'"));
+  EXPECT_EQ(Category("IMPORT DATABASE '/tmp/dump'"), "IMPORT DATABASE");
 }
 
 // =============================================================================
