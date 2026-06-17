@@ -1143,6 +1143,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string log_catalog,
     std::string log_schema,
     std::string log_catalog_db_path) {
+  // Reset graceful-shutdown drain state for every fresh server. The drain flags
+  // are process-global; without this, a prior server that entered the draining
+  // state (e.g. a previous server in the same process, as in the test binary)
+  // would leave g_draining latched true and the new server would reject every
+  // statement with "instance is shutting down".
+  gizmosql::g_draining.store(false, std::memory_order_release);
+  gizmosql::g_shutdown_signal_count.store(0, std::memory_order_release);
+
   // Validate and default the arguments to env var values where applicable
   if (database_filename.empty() || database_filename == ":memory:") {
     GIZMOSQL_LOG(INFO)
