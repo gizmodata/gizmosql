@@ -39,3 +39,6 @@ ios/GizmoSQL/build/
 # Xcode per-user state
 xcuserdata/
 *.xcuserstate
+
+# Local design scratch docs (kept out of the repo)
+statement-queuing-design.md

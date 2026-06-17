@@ -99,9 +99,15 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy the relocatable CLIs from the builder stage.
+# NOTE: /usr/local/bin/aws and /usr/local/bin/aws_completer are symlinks into
+# /usr/local/aws-cli/v2/current/bin in the builder. `COPY --from` dereferences
+# symlinks, so copying them directly would land 8.9 MB standalone PyInstaller
+# launchers in /usr/local/bin that look for their bundled libpython next to
+# themselves (where it does not exist) — breaking `aws`. Recreate them as
+# symlinks instead, exactly as the aws-cli v2 installer lays them out.
 COPY --from=builder /usr/local/aws-cli /usr/local/aws-cli
-COPY --from=builder /usr/local/bin/aws /usr/local/bin/aws
-COPY --from=builder /usr/local/bin/aws_completer /usr/local/bin/aws_completer
+RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws && \
+    ln -s /usr/local/aws-cli/v2/current/bin/aws_completer /usr/local/bin/aws_completer
 COPY --from=builder /usr/local/bin/azcopy /usr/local/bin/azcopy
 COPY --from=builder /usr/local/bin/duckdb /usr/local/bin/duckdb
 

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.2] - 2026-06-17
+
+### Fixed
+
+- **AWS CLI on the default `PATH` is no longer broken in the full Docker image.** `aws --version` failed with `Failed to load Python shared library '/usr/local/bin/libpython3.14.so.1.0'` on both `amd64` and `arm64`. The multi-stage `Dockerfile.ci` (introduced in v1.27.0 for Docker Scout hardening) copied `/usr/local/bin/aws` and `/usr/local/bin/aws_completer` from the builder stage with `COPY --from`, which **dereferences symlinks** — landing the 8.9 MB standalone PyInstaller launcher in `/usr/local/bin` as a regular file, detached from the `libpython` bundled under `/usr/local/aws-cli/v2/current/dist/`. The launcher then looked for its shared library next to itself (where it does not exist). The final stage now recreates these as symlinks into `/usr/local/aws-cli/v2/current/bin` (exactly as the aws-cli v2 installer lays them out), so `aws` works on the default `PATH` again. `azcopy`, `az`, and the `duckdb` CLI were unaffected (genuine standalone binaries). Regression affected v1.27.0 through v1.30.1.
+
+### Changed
+
+- **CI: cleared Node-20-runtime deprecation warnings where an upgrade exists.** Bumped `actions/download-artifact@v7` → `@v8` (a straggler; the other five uses were already on v8), `docker/setup-buildx-action@v3` → `@v4`, and `softprops/action-gh-release@v2` → `@v3` — all now run on Node 24. Two third-party actions (`ilammy/msvc-dev-cmd`, `threeal/cmake-action`) still emit the warning because their latest releases (v1.13.0 and v2.1.0, both 2024) target Node 20 and no Node-24 release exists upstream yet; these will clear once those maintainers update.
+
 ## [1.30.1] - 2026-06-17
 
 ### Changed
