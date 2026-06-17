@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-06-17
+
 ### Added
 
 - **New `-adbc` Docker image tags: GizmoSQL with a curated set of public ADBC drivers bundled in.** Each release now also publishes ADBC-bundled variants of the stable image as additional tags on the existing `gizmodata/gizmosql` repos (Docker Hub + GHCR): `:latest-adbc` / `:<version>-adbc` (on the full base) and `:latest-slim-adbc` / `:<version>-slim-adbc` (on the slim base). The drivers are installed system-wide to `/etc/adbc/drivers` via [`dbc`](https://columnar.tech/dbc/) and cover the publicly available connectors — `bigquery`, `databricks`, `exasol`, `flightsql`, `mssql`, `mysql`, `postgresql`, `redshift`, `snowflake`, and `trino` (intentionally excluding `datafusion`/`sqlite`/`duckdb`, which GizmoSQL already speaks natively, and the private-registry `oracle`/`teradata` drivers). Built multi-arch (`linux/amd64`, `linux/arm64`) with SLSA provenance + SBOM attestations, layered on top of the just-released base tags. See `Dockerfile-adbc.ci`.
