@@ -34,6 +34,8 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/copy_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/load_statement.hpp>
@@ -290,6 +292,26 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         return "ATTACH";
       case dd::StatementType::DETACH_STATEMENT:
         return "DETACH";
+      case dd::StatementType::CREATE_STATEMENT: {
+        // CREATE SECRET (incl. OR REPLACE / PERSISTENT / TEMPORARY — all parse
+        // as a CreateStatement with a SECRET_ENTRY catalog type). Secrets hold
+        // credentials, so creating them is admin-only. Other CREATE statements
+        // (incl. CTAS) fall through to the gated-function walk below.
+        auto& cs = stmt.Cast<dd::CreateStatement>();
+        if (cs.info && cs.info->type == dd::CatalogType::SECRET_ENTRY) {
+          return "CREATE SECRET";
+        }
+        break;
+      }
+      case dd::StatementType::DROP_STATEMENT: {
+        // DROP SECRET (incl. IF EXISTS / PERSISTENT / TEMPORARY — all parse as a
+        // DropStatement with a SECRET_ENTRY catalog type). Other DROPs allowed.
+        auto& ds = stmt.Cast<dd::DropStatement>();
+        if (ds.info && ds.info->type == dd::CatalogType::SECRET_ENTRY) {
+          return "DROP SECRET";
+        }
+        break;
+      }
       case dd::StatementType::LOAD_STATEMENT: {
         auto& ls = stmt.Cast<dd::LoadStatement>();
         const bool is_load = ls.info && ls.info->load_type == dd::LoadType::LOAD;

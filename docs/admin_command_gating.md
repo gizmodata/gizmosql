@@ -51,6 +51,7 @@ For **non-admin** sessions, the following are rejected with a Flight
 | **COPY** to/from a **local** file | `COPY t TO '/tmp/x.csv'`, `COPY t FROM '/etc/passwd'` |
 | **`read_*` / `glob` / `sniff_csv`** of the **local** filesystem | `SELECT * FROM read_csv('/etc/passwd')`, `read_parquet('/data/x.parquet')`, `glob('/home/*')` |
 | **Replacement scans** of a **local** path | `SELECT * FROM '/etc/passwd'`, `FROM 'data.parquet'` |
+| **`CREATE SECRET` / `DROP SECRET`** (all variants) | `CREATE [OR REPLACE] [PERSISTENT\|TEMPORARY] SECRET …`, `DROP SECRET …` |
 | **`duckdb_secrets()`** (always) | `SELECT * FROM duckdb_secrets()` |
 
 ### Local vs. remote

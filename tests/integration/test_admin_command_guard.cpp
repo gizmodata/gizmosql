@@ -238,6 +238,28 @@ TEST(AdminCommandGuard, PrepareIndirectionIsGated) {
 // duckdb_secrets() — always gated.
 // =============================================================================
 
+TEST(AdminCommandGuard, CreateDropSecretIsGated) {
+  // Secrets hold credentials — every CREATE/DROP SECRET variant is admin-only.
+  EXPECT_TRUE(Gated("CREATE SECRET s (TYPE s3, KEY_ID 'k', SECRET 'v')"));
+  EXPECT_TRUE(Gated("CREATE OR REPLACE SECRET s (TYPE s3, KEY_ID 'k', SECRET 'v')"));
+  EXPECT_TRUE(Gated("CREATE PERSISTENT SECRET s (TYPE s3, KEY_ID 'k', SECRET 'v')"));
+  EXPECT_TRUE(Gated(
+      "CREATE OR REPLACE PERSISTENT SECRET s (TYPE s3, KEY_ID 'k', SECRET 'v')"));
+  EXPECT_TRUE(Gated("CREATE TEMPORARY SECRET s (TYPE s3, KEY_ID 'k', SECRET 'v')"));
+  EXPECT_EQ(Category("CREATE SECRET s (TYPE s3)"), "CREATE SECRET");
+
+  EXPECT_TRUE(Gated("DROP SECRET s"));
+  EXPECT_TRUE(Gated("DROP SECRET IF EXISTS s"));
+  EXPECT_TRUE(Gated("DROP PERSISTENT SECRET s"));
+  EXPECT_TRUE(Gated("DROP TEMPORARY SECRET s"));
+  EXPECT_EQ(Category("DROP SECRET s"), "DROP SECRET");
+
+  // Ordinary CREATE/DROP are not secret operations and stay allowed.
+  EXPECT_FALSE(Gated("CREATE TABLE t (id INTEGER)"));
+  EXPECT_FALSE(Gated("DROP TABLE t"));
+  EXPECT_FALSE(Gated("DROP VIEW v"));
+}
+
 TEST(AdminCommandGuard, DuckDBSecretsIsAlwaysGated) {
   EXPECT_TRUE(Gated("SELECT * FROM duckdb_secrets()"));
   EXPECT_TRUE(Gated("SELECT name FROM duckdb_secrets() WHERE name = 'x'"));

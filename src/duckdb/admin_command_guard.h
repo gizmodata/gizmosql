@@ -40,6 +40,8 @@
 //     egress/ingress is not bounded by object grants, so it is always gated)
 //   * read_*() / glob() / sniff_csv() table functions reading the LOCAL
 //     filesystem (remote object-storage/HTTP paths allowed), at any nesting
+//   * CREATE SECRET / DROP SECRET (all variants: OR REPLACE / PERSISTENT /
+//     TEMPORARY — secrets hold credentials)
 //   * duckdb_secrets() (always — it exposes secret material)
 //
 // Detection is parser-based (duckdb::Parser — no execution, no connection), so
