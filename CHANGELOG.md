@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New `-adbc` Docker image tags: GizmoSQL with a curated set of public ADBC drivers bundled in.** Each release now also publishes ADBC-bundled variants of the stable image as additional tags on the existing `gizmodata/gizmosql` repos (Docker Hub + GHCR): `:latest-adbc` / `:<version>-adbc` (on the full base) and `:latest-slim-adbc` / `:<version>-slim-adbc` (on the slim base). The drivers are installed system-wide to `/etc/adbc/drivers` via [`dbc`](https://columnar.tech/dbc/) and cover the publicly available connectors — `bigquery`, `databricks`, `exasol`, `flightsql`, `mssql`, `mysql`, `postgresql`, `redshift`, `snowflake`, and `trino` (intentionally excluding `datafusion`/`sqlite`/`duckdb`, which GizmoSQL already speaks natively, and the private-registry `oracle`/`teradata` drivers). Built multi-arch (`linux/amd64`, `linux/arm64`) with SLSA provenance + SBOM attestations, layered on top of the just-released base tags. See `Dockerfile-adbc.ci`.
+- **Graceful shutdown: drain in-flight queries on SIGINT/SIGTERM (`--graceful-shutdown`).** Opt-in via `--graceful-shutdown` / `GIZMOSQL_GRACEFUL_SHUTDOWN`. When enabled, the first SIGINT/SIGTERM no longer stops the server immediately; instead it enters a **draining** state: already-running queries and their in-progress result fetches are allowed to finish (or hit their per-query timeout), while **new sessions and new statements are rejected** with a retriable `UNAVAILABLE` error (`"GizmoSQL instance is shutting down"`). Once all in-flight work drains, the server stops on its own. A second signal forces an immediate stop. The maximum drain time is capped by `--shutdown-grace-period-seconds` / `GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS` (default **300s**; `0` = wait indefinitely), after which any stragglers are interrupted and the server stops. This is primarily for Kubernetes/container deployments — set the pod's `terminationGracePeriodSeconds` ≥ the grace period so the orchestrator's SIGKILL does not preempt the drain. The library C API gains a matching `RequestGracefulShutdown()` entry point. Default behavior is unchanged when the flag is not set (immediate shutdown). See [Graceful Shutdown](https://docs.gizmosql.com/graceful_shutdown.md).
+
 ## [1.30.2] - 2026-06-17
 
 ### Fixed

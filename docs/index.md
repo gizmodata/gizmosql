@@ -588,6 +588,43 @@ See [start_gizmosql_slim.sh](https://github.com/gizmodata/gizmosql/blob/main/scr
 
 ---
 
+## 🔌 ADBC Driver Images (`-adbc` tags)
+
+For workflows that connect *out* from GizmoSQL to other databases, each release
+also publishes `-adbc` variants that bundle a curated set of publicly available
+[ADBC](https://arrow.apache.org/adbc/) drivers, installed via
+[`dbc`](https://columnar.tech/dbc/). These are **additional tags on the same
+`gizmodata/gizmosql` image** (also mirrored to `ghcr.io/gizmodata/gizmosql`):
+
+| Tag | Base |
+|-----|------|
+| `gizmodata/gizmosql:latest-adbc` / `:<version>-adbc` | full image |
+| `gizmodata/gizmosql:latest-slim-adbc` / `:<version>-slim-adbc` | slim image |
+
+Bundled drivers: `bigquery`, `databricks`, `exasol`, `flightsql`, `mssql`,
+`mysql`, `postgresql`, `redshift`, `snowflake`, `trino`. (`datafusion`,
+`sqlite`, and `duckdb` are omitted — GizmoSQL speaks those natively — as are the
+private-registry `oracle`/`teradata` drivers.)
+
+The drivers are installed system-wide to `/etc/adbc/drivers`, where any ADBC
+driver manager in the container discovers them by name. The images are otherwise
+identical drop-in replacements for the corresponding base tag:
+
+```bash
+# Same as the slim image, plus the bundled ADBC drivers
+docker run -e TLS_ENABLED="0" -e GIZMOSQL_PASSWORD="secret" \
+  gizmodata/gizmosql:latest-slim-adbc
+
+# List the bundled drivers
+docker run --rm gizmodata/gizmosql:latest-slim-adbc ls /etc/adbc/drivers
+```
+
+To customize the driver set, build [`Dockerfile-adbc.ci`](https://github.com/gizmodata/gizmosql/blob/main/Dockerfile-adbc.ci)
+with your own `BASE_IMAGE` / `ADBC_DRIVERS` build args.
+
+
+---
+
 ## 🆘 Help & Support
 
 To see all available command-line options:
