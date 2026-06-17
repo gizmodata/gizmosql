@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.1] - 2026-06-17
+
 ### Changed
 
+- **Upgraded DuckDB to v1.5.4 (stable channel) and v1.4.5 (LTS channel).** Both are upstream bugfix releases shipped on 2026-06-17 (DuckDB v1.5.3 → v1.5.4, v1.4.4 → v1.4.5). The iOS extension pins (`ducklake`, `httpfs`) were re-synced to match DuckDB's own pins for the v1.5.4 release; `postgres_scanner` remains intentionally pinned to the v1.5.2-era commit (it links cleanly against v1.5.4, since these are ABI-compatible patch releases).
 - **Documentation site migrated from Docsify to MkDocs Material for SEO/AEO.** [docs.gizmosql.com](https://docs.gizmosql.com) is now pre-rendered static HTML built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/) instead of client-side-rendered Docsify. Every page now has a real URL (`/quickstart/` instead of `/#/quickstart`) with full HTML content, a per-page `<title>`, and a generated `sitemap.xml` — so search engines can index individual pages and AI crawlers (which don't execute JavaScript) can read the docs at all. The raw Markdown sources are also published alongside the HTML (e.g. `/quickstart.md`) and indexed in a new [`llms.txt`](https://docs.gizmosql.com/llms.txt) for answer engines. Legacy `/#/page` links are redirected client-side to the new URLs. The docs CI build now runs `mkdocs build --strict`, which fails on broken internal links and anchors.
 
 ## [1.30.0] - 2026-06-12

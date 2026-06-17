@@ -4,8 +4,8 @@ GizmoSQL ships in two parallel **release channels** that share the same GizmoSQL
 
 | Channel    | DuckDB tracked                         | When to pick it |
 |------------|----------------------------------------|------------------|
-| **Stable** | Latest DuckDB minor (e.g. `v1.5.3`)    | You want every new DuckDB feature, type, and performance improvement on its normal cadence. |
-| **LTS**    | Most recent DuckDB LTS (e.g. `v1.4.4`) | You need a slower-moving, longer-supported DuckDB engine — production deployments where the underlying database's stability guarantees matter more than new features. |
+| **Stable** | Latest DuckDB minor (e.g. `v1.5.4`)    | You want every new DuckDB feature, type, and performance improvement on its normal cadence. |
+| **LTS**    | Most recent DuckDB LTS (e.g. `v1.4.5`) | You need a slower-moving, longer-supported DuckDB engine — production deployments where the underlying database's stability guarantees matter more than new features. |
 
 Both channels get every GizmoSQL fix, feature, and quality-of-life improvement at the same time. Choosing LTS only changes which DuckDB version is statically linked into the binary; the GizmoSQL CLI flags, library API, configuration, authentication, and protocol behavior are identical.
 
@@ -34,7 +34,7 @@ GizmoSQL Client v1.25.0-LTS
 **2. The startup banner**
 
 ```text
-INFO ... GizmoSQL server version: v1.25.0-LTS - with engine: DuckDB (LTS channel — DuckDB v1.4.4) - will listen on grpc+tcp://0.0.0.0:31337
+INFO ... GizmoSQL server version: v1.25.0-LTS - with engine: DuckDB (LTS channel — DuckDB v1.4.5) - will listen on grpc+tcp://0.0.0.0:31337
 ```
 
 **3. The `GIZMOSQL_VERSION()` SQL function** — query it from any client (JDBC, ADBC, gizmosql_client, etc.) to confirm which channel the server you connected to was built from:
@@ -105,7 +105,7 @@ cmake -B build -DGIZMOSQL_DUCKDB_CHANNEL=lts
 cmake --build build
 ```
 
-Override the LTS version pin with `-DDUCKDB_LTS_VERSION=v1.4.5` if you need a specific point release.
+Override the LTS version pin with `-DDUCKDB_LTS_VERSION=v1.4.4` if you need a specific point release.
 
 The default (`stable`) is unchanged: `cmake -B build` produces the regular `gizmosql_server` / `gizmosql_client` binaries with no `-LTS` markers.
 

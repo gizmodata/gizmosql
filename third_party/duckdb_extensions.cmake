@@ -32,24 +32,24 @@ if(GIZMOSQL_IOS)
     # in third_party/DuckDB_CMakeLists.txt.in, sync these commits too.
     duckdb_extension_load(ducklake
         GIT_URL https://github.com/duckdb/ducklake
-        GIT_TAG e6a3bd0a8554b74d97cbc7e8acc3e2c9f01a0385
+        GIT_TAG d318a545571d7d46eb751fa2aa5f6f4389285d3c
     )
 
     duckdb_extension_load(httpfs
         GIT_URL https://github.com/duckdb/duckdb-httpfs
-        GIT_TAG 52afb4204a3238d6ee132e83340f8d68c40ee91c
+        GIT_TAG c3f215ab360f04dc3d3d5305fa81849c0121f111
     )
 
     # postgres_scanner: intentionally pinned to the DuckDB v1.5.2-era
-    # commit (c89234f0...), NOT DuckDB's official v1.5.3 pin
-    # (6b2b12cad...). The newer pin removed the vendored libpq source
+    # commit (c89234f0...), NOT DuckDB's official v1.5.4 pin
+    # (8f813f9b9...). The newer pin removed the vendored libpq source
     # tree from the extension repo and now relies on
     # `find_package(PostgreSQL REQUIRED)` — it expects an externally
     # cross-compiled libpq, which would be a multi-day effort to set
     # up for the iOS toolchain. The older pin vendors libpq and
     # `database-connector` submodules and builds them from source.
-    # DuckDB 1.5.2 → 1.5.3 is a patch release with ABI compatibility,
-    # so the older extension links cleanly against DuckDB v1.5.3.
+    # DuckDB 1.5.2 → 1.5.4 are patch releases with ABI compatibility,
+    # so the older extension links cleanly against DuckDB v1.5.4.
     duckdb_extension_load(postgres_scanner
         GIT_URL https://github.com/duckdb/duckdb-postgres
         GIT_TAG c89234f0b1985f4ee0f52f16e742a1ab2d4ae4f0
