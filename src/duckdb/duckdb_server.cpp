@@ -50,6 +50,7 @@
 #include "gizmosql_telemetry.h"
 #include "telemetry_middleware.h"
 #include "flight_sql_fwd.h"
+#include "shutdown_state.h"
 #include "session_context.h"
 #include "request_ctx.h"
 #ifdef GIZMOSQL_ENTERPRISE
@@ -802,6 +803,20 @@ Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
                           query_timeout, flight_method, is_internal);
 }
 
+// During a graceful drain (--graceful-shutdown, after the first SIGINT/SIGTERM)
+// the server rejects NEW work — new statement executions and new sessions — with
+// a retriable UNAVAILABLE error, while letting already-running queries and their
+// result fetches finish. Returns OK when not draining.
+arrow::Status RejectIfDraining() {
+  if (gizmosql::IsDraining()) {
+    return flight::MakeFlightError(
+        flight::FlightStatusCode::Unavailable,
+        "GizmoSQL instance is shutting down; not accepting new statements. "
+        "Retry against another instance.");
+  }
+  return arrow::Status::OK();
+}
+
 Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
     const flight::FlightDescriptor& descriptor,
     const std::shared_ptr<arrow::Schema>& schema) {
@@ -969,6 +984,16 @@ class DuckDBFlightSqlServer::Impl {
         }
         return it->second;
       }
+    }
+
+    // Reject brand-new sessions during a graceful drain. Existing sessions were
+    // returned by the fast path above, so their in-flight fetches still proceed;
+    // only the creation of a NEW session is refused while shutting down.
+    if (gizmosql::IsDraining()) {
+      return flight::MakeFlightError(
+          flight::FlightStatusCode::Unavailable,
+          "GizmoSQL instance is shutting down; not accepting new connections. "
+          "Retry against another instance.");
     }
 
     // Build the session *without* holding any lock
@@ -1218,6 +1243,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoStatement(
       const flight::ServerCallContext& context, const sql::StatementQuery& command,
       const flight::FlightDescriptor& descriptor) {
+    ARROW_RETURN_NOT_OK(RejectIfDraining());
     const std::string& query = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     ARROW_ASSIGN_OR_RAISE(
@@ -1304,6 +1330,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<sql::ActionCreatePreparedStatementResult> CreatePreparedStatement(
       const flight::ServerCallContext& context,
       const sql::ActionCreatePreparedStatementRequest& request) {
+    ARROW_RETURN_NOT_OK(RejectIfDraining());
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
 
     const std::string handle =
@@ -1379,6 +1406,7 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const sql::PreparedStatementQuery& command,
       const flight::FlightDescriptor& descriptor) {
+    ARROW_RETURN_NOT_OK(RejectIfDraining());
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
@@ -1421,6 +1449,7 @@ class DuckDBFlightSqlServer::Impl {
                                      const sql::PreparedStatementQuery& command,
                                      flight::FlightMessageReader* reader,
                                      flight::FlightMetadataWriter* writer) {
+    ARROW_RETURN_NOT_OK(RejectIfDraining());
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     std::shared_ptr<DuckDBStatement> statement;
@@ -1440,6 +1469,8 @@ class DuckDBFlightSqlServer::Impl {
   Result<int64_t> DoPutPreparedStatementUpdate(
       const flight::ServerCallContext& context,
       const sql::PreparedStatementUpdate& command, flight::FlightMessageReader* reader) {
+    ARROW_RETURN_NOT_OK(RejectIfDraining());
+    gizmosql::InFlightGuard inflight_guard;
     const std::string& prepared_statement_handle = command.prepared_statement_handle;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     std::shared_ptr<DuckDBStatement> statement;
@@ -1485,6 +1516,8 @@ class DuckDBFlightSqlServer::Impl {
 
   Result<int64_t> DoPutCommandStatementUpdate(const flight::ServerCallContext& context,
                                               const sql::StatementUpdate& command) {
+    ARROW_RETURN_NOT_OK(RejectIfDraining());
+    gizmosql::InFlightGuard inflight_guard;
     const std::string& sql = command.query;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     ARROW_ASSIGN_OR_RAISE(
