@@ -43,7 +43,13 @@ struct CliResult {
 };
 
 CliResult RunServer(const std::string& args) {
-  const std::string cmd = ServerBinary() + " " + args + " 2>/dev/null";
+  // Discard stderr via the platform null device (cmd.exe uses NUL, not /dev/null).
+#ifdef _WIN32
+  const char* kNullDevice = "NUL";
+#else
+  const char* kNullDevice = "/dev/null";
+#endif
+  const std::string cmd = ServerBinary() + " " + args + " 2>" + kNullDevice;
   CliResult result;
   FILE* pipe = popen(cmd.c_str(), "r");
   if (!pipe) {

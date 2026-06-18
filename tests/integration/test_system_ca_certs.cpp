@@ -25,6 +25,24 @@
 
 namespace {
 
+// Portable set/unset of an environment variable. POSIX has setenv/unsetenv;
+// MSVC has neither, so use _putenv_s (an empty value removes the variable).
+void SetEnvVar(const char* name, const char* value) {
+#ifdef _WIN32
+  _putenv_s(name, value);
+#else
+  setenv(name, value, /*overwrite=*/1);
+#endif
+}
+
+void UnsetEnvVar(const char* name) {
+#ifdef _WIN32
+  _putenv_s(name, "");
+#else
+  unsetenv(name);
+#endif
+}
+
 // RAII for an env var (set on construct, restore on destruct).
 class ScopedEnv {
  public:
@@ -32,13 +50,13 @@ class ScopedEnv {
     const char* prev = std::getenv(name);
     had_prev_ = prev != nullptr;
     if (had_prev_) prev_ = prev;
-    setenv(name, value, /*overwrite=*/1);
+    SetEnvVar(name, value);
   }
   ~ScopedEnv() {
     if (had_prev_) {
-      setenv(name_, prev_.c_str(), 1);
+      SetEnvVar(name_, prev_.c_str());
     } else {
-      unsetenv(name_);
+      UnsetEnvVar(name_);
     }
   }
 
@@ -81,8 +99,10 @@ TEST(SystemCaCerts, IgnoresNonexistentSslCertFileEnv) {
 // bundle paths must exist — this guards against the probe list going stale.
 TEST(SystemCaCerts, FindsASystemBundle) {
   // Make sure SSL_CERT_FILE isn't masking the path-list logic.
-  const char* prev = std::getenv("SSL_CERT_FILE");
-  if (prev) unsetenv("SSL_CERT_FILE");
+  const char* prev_raw = std::getenv("SSL_CERT_FILE");
+  const bool had_prev = prev_raw != nullptr;
+  const std::string prev = had_prev ? prev_raw : std::string();
+  if (had_prev) UnsetEnvVar("SSL_CERT_FILE");
 
   auto found = gizmosql::FindSystemCaCertFile();
   ASSERT_TRUE(found.has_value())
@@ -91,5 +111,5 @@ TEST(SystemCaCerts, FindsASystemBundle) {
   std::ifstream f(*found);
   EXPECT_TRUE(f.good()) << "probe returned a non-readable path: " << *found;
 
-  if (prev) setenv("SSL_CERT_FILE", prev, 1);
+  if (had_prev) SetEnvVar("SSL_CERT_FILE", prev.c_str());
 }
