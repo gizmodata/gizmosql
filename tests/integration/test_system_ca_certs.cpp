@@ -97,7 +97,14 @@ TEST(SystemCaCerts, IgnoresNonexistentSslCertFileEnv) {
 
 // On any normal Linux/macOS host (incl. CI runners) one of the well-known
 // bundle paths must exist — this guards against the probe list going stale.
+// Windows is excluded: it uses the OS certificate store (schannel), not an
+// on-disk PEM bundle, so the probe intentionally finds nothing there and the
+// HTTPS clients fall back to OpenSSL's default verify paths.
 TEST(SystemCaCerts, FindsASystemBundle) {
+#ifdef _WIN32
+  GTEST_SKIP() << "Windows uses the OS certificate store; no on-disk CA bundle "
+                  "is expected (the probe targets Linux/macOS).";
+#else
   // Make sure SSL_CERT_FILE isn't masking the path-list logic.
   const char* prev_raw = std::getenv("SSL_CERT_FILE");
   const bool had_prev = prev_raw != nullptr;
@@ -112,4 +119,5 @@ TEST(SystemCaCerts, FindsASystemBundle) {
   EXPECT_TRUE(f.good()) << "probe returned a non-readable path: " << *found;
 
   if (had_prev) SetEnvVar("SSL_CERT_FILE", prev.c_str());
+#endif  // _WIN32
 }
