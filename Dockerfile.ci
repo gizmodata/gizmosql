@@ -135,6 +135,14 @@ RUN python3 -m venv ${VIRTUAL_ENV} && \
 # Set the PATH so that the Python Virtual environment is referenced for subsequent RUN steps (hat tip: https://pythonspeed.com/articles/activate-virtualenv-dockerfile/)
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
+# Point OpenSSL's default-verify-paths at the distro CA bundle. The portable
+# gizmosql binaries statically link a self-built OpenSSL whose compiled-in
+# OPENSSLDIR is a build-time path that doesn't exist here; the binary's own CA
+# probe handles this, and these env vars are belt-and-suspenders that also cover
+# any other OpenSSL consumer in the image.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/certs
+
 # Copy the scripts directory into the image (we copy directory-by-directory in order to maximize Docker caching)
 COPY --chown=app_user:app_user scripts scripts
 

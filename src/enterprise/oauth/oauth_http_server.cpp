@@ -19,6 +19,7 @@
 #include "jwt-cpp/jwt.h"
 #include "gizmosql_logging.h"
 #include "gizmosql_security.h"
+#include "system_ca_certs.h"
 
 namespace gizmosql::enterprise {
 
@@ -390,6 +391,12 @@ arrow::Result<std::string> OAuthHttpServer::ExchangeCodeForTokens(
   client.set_follow_location(true);
   client.set_connection_timeout(std::chrono::seconds(10));
   client.set_read_timeout(std::chrono::seconds(10));
+  // Explicitly use the system CA bundle (the statically-linked OpenSSL's
+  // compiled-in default CA path does not exist at runtime — see
+  // system_ca_certs.h).
+  if (auto ca = gizmosql::FindSystemCaCertFile()) {
+    client.set_ca_cert_path(ca->c_str());
+  }
 
   // Build POST body
   httplib::Params params;

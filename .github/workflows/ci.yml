@@ -309,15 +309,27 @@ jobs:
             bash "$PWD/scripts/build_portable_linux.sh" ${{ matrix.duckdb_channel }} build
           sudo chown -R "$(id -u):$(id -g)" build
 
-      - name: Smoke test out-of-the-box startup (Raspberry Pi OS userland + Amazon Linux 2023)
-        # debian:bookworm-slim is the same userland as Raspberry Pi OS
-        # (bookworm). Both targets were broken before the manylinux build
-        # (binaries needed GLIBC_2.38 / GLIBCXX_3.4.32).
+      - name: Smoke test startup + outbound TLS trust (Raspberry Pi OS userland + Amazon Linux 2023)
+        # Two guarantees on the actual portable binary, on both CA-layout families
+        # (Debian /etc/ssl/certs and RHEL/Amazon /etc/pki/tls):
+        #   1. starts out of the box on an old-glibc distro (debian:bookworm-slim
+        #      is the Raspberry Pi OS userland) — both targets needed GLIBC_2.38 /
+        #      GLIBCXX_3.4.32 before the manylinux build.
+        #   2. outbound HTTPS verifies against the *system* CA bundle. This guards
+        #      the v1.30.0 regression where the statically-linked OpenSSL's
+        #      compiled-in CA path (OPENSSLDIR) is a build-time dir that doesn't
+        #      exist at runtime, so JWKS/OAuth TLS verification failed. If the CA
+        #      probe ever regresses, --verify-tls exits non-zero and this fails.
         run: |
+          OIDC="https://token.actions.githubusercontent.com/.well-known/openid-configuration"
           docker run --rm -v "$PWD/build:/bin-under-test:ro" debian:bookworm-slim bash -c \
-            "apt-get update -qq >/dev/null && apt-get install -y -qq libcurl4 >/dev/null && /bin-under-test/gizmosql_server${{ env.bin_suffix }} --version"
+            "apt-get update -qq >/dev/null && apt-get install -y -qq libcurl4 ca-certificates >/dev/null && \
+             /bin-under-test/gizmosql_server${{ env.bin_suffix }} --version && \
+             /bin-under-test/gizmosql_server${{ env.bin_suffix }} --verify-tls '$OIDC'"
           docker run --rm -v "$PWD/build:/bin-under-test:ro" amazonlinux:2023 bash -c \
-            "/bin-under-test/gizmosql_server${{ env.bin_suffix }} --version"
+            "(rpm -q ca-certificates >/dev/null 2>&1 || dnf install -y -q ca-certificates >/dev/null) && \
+             /bin-under-test/gizmosql_server${{ env.bin_suffix }} --version && \
+             /bin-under-test/gizmosql_server${{ env.bin_suffix }} --verify-tls '$OIDC'"
 
       - name: Save Arrow cache
         if: steps.arrow-cache.outputs.cache-hit != 'true'

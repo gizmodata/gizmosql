@@ -24,6 +24,15 @@
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
 
+#ifdef GIZMOSQL_ENTERPRISE
+// Defined in src/enterprise/jwks/jwks_manager.cpp (where cpp-httplib + OpenSSL
+// are already wired). Performs a single verified HTTPS GET using the system CA
+// bundle — the same path the JWKS/OAuth clients use — and returns 0/1.
+namespace gizmosql {
+int VerifyTlsEndpoint(const std::string& url);
+}
+#endif
+
 int main(int argc, char** argv) {
   std::vector<std::string> tls_token_values;
 
@@ -33,6 +42,11 @@ int main(int argc, char** argv) {
     desc.add_options()
             ("help", "produce this help message")
             ("version", "Print the version and exit")
+            ("verify-tls", po::value<std::string>(),
+             "Diagnostic: perform a verified HTTPS GET to the given URL using the "
+             "system CA trust store (the same path JWKS/OAuth use) and exit "
+             "(0 = success, 1 = failure). Useful to check outbound TLS/CA in a "
+             "container, e.g. --verify-tls https://issuer/.well-known/openid-configuration")
             ("backend,B", po::value<std::string>()->default_value("duckdb"),
              "Specify the database backend. Allowed options: duckdb, sqlite.")
             ("hostname,H", po::value<std::string>()->default_value(""),
@@ -286,6 +300,15 @@ int main(int argc, char** argv) {
   if (vm.count("version")) {
     std::cout << "GizmoSQL Server CLI: " << GIZMOSQL_SERVER_VERSION << "\n";
     return 0;
+  }
+
+  if (vm.count("verify-tls")) {
+#ifdef GIZMOSQL_ENTERPRISE
+    return gizmosql::VerifyTlsEndpoint(vm["verify-tls"].as<std::string>());
+#else
+    std::cerr << "--verify-tls requires the GizmoSQL Enterprise edition\n";
+    return 1;
+#endif
   }
 
   std::string backend_str = vm["backend"].as<std::string>();

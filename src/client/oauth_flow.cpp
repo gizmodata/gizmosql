@@ -31,6 +31,7 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+#include "system_ca_certs.h"
 
 namespace gizmosql::client {
 
@@ -62,6 +63,7 @@ arrow::Result<std::pair<std::string, std::string>> OAuthFlow::Initiate(
   httplib::Client cli(oauth_base_url);
   cli.set_connection_timeout(10);
   cli.set_read_timeout(10);
+  if (auto ca = gizmosql::FindSystemCaCertFile()) cli.set_ca_cert_path(ca->c_str());
 
   auto res = cli.Get("/oauth/initiate");
   if (!res) {
@@ -120,6 +122,7 @@ arrow::Result<std::string> OAuthFlow::PollForToken(
   httplib::Client cli(oauth_base_url);
   cli.set_connection_timeout(10);
   cli.set_read_timeout(10);
+  if (auto ca = gizmosql::FindSystemCaCertFile()) cli.set_ca_cert_path(ca->c_str());
 
   auto start = std::chrono::steady_clock::now();
   std::string poll_path = "/oauth/token/" + uuid;

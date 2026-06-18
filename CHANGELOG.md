@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Outbound HTTPS (JWKS / OAuth) now verifies TLS against the system CA bundle — fixes `SSL server verification failed` on the portable/Docker builds.** Since v1.30.0 (the portable-Linux / `manylinux_2_28` migration), the release binaries statically link a self-built OpenSSL whose compiled-in default CA directory (`OPENSSLDIR`) is a build-time path that does not exist at runtime. As a result, every outbound HTTPS request from the server-side **JWKS/OIDC discovery + key fetch** and **OAuth token exchange**, and the **client's OAuth login flow**, failed certificate verification — e.g. `Failed to auto-discover JWKS from issuer …: SSL server verification failed`. (`curl` inside the same container worked because it uses the distro's OpenSSL.) All three cpp-httplib clients now explicitly load the system CA bundle (`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, …, honoring `$SSL_CERT_FILE`), so TLS verification works on Debian/Ubuntu, RHEL/Amazon Linux, SUSE, and macOS regardless of the static OpenSSL's `OPENSSLDIR`. The Docker images also set `SSL_CERT_FILE`/`SSL_CERT_DIR` as defense-in-depth. Adds a `gizmosql_server --verify-tls <url>` diagnostic (a verified HTTPS GET via the same path), now exercised against a real public OIDC endpoint in the Debian + Amazon Linux portable-binary smoke tests so a CA-trust regression turns CI red.
+
 ## [1.31.0] - 2026-06-17
 
 ### Added
