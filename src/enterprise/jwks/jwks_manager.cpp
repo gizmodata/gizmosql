@@ -5,6 +5,7 @@
 #include "jwks_manager.h"
 
 #include <nlohmann/json.hpp>
+#include <iostream>
 #include <sstream>
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
@@ -12,6 +13,49 @@
 
 #include "jwt-cpp/jwt.h"
 #include "gizmosql_logging.h"
+#include "system_ca_certs.h"
+
+namespace gizmosql {
+
+// HTTPS reachability/trust self-check (used by `gizmosql_server --verify-tls`
+// and the CI smoke test). Performs a single GET against `url` using the system
+// CA bundle, exactly like the JWKS/OAuth clients. Returns 0 on a successful
+// verified HTTPS response, 1 otherwise (printing the reason). Lives here because
+// this TU already has cpp-httplib + OpenSSL wired in.
+int VerifyTlsEndpoint(const std::string& url) {
+  // Split scheme://host[:port]/path — httplib::Client wants scheme+host+port.
+  const auto scheme_end = url.find("://");
+  const std::string scheme =
+      scheme_end == std::string::npos ? "https" : url.substr(0, scheme_end);
+  const std::string after =
+      scheme_end == std::string::npos ? url : url.substr(scheme_end + 3);
+  const auto slash = after.find('/');
+  const std::string base =
+      scheme + "://" + (slash == std::string::npos ? after : after.substr(0, slash));
+  const std::string path = slash == std::string::npos ? "/" : after.substr(slash);
+
+  httplib::Client client(base.c_str());
+  client.set_follow_location(true);
+  client.set_connection_timeout(std::chrono::seconds(10));
+  client.set_read_timeout(std::chrono::seconds(10));
+  if (auto ca = gizmosql::FindSystemCaCertFile()) {
+    client.set_ca_cert_path(ca->c_str());
+    std::cout << "verify-tls: using CA bundle " << *ca << "\n";
+  } else {
+    std::cout << "verify-tls: WARNING no system CA bundle found "
+                 "(set SSL_CERT_FILE)\n";
+  }
+  auto res = client.Get(path.c_str());
+  if (!res) {
+    std::cout << "verify-tls: FAILED for " << url << ": "
+              << httplib::to_string(res.error()) << "\n";
+    return 1;
+  }
+  std::cout << "verify-tls: OK " << url << " -> HTTP " << res->status << "\n";
+  return 0;
+}
+
+}  // namespace gizmosql
 
 namespace gizmosql::enterprise {
 
@@ -271,6 +315,12 @@ arrow::Result<std::string> JwksManager::HttpGet(const std::string& url) {
   client.set_follow_location(true);
   client.set_connection_timeout(std::chrono::seconds(10));
   client.set_read_timeout(std::chrono::seconds(10));
+  // Use the system CA bundle explicitly. Our portable binaries statically link
+  // an OpenSSL whose compiled-in default CA path does not exist at runtime, so
+  // relying on OpenSSL's default-verify-paths would fail every HTTPS handshake.
+  if (auto ca = gizmosql::FindSystemCaCertFile()) {
+    client.set_ca_cert_path(ca->c_str());
+  }
 
   auto res = client.Get(path);
   if (!res) {

@@ -44,4 +44,10 @@ RUN chmod +x /usr/local/bin/gizmosql_client
 EXPOSE 31337
 EXPOSE 31339
 
+# Point OpenSSL's default-verify-paths at the distro CA bundle (the statically
+# linked gizmosql OpenSSL bakes in a build-time OPENSSLDIR that isn't present at
+# runtime). Belt-and-suspenders alongside the binary's own CA probe.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/certs
+
 ENTRYPOINT ["scripts/start_gizmosql_slim.sh"]

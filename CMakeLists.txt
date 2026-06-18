@@ -824,6 +824,7 @@ set_target_properties(gizmosql_client PROPERTIES
 target_include_directories(gizmosql_client
         PRIVATE
         ${CMAKE_SOURCE_DIR}/src/common/include
+        ${CMAKE_SOURCE_DIR}/src/common/include/detail
         ${CMAKE_SOURCE_DIR}/src/client
         ${HTTPLIB_INCLUDE_DIR}
 )
