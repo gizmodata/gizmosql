@@ -1640,6 +1640,8 @@ size_t GetActiveSessionCount() {
   }
   return 0;
 }
+
+const char* GetDuckDBVersion() { return duckdb_library_version(); }
 int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string hostname, const int& port, std::string username,
                        std::string password, std::string secret_key,

@@ -31,6 +31,18 @@ $ gizmosql_client_lts --version
 GizmoSQL Client v1.25.0-LTS
 ```
 
+The server also exposes **`--print-duckdb-version`**, which prints just the
+version of the linked DuckDB library and exits — the clearest channel
+discriminator, since the stable and LTS channels pin different DuckDB releases:
+
+```text
+$ gizmosql_server --print-duckdb-version
+v1.5.4
+
+$ gizmosql_server_lts --print-duckdb-version
+v1.4.5
+```
+
 **2. The startup banner**
 
 ```text

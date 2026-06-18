@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
     desc.add_options()
             ("help", "produce this help message")
             ("version", "Print the version and exit")
+            ("print-duckdb-version", "Print the linked DuckDB version and exit")
             ("verify-tls", po::value<std::string>(),
              "Diagnostic: perform a verified HTTPS GET to the given URL using the "
              "system CA trust store (the same path JWKS/OAuth use) and exit "
@@ -299,6 +300,11 @@ int main(int argc, char** argv) {
 
   if (vm.count("version")) {
     std::cout << "GizmoSQL Server CLI: " << GIZMOSQL_SERVER_VERSION << "\n";
+    return 0;
+  }
+
+  if (vm.count("print-duckdb-version")) {
+    std::cout << GetDuckDBVersion() << "\n";
     return 0;
   }
 

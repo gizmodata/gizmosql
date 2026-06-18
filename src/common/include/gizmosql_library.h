@@ -153,6 +153,13 @@ void RequestGracefulShutdown();
 
 size_t GetActiveSessionCount();
 
+/**
+ * @brief Return the version string of the linked DuckDB library (e.g. "v1.5.4").
+ *
+ * Thread-safe; returns a static string owned by DuckDB (do not free).
+ */
+const char* GetDuckDBVersion();
+
 int RunFlightSQLServer(
     const BackendType backend,
     std::filesystem::path database_filename = std::filesystem::path(),

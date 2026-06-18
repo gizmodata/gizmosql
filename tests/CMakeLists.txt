@@ -35,6 +35,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_graceful_shutdown.cpp
         integration/test_admin_command_guard.cpp
         integration/test_system_ca_certs.cpp
+        integration/test_server_cli.cpp
         integration/test_session_options_probe.cpp
         integration/test_set_query_log_level.cpp
         integration/test_sqlite_backend.cpp
@@ -122,10 +123,12 @@ if(GIZMOSQL_ENTERPRISE)
     )
 endif()
 
-# Pass the build directory so CLI tests can find the gizmosql_client binary
+# Pass the build directory so CLI tests can find the gizmosql_client/server binaries
 target_compile_definitions(gizmosql_integration_tests PRIVATE
         GIZMOSQL_CLIENT_BINARY="$<TARGET_FILE:gizmosql_client>"
+        GIZMOSQL_SERVER_BINARY="$<TARGET_FILE:gizmosql_server>"
 )
+add_dependencies(gizmosql_integration_tests gizmosql_server)
 
 # Ensure the client is built before running tests
 add_dependencies(gizmosql_integration_tests gizmosql_client)
