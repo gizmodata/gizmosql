@@ -337,4 +337,100 @@ TEST(GracefulShutdown, RealSignalDrivesDrain) {
       << "in-flight query should finish during drain; got: " << slow_status.ToString();
 }
 
+// A long, interruptible query that runs far longer than any test's grace window
+// unless it is interrupted. Unlike sleep_ms() (which ignores DuckDB's Interrupt()),
+// this scan polls the interrupt flag and aborts promptly when a forced shutdown
+// interrupts it. The arithmetic predicate defeats any count(*) shortcut.
+constexpr char kLongInterruptibleQuery[] =
+    "SELECT count(*) FROM range(100000000000) t(i) WHERE (i * 2654435761) % 97 = 0";
+
+// When the grace period elapses with a query still running, the server must FORCE
+// the stop — interrupt the straggler and shut down — rather than block until the
+// query finishes on its own. (gRPC's Shutdown() waits for synchronous handlers, so
+// this only works because the forced path interrupts the in-flight query first.)
+TEST(GracefulShutdown, GracePeriodElapsedForcesStop) {
+  const int kPort = 31418;
+  const int kHealthPort = 31419;
+  const std::string kDb = "graceful_shutdown_force_grace.db";
+  RemoveDb(kDb);
+
+  std::thread server = LaunchGracefulServer(kPort, kHealthPort, kDb, /*grace=*/2);
+  if (!WaitReachable(kPort)) {
+    StopServer(server, kDb);
+    FAIL() << "graceful-shutdown server failed to come up";
+  }
+
+  std::atomic<bool> slow_done{false};
+  arrow::Status slow_status;
+  std::thread slow_query([&]() {
+    slow_status = RunSelect(kPort, kLongInterruptibleQuery);
+    slow_done.store(true);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));
+  const bool slow_running_at_signal = !slow_done.load();
+
+  const auto t0 = std::chrono::steady_clock::now();
+  std::raise(SIGTERM);  // drain begins; grace=2s elapses with the query still running
+
+  ASSERT_TRUE(server.joinable());
+  server.join();
+  const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+  slow_query.join();
+  gizmosql::CleanupServerResources();
+  RemoveDb(kDb);
+
+  EXPECT_TRUE(slow_running_at_signal) << "slow query finished before the signal";
+  EXPECT_LT(elapsed, 15)
+      << "force after the grace period should stop the server promptly (~grace), "
+         "not wait for the long query to finish";
+  EXPECT_FALSE(slow_status.ok())
+      << "the straggler query should be interrupted by the forced shutdown";
+}
+
+// A second signal during a drain forces an immediate stop, abandoning in-flight
+// work — even when the grace period is long.
+TEST(GracefulShutdown, SecondSignalForcesStop) {
+  const int kPort = 31420;
+  const int kHealthPort = 31421;
+  const std::string kDb = "graceful_shutdown_force_signal.db";
+  RemoveDb(kDb);
+
+  std::thread server = LaunchGracefulServer(kPort, kHealthPort, kDb, /*grace=*/300);
+  if (!WaitReachable(kPort)) {
+    StopServer(server, kDb);
+    FAIL() << "graceful-shutdown server failed to come up";
+  }
+
+  std::atomic<bool> slow_done{false};
+  arrow::Status slow_status;
+  std::thread slow_query([&]() {
+    slow_status = RunSelect(kPort, kLongInterruptibleQuery);
+    slow_done.store(true);
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));
+  const bool slow_running_at_signal = !slow_done.load();
+
+  const auto t0 = std::chrono::steady_clock::now();
+  std::raise(SIGTERM);  // first signal: begin draining (would wait up to 300s)
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  std::raise(SIGTERM);  // second signal: force immediate stop
+
+  ASSERT_TRUE(server.joinable());
+  server.join();
+  const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::steady_clock::now() - t0)
+                           .count();
+  slow_query.join();
+  gizmosql::CleanupServerResources();
+  RemoveDb(kDb);
+
+  EXPECT_TRUE(slow_running_at_signal) << "slow query finished before the signal";
+  EXPECT_LT(elapsed, 15)
+      << "a second signal should force a prompt stop, not wait out the 300s grace";
+  EXPECT_FALSE(slow_status.ok())
+      << "the in-flight query should be interrupted by the forced shutdown";
+}
+
 #endif  // !_WIN32

@@ -56,13 +56,22 @@ export GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS=300
 2. **Wait for in-flight work.** The server waits until every in-flight query
    execution and result-stream fetch has completed.
 3. **Grace-period cap.** If draining takes longer than
-   `--shutdown-grace-period-seconds`, any remaining queries are interrupted and
-   the server stops anyway. This guarantees the process always terminates — for
-   example when a query has no timeout (`query_timeout = 0`) and runs forever.
+   `--shutdown-grace-period-seconds`, any remaining queries are **interrupted**
+   and the server stops anyway. This guarantees the process always terminates —
+   for example when a query has no timeout (`query_timeout = 0`) and runs forever.
    Set the cap to `0` to wait indefinitely and rely solely on per-query timeouts.
 4. **Second signal → force.** Sending a second `SIGINT`/`SIGTERM` while draining
    aborts the drain and stops the server immediately (the "press Ctrl-C again to
-   force quit" pattern).
+   force quit" pattern), interrupting any still-running queries.
+
+!!! note "Forcing interrupts queries, but can't preempt an uninterruptible call"
+    A forced stop (grace-period elapsed or second signal) calls DuckDB's query
+    *interrupt* on every in-flight statement, so normal queries abort within a
+    fraction of a second and the server stops promptly. A handful of operations
+    don't check the interrupt flag — notably `sleep_ms()` — and will run to
+    completion regardless; only `SIGKILL` (or process exit) stops those. This is a
+    DuckDB limitation, not a GizmoSQL one, and doesn't affect real analytical
+    workloads.
 
 ## Adjusting it on a running server
 

@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 
 // --- Graceful shutdown (drain) state ----------------------------------------
 //
@@ -69,6 +70,16 @@ inline std::atomic<bool> g_draining{false};
 /// running. The drain watcher waits for this to reach zero before stopping the
 /// server (or until the grace period elapses).
 inline std::atomic<int64_t> g_inflight_requests{0};
+
+/// Optional hook the backend registers to interrupt every in-flight query when a
+/// FORCED shutdown is requested (second signal, or grace-period elapsed with work
+/// still running). gRPC's Shutdown() — even with an immediate deadline — waits for
+/// a synchronous query handler to unwind rather than preempting it, so without
+/// interrupting the running queries a "force" would still block until they finish.
+/// The hook (DuckDB: interrupt all session connections) makes those handlers return
+/// promptly. Registered by RunFlightSQLServer() for backends that support it and
+/// cleared after the server stops; empty when unsupported (e.g. SQLite) or unset.
+inline std::function<void()> g_force_interrupt_hook;
 
 /// True while the server is draining and rejecting new work.
 inline bool IsDraining() noexcept { return g_draining.load(std::memory_order_acquire); }

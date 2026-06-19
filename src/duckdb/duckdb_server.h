@@ -281,6 +281,12 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   // Statement-queue admission controller (server-wide, shared across sessions).
   AdmissionController& GetAdmissionController();
 
+  // Interrupt the in-flight query on every active session (best-effort). Used by
+  // the forced graceful-shutdown path (second signal / grace-period elapsed) so
+  // synchronous query handlers unwind promptly instead of blocking the gRPC
+  // Shutdown() until they finish. Mirrors what KILL SESSION does per-session.
+  void InterruptAllInFlightQueries();
+
   // Session management for KILL SESSION
   std::shared_ptr<ClientSession> FindSession(const std::string& session_id);
   arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false);

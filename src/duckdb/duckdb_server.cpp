@@ -1185,6 +1185,30 @@ class DuckDBFlightSqlServer::Impl {
     }
   }
 
+  // Best-effort interrupt of every active session's in-flight query, mirroring the
+  // per-session KILL SESSION path. Used by forced shutdown so synchronous handlers
+  // (which gRPC's Shutdown() would otherwise wait for) unwind promptly. We hold a
+  // shared lock and only flag + Interrupt(); session removal happens later in the
+  // normal teardown (ReleaseAllSessions).
+  void InterruptAllInFlightQueries() {
+    std::shared_lock read_lock(sessions_mutex_);
+    if (!client_sessions_.empty()) {
+      GIZMOSQL_LOG(WARNING) << "GizmoSQL server - forced shutdown: interrupting "
+                            << client_sessions_.size()
+                            << " active session(s)' in-flight queries";
+    }
+    for (auto& [id, session] : client_sessions_) {
+      if (!session) continue;
+      session->kill_requested = true;
+      if (session->connection) {
+        session->connection->Get().Interrupt();
+      }
+    }
+    // Nudge any statements blocked in the admission queue so they abandon it
+    // immediately rather than holding a gRPC handler thread until a slot frees.
+    admission_controller_.WakeWaiters();
+  }
+
   std::string GetInstanceId() const {
     return instance_id_;
   }
@@ -2667,6 +2691,10 @@ std::shared_ptr<duckdb::DuckDB> DuckDBFlightSqlServer::GetDuckDBInstance() const
 
 bool DuckDBFlightSqlServer::WasSessionKilled(const std::string& session_id) {
   return impl_->WasSessionKilled(session_id);
+}
+
+void DuckDBFlightSqlServer::InterruptAllInFlightQueries() {
+  impl_->InterruptAllInFlightQueries();
 }
 
 std::shared_ptr<ClientSession> DuckDBFlightSqlServer::FindSession(

@@ -1592,6 +1592,13 @@ static void RunDrainWatcher() {
 
   const auto start = steady_clock::now();
   int last_logged_bucket = -1;
+  // When `force` is set we hit a hard cutoff (second signal or grace-period
+  // elapsed) with queries still running. A plain Shutdown() waits for in-flight
+  // gRPC RPCs to finish — which is exactly the straggler we want to abandon — so
+  // force exits pass an immediate deadline to Shutdown(), which cancels the
+  // outstanding RPCs instead of waiting. The clean exit (inflight == 0) has
+  // nothing to wait for, so it uses the unbounded Shutdown().
+  bool force = false;
   while (true) {
     const int64_t inflight = InFlightRequestCount();
     if (inflight <= 0) {
@@ -1604,6 +1611,7 @@ static void RunDrainWatcher() {
           << "GizmoSQL server - second shutdown signal received; forcing immediate "
              "shutdown with "
           << inflight << " query(ies) still in flight";
+      force = true;
       break;
     }
     // Re-read the grace cap each iteration so a live SET takes effect mid-drain.
@@ -1614,6 +1622,7 @@ static void RunDrainWatcher() {
           << "GizmoSQL server - graceful shutdown grace period (" << grace_period_seconds
           << "s) elapsed with " << inflight
           << " query(ies) still in flight; forcing shutdown";
+      force = true;
       break;
     }
     // Periodic progress log (~every 5s).
@@ -1628,8 +1637,19 @@ static void RunDrainWatcher() {
   }
 
   // Trigger the real shutdown: unblocks Serve(), running the existing teardown.
+  // A forced stop must first interrupt the still-running queries (gRPC's Shutdown()
+  // waits for a synchronous handler to unwind even with an immediate deadline), then
+  // Shutdown() with an immediate deadline to cancel anything left at the transport.
+  if (force && g_force_interrupt_hook) {
+    g_force_interrupt_hook();
+  }
   if (g_flight_server) {
-    (void)g_flight_server->Shutdown();
+    if (force) {
+      const auto deadline = std::chrono::system_clock::now();
+      (void)g_flight_server->Shutdown(&deadline);
+    } else {
+      (void)g_flight_server->Shutdown();
+    }
   }
   g_drain_watcher_active.store(false, std::memory_order_release);
 }
@@ -2119,6 +2139,14 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     // every shutdown.
     ARROW_CHECK_OK(server_ptr->SetShutdownOnSignals({}));
 
+    // Register the backend's force-interrupt hook so a FORCED shutdown can preempt
+    // running queries (gRPC Shutdown() alone waits for synchronous handlers). Only
+    // the DuckDB backend supports this; SQLite falls back to deadline-only.
+    if (auto* ddb =
+            dynamic_cast<gizmosql::ddb::DuckDBFlightSqlServer*>(server_ptr.get())) {
+      gizmosql::g_force_interrupt_hook = [ddb]() { ddb->InterruptAllInFlightQueries(); };
+    }
+
     // Seed the live atomics from the resolved boot-time values. Reset the drain
     // state too, so a second RunFlightSQLServer() call in the same process
     // (embedders, tests) starts clean rather than inheriting a prior run's signal
@@ -2148,6 +2176,10 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       gizmosql::g_shutdown_signal_count.fetch_add(1, std::memory_order_release);
       drain_watcher_thread.join();
     }
+
+    // The watcher is done; drop the interrupt hook before the server is torn down
+    // so the captured pointer can never be called against a destroyed server.
+    gizmosql::g_force_interrupt_hook = nullptr;
 
     // Server has received shutdown signal (SIGTERM/SIGINT)
     GIZMOSQL_LOG(INFO) << "GizmoSQL server - shutdown signal received, stopping...";
