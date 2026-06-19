@@ -47,6 +47,7 @@
 #endif
 #include "duckdb_server.h"
 #include "session_context.h"
+#include "shutdown_state.h"
 #include "admin_command_guard.h"
 #include "gizmosql_telemetry.h"
 #include <boost/uuid/uuid.hpp>
@@ -1564,6 +1565,53 @@ SettingsRegistry::SettingsRegistry() {
                        const std::string& val) -> arrow::Status {
         ARROW_ASSIGN_OR_RAISE(int n, ParseSetInt(val, "max_queue_wait"));
         srv.GetAdmissionController().SetDefaultMaxQueueWaitSeconds(n);
+        return arrow::Status::OK();
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.graceful_shutdown",
+      .scope = SetScopeKind::kGlobalOnly,
+      .input_type = "BOOLEAN",
+      .env_var = "GIZMOSQL_GRACEFUL_SHUTDOWN",
+      .default_value = "false",
+      .description =
+          "Drain in-flight queries on SIGINT/SIGTERM instead of stopping "
+          "immediately. Live-adjustable; takes effect on the next shutdown signal.",
+      .get_global = [](DuckDBFlightSqlServer&,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(
+            std::string(gizmosql::GracefulShutdownEnabled() ? "true" : "false"));
+      },
+      .set_global = [](DuckDBFlightSqlServer&, ClientSession&,
+                       const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(bool b, ParseSetBool(val, "graceful_shutdown"));
+        gizmosql::g_graceful_enabled.store(b, std::memory_order_release);
+        return arrow::Status::OK();
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.shutdown_grace_period_seconds",
+      .scope = SetScopeKind::kGlobalOnly,
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS",
+      .default_value = "300",
+      .description =
+          "Max seconds to wait for in-flight queries to drain during graceful "
+          "shutdown (0 = wait indefinitely). Live-adjustable, including mid-drain.",
+      .get_global = [](DuckDBFlightSqlServer&,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(
+            std::to_string(gizmosql::GracefulShutdownGracePeriodSeconds()));
+      },
+      .set_global = [](DuckDBFlightSqlServer&, ClientSession&,
+                       const std::string& val) -> arrow::Status {
+        ARROW_ASSIGN_OR_RAISE(int n,
+                              ParseSetInt(val, "shutdown_grace_period_seconds"));
+        if (n < 0)
+          return arrow::Status::Invalid("shutdown_grace_period_seconds must be >= 0");
+        gizmosql::g_grace_period_seconds.store(n, std::memory_order_release);
         return arrow::Status::OK();
       },
   });

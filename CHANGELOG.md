@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-06-19
+
+### Added
+
+- **Graceful shutdown is now live-adjustable — no restart required.** Both knobs are exposed in the `gizmosql_settings()` view and can be changed at runtime with `SET GLOBAL` (admin only), matching how `gizmosql.query_timeout` and the statement-queue settings already work: `SET GLOBAL gizmosql.graceful_shutdown = true|false` toggles drain-on-signal, and `SET GLOBAL gizmosql.shutdown_grace_period_seconds = <n>` changes the drain cap. The `--graceful-shutdown` / `--shutdown-grace-period-seconds` CLI flags (and their env vars) still set the boot-time values. The grace cap is re-read on every drain-loop iteration, so it can be raised or lowered **mid-drain**; the enable flag is latched at the moment the first SIGINT/SIGTERM arrives. To support live enabling, the drain watcher + signal handlers are now installed unconditionally at startup (a disabled flag stops the server immediately on signal, as before, so default behavior is unchanged). See [Graceful Shutdown](https://docs.gizmosql.com/graceful_shutdown.md).
+
 ## [1.31.1] - 2026-06-18
 
 ### Added

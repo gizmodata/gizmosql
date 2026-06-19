@@ -1544,13 +1544,20 @@ static void InstallGracefulSignalHandlers() {
 #endif
 }
 
-// Watcher thread body. Blocks until the first shutdown signal/request, marks the
-// server as draining (which makes request handlers reject new sessions and new
-// statements), then waits for all in-flight queries + fetches to finish — bounded
-// by `grace_period_seconds` (0 = wait indefinitely). A second signal forces an
-// immediate stop. In every exit path it calls Shutdown() on the Flight server,
-// which unblocks Serve() and runs the normal teardown sequence.
-static void RunDrainWatcher(int grace_period_seconds) {
+// Watcher thread body. Started unconditionally; blocks until the first shutdown
+// signal/request, then branches on whether graceful shutdown is enabled (a
+// live-adjustable flag — see g_graceful_enabled in shutdown_state.h):
+//
+//   * disabled ⇒ stop the server immediately (the historical default), or
+//   * enabled  ⇒ mark the server as draining (so request handlers reject new
+//     sessions/statements), then wait for all in-flight queries + fetches to
+//     finish — bounded by the live grace cap g_grace_period_seconds (0 = wait
+//     indefinitely), re-read each iteration so a runtime change applies mid-drain.
+//
+// A second signal forces an immediate stop. In every exit path it calls
+// Shutdown() on the Flight server, which unblocks Serve() and runs the normal
+// teardown sequence.
+static void RunDrainWatcher() {
   using namespace std::chrono;
   g_drain_watcher_active.store(true, std::memory_order_release);
 
@@ -1559,19 +1566,31 @@ static void RunDrainWatcher(int grace_period_seconds) {
     std::this_thread::sleep_for(milliseconds(100));
   }
 
+  // Latch the graceful-vs-immediate choice at the moment the drain begins. When
+  // graceful shutdown is disabled, behave like Arrow's default handlers: stop now.
+  if (!GracefulShutdownEnabled()) {
+    GIZMOSQL_LOG(INFO)
+        << "GizmoSQL server - shutdown signal received; stopping immediately "
+           "(graceful shutdown disabled)";
+    if (g_flight_server) {
+      (void)g_flight_server->Shutdown();
+    }
+    g_drain_watcher_active.store(false, std::memory_order_release);
+    return;
+  }
+
   // Enter the draining state: handlers now reject new work.
   g_draining.store(true, std::memory_order_release);
-  GIZMOSQL_LOG(INFO)
-      << "GizmoSQL server - graceful shutdown requested; draining (rejecting new "
-         "sessions/statements, waiting for in-flight queries to finish)"
-      << (grace_period_seconds > 0
-              ? std::string(" — grace period ") + std::to_string(grace_period_seconds) + "s"
-              : std::string(" — no grace cap"));
+  {
+    const int grace = GracefulShutdownGracePeriodSeconds();
+    GIZMOSQL_LOG(INFO)
+        << "GizmoSQL server - graceful shutdown requested; draining (rejecting new "
+           "sessions/statements, waiting for in-flight queries to finish)"
+        << (grace > 0 ? std::string(" — grace period ") + std::to_string(grace) + "s"
+                      : std::string(" — no grace cap"));
+  }
 
   const auto start = steady_clock::now();
-  const auto deadline = grace_period_seconds > 0
-                            ? start + seconds(grace_period_seconds)
-                            : steady_clock::time_point::max();
   int last_logged_bucket = -1;
   while (true) {
     const int64_t inflight = InFlightRequestCount();
@@ -1587,7 +1606,10 @@ static void RunDrainWatcher(int grace_period_seconds) {
           << inflight << " query(ies) still in flight";
       break;
     }
-    if (grace_period_seconds > 0 && steady_clock::now() >= deadline) {
+    // Re-read the grace cap each iteration so a live SET takes effect mid-drain.
+    const int grace_period_seconds = GracefulShutdownGracePeriodSeconds();
+    if (grace_period_seconds > 0 &&
+        steady_clock::now() >= start + seconds(grace_period_seconds)) {
       GIZMOSQL_LOG(WARNING)
           << "GizmoSQL server - graceful shutdown grace period (" << grace_period_seconds
           << "s) elapsed with " << inflight
@@ -1616,10 +1638,11 @@ static void RunDrainWatcher(int grace_period_seconds) {
 extern "C" {
 
 void RequestGracefulShutdown() {
-  // Mirrors a SIGINT/SIGTERM: the drain watcher (started only when graceful
-  // shutdown is enabled) observes the counter and drains. When graceful
-  // shutdown is NOT enabled there is no watcher, so fall back to an immediate
-  // stop for embedders that call this directly.
+  // Mirrors a SIGINT/SIGTERM: bump the counter and let the drain watcher observe
+  // it. RunFlightSQLServer() always starts the watcher, which then drains or stops
+  // immediately depending on the live gizmosql.graceful_shutdown flag. Embedders
+  // that build a server via CreateFlightSQLServer() (no watcher) fall back to an
+  // immediate stop here.
   gizmosql::g_shutdown_signal_count.fetch_add(1, std::memory_order_release);
   if (!gizmosql::g_drain_watcher_active.load(std::memory_order_acquire) &&
       gizmosql::g_flight_server) {
@@ -2079,22 +2102,26 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
 
     // Graceful shutdown: install our own SIGINT/SIGTERM handlers (overriding the
     // immediate-stop handlers Arrow installed via SetShutdownOnSignals during
-    // Init) and start a drain watcher thread. On the first signal the watcher
-    // marks the server as draining — new sessions/statements are rejected while
-    // in-flight queries and their fetches finish (or hit the grace cap) — then
-    // calls Shutdown() to unblock Serve(). When disabled, Arrow's handlers run
-    // as before and the server stops immediately on signal.
-    std::thread drain_watcher_thread;
+    // Init) and start a drain watcher thread. The watcher and handlers are
+    // installed UNCONDITIONALLY so that graceful shutdown can be toggled live via
+    // `SET GLOBAL gizmosql.graceful_shutdown` — the watcher consults the flag when
+    // the first signal arrives. When the flag is disabled it stops the server
+    // immediately (the historical default); when enabled it drains in-flight work,
+    // bounded by the live grace cap, before stopping.
+    //
+    // Seed the live atomics from the resolved boot-time values. Reset the drain
+    // state too, so a second RunFlightSQLServer() call in the same process
+    // (embedders, tests) starts clean rather than inheriting a prior run's signal
+    // count / draining flag.
     const bool graceful = graceful_shutdown.value_or(false);
+    gizmosql::g_shutdown_signal_count.store(0, std::memory_order_release);
+    gizmosql::g_draining.store(false, std::memory_order_release);
+    gizmosql::g_graceful_enabled.store(graceful, std::memory_order_release);
+    gizmosql::g_grace_period_seconds.store(shutdown_grace_period_seconds,
+                                           std::memory_order_release);
+    gizmosql::InstallGracefulSignalHandlers();
+    std::thread drain_watcher_thread(gizmosql::RunDrainWatcher);
     if (graceful) {
-      // Reset drain state so a second RunFlightSQLServer() call in the same
-      // process (embedders, tests) starts clean rather than inheriting a prior
-      // run's signal count / draining flag.
-      gizmosql::g_shutdown_signal_count.store(0, std::memory_order_release);
-      gizmosql::g_draining.store(false, std::memory_order_release);
-      gizmosql::InstallGracefulSignalHandlers();
-      drain_watcher_thread =
-          std::thread(gizmosql::RunDrainWatcher, shutdown_grace_period_seconds);
       GIZMOSQL_LOG(INFO) << "GizmoSQL server - graceful shutdown enabled (grace period "
                          << (shutdown_grace_period_seconds > 0
                                  ? std::to_string(shutdown_grace_period_seconds) + "s)"

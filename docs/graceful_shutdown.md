@@ -29,6 +29,10 @@ variable:
 | Enable graceful shutdown | `--graceful-shutdown` | `GIZMOSQL_GRACEFUL_SHUTDOWN` | `false` (immediate stop) |
 | Maximum drain time | `--shutdown-grace-period-seconds` | `GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS` | `300` (`0` = wait indefinitely) |
 
+These set the **boot-time** values. Both are also **adjustable on a live server**
+without a restart — see [Adjusting it on a running server](#adjusting-it-on-a-running-server)
+below.
+
 ```bash
 gizmosql_server \
   --database-filename=./data.db \
@@ -59,6 +63,49 @@ export GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS=300
 4. **Second signal → force.** Sending a second `SIGINT`/`SIGTERM` while draining
    aborts the drain and stops the server immediately (the "press Ctrl-C again to
    force quit" pattern).
+
+## Adjusting it on a running server
+
+Both knobs are live-adjustable, just like `gizmosql.query_timeout` and the
+statement-queue settings. They appear in the `gizmosql_settings()` view and can be
+changed with `SET GLOBAL` — no restart required:
+
+| Setting | `SET GLOBAL` name | Type |
+|---------|-------------------|------|
+| Enable graceful shutdown | `gizmosql.graceful_shutdown` | `BOOLEAN` |
+| Maximum drain time | `gizmosql.shutdown_grace_period_seconds` | `INTEGER` (seconds, `0` = unlimited) |
+
+Both are **server-wide** (`GLOBAL` scope) and may only be changed by an **admin**
+user:
+
+```sql
+-- Inspect the current values (effective + global + default + env var).
+SELECT name, value, global_value, default_value, env_var
+FROM gizmosql_settings()
+WHERE name LIKE 'gizmosql.%shutdown%' OR name = 'gizmosql.graceful_shutdown';
+
+-- Turn graceful shutdown on for a running instance.
+SET GLOBAL gizmosql.graceful_shutdown = true;
+
+-- Give long-running queries more (or less) time to drain.
+SET GLOBAL gizmosql.shutdown_grace_period_seconds = 600;
+```
+
+When to use this:
+
+- **Enable on demand before a maintenance window** — flip
+  `gizmosql.graceful_shutdown = true` right before you roll a pod, even if the
+  server booted with it off.
+- **Extend the cap mid-drain** — `gizmosql.shutdown_grace_period_seconds` is
+  re-read on every drain-loop iteration, so raising it *while a drain is already
+  in progress* gives the remaining queries more time. Lowering it forces a sooner
+  cutoff.
+
+!!! note "When the enable flag is latched"
+    `gizmosql.graceful_shutdown` is consulted at the moment the **first**
+    `SIGINT`/`SIGTERM` arrives. Toggling it *after* a drain has already begun has
+    no effect on that drain — but the grace-period cap can still be changed
+    mid-drain.
 
 ## Kubernetes configuration
 

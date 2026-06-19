@@ -42,6 +42,24 @@
 
 namespace gizmosql {
 
+/// Whether graceful drain-on-signal is enabled. Seeded at startup from
+/// --graceful-shutdown / GIZMOSQL_GRACEFUL_SHUTDOWN and live-adjustable at runtime
+/// via `SET GLOBAL gizmosql.graceful_shutdown` (admin only). The drain watcher
+/// thread is started unconditionally; it consults this flag when the first
+/// shutdown signal arrives — true ⇒ drain in-flight work, false ⇒ stop the server
+/// immediately (the historical default behavior). Changing this mid-drain has no
+/// effect: the choice is latched when the drain begins.
+inline std::atomic<bool> g_graceful_enabled{false};
+
+/// Maximum seconds to wait for in-flight work to drain before forcing shutdown
+/// (0 = wait indefinitely). Seeded at startup from --shutdown-grace-period-seconds
+/// / GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS and live-adjustable at runtime via
+/// `SET GLOBAL gizmosql.shutdown_grace_period_seconds` (admin only). The drain
+/// watcher re-reads this every loop iteration, so a change takes effect even
+/// while a drain is already in progress (e.g. extend the cap when a drain is
+/// taking longer than expected).
+inline std::atomic<int32_t> g_grace_period_seconds{300};
+
 /// True once a graceful drain has begun. Request handlers consult this to reject
 /// new work. Set by the drain watcher thread (never by the async signal handler,
 /// which only flips a sig_atomic counter).
@@ -58,6 +76,16 @@ inline bool IsDraining() noexcept { return g_draining.load(std::memory_order_acq
 /// Current count of in-flight query executions + fetches.
 inline int64_t InFlightRequestCount() noexcept {
   return g_inflight_requests.load(std::memory_order_acquire);
+}
+
+/// Whether graceful drain-on-signal is currently enabled.
+inline bool GracefulShutdownEnabled() noexcept {
+  return g_graceful_enabled.load(std::memory_order_acquire);
+}
+
+/// Current drain grace cap in seconds (0 = wait indefinitely).
+inline int32_t GracefulShutdownGracePeriodSeconds() noexcept {
+  return g_grace_period_seconds.load(std::memory_order_acquire);
 }
 
 /// RAII counter for one in-flight query/fetch. Held for the full duration of a

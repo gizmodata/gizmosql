@@ -33,6 +33,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_log_level_filtering.cpp
         integration/test_max_metadata_size.cpp
         integration/test_graceful_shutdown.cpp
+        integration/test_graceful_shutdown_settings.cpp
         integration/test_admin_command_guard.cpp
         integration/test_system_ca_certs.cpp
         integration/test_server_cli.cpp

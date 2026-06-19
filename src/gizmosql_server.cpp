@@ -215,14 +215,17 @@ int main(int argc, char** argv) {
               "enabled, the first signal puts the server into a draining state: new sessions and "
               "statements are rejected with an UNAVAILABLE error while already-running queries and "
               "their result fetches finish (or hit their query timeout). A second signal forces an "
-              "immediate stop. Recommended for Kubernetes/container deployments. If not set, uses "
-              "env var GIZMOSQL_GRACEFUL_SHUTDOWN (1/true to enable).")
+              "immediate stop. Recommended for Kubernetes/container deployments. Sets the boot-time "
+              "value; also adjustable on a live server with SET GLOBAL gizmosql.graceful_shutdown "
+              "(admin only). If not set, uses env var GIZMOSQL_GRACEFUL_SHUTDOWN (1/true to enable).")
             ("shutdown-grace-period-seconds", po::value<int32_t>()->default_value(-1),
               "Maximum seconds to wait for in-flight queries to drain during a graceful shutdown "
               "before forcing a stop. 0 = wait indefinitely (rely on per-query timeouts). -1 "
               "(default) uses env var GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS, then a built-in 300s "
               "default. Set the container/pod terminationGracePeriodSeconds >= this value so the "
-              "orchestrator's SIGKILL does not preempt the drain. Only used with --graceful-shutdown.")
+              "orchestrator's SIGKILL does not preempt the drain. Only used with --graceful-shutdown. "
+              "Also adjustable on a live server with SET GLOBAL gizmosql.shutdown_grace_period_seconds "
+              "(admin only), including mid-drain.")
             ("license-key-file,L", po::value<std::string>()->default_value(""),
               "Path to the GizmoSQL Enterprise license key file (JWT format). "
               "If not set, uses env var GIZMOSQL_LICENSE_KEY_FILE. "
