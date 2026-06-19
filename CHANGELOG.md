@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Graceful shutdown is now live-adjustable — no restart required.** Both knobs are exposed in the `gizmosql_settings()` view and can be changed at runtime with `SET GLOBAL` (admin only), matching how `gizmosql.query_timeout` and the statement-queue settings already work: `SET GLOBAL gizmosql.graceful_shutdown = true|false` toggles drain-on-signal, and `SET GLOBAL gizmosql.shutdown_grace_period_seconds = <n>` changes the drain cap. The `--graceful-shutdown` / `--shutdown-grace-period-seconds` CLI flags (and their env vars) still set the boot-time values. The grace cap is re-read on every drain-loop iteration, so it can be raised or lowered **mid-drain**; the enable flag is latched at the moment the first SIGINT/SIGTERM arrives. To support live enabling, the drain watcher + signal handlers are now installed unconditionally at startup (a disabled flag stops the server immediately on signal, as before, so default behavior is unchanged). See [Graceful Shutdown](https://docs.gizmosql.com/graceful_shutdown.md).
 
+### Fixed
+
+- **Graceful shutdown now actually triggers on a real `SIGINT`/`SIGTERM`.** In v1.31.0 the drain was only ever reached via the programmatic `RequestGracefulShutdown()` C-API entry point (the only path the tests exercised). On a genuine Ctrl-C / `SIGTERM`, Arrow Flight's `Serve()` re-installed its own signal handlers (clobbering GizmoSQL's) and shut the gRPC transport down directly, which **blocked until the in-flight query finished** and bypassed the drain entirely — new statements were not rejected with the `"shutting down"` error and no drain progress was logged. GizmoSQL now clears Arrow's shutdown-on-signal list before `Serve()`, so its own always-on drain watcher owns every shutdown path (graceful and immediate). Adds a regression test that drives the drain with a real `SIGTERM` rather than the programmatic call.
+
 ## [1.31.1] - 2026-06-18
 
 ### Added

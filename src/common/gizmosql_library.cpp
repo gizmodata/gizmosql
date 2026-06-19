@@ -2100,15 +2100,25 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     auto server_ptr = create_server_result.ValueOrDie();
     gizmosql::g_flight_server = server_ptr;
 
-    // Graceful shutdown: install our own SIGINT/SIGTERM handlers (overriding the
-    // immediate-stop handlers Arrow installed via SetShutdownOnSignals during
-    // Init) and start a drain watcher thread. The watcher and handlers are
-    // installed UNCONDITIONALLY so that graceful shutdown can be toggled live via
-    // `SET GLOBAL gizmosql.graceful_shutdown` — the watcher consults the flag when
-    // the first signal arrives. When the flag is disabled it stops the server
-    // immediately (the historical default); when enabled it drains in-flight work,
-    // bounded by the live grace cap, before stopping.
+    // Graceful shutdown: GizmoSQL manages SIGINT/SIGTERM itself via an always-on
+    // drain watcher thread + our own signal handler, for BOTH the graceful and the
+    // immediate paths. The watcher consults the live gizmosql.graceful_shutdown
+    // flag when the first signal arrives, so the behavior can be toggled at runtime
+    // via `SET GLOBAL gizmosql.graceful_shutdown`: disabled ⇒ stop immediately (the
+    // historical default), enabled ⇒ drain in-flight work, bounded by the live
+    // grace cap, before stopping.
     //
+    // CRITICAL: clear Arrow's shutdown-on-signal list FIRST. CreateFlightSQLServer()
+    // calls SetShutdownOnSignals({SIGINT,SIGTERM}); Arrow's Serve() then RE-installs
+    // its own SIGINT/SIGTERM handlers (overriding ours) and, on signal, calls the
+    // gRPC transport Shutdown() directly — which blocks until in-flight RPCs drain
+    // and never wakes our watcher. That makes our async handler dead code on the
+    // real-signal path (the programmatic RequestGracefulShutdown() entry point still
+    // worked, which is why this slipped through). Emptying the list makes Serve()'s
+    // re-install loop a no-op, so OUR handler stays active and the watcher drives
+    // every shutdown.
+    ARROW_CHECK_OK(server_ptr->SetShutdownOnSignals({}));
+
     // Seed the live atomics from the resolved boot-time values. Reset the drain
     // state too, so a second RunFlightSQLServer() call in the same process
     // (embedders, tests) starts clean rather than inheriting a prior run's signal

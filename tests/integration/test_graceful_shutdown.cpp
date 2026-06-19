@@ -33,6 +33,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -262,6 +263,78 @@ TEST(GracefulShutdown, StopsPromptlyWhenIdle) {
 
   EXPECT_TRUE(pre_drain_ok) << "a normal query should succeed before the drain";
   EXPECT_LT(elapsed, 10) << "idle drain should stop well within the grace period";
+}
+
+// Regression test for the real-signal path. The drain MUST be driven by a genuine
+// SIGTERM/SIGINT, not just the programmatic RequestGracefulShutdown() used by the
+// tests above. Arrow's Serve() re-installs its own SIGINT/SIGTERM handlers, which —
+// unless GizmoSQL clears Arrow's shutdown-on-signal list before Serve() — clobber
+// ours and shut the gRPC transport down directly, bypassing the drain watcher
+// entirely (new work would NOT be rejected with our "shutting down" error; the
+// server would simply block inside gRPC until the in-flight RPC finished). This
+// test asserts our watcher actually owns the signal: a new statement is rejected
+// with the draining error WHILE an in-flight query is still running.
+TEST(GracefulShutdown, RealSignalDrivesDrain) {
+  const int kPort = 31416;
+  const int kHealthPort = 31417;
+  const std::string kDb = "graceful_shutdown_signal.db";
+  RemoveDb(kDb);
+
+  std::thread server = LaunchGracefulServer(kPort, kHealthPort, kDb, /*grace=*/30);
+  const bool reachable = WaitReachable(kPort);
+  if (!reachable) {
+    StopServer(server, kDb);
+    FAIL() << "graceful-shutdown server failed to come up";
+  }
+
+  const bool sleep_ms_usable = SleepMsUsable(kPort);
+  if (!sleep_ms_usable) {
+    StopServer(server, kDb);
+    GTEST_SKIP() << "DuckDB sleep_ms() unavailable (v1.4.x LTS) — skipping drain timing";
+  }
+
+  std::atomic<bool> slow_done{false};
+  arrow::Status slow_status;
+  std::thread slow_query([&]() {
+    slow_status = RunSelect(kPort, "SELECT sleep_ms(5000) AS slept");
+    slow_done.store(true);
+  });
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));
+  const bool slow_running_at_drain = !slow_done.load();
+
+  // Deliver a REAL signal to ourselves (the in-process equivalent of the kubelet's
+  // SIGTERM), rather than calling RequestGracefulShutdown(). This is the path that
+  // was previously intercepted by Arrow.
+  std::raise(SIGTERM);
+
+  // Our watcher must flip the draining flag; a fresh statement is then rejected
+  // while the in-flight query keeps running.
+  arrow::Status rejected = arrow::Status::OK();
+  const auto reject_deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (std::chrono::steady_clock::now() < reject_deadline) {
+    rejected = RunSelect(kPort, "SELECT 1 AS x");
+    if (!rejected.ok()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  slow_query.join();
+
+  ASSERT_TRUE(server.joinable());
+  server.join();
+  gizmosql::CleanupServerResources();
+  RemoveDb(kDb);
+
+  EXPECT_TRUE(slow_running_at_drain) << "slow query finished before the signal";
+  EXPECT_FALSE(rejected.ok())
+      << "after a real SIGTERM, a new statement should be rejected by the drain, "
+         "but it succeeded — Arrow likely intercepted the signal";
+  EXPECT_NE(rejected.ToString().find("shutting down"), std::string::npos)
+      << "rejection should come from GizmoSQL's drain (\"shutting down\"); got: "
+      << rejected.ToString();
+  EXPECT_TRUE(slow_status.ok())
+      << "in-flight query should finish during drain; got: " << slow_status.ToString();
 }
 
 #endif  // !_WIN32
