@@ -27,7 +27,7 @@ pip install 'gizmosql[adbc]'
 
 The package itself has zero runtime dependencies. The `gizmosql_server` binary is downloaded on first use (~10 MB compressed) into `~/.cache/gizmosql/`; subsequent starts use the cached copy.
 
-> **Supported platforms:** macOS arm64, Linux amd64, Linux arm64, Windows amd64. Python 3.10+.
+> **Supported platforms:** macOS arm64, Linux amd64, Linux arm64, Windows amd64, Windows arm64. Python 3.10+.
 
 ## Quick start
 
@@ -204,7 +204,7 @@ srv.config             # dataclass with the resolved configuration
 ## Limitations
 
 - **Subprocess only.** The server runs in its own process and clients (including `Server.connect()`) talk to it over the loopback Flight SQL endpoint. This is the right architecture for the intended use cases — the wrapper is a process manager, not an embedded SQL engine.
-- **Pre-built binaries** for: macOS arm64, Linux amd64, Linux arm64, Windows amd64. Other platforms aren't supported.
+- **Pre-built binaries** for: macOS arm64, Linux amd64, Linux arm64, Windows amd64, Windows arm64. Other platforms aren't supported.
 - **Not a drop-in for `duckdb`.** If you just want in-process SQL from Python, install `duckdb` directly. This package is for the case where you specifically need a Flight SQL endpoint.
 
 ## Links
