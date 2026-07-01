@@ -11,6 +11,7 @@
 [![SQLAlchemy Dialect](https://img.shields.io/badge/PyPI-GizmoSQL%20SQLAlchemy%20Dialect-blue?logo=PyPI)](https://pypi.org/project/sqlalchemy-gizmosql-adbc-dialect/)
 [![Ibis Backend](https://img.shields.io/badge/PyPI-GizmoSQL%20Ibis%20Backend-blue?logo=PyPI)](https://pypi.org/project/ibis-gizmosql/)
 [![App Store](https://img.shields.io/badge/App%20Store-GizmoSQL%20for%20iOS-black?logo=apple)](https://apps.apple.com/us/app/gizmosql/id6761951280)
+[![Slack Community](https://img.shields.io/badge/Slack-GizmoData%20Community-4A154B?logo=slack)](https://join.slack.com/t/gizmodatacommunity/shared_invite/zt-42jk7kdti-SJp7qk7d6XYCIKfBG~4HrA)
 
 ---
 
@@ -334,6 +335,14 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 **GizmoSQL Core** is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 **Enterprise features** (in `src/enterprise/`) are proprietary and require a commercial license from GizmoData LLC. See [src/enterprise/LICENSE](src/enterprise/LICENSE) for details.
+
+---
+
+## 💬 Community
+
+Join the **GizmoData Community Slack** to ask questions, share what you're building, and get help from the team and other users:
+
+👉 [Join the GizmoData Community on Slack](https://join.slack.com/t/gizmodatacommunity/shared_invite/zt-42jk7kdti-SJp7qk7d6XYCIKfBG~4HrA)
 
 ---
 
