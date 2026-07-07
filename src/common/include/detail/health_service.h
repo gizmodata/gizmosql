@@ -40,21 +40,43 @@ using HealthCheckFn = std::function<bool()>;
 /// Uses a background thread to periodically check health status, ensuring
 /// that multiple Watch streams share a single health check rather than
 /// each polling independently.
+///
+/// Hang detection: the health check function runs with no timeout (a hung
+/// SQL query blocks the checker thread indefinitely), so health status is
+/// staleness-aware — if no check has *completed* within the staleness
+/// threshold, Check/Watch report NOT_SERVING even though the last completed
+/// check succeeded. A hung health check query therefore reads as unhealthy
+/// after the threshold elapses, and recovers automatically if the query
+/// eventually returns successfully.
 class GizmoSQLHealthServiceImpl final : public grpc::health::v1::Health::Service {
  public:
   /// Default health check polling interval in seconds.
   static constexpr int kDefaultPollIntervalSeconds = 5;
 
+  /// Default staleness threshold, as a multiple of the poll interval.
+  /// If no health check completes within (poll_interval * this multiplier),
+  /// the service reports NOT_SERVING.
+  static constexpr int kDefaultStalenessMultiplier = 3;
+
   /// Construct a health service with the given health check function.
   /// @param health_check_fn Function that returns true if the service is healthy.
   /// @param poll_interval_seconds Interval between health checks (default: 5 seconds).
+  /// @param staleness_seconds Report NOT_SERVING if no health check has completed
+  ///        within this many seconds (e.g. the health check query is hung).
+  ///        0 (default) means poll_interval_seconds * kDefaultStalenessMultiplier.
+  /// @param health_check_query_text The SQL text the health check function runs,
+  ///        included in per-check log messages so operators can see the query
+  ///        without scrolling back to startup. Logging only; may be empty.
   explicit GizmoSQLHealthServiceImpl(HealthCheckFn health_check_fn,
-                                     int poll_interval_seconds = kDefaultPollIntervalSeconds);
+                                     int poll_interval_seconds = kDefaultPollIntervalSeconds,
+                                     int staleness_seconds = 0,
+                                     std::string health_check_query_text = "");
 
   ~GizmoSQLHealthServiceImpl() override;
 
   /// Perform a synchronous health check.
-  /// Returns the cached health status from the background poller.
+  /// Returns the cached health status from the background poller, downgraded
+  /// to NOT_SERVING when the status is stale (see CurrentStatus()).
   /// @param context The gRPC server context.
   /// @param request The health check request (service name is ignored).
   /// @param response The health check response with serving status.
@@ -75,25 +97,48 @@ class GizmoSQLHealthServiceImpl final : public grpc::health::v1::Health::Service
                      const grpc::health::v1::HealthCheckRequest* request,
                      grpc::ServerWriter<grpc::health::v1::HealthCheckResponse>* writer) override;
 
-  /// Signal shutdown to stop the background health checker and any active Watch streams.
+  /// Signal shutdown to stop the background health checker and any active Watch
+  /// streams. If the checker thread is stuck inside a hung health check query,
+  /// it is detached (after a short wait) rather than hanging shutdown.
   void Shutdown();
 
+  /// The effective health status: the last completed check result, downgraded
+  /// to unhealthy (false) when no check has completed within the staleness
+  /// threshold — i.e. the health check query is hung or the checker thread is
+  /// wedged. Also exposed for tests.
+  bool CurrentStatus();
+
  private:
-  /// Background thread function that periodically checks health.
-  void HealthCheckLoop();
+  // State shared with the checker thread via shared_ptr so Shutdown() can
+  // safely detach the thread when it is stuck inside a hung health check query.
+  struct SharedState {
+    std::mutex mutex;
+    std::condition_variable status_changed_cv;
+    bool cached_status{false};
+    uint64_t status_version{0};  // Incremented on each status change
+    bool first_check_done{false};
+    std::chrono::steady_clock::time_point last_check_completed{};
+    std::atomic<bool> shutdown{false};
+    std::atomic<bool> check_in_flight{false};
+    // Set when a reader logs the "health check is stale" warning; cleared when
+    // a check completes, so each stall episode warns exactly once.
+    std::atomic<bool> stale_warning_logged{false};
+  };
 
-  HealthCheckFn health_check_fn_;
+  /// Background thread function that periodically runs the health check.
+  static void HealthCheckLoop(std::shared_ptr<SharedState> state,
+                              HealthCheckFn health_check_fn,
+                              std::chrono::seconds poll_interval,
+                              std::chrono::seconds staleness_threshold,
+                              std::string query_log_suffix);
+
   std::chrono::seconds poll_interval_;
-
-  // Shared state protected by mutex
-  std::mutex mutex_;
-  std::condition_variable status_changed_cv_;
-  bool cached_status_{false};
-  uint64_t status_version_{0};  // Incremented on each status change
-
-  // Background thread management
+  std::chrono::seconds staleness_threshold_;
+  // " - query: <sql>" suffix appended to health log messages (empty when no
+  // query text was supplied).
+  std::string query_log_suffix_;
+  std::shared_ptr<SharedState> state_;
   std::thread health_check_thread_;
-  std::atomic<bool> shutdown_{false};
 };
 
 /// Lightweight plaintext gRPC server for Kubernetes health probes.

@@ -84,6 +84,8 @@ enum class BackendType { duckdb, sqlite };
  * @param session_log_level The logging level to use for client session lifecycle messages (creation/closure).  Default is: info. If empty, uses env var GIZMOSQL_SESSION_LOG_LEVEL.
  * @param health_port The port for the plaintext gRPC health check server (for Kubernetes probes). Default is DEFAULT_HEALTH_PORT (31338). Set to 0 to disable.
  * @param health_check_query The SQL query to use for health checks. If empty, uses env var GIZMOSQL_HEALTH_CHECK_QUERY, or defaults to "SELECT 1".
+ * @param health_check_interval_seconds Seconds between background health check runs. If 0, uses env var GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS, or defaults to 5.
+ * @param health_check_staleness_seconds Report NOT_SERVING when no health check has completed within this many seconds (detects a hung health check query). If 0, uses env var GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS, or defaults to 3x the interval.
  * @param enable_instrumentation [Enterprise] Whether to enable session instrumentation (tracking instances, sessions, SQL statements). Default is std::nullopt (check env var GIZMOSQL_ENABLE_INSTRUMENTATION, fallback to false). Pass true/false to override env var. Requires valid enterprise license.
  * @param instrumentation_db_path [Enterprise] Path for the instrumentation database. If empty, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH, or defaults to gizmosql_instrumentation.db in the same directory as the main database. Ignored if instrumentation_catalog is set.
  * @param instrumentation_catalog [Enterprise] Catalog name for instrumentation. If set, uses a pre-attached catalog (e.g., DuckLake) instead of a file. The catalog must be attached via init_sql_commands. If empty, uses env var GIZMOSQL_INSTRUMENTATION_CATALOG.
@@ -241,5 +243,14 @@ int RunFlightSQLServer(
     /// per-query timeouts). Sentinel -1 = consult env var, then default 300.
     /// Set the container/pod terminationGracePeriodSeconds >= this value so the
     /// orchestrator's SIGKILL does not preempt the drain.
-    int32_t shutdown_grace_period_seconds = -1);
+    int32_t shutdown_grace_period_seconds = -1,
+    /// Seconds between background health check runs
+    /// (--health-check-interval-seconds / GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS).
+    /// 0 = consult env var, then default 5.
+    int32_t health_check_interval_seconds = 0,
+    /// Report NOT_SERVING when no health check has completed within this many
+    /// seconds — detects a hung health check query
+    /// (--health-check-staleness-seconds / GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS).
+    /// 0 = consult env var, then default 3x the interval.
+    int32_t health_check_staleness_seconds = 0);
 }

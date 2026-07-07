@@ -457,6 +457,29 @@ static SystemInfo GetSystemInfo() {
   return info;
 }
 
+std::string SafeGetEnvVarValue(const std::string& env_var_name);
+
+// Parse a positive integer number of seconds from an env var; returns
+// default_seconds when the env var is unset, non-numeric, or non-positive.
+static int GetPositiveSecondsEnv(const std::string& env_var_name, int default_seconds) {
+  const std::string value = SafeGetEnvVarValue(env_var_name);
+  if (value.empty()) {
+    return default_seconds;
+  }
+  try {
+    const int parsed = std::stoi(value);
+    if (parsed > 0) {
+      return parsed;
+    }
+  } catch (const std::exception&) {
+    // fall through to warning
+  }
+  GIZMOSQL_LOG(WARNING) << "Ignoring invalid value for " << env_var_name << ": '"
+                        << value << "' (expected a positive integer number of "
+                        << "seconds) - using default of " << default_seconds << "s";
+  return default_seconds;
+}
+
 // Format bytes as human-readable string (e.g., "16.0 GB")
 static std::string FormatBytes(int64_t bytes) {
   const char* units[] = {"B", "KB", "MB", "GB", "TB"};
@@ -511,7 +534,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const bool& enable_catalog_logging,
     const std::string& log_catalog,
     const std::string& log_schema,
-    const std::string& log_catalog_db_path) {
+    const std::string& log_catalog_db_path,
+    const int32_t& health_check_interval_seconds,
+    const int32_t& health_check_staleness_seconds) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -981,6 +1006,23 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // The health check function will execute the configured query on the backend to verify connectivity
     // Using g_health_service (static) to ensure the service lives as long as the server
     GIZMOSQL_LOG(INFO) << "Health check query: " << health_check_query;
+    // Explicit args win; 0 (unset) falls back to the env var, then the default.
+    const int health_poll_interval =
+        health_check_interval_seconds > 0
+            ? health_check_interval_seconds
+            : GetPositiveSecondsEnv(
+                  "GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS",
+                  GizmoSQLHealthServiceImpl::kDefaultPollIntervalSeconds);
+    const int health_staleness =
+        health_check_staleness_seconds > 0
+            ? health_check_staleness_seconds
+            : GetPositiveSecondsEnv(
+                  "GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS",
+                  health_poll_interval *
+                      GizmoSQLHealthServiceImpl::kDefaultStalenessMultiplier);
+    GIZMOSQL_LOG(INFO) << "Health check interval: " << health_poll_interval
+                       << "s, staleness threshold (hung-check grace period): "
+                       << health_staleness << "s";
     if (backend == BackendType::sqlite) {
       auto sqlite_server =
           std::dynamic_pointer_cast<gizmosql::sqlite::SQLiteFlightSqlServer>(server);
@@ -991,7 +1033,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
               return s->ExecuteSql(health_check_query).ok();
             }
             return false;
-          });
+          },
+          health_poll_interval, health_staleness, health_check_query);
     } else if (backend == BackendType::duckdb) {
       auto duckdb_server =
           std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server);
@@ -1002,7 +1045,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
               return s->ExecuteSql(health_check_query).ok();
             }
             return false;
-          });
+          },
+          health_poll_interval, health_staleness, health_check_query);
     }
 
     // Set up builder_hook to (a) configure GRPC_ARG_MAX_METADATA_SIZE if requested
@@ -1142,7 +1186,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     bool enable_catalog_logging,
     std::string log_catalog,
     std::string log_schema,
-    std::string log_catalog_db_path) {
+    std::string log_catalog_db_path,
+    int32_t health_check_interval_seconds,
+    int32_t health_check_staleness_seconds) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
   // state (e.g. a previous server in the same process, as in the test binary)
@@ -1469,7 +1515,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       max_metadata_size, storage_version, max_concurrent_statements,
       max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default,
       memory_limit, capture_query_profile, cluster_id, enable_catalog_logging,
-      log_catalog, log_schema, log_catalog_db_path);
+      log_catalog, log_schema, log_catalog_db_path,
+      health_check_interval_seconds, health_check_staleness_seconds);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1736,7 +1783,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string log_schema,
                        std::string log_catalog_db_path,
                        std::optional<bool> graceful_shutdown,
-                       int32_t shutdown_grace_period_seconds) {
+                       int32_t shutdown_grace_period_seconds,
+                       int32_t health_check_interval_seconds,
+                       int32_t health_check_staleness_seconds) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -2114,7 +2163,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       max_queued_statements, max_queue_wait_seconds,
       admin_bypass_queue_default.value_or(true), memory_limit, capture_profile_mode,
       cluster_id, enable_catalog_logging.value(), log_catalog, log_schema,
-      log_catalog_db_path);
+      log_catalog_db_path, health_check_interval_seconds,
+      health_check_staleness_seconds);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

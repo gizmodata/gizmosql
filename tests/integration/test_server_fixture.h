@@ -84,7 +84,9 @@ CreateFlightSQLServer(
     bool enable_catalog_logging = false,
     std::string log_catalog = "",
     std::string log_schema = "",
-    std::string log_catalog_db_path = "");
+    std::string log_catalog_db_path = "",
+    int32_t health_check_interval_seconds = 0,
+    int32_t health_check_staleness_seconds = 0);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -141,6 +143,8 @@ struct TestServerConfig {
   std::string log_catalog = "";                  // [Enterprise] external log catalog name (empty => file-based _gizmosql_logs)
   std::string log_schema = "";                   // [Enterprise] schema within the log catalog (empty => "main")
   std::string log_catalog_db_path = "";          // [Enterprise] file-based log DB path (empty => default sibling)
+  int32_t health_check_interval_seconds = 0;     // Seconds between health checks (0 => env var, then 5)
+  int32_t health_check_staleness_seconds = 0;    // NOT_SERVING if no check completed in this window (0 => env var, then 3x interval)
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -256,7 +260,9 @@ class ServerTestFixture : public ::testing::Test {
         /*enable_catalog_logging=*/config_.enable_catalog_logging,
         /*log_catalog=*/config_.log_catalog,
         /*log_schema=*/config_.log_schema,
-        /*log_catalog_db_path=*/config_.log_catalog_db_path);
+        /*log_catalog_db_path=*/config_.log_catalog_db_path,
+        /*health_check_interval_seconds=*/config_.health_check_interval_seconds,
+        /*health_check_staleness_seconds=*/config_.health_check_staleness_seconds);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-07-07
+
+### Added
+
+- **Health checks now detect a *hung* health-check query, not just a failing one.** Previously the background health checker ran the configured query (`--health-check-query`, default `SELECT 1`) with no timeout: if the query hung — e.g. `SHOW DATABASES` against a wedged attached catalog — the checker thread blocked forever, the cached status froze at its last value (usually `SERVING`), and Kubernetes kept probing a healthy-looking but wedged instance. Health status is now **staleness-aware**: if no health check has *completed* within the staleness threshold, `Check`/`Watch` report `NOT_SERVING` (with a one-time warning log per stall), and status recovers automatically if the query eventually completes successfully. Two new knobs tune this: `--health-check-interval-seconds` / `GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS` (seconds between checks, default `5`) and `--health-check-staleness-seconds` / `GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS` (the hung-check grace period, default `3 ×` the interval, i.e. `15s`); both are also new trailing parameters on the `RunFlightSQLServer()` C API. Also: each health-check execution is now logged at `DEBUG` with its duration and result; a *successful* check that takes longer than the staleness threshold logs a `WARNING` (the effective status would flap SERVING ↔ NOT_SERVING — raise the threshold or use a faster query); a health query hung **at startup** no longer blocks server start (the server starts `NOT_SERVING` after the staleness window and logs a warning); and shutdown no longer hangs waiting on a stuck checker thread (it is detached after a short grace). Watch streams push the staleness-driven `NOT_SERVING` transition to subscribers as well.
+
+### Fixed
+
+- **Docs: the server-options table rendered the wrong defaults for `--log-level`, `--log-format`, and `--access-log`.** Unescaped `|` characters inside the Description cells (`text|json`, `debug|info|…`, `on|off`) split those rows into extra Markdown columns, shifting e.g. `json` into `--log-format`'s Default column on the rendered docs site. The actual defaults were always `info` / `text` / `off`; the pipes are now escaped so the table renders correctly.
+
 ## [1.32.0] - 2026-06-19
 
 ### Added

@@ -30,6 +30,8 @@
 #   GIZMOSQL_AUTH_LOG_LEVEL   --auth-log-level
 #   GIZMOSQL_SESSION_LOG_LEVEL --session-log-level
 #   GIZMOSQL_HEALTH_CHECK_QUERY      --health-check-query
+#   GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS   --health-check-interval-seconds (default 5)
+#   GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS  --health-check-staleness-seconds (default 3x interval)
 #   GIZMOSQL_ENABLE_INSTRUMENTATION  --enable-instrumentation
 #   GIZMOSQL_INSTRUMENTATION_DB_PATH --instrumentation-db-path
 #   GIZMOSQL_INSTRUMENTATION_CATALOG --instrumentation-catalog

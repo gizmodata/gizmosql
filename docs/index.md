@@ -445,9 +445,9 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | token-allowed-issuer / TOKEN_ALLOWED_ISSUER | Allowed JWT issuer for token auth | none | --token-allowed-issuer |
 | token-allowed-audience / TOKEN_ALLOWED_AUDIENCE | Allowed JWT audience for token auth | none | --token-allowed-audience |
 | token-signature-verify-cert-path / TOKEN_SIGNATURE_VERIFY_CERT_PATH | RSA PEM cert to verify token signatures | none | --token-signature-verify-cert-path |
-| log-level / GIZMOSQL_LOG_LEVEL | Log level: debug|info|warn|error|fatal | info (if unset) | --log-level |
-| log-format / GIZMOSQL_LOG_FORMAT | Log format: text|json | text (if unset) | --log-format |
-| access-log / GIZMOSQL_ACCESS_LOG | Per-RPC access logging: on|off | off (if unset) | --access-log |
+| log-level / GIZMOSQL_LOG_LEVEL | Log level: debug\|info\|warn\|error\|fatal | info (if unset) | --log-level |
+| log-format / GIZMOSQL_LOG_FORMAT | Log format: text\|json | text (if unset) | --log-format |
+| access-log / GIZMOSQL_ACCESS_LOG | Per-RPC access logging: on\|off | off (if unset) | --access-log |
 | log-file / GIZMOSQL_LOG_FILE | Log file path; '-' => stdout; empty => stderr | stderr (if unset) | --log-file |
 | query-timeout | Query timeout in seconds (0 = unlimited) | DEFAULT_QUERY_TIMEOUT_SECONDS | --query-timeout |
 | max-metadata-size / GIZMOSQL_MAX_METADATA_SIZE | Max inbound gRPC HTTP/2 header metadata bytes per call (`GRPC_ARG_MAX_METADATA_SIZE`). Raise above the gRPC default of ~8 KB if clients send large per-call metadata (e.g. extra Apache Flight SQL JDBC URL parameters that get forwarded as gRPC headers, large bearer tokens, accumulated cookies, proxy-injected trace headers) | 0 (= use gRPC default) | --max-metadata-size |
@@ -456,6 +456,8 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | session-log-level / GIZMOSQL_SESSION_LOG_LEVEL | Client session lifecycle (create/close) log level | info (if unset) | --session-log-level |
 | health-port | Plaintext gRPC health check port (0 = disable) | DEFAULT_HEALTH_PORT | --health-port |
 | health-check-query / GIZMOSQL_HEALTH_CHECK_QUERY | SQL query used for health checks | SELECT 1 | --health-check-query |
+| health-check-interval-seconds / GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS | Seconds between background health check runs | 5 | --health-check-interval-seconds |
+| health-check-staleness-seconds / GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS | Report NOT_SERVING when no health check has completed within this many seconds (detects a hung health check query) | 3 × interval (15) | --health-check-staleness-seconds |
 | enable-instrumentation / GIZMOSQL_ENABLE_INSTRUMENTATION | *[Enterprise]* Enable session instrumentation | false | --enable-instrumentation |
 | instrumentation-db-path / GIZMOSQL_INSTRUMENTATION_DB_PATH | *[Enterprise]* Path for instrumentation database | (same dir as main DB) | --instrumentation-db-path |
 | instrumentation-catalog / GIZMOSQL_INSTRUMENTATION_CATALOG | *[Enterprise]* Pre-attached DuckLake catalog name for instrumentation | none | --instrumentation-catalog |

@@ -16,11 +16,15 @@
 // under the License.
 
 #include <gtest/gtest.h>
-#include <thread>
+#include <atomic>
 #include <chrono>
+#include <memory>
+#include <thread>
 
 #include <grpcpp/grpcpp.h>
 #include "grpc/health/v1/health.grpc.pb.h"
+
+#include "health_service.h"
 
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
@@ -98,6 +102,49 @@ std::atomic<bool>
 template <>
 gizmosql::testing::TestServerConfig
     gizmosql::testing::ServerTestFixture<HealthCheckCustomQueryFixture>::config_{};
+
+// ============================================================================
+// Test Fixture with a health check query that hangs (or errors on the LTS
+// channel, where sleep_ms may not exist) — either way the server must report
+// NOT_SERVING. Exercises the health_check_interval_seconds /
+// health_check_staleness_seconds config end-to-end through the server.
+// ============================================================================
+
+class HealthCheckHungQueryFixture
+    : public gizmosql::testing::ServerTestFixture<HealthCheckHungQueryFixture> {
+ public:
+  static gizmosql::testing::TestServerConfig GetConfig() {
+    return {
+        .database_filename = "health_hung_test.db",
+        .port = 31480,
+        .health_port = 31481,
+        .username = "health_tester",
+        .password = "health_password",
+        .backend = BackendType::duckdb,
+        .enable_instrumentation = false,
+        // Hangs for 10s per check on DuckDB >= 1.5 (sleep_ms) — well past the
+        // 2s staleness threshold, yet short enough that the checker thread
+        // exits promptly after the suite; errors on older DuckDB without
+        // sleep_ms — both must yield NOT_SERVING.
+        .health_check_query = "SELECT sleep_ms(10000)",
+        .health_check_interval_seconds = 1,
+        .health_check_staleness_seconds = 2,
+    };
+  }
+};
+
+// Static member definitions required by the template
+template <>
+std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
+    gizmosql::testing::ServerTestFixture<HealthCheckHungQueryFixture>::server_{};
+template <>
+std::thread gizmosql::testing::ServerTestFixture<HealthCheckHungQueryFixture>::server_thread_{};
+template <>
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<HealthCheckHungQueryFixture>::server_ready_{false};
+template <>
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<HealthCheckHungQueryFixture>::config_{};
 
 // ============================================================================
 // Health Check Tests with Default Query
@@ -212,4 +259,149 @@ TEST_F(HealthCheckCustomQueryFixture, CanExecuteCustomHealthCheckQuery) {
   auto chunk = column->chunk(0);
   auto int_array = std::static_pointer_cast<arrow::Int32Array>(chunk);
   ASSERT_EQ(int_array->Value(0), 42);
+}
+
+// ============================================================================
+// Hung health check query (end-to-end through the server + config plumbing)
+// ============================================================================
+
+TEST_F(HealthCheckHungQueryFixture, HungHealthQueryReportsNotServing) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  auto channel = grpc::CreateChannel(
+      "localhost:" + std::to_string(GetHealthPort()),
+      grpc::InsecureChannelCredentials());
+  auto stub = grpc::health::v1::Health::NewStub(channel);
+
+  // The health query either hangs (sleep_ms, DuckDB >= 1.5) — detected via the
+  // 2s staleness threshold — or errors (older DuckDB without sleep_ms). Either
+  // way the server must report NOT_SERVING. Poll briefly to absorb timing slack.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  grpc::health::v1::HealthCheckResponse::ServingStatus last_status =
+      grpc::health::v1::HealthCheckResponse::UNKNOWN;
+  while (std::chrono::steady_clock::now() < deadline) {
+    grpc::ClientContext context;
+    grpc::health::v1::HealthCheckRequest request;
+    grpc::health::v1::HealthCheckResponse response;
+    auto status = stub->Check(&context, request, &response);
+    ASSERT_TRUE(status.ok()) << "Health check RPC failed: " << status.error_message();
+    last_status = response.status();
+    if (last_status == grpc::health::v1::HealthCheckResponse::NOT_SERVING) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  }
+  ASSERT_EQ(last_status, grpc::health::v1::HealthCheckResponse::NOT_SERVING)
+      << "A hung (or failing) health check query must report NOT_SERVING";
+}
+
+// ============================================================================
+// Staleness (hung health check query) tests — exercise GizmoSQLHealthServiceImpl
+// directly with a controllable health check function, so a "hung query" is a
+// lambda blocked on an atomic rather than a real SQL sleep.
+// ============================================================================
+
+namespace {
+
+// Poll CurrentStatus() until it equals `expected` or the deadline passes.
+bool WaitForStatus(gizmosql::GizmoSQLHealthServiceImpl& service, bool expected,
+                   std::chrono::seconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (service.CurrentStatus() == expected) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  return service.CurrentStatus() == expected;
+}
+
+// Shared control block for a health check function that succeeds on the first
+// call, then hangs (blocks) until `release` is set. Held via shared_ptr so a
+// detached checker thread can never outlive the state it references.
+struct HangControl {
+  std::atomic<int> calls{0};
+  std::atomic<bool> release{false};
+};
+
+gizmosql::HealthCheckFn MakeHangingCheckFn(std::shared_ptr<HangControl> control) {
+  return [control]() -> bool {
+    if (control->calls.fetch_add(1) == 0) {
+      return true;  // initial check: healthy
+    }
+    while (!control->release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return true;  // "query" finally returned successfully
+  };
+}
+
+}  // namespace
+
+TEST(HealthCheckStaleness, HungCheckReportsNotServingThenRecovers) {
+  auto control = std::make_shared<HangControl>();
+  gizmosql::GizmoSQLHealthServiceImpl service(MakeHangingCheckFn(control),
+                                              /*poll_interval_seconds=*/1,
+                                              /*staleness_seconds=*/2);
+
+  // The initial check completed successfully, so we start SERVING
+  ASSERT_TRUE(service.CurrentStatus());
+
+  // The second poll hangs; once no check has completed within the staleness
+  // threshold, the effective status must flip to NOT_SERVING even though the
+  // hung check never *failed*.
+  ASSERT_TRUE(WaitForStatus(service, false, std::chrono::seconds(10)))
+      << "A hung health check query should report NOT_SERVING after the "
+         "staleness threshold";
+
+  // Un-hang the query: the check completes successfully and status recovers
+  control->release.store(true);
+  ASSERT_TRUE(WaitForStatus(service, true, std::chrono::seconds(10)))
+      << "Status should recover to SERVING once the health check query "
+         "completes again";
+
+  service.Shutdown();
+}
+
+TEST(HealthCheckStaleness, FailingCheckReportsNotServing) {
+  auto healthy = std::make_shared<std::atomic<bool>>(false);
+  gizmosql::GizmoSQLHealthServiceImpl service(
+      [healthy]() -> bool { return healthy->load(); },
+      /*poll_interval_seconds=*/1);
+
+  // Initial check returned false
+  ASSERT_FALSE(service.CurrentStatus());
+
+  // Backend "recovers": next poll flips status to SERVING
+  healthy->store(true);
+  ASSERT_TRUE(WaitForStatus(service, true, std::chrono::seconds(10)));
+
+  service.Shutdown();
+}
+
+TEST(HealthCheckStaleness, ShutdownDoesNotHangOnHungCheck) {
+  auto control = std::make_shared<HangControl>();
+  auto service = std::make_unique<gizmosql::GizmoSQLHealthServiceImpl>(
+      MakeHangingCheckFn(control),
+      /*poll_interval_seconds=*/1,
+      /*staleness_seconds=*/2);
+
+  // Wait until the hung second check has made us stale/NOT_SERVING, so we know
+  // the checker thread is stuck inside the health check function.
+  ASSERT_TRUE(service->CurrentStatus());
+  ASSERT_TRUE(WaitForStatus(*service, false, std::chrono::seconds(10)));
+
+  // Shutdown must not block on the stuck checker thread (it waits briefly,
+  // then detaches). Allow generous slack over the internal 2s wait.
+  const auto start = std::chrono::steady_clock::now();
+  service->Shutdown();
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  EXPECT_LT(elapsed, std::chrono::seconds(10))
+      << "Shutdown() must not hang waiting on a hung health check query";
+
+  service.reset();
+
+  // Release the detached checker thread so it can observe shutdown and exit
+  // (it only touches state kept alive by shared_ptrs, so this is safe).
+  control->release.store(true);
 }

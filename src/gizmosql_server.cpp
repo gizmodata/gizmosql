@@ -171,6 +171,13 @@ int main(int argc, char** argv) {
             ("health-check-query", po::value<std::string>()->default_value(""),
               "SQL query used for health checks. If not set, uses env var GIZMOSQL_HEALTH_CHECK_QUERY. "
               "If that isn't set, defaults to 'SELECT 1'.")
+            ("health-check-interval-seconds", po::value<int32_t>()->default_value(0),
+              "Seconds between background health check runs. If not set (0), uses env var "
+              "GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS. If that isn't set, defaults to 5.")
+            ("health-check-staleness-seconds", po::value<int32_t>()->default_value(0),
+              "Report NOT_SERVING when no health check has completed within this many seconds "
+              "(detects a hung health check query). If not set (0), uses env var "
+              "GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS. If that isn't set, defaults to 3x the interval.")
             ("enable-instrumentation", po::value<bool>()->default_value(false),
               "[Enterprise] Enable session instrumentation (tracking instances, sessions, SQL statements). "
               "Requires a valid enterprise license. If not set, uses env var GIZMOSQL_ENABLE_INSTRUMENTATION (1/true to enable).")
@@ -460,6 +467,11 @@ int main(int argc, char** argv) {
   std::string health_check_query =
       vm.count("health-check-query") ? vm["health-check-query"].as<std::string>() : "";
 
+  int32_t health_check_interval_seconds =
+      vm["health-check-interval-seconds"].as<int32_t>();
+  int32_t health_check_staleness_seconds =
+      vm["health-check-staleness-seconds"].as<int32_t>();
+
   std::optional<bool> enable_instrumentation =
       vm["enable-instrumentation"].defaulted() ? std::nullopt
                                                : std::optional(vm["enable-instrumentation"].as<bool>());
@@ -557,5 +569,6 @@ int main(int argc, char** argv) {
       storage_version, max_concurrent_statements, max_queued_statements,
       max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile,
       cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path,
-      graceful_shutdown, shutdown_grace_period_seconds);
+      graceful_shutdown, shutdown_grace_period_seconds,
+      health_check_interval_seconds, health_check_staleness_seconds);
 }
