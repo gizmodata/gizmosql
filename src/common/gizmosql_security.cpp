@@ -228,8 +228,11 @@ void SecurityUtilities::ParseBasicHeader(const flight::CallHeaders& incoming_hea
                                          std::string& username, std::string& password) {
   std::string encoded_credentials =
       FindKeyValPrefixInCallHeaders(incoming_headers, kAuthHeader, kBasicPrefix);
-  // Arrow 25+: base64_decode returns Result<std::string> (rejects malformed
-  // input). Invalid base64 leaves username/password empty so auth fails.
+  // Arrow 25+: base64_decode returns Result<std::string> and requires padded
+  // input, but RFC 7617 clients may omit padding (Go's Flight client sends
+  // unpadded base64) — pad to a multiple of 4 before decoding. Genuinely
+  // malformed base64 leaves username/password empty so auth fails.
+  encoded_credentials.append((4 - encoded_credentials.size() % 4) % 4, '=');
   auto decoded = arrow::util::base64_decode(encoded_credentials);
   if (!decoded.ok()) {
     return;

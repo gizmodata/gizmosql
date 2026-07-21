@@ -43,10 +43,13 @@ ExternalProject_Add(
       $<$<BOOL:${WIN32}>:-DCMAKE_POLICY_DEFAULT_CMP0091=NEW>
       $<$<BOOL:${WIN32}>:-DARROW_MIMALLOC=OFF>
       $<$<BOOL:${WIN32}>:-DARROW_JEMALLOC=OFF>
-      # Abseil LTS 20250127 (bundled by Arrow 25) unconditionally overwrites
-      # CMAKE_MSVC_RUNTIME_LIBRARY to the DLL runtime unless this is ON,
-      # breaking ARROW_USE_STATIC_CRT links (protoc: unresolved __imp__mktime64)
+      # Abseil LTS 20250127 and gRPC (bundled by Arrow 25) each unconditionally
+      # overwrite CMAKE_MSVC_RUNTIME_LIBRARY to the DLL runtime unless their
+      # opt-in flag is ON, breaking ARROW_USE_STATIC_CRT links (protoc:
+      # unresolved __imp__mktime64; grpc_cpp_plugin: LNK2038 RuntimeLibrary
+      # mismatch)
       $<$<BOOL:${WIN32}>:-DABSL_MSVC_STATIC_RUNTIME=ON>
+      $<$<BOOL:${WIN32}>:-DgRPC_MSVC_STATIC_RUNTIME=ON>
       # On Windows, override ARROW_DEPENDENCY_SOURCE from BUNDLED to AUTO and
       # pass vcpkg toolchain so Arrow finds zlib from vcpkg and tells gRPC to
       # use gRPC_ZLIB_PROVIDER=package (not module). The ARROW_*_ARG variables
