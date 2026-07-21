@@ -6,6 +6,7 @@
 
 #include "instrumentation_manager.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include <boost/uuid/uuid.hpp>
@@ -253,9 +254,8 @@ ExecutionInstrumentation::~ExecutionInstrumentation() {
   }
 }
 
-void ExecutionInstrumentation::SetCompleted(int64_t duration_ms) {
+void ExecutionInstrumentation::SetCompleted() {
   end_timestamp_ = std::chrono::system_clock::now();
-  duration_ms_ = duration_ms;
   status_ = "success";
   // Don't finalize here - let the destructor handle it after all rows have been fetched
   // via IncrementRowsFetched() calls in the batch reader
@@ -313,6 +313,12 @@ void ExecutionInstrumentation::SetRunning() {
 
 void ExecutionInstrumentation::IncrementRowsFetched(int64_t count) {
   rows_fetched_.fetch_add(count, std::memory_order_relaxed);
+  const int64_t now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                             std::chrono::system_clock::now().time_since_epoch())
+                             .count();
+  int64_t expected = 0;
+  first_fetch_us_.compare_exchange_strong(expected, now_us, std::memory_order_relaxed);
+  last_fetch_us_.store(now_us, std::memory_order_relaxed);
 }
 
 void ExecutionInstrumentation::SetQueryProfile(std::string query_profile_json) {
@@ -334,28 +340,72 @@ void ExecutionInstrumentation::Finalize() {
     end_timestamp_ = std::chrono::system_clock::now();
   }
 
-  // Calculate duration from wall-clock times if not explicitly provided
-  int64_t final_duration_ms = duration_ms_;
-  if (final_duration_ms == 0) {
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-        end_timestamp_ - start_timestamp_);
-    final_duration_ms = duration.count();
+  // The execution timeline is recorded as five timestamps, all derived from
+  // wall-clock offsets against start_timestamp_ (captured synchronously, so
+  // async write-queue latency can never skew them):
+  //  * execution_end_time / duration_ms — when the ENGINE finished executing
+  //    (end_timestamp_, stamped by SetCompleted/SetError/etc.).
+  //  * fetch_start_time — first result batch handed to the client (NULL if
+  //    none were, e.g. DML or an error).
+  //  * fetch_end_time / total_duration_ms — when result DELIVERY finished: the
+  //    last batch the client fetched, or the engine end if later (results
+  //    stream on the prepared path, so Execute() returning is not the end of
+  //    the work).
+  //  * cursor_close_time — when the client released the statement/stream
+  //    (i.e. now, at finalize). A client can hold a drained statement open for
+  //    hours; that idle time shows up here and only here — it is deliberately
+  //    excluded from both durations.
+  const auto us_to_tp = [](int64_t us) {
+    return std::chrono::system_clock::time_point{
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::microseconds(us))};
+  };
+  const auto ms_since = [this](std::chrono::system_clock::time_point end) {
+    return std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    end - start_timestamp_)
+                                    .count());
+  };
+
+  const int64_t first_fetch_us = first_fetch_us_.load(std::memory_order_relaxed);
+  const int64_t last_fetch_us = last_fetch_us_.load(std::memory_order_relaxed);
+  auto fetch_end = end_timestamp_;
+  if (last_fetch_us > 0 && us_to_tp(last_fetch_us) > fetch_end) {
+    fetch_end = us_to_tp(last_fetch_us);
   }
+
+  const int64_t final_duration_ms = ms_since(end_timestamp_);
+  const int64_t total_duration_ms = ms_since(fetch_end);
+  // NULL (typed, so to_milliseconds() can bind it) when no batch was delivered.
+  const duckdb::Value fetch_start_offset =
+      first_fetch_us > 0 ? duckdb::Value::BIGINT(ms_since(us_to_tp(first_fetch_us)))
+                         : duckdb::Value(duckdb::LogicalType::BIGINT);
+  const int64_t cursor_close_offset_ms = ms_since(std::chrono::system_clock::now());
 
   manager_->QueueWrite([exec_id = execution_id_, rows = rows_fetched_.load(),
                         status = status_, error_msg = error_message_,
-                        profile = query_profile_,
-                        final_duration_ms](duckdb::Connection& conn) {
+                        profile = query_profile_, final_duration_ms,
+                        total_duration_ms, fetch_start_offset,
+                        cursor_close_offset_ms](duckdb::Connection& conn) {
+    // All timestamps are derived from execution_start_time (stamped by this
+    // same writer connection) rather than now(), so that end - start always
+    // equals the corresponding duration regardless of write-queue latency.
     ExecuteInstrumentationWrite(
         conn, "record execution end",
-        "UPDATE sql_executions SET execution_end_time = now(), "
+        "UPDATE sql_executions SET "
+        "execution_end_time = execution_start_time + to_milliseconds($5), "
+        "fetch_start_time = execution_start_time + to_milliseconds($8), "
+        "fetch_end_time = execution_start_time + to_milliseconds($7), "
+        "cursor_close_time = execution_start_time + to_milliseconds($9), "
         "rows_fetched = $2, status = $3, error_message = $4, "
-        "duration_ms = $5, query_profile = $6 WHERE execution_id = $1",
+        "duration_ms = $5, query_profile = $6, total_duration_ms = $7 "
+        "WHERE execution_id = $1",
         {duckdb::Value::UUID(exec_id),
          duckdb::Value::BIGINT(rows), duckdb::Value(status),
          error_msg.empty() ? duckdb::Value() : duckdb::Value(error_msg),
          duckdb::Value::BIGINT(final_duration_ms),
-         profile.empty() ? duckdb::Value() : duckdb::Value(profile)});
+         profile.empty() ? duckdb::Value() : duckdb::Value(profile),
+         duckdb::Value::BIGINT(total_duration_ms), fetch_start_offset,
+         duckdb::Value::BIGINT(cursor_close_offset_ms)});
   });
 }
 

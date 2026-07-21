@@ -343,13 +343,26 @@ Tracks individual executions of statements (one per execution).
 | `statement_id` | UUID | Reference to sql_statements |
 | `bind_parameters` | VARCHAR | JSON array of bind parameters (NULL if none) |
 | `execution_start_time` | TIMESTAMPTZ | When execution started (tz-aware) |
-| `execution_end_time` | TIMESTAMPTZ | When execution completed |
+| `execution_end_time` | TIMESTAMPTZ | When the **engine** finished executing the query (always equals `execution_start_time + duration_ms`) |
 | `enqueue_time` | TIMESTAMPTZ | When the statement entered the admission queue (NULL if never queued; see [Statement Queuing](statement_queuing.md)) |
+| `fetch_start_time` | TIMESTAMPTZ | When the first result batch was delivered to the client (NULL if none — e.g. DML or an error; can precede `execution_end_time`, since results stream) |
+| `fetch_end_time` | TIMESTAMPTZ | When result delivery finished — the last batch the client fetched, or `execution_end_time` if later (always equals `execution_start_time + total_duration_ms`) |
+| `cursor_close_time` | TIMESTAMPTZ | When the client released the statement/stream; `cursor_close_time - fetch_end_time` is how long a client sat on a fully-drained statement |
 | `rows_fetched` | BIGINT | Number of rows returned |
 | `status` | VARCHAR | 'queued', 'executing', 'success', 'error', 'timeout', 'cancelled' |
+| `duration_ms` | BIGINT | **Engine** execution time in milliseconds (`execution_end_time - execution_start_time`; excludes admission-queue wait and result streaming) |
+| `total_duration_ms` | BIGINT | Full execution wall clock through result delivery (`fetch_end_time - execution_start_time`; still excludes queue wait and idle-open-cursor time) |
 | `error_message` | VARCHAR | Error message if failed |
-| `duration_ms` | BIGINT | Execution duration in milliseconds |
 | `query_profile` | JSON | DuckDB native query profile JSON (NULL unless [profile capture](#query-profile-capture) is enabled) |
+
+The timestamps form a per-execution timeline (each interval is derivable by
+subtraction — queue wait, engine time, time-to-first-row, fetch phase,
+idle-cursor time):
+
+```
+enqueue_time → execution_start_time → execution_end_time → fetch_end_time → cursor_close_time
+                                    ↘ fetch_start_time (may precede execution_end_time — results stream)
+```
 
 ### Views
 
@@ -363,11 +376,13 @@ Shows currently active sessions.
 SELECT * FROM active_sessions;
 ```
 
-Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `peer_identity`, `user_agent`, `connection_protocol`, `start_time`, `status`, `hostname`, `hostname_arg`, `server_ip`, `port`, `database_path`, `session_duration_seconds`
+Returns: `session_id`, `instance_id`, `username`, `role`, `auth_method`, `peer`, `peer_identity`, `user_agent`, `connection_protocol`, `start_time`, `status`, `hostname`, `hostname_arg`, `server_ip`, `port`, `database_path`, `session_tag`, `instance_tag`, `session_duration_seconds`, `cluster_id`
 
 #### `session_activity`
 
-Complete view joining instances, sessions, statements, and executions.
+Complete view joining instances, sessions, statements, and executions. Includes
+the instance's `cluster_id`, so activity can be filtered or grouped per cluster
+in multi-instance deployments.
 
 ```sql
 SELECT * FROM session_activity

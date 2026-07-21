@@ -131,7 +131,7 @@ class ExecutionInstrumentation {
 
   std::string GetExecutionId() const { return execution_id_; }
 
-  void SetCompleted(int64_t duration_ms);
+  void SetCompleted();
   void SetError(const std::string& error_message);
   void SetTimeout();
   void SetCancelled();
@@ -157,10 +157,15 @@ class ExecutionInstrumentation {
   std::string status_{"executing"};
   std::string error_message_;
   std::string query_profile_;  // DuckDB native profiling JSON (empty => NULL column)
-  int64_t duration_ms_{0};
   // Wall-clock timestamps captured synchronously (not affected by async queue delays)
   std::chrono::system_clock::time_point start_timestamp_;
   std::chrono::system_clock::time_point end_timestamp_;
+  // Wall clock (micros since epoch) of the first/most recent batch handed to the
+  // client (0 = no batch delivered). Results stream on the prepared path, so
+  // Execute() returning does not mean the query is done — total_duration_ms /
+  // fetch_end_time must extend through the last fetch.
+  std::atomic<int64_t> first_fetch_us_{0};
+  std::atomic<int64_t> last_fetch_us_{0};
   bool finalized_{false};
 };
 

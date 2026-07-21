@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Full per-execution timeline in instrumentation: `sql_executions` now records five timestamps and two durations.** New columns `fetch_start_time` (first result batch delivered to the client; NULL if none; can precede `execution_end_time` since results stream), `fetch_end_time` (last batch delivered), `cursor_close_time` (client released the statement/stream), and `total_duration_ms` (`fetch_end_time - execution_start_time`, i.e. execution through result delivery) join the existing `enqueue_time`/`execution_start_time`/`execution_end_time`/`duration_ms`, so queue wait, engine time, time-to-first-row, fetch phase, and idle-open-cursor time are all derivable by subtraction. Added via `ADD COLUMN IF NOT EXISTS` migrations on all backends (file, PostgreSQL, DuckLake); exposed in the `session_activity` and `execution_details` views, with `avg_total_duration_ms`/`max_total_duration_ms` added to `session_stats`.
+- **`cluster_id` is now exposed in the instrumentation `session_activity` and `active_sessions` views.** Both views carry the owning instance's `cluster_id` (from `--cluster-id` / `GIZMOSQL_CLUSTER_ID`; NULL when unset), so activity can be filtered or grouped per cluster in multi-instance deployments. New view columns are appended at the end of each view's column list so existing PostgreSQL-backed catalogs upgrade in place via `CREATE OR REPLACE VIEW`.
+
+### Fixed
+
+- **Instrumentation `sql_executions.execution_end_time` was wildly inconsistent with `duration_ms` (e.g. `duration_ms = 5` for a start→end span of over an hour).** The two columns measured different events: `duration_ms` was stamped when the engine finished executing, while `execution_end_time` was stamped when the statement was finally closed or re-executed — for a client holding the statement open, hours after the query finished (that moment is still recorded, now under its honest name: `cursor_close_time`). `execution_end_time` now marks when the **engine** finished and is derived as `execution_start_time + duration_ms`, so `end - start` always equals `duration_ms` exactly; the result-delivery phase is tracked separately by `fetch_end_time`/`total_duration_ms`. Timestamps are computed from wall-clock offsets captured synchronously, so instrumentation write-queue latency can no longer skew them.
+
 ## [1.33.0] - 2026-07-07
 
 ### Added

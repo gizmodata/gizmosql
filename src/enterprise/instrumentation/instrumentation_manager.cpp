@@ -123,12 +123,16 @@ CREATE TABLE IF NOT EXISTS sql_executions (
     statement_id UUID NOT NULL,
     bind_parameters VARCHAR,
     execution_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
-    execution_end_time TIMESTAMP WITH TIME ZONE,
+    execution_end_time TIMESTAMP WITH TIME ZONE,  -- when the engine finished executing
     enqueue_time TIMESTAMP WITH TIME ZONE,  -- when the statement entered the admission queue (NULL if never queued)
+    fetch_start_time TIMESTAMP WITH TIME ZONE,  -- first result batch delivered to the client (NULL if none)
+    fetch_end_time TIMESTAMP WITH TIME ZONE,  -- last result batch delivered (>= execution_end_time)
+    cursor_close_time TIMESTAMP WITH TIME ZONE,  -- client released the statement/stream
     rows_fetched BIGINT,
     status VARCHAR NOT NULL,  -- queued|executing|success|error|timeout|cancelled (CHECK not supported in DuckLake)
     error_message VARCHAR,
-    duration_ms BIGINT,
+    duration_ms BIGINT,  -- engine execution time: execution_end_time - execution_start_time
+    total_duration_ms BIGINT,  -- through result delivery: fetch_end_time - execution_start_time
     query_profile JSON  -- DuckDB native query profiling JSON (NULL unless capture enabled)
 );
 
@@ -139,6 +143,10 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS session_tag JSON;
 ALTER TABLE sql_statements ADD COLUMN IF NOT EXISTS query_tag JSON;
 ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS enqueue_time TIMESTAMP WITH TIME ZONE;
 ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS query_profile JSON;
+ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS fetch_start_time TIMESTAMP WITH TIME ZONE;
+ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS fetch_end_time TIMESTAMP WITH TIME ZONE;
+ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS cursor_close_time TIMESTAMP WITH TIME ZONE;
+ALTER TABLE sql_executions ADD COLUMN IF NOT EXISTS total_duration_ms BIGINT;
 
 -- Indexes not supported in DuckLake, but would be useful for file-based mode:
 -- CREATE INDEX IF NOT EXISTS idx_sessions_instance_id ON sessions(instance_id);
@@ -190,7 +198,12 @@ SELECT
     e.error_message,
     e.duration_ms,
     e.query_profile,
-    st.query_tag
+    st.query_tag,
+    i.cluster_id,
+    e.fetch_start_time,
+    e.fetch_end_time,
+    e.cursor_close_time,
+    e.total_duration_ms
 FROM instances i
 LEFT JOIN sessions s ON i.instance_id = s.instance_id
 LEFT JOIN sql_statements st ON s.session_id = st.session_id
@@ -217,7 +230,8 @@ SELECT
     i.database_path,
     s.session_tag,
     i.instance_tag,
-    EPOCH(now()) - EPOCH(s.start_time) AS session_duration_seconds
+    EPOCH(now()) - EPOCH(s.start_time) AS session_duration_seconds,
+    i.cluster_id
 FROM sessions s
 JOIN instances i ON s.instance_id = i.instance_id
 WHERE s.status = 'active'
@@ -243,7 +257,9 @@ SELECT
     SUM(CASE WHEN e.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_executions,
     SUM(e.rows_fetched) AS total_rows_fetched,
     AVG(e.duration_ms) AS avg_duration_ms,
-    MAX(e.duration_ms) AS max_duration_ms
+    MAX(e.duration_ms) AS max_duration_ms,
+    AVG(e.total_duration_ms) AS avg_total_duration_ms,
+    MAX(e.total_duration_ms) AS max_total_duration_ms
 FROM sessions s
 LEFT JOIN sql_statements st ON s.session_id = st.session_id
 LEFT JOIN sql_executions e ON st.statement_id = e.statement_id
@@ -273,7 +289,11 @@ SELECT
     s.auth_method,
     s.peer,
     st.query_tag,
-    s.session_tag
+    s.session_tag,
+    e.fetch_start_time,
+    e.fetch_end_time,
+    e.cursor_close_time,
+    e.total_duration_ms
 FROM sql_executions e
 JOIN sql_statements st ON e.statement_id = st.statement_id
 JOIN sessions s ON st.session_id = s.session_id;
@@ -331,7 +351,9 @@ std::vector<std::string> BuildViewStatements(const std::string& p) {
       "st.created_time AS statement_created_time, e.execution_id, "
       "e.bind_parameters, e.execution_start_time, e.execution_end_time, "
       "e.rows_fetched, e.status AS execution_status, e.error_message, "
-      "e.duration_ms, e.query_profile, st.query_tag "
+      "e.duration_ms, e.query_profile, st.query_tag, i.cluster_id, "
+      "e.fetch_start_time, e.fetch_end_time, e.cursor_close_time, "
+      "e.total_duration_ms "
       "FROM " + p + "instances i "
       "LEFT JOIN " + p + "sessions s ON i.instance_id = s.instance_id "
       "LEFT JOIN " + p + "sql_statements st ON s.session_id = st.session_id "
@@ -342,7 +364,8 @@ std::vector<std::string> BuildViewStatements(const std::string& p) {
       "s.peer_identity, s.user_agent, s.connection_protocol, s.start_time, "
       "s.status, i.hostname, i.hostname_arg, i.server_ip, i.port, "
       "i.database_path, s.session_tag, i.instance_tag, "
-      "EXTRACT(EPOCH FROM (now() - s.start_time)) AS session_duration_seconds "
+      "EXTRACT(EPOCH FROM (now() - s.start_time)) AS session_duration_seconds, "
+      "i.cluster_id "
       "FROM " + p + "sessions s "
       "JOIN " + p + "instances i ON s.instance_id = i.instance_id "
       "WHERE s.status = 'active' AND i.status = 'running'",
@@ -357,7 +380,9 @@ std::vector<std::string> BuildViewStatements(const std::string& p) {
       "SUM(CASE WHEN e.status = 'timeout' THEN 1 ELSE 0 END) AS timed_out_executions, "
       "SUM(CASE WHEN e.status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_executions, "
       "SUM(e.rows_fetched) AS total_rows_fetched, "
-      "AVG(e.duration_ms) AS avg_duration_ms, MAX(e.duration_ms) AS max_duration_ms "
+      "AVG(e.duration_ms) AS avg_duration_ms, MAX(e.duration_ms) AS max_duration_ms, "
+      "AVG(e.total_duration_ms) AS avg_total_duration_ms, "
+      "MAX(e.total_duration_ms) AS max_total_duration_ms "
       "FROM " + p + "sessions s "
       "LEFT JOIN " + p + "sql_statements st ON s.session_id = st.session_id "
       "LEFT JOIN " + p + "sql_executions e ON st.statement_id = e.statement_id "
@@ -371,7 +396,9 @@ std::vector<std::string> BuildViewStatements(const std::string& p) {
       "CAST(EXTRACT(EPOCH FROM (e.execution_start_time - e.enqueue_time)) * 1000 AS BIGINT) "
       "END AS queue_wait_ms, e.rows_fetched, e.status, e.error_message, "
       "e.duration_ms, e.query_profile, s.username, s.auth_method, s.peer, "
-      "st.query_tag, s.session_tag "
+      "st.query_tag, s.session_tag, "
+      "e.fetch_start_time, e.fetch_end_time, e.cursor_close_time, "
+      "e.total_duration_ms "
       "FROM " + p + "sql_executions e "
       "JOIN " + p + "sql_statements st ON e.statement_id = st.statement_id "
       "JOIN " + p + "sessions s ON st.session_id = s.session_id",
@@ -441,9 +468,13 @@ std::vector<std::string> BuildSchemaStatements(const std::string& p,
       "bind_parameters VARCHAR, "
       "execution_start_time TIMESTAMP WITH TIME ZONE NOT NULL, "
       "execution_end_time TIMESTAMP WITH TIME ZONE, "
-      "enqueue_time TIMESTAMP WITH TIME ZONE, rows_fetched BIGINT, "
+      "enqueue_time TIMESTAMP WITH TIME ZONE, "
+      "fetch_start_time TIMESTAMP WITH TIME ZONE, "
+      "fetch_end_time TIMESTAMP WITH TIME ZONE, "
+      "cursor_close_time TIMESTAMP WITH TIME ZONE, rows_fetched BIGINT, "
       "status VARCHAR NOT NULL CHECK (status IN ('queued', 'executing', 'success', 'error', 'timeout', 'cancelled')), "
-      "error_message VARCHAR, duration_ms BIGINT, query_profile JSON)",
+      "error_message VARCHAR, duration_ms BIGINT, total_duration_ms BIGINT, "
+      "query_profile JSON)",
 
       // Additive migrations (safe to re-run on an existing schema)
       "ALTER TABLE " + p + "instances ADD COLUMN IF NOT EXISTS instance_tag JSON",
@@ -452,6 +483,10 @@ std::vector<std::string> BuildSchemaStatements(const std::string& p,
       "ALTER TABLE " + p + "sql_statements ADD COLUMN IF NOT EXISTS query_tag JSON",
       "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS enqueue_time TIMESTAMP WITH TIME ZONE",
       "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS query_profile JSON",
+      "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS fetch_start_time TIMESTAMP WITH TIME ZONE",
+      "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS fetch_end_time TIMESTAMP WITH TIME ZONE",
+      "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS cursor_close_time TIMESTAMP WITH TIME ZONE",
+      "ALTER TABLE " + p + "sql_executions ADD COLUMN IF NOT EXISTS total_duration_ms BIGINT",
 
       // Indexes on foreign-key (child) columns, status, and every TIMESTAMPTZ
       // lifecycle column. Indexing the timestamps keeps time-range queries and

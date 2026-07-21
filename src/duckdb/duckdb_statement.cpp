@@ -1923,7 +1923,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 #ifdef GIZMOSQL_ENTERPRISE
       // Mark execution as complete for admin commands
       if (execution_instrumentation_) {
-        execution_instrumentation_->SetCompleted(0);
+        execution_instrumentation_->SetCompleted();
       }
 #endif
       record_query_metric("OK");
@@ -1945,7 +1945,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
 #ifdef GIZMOSQL_ENTERPRISE
     // Mark execution as complete for successful SET commands
     if (execution_instrumentation_) {
-      execution_instrumentation_->SetCompleted(0);
+      execution_instrumentation_->SetCompleted();
     }
 #endif
     record_query_metric("OK");
@@ -2219,7 +2219,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
                                  {"execution_id", execution_id}, {"error", ex.what()});
         }
       }
-      execution_instrumentation_->SetCompleted(GetLastExecutionDurationMs());
+      execution_instrumentation_->SetCompleted();
     } else if (session->kill_requested) {
       // The query was interrupted by KILL SESSION, not a genuine execution error.
       execution_instrumentation_->SetCancelled();

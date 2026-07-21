@@ -51,6 +51,7 @@ class InstrumentationServerFixture
         .health_port = 31340,
         .username = "tester",
         .password = "tester",
+        .cluster_id = "12345678-1234-5678-1234-567812345678",
     };
   }
 };
@@ -139,6 +140,143 @@ TEST_F(InstrumentationServerFixture, InstrumentationRecordsCreated) {
     }
   }
   ASSERT_TRUE(found_statement) << "Expected to find statement instrumentation records";
+}
+
+namespace {
+
+// Executes a query and returns the first cell of the result as a string
+// (empty string if the query returned no rows).
+std::string QueryScalar(arrow::flight::sql::FlightSqlClient& sql_client,
+                        arrow::flight::FlightCallOptions& call_options,
+                        const std::string& sql) {
+  auto info_result = sql_client.Execute(call_options, sql);
+  EXPECT_TRUE(info_result.ok()) << info_result.status().ToString();
+  if (!info_result.ok()) return "";
+  std::string value;
+  for (const auto& endpoint : (*info_result)->endpoints()) {
+    auto reader_result = sql_client.DoGet(call_options, endpoint.ticket);
+    EXPECT_TRUE(reader_result.ok()) << reader_result.status().ToString();
+    if (!reader_result.ok()) return "";
+    auto table_result = (*reader_result)->ToTable();
+    EXPECT_TRUE(table_result.ok()) << table_result.status().ToString();
+    if (!table_result.ok()) return "";
+    auto table = *table_result;
+    if (value.empty() && table->num_rows() > 0) {
+      auto scalar_result = table->column(0)->chunk(0)->GetScalar(0);
+      EXPECT_TRUE(scalar_result.ok()) << scalar_result.status().ToString();
+      if (scalar_result.ok()) value = (*scalar_result)->ToString();
+    }
+  }
+  return value;
+}
+
+}  // namespace
+
+// The five-timestamp execution timeline must be internally consistent:
+// duration_ms == execution_end_time - execution_start_time,
+// total_duration_ms == fetch_end_time - execution_start_time, and the
+// timestamps must be monotonically ordered.
+TEST_F(InstrumentationServerFixture, ExecutionTimelineConsistent) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  // Execute a query that returns rows and drain the stream completely.
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info, sql_client.Execute(
+                     call_options, "SELECT i AS timeline_probe FROM range(100) t(i)"));
+  for (const auto& endpoint : info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               sql_client.DoGet(call_options, endpoint.ticket));
+    std::shared_ptr<arrow::Table> table;
+    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+    ASSERT_EQ(table->num_rows(), 100);
+  }
+
+  // Wait for the async write queue to finalize the execution record.
+  const std::string probe_filter =
+      "FROM _gizmosql_instr.execution_details "
+      "WHERE sql_text LIKE '%timeline_probe%' "
+      "  AND sql_text NOT LIKE '%execution_details%' "
+      "  AND cursor_close_time IS NOT NULL";
+  bool finalized = false;
+  for (int i = 0; i < 50 && !finalized; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    finalized =
+        QueryScalar(sql_client, call_options, "SELECT COUNT(*) " + probe_filter) != "0";
+  }
+  ASSERT_TRUE(finalized) << "Execution record was never finalized";
+
+  // Every finalized column must be populated for a drained SELECT...
+  ASSERT_EQ(QueryScalar(sql_client, call_options,
+                        "SELECT COUNT(*) " + probe_filter +
+                            " AND execution_end_time IS NOT NULL"
+                            " AND fetch_start_time IS NOT NULL"
+                            " AND fetch_end_time IS NOT NULL"
+                            " AND duration_ms IS NOT NULL"
+                            " AND total_duration_ms IS NOT NULL"),
+            "1");
+
+  // ...and the whole table (not just the probe row) must satisfy the
+  // timeline invariants exactly.
+  ASSERT_EQ(
+      QueryScalar(
+          sql_client, call_options,
+          "SELECT COUNT(*) FROM _gizmosql_instr.sql_executions "
+          "WHERE cursor_close_time IS NOT NULL "
+          "  AND (date_diff('millisecond', execution_start_time, execution_end_time) "
+          "         <> duration_ms "
+          "    OR date_diff('millisecond', execution_start_time, fetch_end_time) "
+          "         <> total_duration_ms "
+          "    OR total_duration_ms < duration_ms "
+          "    OR fetch_end_time < execution_end_time "
+          "    OR cursor_close_time < fetch_end_time "
+          "    OR (fetch_start_time IS NOT NULL AND fetch_start_time > fetch_end_time))"),
+      "0")
+      << "Found executions violating the timeline invariants";
+}
+
+// cluster_id (from --cluster-id) must be exposed in the session_activity and
+// active_sessions views.
+TEST_F(InstrumentationServerFixture, ClusterIdExposedInViews) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  const std::string expected_cluster_id = "12345678-1234-5678-1234-567812345678";
+  EXPECT_EQ(QueryScalar(sql_client, call_options,
+                        "SELECT DISTINCT cluster_id::VARCHAR "
+                        "FROM _gizmosql_instr.session_activity "
+                        "WHERE cluster_id IS NOT NULL"),
+            expected_cluster_id);
+  // This session is active right now, so active_sessions must show it too.
+  EXPECT_EQ(QueryScalar(sql_client, call_options,
+                        "SELECT DISTINCT cluster_id::VARCHAR "
+                        "FROM _gizmosql_instr.active_sessions "
+                        "WHERE cluster_id IS NOT NULL"),
+            expected_cluster_id);
 }
 
 // Test that DETACH of instrumentation database is prevented
