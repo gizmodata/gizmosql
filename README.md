@@ -70,7 +70,7 @@ For more details, see the [Editions documentation](https://docs.gizmosql.com/edi
 |----------------------------------------------------------------------------------|---------|
 | [DuckDB](https://duckdb.org)                                                     | v1.5.4  |
 | [SQLite](https://sqlite.org)                                                     | 3.53.1  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1  |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.0  |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2  |
 | [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0 |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |

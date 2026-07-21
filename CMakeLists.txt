@@ -270,6 +270,13 @@ file(GLOB_RECURSE ARROW_FETCHCONTENT_LIBS
         "${ARROW_BUILD_DIR}/_deps/absl-build/absl/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
         "${ARROW_BUILD_DIR}/_deps/cares-build/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
         "${ARROW_BUILD_DIR}/_deps/re2-build/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        # Arrow 25's protobuf split UTF-8 validation into utf8_range/utf8_validity;
+        # arrow_bundled_dependencies references but does not contain these symbols
+        "${ARROW_BUILD_DIR}/_deps/protobuf-build/third_party/utf8_range/*${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        "${ARROW_BUILD_DIR}/_deps/grpc-build/${CMAKE_STATIC_LIBRARY_PREFIX}utf8_range_lib${CMAKE_STATIC_LIBRARY_SUFFIX}"
+        # gRPC in Arrow 25 builds upb as separate archives that
+        # arrow_bundled_dependencies references but does not contain
+        "${ARROW_BUILD_DIR}/_deps/grpc-build/${CMAKE_STATIC_LIBRARY_PREFIX}upb*${CMAKE_STATIC_LIBRARY_SUFFIX}"
         # ExternalProject layout (older Arrow)
         "${ARROW_BUILD_DIR}/absl_ep-install/lib/*${CMAKE_STATIC_LIBRARY_SUFFIX}")
 # Filter out CMakeFiles/ build artifacts that match the glob

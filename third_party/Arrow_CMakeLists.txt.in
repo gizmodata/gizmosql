@@ -5,15 +5,15 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(ExternalProject)
 
-# Arrow 23 has a macOS-specific bug where it tries to set_target_properties on
-# c-ares::cares (an ALIAS target). This patch fixes it. On Linux, the pattern
-# won't match (no if(APPLE) block executes), so the patch is harmless.
+# patch_arrow.cmake applies small source fixes (see comments there). Patterns
+# already fixed upstream simply don't match and become no-ops, so the patch is
+# safe to run against any Arrow version.
 
 ExternalProject_Add(
     arrow_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/apache/arrow.git
-    GIT_TAG apache-arrow-23.0.1
+    GIT_TAG apache-arrow-25.0.0
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR cpp
     PATCH_COMMAND "${CMAKE_COMMAND}" -DARROW_SOURCE_DIR=<SOURCE_DIR> -P "${CMAKE_SOURCE_DIR}/third_party/patch_arrow.cmake"

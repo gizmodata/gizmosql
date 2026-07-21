@@ -50,7 +50,7 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 |----------------------------------------------------------------------------------|----------------|-------------|
 | [DuckDB](https://duckdb.org)                                                     | v1.5.4         | v1.4.5      |
 | [SQLite](https://sqlite.org)                                                     | 3.53.1         | 3.53.1      |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 23.0.1         | 23.0.1      |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.0         | 25.0.0      |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      |
 | [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0        | v1.25.0     |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     |
@@ -500,7 +500,7 @@ $ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 23.0.1
+Apache Arrow version: 25.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.5.4
 Running Init SQL command: 
@@ -528,7 +528,7 @@ The above will produce output similar to the following:
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 23.0.1
+Apache Arrow version: 25.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
 Using database file: "/Users/philip/Documents/git/gizmosql/data/TPC-H-small.sqlite"

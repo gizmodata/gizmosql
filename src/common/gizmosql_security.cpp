@@ -228,7 +228,13 @@ void SecurityUtilities::ParseBasicHeader(const flight::CallHeaders& incoming_hea
                                          std::string& username, std::string& password) {
   std::string encoded_credentials =
       FindKeyValPrefixInCallHeaders(incoming_headers, kAuthHeader, kBasicPrefix);
-  std::stringstream decoded_stream(arrow::util::base64_decode(encoded_credentials));
+  // Arrow 25+: base64_decode returns Result<std::string> (rejects malformed
+  // input). Invalid base64 leaves username/password empty so auth fails.
+  auto decoded = arrow::util::base64_decode(encoded_credentials);
+  if (!decoded.ok()) {
+    return;
+  }
+  std::stringstream decoded_stream(decoded.MoveValueUnsafe());
   std::getline(decoded_stream, username, ':');
   std::getline(decoded_stream, password, ':');
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgraded Apache Arrow from 23.0.1 to 25.0.0.** Arrow 25 ships the new Flight SQL protocol field `is_update` on `ActionCreatePreparedStatementResult` ([apache/arrow#49498](https://github.com/apache/arrow/pull/49498)), which will eventually let clients drop query-vs-update text sniffing for prepared statements — note the field is protobuf-only in Arrow 25's C++ release (the C++ Flight SQL server/client APIs do not expose it yet), so GizmoSQL cannot populate it until a follow-up Arrow C++ release does. Two of the three local Arrow source patches (the macOS c-ares `set_target_properties` fix and the `cctools_ld` libtool-detection regex) were fixed upstream and now no-op; the MSVC SSE-defines guard still applies.
+
 ### Added
 
 - **Full per-execution timeline in instrumentation: `sql_executions` now records five timestamps and two durations.** New columns `fetch_start_time` (first result batch delivered to the client; NULL if none; can precede `execution_end_time` since results stream), `fetch_end_time` (last batch delivered), `cursor_close_time` (client released the statement/stream), and `total_duration_ms` (`fetch_end_time - execution_start_time`, i.e. execution through result delivery) join the existing `enqueue_time`/`execution_start_time`/`execution_end_time`/`duration_ms`, so queue wait, engine time, time-to-first-row, fetch phase, and idle-open-cursor time are all derivable by subtraction. Added via `ADD COLUMN IF NOT EXISTS` migrations on all backends (file, PostgreSQL, DuckLake); exposed in the `session_activity` and `execution_details` views, with `avg_total_duration_ms`/`max_total_duration_ms` added to `session_stats`.

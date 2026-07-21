@@ -1,6 +1,9 @@
-# Cross-platform patch for Arrow 23's ThirdpartyToolchain.cmake
+# Cross-platform patch for Arrow's ThirdpartyToolchain.cmake
 # Removes problematic set_target_properties on ALIAS target (c-ares::cares)
 # and LIBRESOLV_LIBRARY references that break the build.
+# (The c-ares fix was needed for Arrow 23; fixed upstream in Arrow 25 so the
+# regex no longer matches there — each patch below is a no-op when its
+# pattern is absent.)
 #
 # This replaces the POSIX sed-based patch command for Windows compatibility.
 
