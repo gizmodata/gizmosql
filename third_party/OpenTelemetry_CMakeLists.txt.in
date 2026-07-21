@@ -15,6 +15,8 @@ set(PROTOBUF_INCLUDE_DIR "@ARROW_PROTOBUF_INCLUDE_DIR@")
 set(PROTOBUF_LIB "@ARROW_PROTOBUF_LIB@")
 set(PROTOBUF_LITE_LIB "@ARROW_PROTOBUF_LITE_LIB@")
 set(PROTOBUF_PROTOC "@ARROW_PROTOC_EXECUTABLE@")
+set(ABSL_INCLUDE_DIR "@ARROW_ABSL_INCLUDE_DIR@")
+set(UTF8_RANGE_INCLUDE_DIR "@ARROW_UTF8_RANGE_INCLUDE_DIR@")
 
 # Build OpenTelemetry with HTTP exporter only (no gRPC dependency)
 ExternalProject_Add(
@@ -35,11 +37,14 @@ ExternalProject_Add(
       -DWITH_OTLP_GRPC=OFF
       # Enable HTTP exporter with curl
       -DWITH_OTLP_HTTP=ON
-      # Use Arrow's bundled protobuf (v21.3 via FetchContent).
+      # Use Arrow's bundled protobuf (via FetchContent).
       # Block any system protobuf (e.g. Homebrew) so that the cache variables
       # below are authoritative.  CMAKE_IGNORE_PREFIX_PATH prevents config-mode
       # find_package from discovering system packages.
       -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew$<SEMICOLON>/usr/local
+      # Arrow 25's protobuf headers include absl (and reference utf8_range)
+      # headers, which live in Arrow's FetchContent source trees
+      "-DCMAKE_CXX_FLAGS=-I${ABSL_INCLUDE_DIR} -I${UTF8_RANGE_INCLUDE_DIR}"
       -DProtobuf_INCLUDE_DIR=${PROTOBUF_INCLUDE_DIR}
       -DProtobuf_LIBRARY=${PROTOBUF_LIB}
       -DProtobuf_LITE_LIBRARY=${PROTOBUF_LITE_LIB}

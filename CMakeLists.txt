@@ -426,6 +426,10 @@ if(WITH_OPENTELEMETRY)
     set(ARROW_PROTOBUF_LIB "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-build/${CMAKE_STATIC_LIBRARY_PREFIX}protobuf${CMAKE_STATIC_LIBRARY_SUFFIX}")
     set(ARROW_PROTOBUF_LITE_LIB "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-build/${CMAKE_STATIC_LIBRARY_PREFIX}protobuf-lite${CMAKE_STATIC_LIBRARY_SUFFIX}")
     set(ARROW_PROTOC_EXECUTABLE "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-build/protoc${CMAKE_EXECUTABLE_SUFFIX}")
+    # Arrow 25's protobuf headers include absl headers (and ship utf8_range),
+    # so OTel's generated-proto compilation needs these on its include path
+    set(ARROW_ABSL_INCLUDE_DIR "${ARROW_BUILD_DIR_OTEL}/_deps/absl-src")
+    set(ARROW_UTF8_RANGE_INCLUDE_DIR "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-src/third_party/utf8_range")
     configure_file(third_party/OpenTelemetry_CMakeLists.txt.in opentelemetry/CMakeLists.txt @ONLY)
     execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
