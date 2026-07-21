@@ -9,7 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Upgraded Apache Arrow from 23.0.1 to 25.0.0.** Arrow 25 ships the new Flight SQL protocol field `is_update` on `ActionCreatePreparedStatementResult` ([apache/arrow#49498](https://github.com/apache/arrow/pull/49498)), which will eventually let clients drop query-vs-update text sniffing for prepared statements — note the field is protobuf-only in Arrow 25's C++ release (the C++ Flight SQL server/client APIs do not expose it yet), so GizmoSQL cannot populate it until a follow-up Arrow C++ release does. Two of the three local Arrow source patches (the macOS c-ares `set_target_properties` fix and the `cctools_ld` libtool-detection regex) were fixed upstream and now no-op; the MSVC SSE-defines guard still applies.
+- **Upgraded Apache Arrow from 23.0.1 to 25.0.0** (two releases: [24.0.0](https://arrow.apache.org/blog/2026/04/21/24.0.0-release/) and [25.0.0](https://arrow.apache.org/blog/2026/07/10/25.0.0-release/)). Highlights that matter to GizmoSQL users:
+  - **Flight SQL protocol groundwork for retiring client-side DML/DDL detection.** The protocol now lets servers declare at prepare time whether a statement returns a result set (`is_update` on `ActionCreatePreparedStatementResult`, [apache/arrow#49498](https://github.com/apache/arrow/pull/49498)) — the first step toward GizmoSQL client drivers dropping query-vs-update text sniffing for prepared statements. Adoption lands as the ecosystem catches up: the field is protobuf-only in Arrow 25's C++ release (not yet exposed in the C++ Flight SQL server API, so GizmoSQL cannot populate it yet), while Arrow Java has already merged client support.
+  - **Stricter Arrow IPC validation**: the IPC reader now rejects malformed streams and files it previously tolerated — a hardening win for a network-facing server. Note that a non-conforming client producing sloppy IPC could newly see rejections.
+  - **A formal Arrow security model**: the Arrow project published project-wide and C++-specific security documentation covering guarantees when handling untrusted Arrow data — relevant to GizmoSQL since Arrow is our entire wire format.
+  - **Refreshed bundled gRPC/protobuf stack**, bringing the server's network layer up to current security patch levels.
+  - **ARM64 SVE runtime dispatch**: Arrow's vectorized routines now use SVE on capable ARM CPUs (e.g. AWS Graviton 3/4) — a modest boost for GizmoSQL's arm64 builds on the Flight data path.
+
+  Build notes: two of the three local Arrow source patches (the macOS c-ares `set_target_properties` fix and the `cctools_ld` libtool-detection regex) were fixed upstream and now no-op; the MSVC SSE-defines guard still applies.
 
 ### Added
 
