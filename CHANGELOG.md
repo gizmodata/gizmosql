@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.1] - 2026-07-22
+
 ### Fixed
 
 - **Windows MSI: same-version rebuilds now upgrade in place.** `<MajorUpgrade>` now sets `AllowSameVersionUpgrades="yes"`, so reinstalling an MSI built from the same release version replaces the existing install instead of failing to trigger the upgrade logic. (`ProductVersion` itself was already correct here — it binds to the server exe's `VERSIONINFO` resource, which CMake stamps from the release git tag.)
