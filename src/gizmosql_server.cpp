@@ -152,6 +152,14 @@ int main(int argc, char** argv) {
              "DuckDB's `memory_limit` setting (global / instance-wide). Empty leaves DuckDB's "
              "built-in default (80% of physical RAM). If empty, uses env var GIZMOSQL_MEMORY_LIMIT. "
              "Ignored for the SQLite backend.")
+            ("allow-unsigned-extensions", po::value<bool>()->default_value(false),
+             "Allow loading unsigned DuckDB extensions (DuckDB's allow_unsigned_extensions "
+             "setting). This setting is GLOBAL_ONLY in DuckDB - it cannot be changed via SET or "
+             "init SQL after the database is open, so it must be enabled here at startup. "
+             "SECURITY: keep disabled unless loading trusted, operator-provided extensions "
+             "(e.g. a locally mounted release bundle). If not set, uses env var "
+             "GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS (1/true to enable). "
+             "Ignored for the SQLite backend.")
             ("capture-query-profile", po::value<std::string>()->default_value(""),
              "[Enterprise] Server default for capturing DuckDB query profiles into the "
              "instrumentation sql_executions.query_profile column: off|standard|detailed. "
@@ -453,6 +461,11 @@ int main(int argc, char** argv) {
 
   std::string memory_limit = vm["memory-limit"].as<std::string>();
 
+  std::optional<bool> allow_unsigned_extensions =
+      vm["allow-unsigned-extensions"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["allow-unsigned-extensions"].as<bool>());
+
   std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
 
   std::string query_log_level =
@@ -570,5 +583,6 @@ int main(int argc, char** argv) {
       max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile,
       cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path,
       graceful_shutdown, shutdown_grace_period_seconds,
-      health_check_interval_seconds, health_check_staleness_seconds);
+      health_check_interval_seconds, health_check_staleness_seconds,
+      allow_unsigned_extensions);
 }

@@ -536,7 +536,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& log_schema,
     const std::string& log_catalog_db_path,
     const int32_t& health_check_interval_seconds,
-    const int32_t& health_check_staleness_seconds) {
+    const int32_t& health_check_staleness_seconds,
+    const bool& allow_unsigned_extensions) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -757,6 +758,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                                              max_queued_statements, max_queue_wait_seconds,
                                              admin_bypass_queue_default, memory_limit,
                                              capture_query_profile,
+                                             allow_unsigned_extensions,
                                              nullptr))  // No instrumentation manager yet
 
     // Set instance_id for all future log entries (enables log correlation)
@@ -1188,7 +1190,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     std::string log_schema,
     std::string log_catalog_db_path,
     int32_t health_check_interval_seconds,
-    int32_t health_check_staleness_seconds) {
+    int32_t health_check_staleness_seconds,
+    bool allow_unsigned_extensions) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
   // state (e.g. a previous server in the same process, as in the test binary)
@@ -1516,7 +1519,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default,
       memory_limit, capture_query_profile, cluster_id, enable_catalog_logging,
       log_catalog, log_schema, log_catalog_db_path,
-      health_check_interval_seconds, health_check_staleness_seconds);
+      health_check_interval_seconds, health_check_staleness_seconds,
+      allow_unsigned_extensions);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1785,7 +1789,8 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::optional<bool> graceful_shutdown,
                        int32_t shutdown_grace_period_seconds,
                        int32_t health_check_interval_seconds,
-                       int32_t health_check_staleness_seconds) {
+                       int32_t health_check_staleness_seconds,
+                       std::optional<bool> allow_unsigned_extensions) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1876,6 +1881,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   resolve_bool_env(otel_enabled, "GIZMOSQL_OTEL_ENABLED");
   resolve_bool_env(admin_bypass_queue_default, "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT");
   resolve_bool_env(graceful_shutdown, "GIZMOSQL_GRACEFUL_SHUTDOWN");
+  resolve_bool_env(allow_unsigned_extensions, "GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS");
   // ----------------------------------------------------------
 
   // Graceful shutdown grace-period cap. Sentinel -1 (default) => consult env,
@@ -2164,7 +2170,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       admin_bypass_queue_default.value_or(true), memory_limit, capture_profile_mode,
       cluster_id, enable_catalog_logging.value(), log_catalog, log_schema,
       log_catalog_db_path, health_check_interval_seconds,
-      health_check_staleness_seconds);
+      health_check_staleness_seconds, allow_unsigned_extensions.value());
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

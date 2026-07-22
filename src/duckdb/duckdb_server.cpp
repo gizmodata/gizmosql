@@ -2253,6 +2253,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
     const bool& admin_bypass_queue_default, const std::string& memory_limit,
     const gizmosql::QueryProfileMode& capture_query_profile,
+    const bool& allow_unsigned_extensions,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2272,6 +2273,15 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   duckdb::DBConfig config;
   if (read_only) {
     config.options.access_mode = duckdb::AccessMode::READ_ONLY;
+  }
+
+  // allow_unsigned_extensions is GLOBAL_ONLY in DuckDB — it cannot be changed
+  // via SET / init SQL after the database is open, so it must be applied here.
+  if (allow_unsigned_extensions) {
+    config.SetOptionByName("allow_unsigned_extensions", duckdb::Value::BOOLEAN(true));
+    GIZMOSQL_LOG(WARNING)
+        << "DuckDB allow_unsigned_extensions is ENABLED - unsigned extensions can "
+           "be loaded. Only enable this for trusted, operator-provided extensions.";
   }
 
   if (!storage_version.empty()) {

@@ -252,5 +252,13 @@ int RunFlightSQLServer(
     /// seconds — detects a hung health check query
     /// (--health-check-staleness-seconds / GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS).
     /// 0 = consult env var, then default 3x the interval.
-    int32_t health_check_staleness_seconds = 0);
+    int32_t health_check_staleness_seconds = 0,
+    /// [DuckDB] Allow loading unsigned DuckDB extensions
+    /// (--allow-unsigned-extensions / GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS).
+    /// DuckDB's `allow_unsigned_extensions` setting is GLOBAL_ONLY — it cannot be
+    /// changed via SET / init SQL after the database is open, so it must be
+    /// enabled here at startup. SECURITY: keep disabled unless loading trusted,
+    /// operator-provided extensions (e.g. a locally mounted release bundle).
+    /// nullopt = consult env var, then default off.
+    std::optional<bool> allow_unsigned_extensions = std::nullopt);
 }
