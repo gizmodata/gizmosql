@@ -127,10 +127,12 @@ TEST_F(MaxMetadataDefaultFixture, SmallHeaderSucceeds) {
 
 TEST_F(MaxMetadataDefaultFixture, OversizedHeaderRejected) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-  // 12 KB header value — exceeds the gRPC default of ~8 KB and must be
-  // rejected somewhere in the gRPC HTTP/2 stack (client- or server-side).
+  // 40 KB header value — newer gRPC rejects sizes between the soft (~8 KB)
+  // and hard (~16 KB) limits only *probabilistically* (grpc/grpc#31643), so
+  // the header must exceed the hard limit to be deterministically rejected
+  // somewhere in the gRPC HTTP/2 stack (client- or server-side).
   auto status = TrySelectWithBigHeader(GetPort(), GetUsername(), GetPassword(),
-                                       MakeBigHeaderValue(12 * 1024));
+                                       MakeBigHeaderValue(40 * 1024));
   ASSERT_FALSE(status.ok())
       << "oversized header should be rejected at the gRPC default limit";
 }
