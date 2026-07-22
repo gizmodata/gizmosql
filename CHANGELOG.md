@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-07-22
+
 ### Changed
 
 - **Upgraded Apache Arrow from 23.0.1 to 25.0.0** (two releases: [24.0.0](https://arrow.apache.org/blog/2026/04/21/24.0.0-release/) and [25.0.0](https://arrow.apache.org/blog/2026/07/10/25.0.0-release/)). Highlights that matter to GizmoSQL users:
