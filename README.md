@@ -129,8 +129,15 @@ docker run --name gizmosql \
 
 ```bash
 brew tap gizmodata/tap
+brew trust gizmodata/tap
 brew install gizmosql
 ```
+
+> **Note:** Homebrew 6.0 (June 2026) requires third-party taps to be explicitly
+> trusted before formulae can be installed from them — hence the `brew trust`
+> step. On older Homebrew versions the command doesn't exist; simply skip it.
+> Alternatively, `brew install gizmodata/tap/gizmosql` installs with a one-off
+> trust for just this formula.
 
 Supported platforms:
 - macOS (Apple Silicon / ARM64)

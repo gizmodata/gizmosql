@@ -85,6 +85,7 @@ The LTS formula lives in the same `gizmodata/tap` as the regular `gizmosql` form
 
 ```bash
 brew tap gizmodata/tap         # once (skip if already tapped)
+brew trust gizmodata/tap       # once (Homebrew 6.0+; skip on older versions)
 brew install gizmosql-lts      # LTS channel
 # or, side-by-side:
 brew install gizmosql gizmosql-lts

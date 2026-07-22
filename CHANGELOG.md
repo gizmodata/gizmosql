@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docs: Homebrew install instructions updated for Homebrew 6.0's tap-trust requirement.** Since June 2026, Homebrew requires third-party taps to be explicitly trusted (`brew trust gizmodata/tap`) before formulae can be installed from them; the README, install docs, and LTS-channel docs now include the trust step (with a note that older Homebrew versions can skip it).
+
 ## [1.34.0] - 2026-07-22
 
 ### Changed
