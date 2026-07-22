@@ -795,19 +795,29 @@ jobs:
       - name: Convert logo to BMP
         run: |
           Add-Type -AssemblyName System.Drawing
+          # Draw the logo preserving its aspect ratio (the source logo is a
+          # 1024x1024 square — drawing it into a hardcoded 4:1 box squishes it).
+          function Draw-LogoFit($graphics, $img, $x, $y, $maxW, $maxH) {
+            $scale = [Math]::Min($maxW / $img.Width, $maxH / $img.Height)
+            $w = [int]($img.Width * $scale); $h = [int]($img.Height * $scale)
+            $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $graphics.DrawImage($img, $x, $y, $w, $h)
+          }
           $logo = [System.Drawing.Image]::FromFile("${{ github.workspace }}\installer\gizmosql_logo.png")
-          # Banner (493x58)
+          # Banner (493x58): WixUI overlays the page title on the LEFT, so
+          # keep the logo small on the RIGHT.
           $banner = New-Object System.Drawing.Bitmap(493, 58)
           $g = [System.Drawing.Graphics]::FromImage($banner)
           $g.Clear([System.Drawing.Color]::White)
-          $g.DrawImage($logo, 10, 4, 200, 50)
+          Draw-LogoFit $g $logo 437 7 44 44
           $g.Dispose()
           $banner.Save("${{ github.workspace }}\installer\banner.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
-          # Dialog (493x312)
+          # Dialog (493x312): WixUI's text column starts around x=165, so
+          # keep the logo in the left strip.
           $dialog = New-Object System.Drawing.Bitmap(493, 312)
           $g = [System.Drawing.Graphics]::FromImage($dialog)
           $g.Clear([System.Drawing.Color]::White)
-          $g.DrawImage($logo, 20, 20, 300, 75)
+          Draw-LogoFit $g $logo 22 30 120 120
           $g.Dispose()
           $dialog.Save("${{ github.workspace }}\installer\dialog.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
           $logo.Dispose()

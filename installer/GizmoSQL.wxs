@@ -10,7 +10,8 @@
     <Icon Id="gizmosql.ico" SourceFile="gizmosql.ico" />
     <Property Id="ARPPRODUCTICON" Value="gizmosql.ico" />
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of GizmoSQL is already installed." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of GizmoSQL is already installed." />
     <Media Id="1" Cabinet="gizmosql.cab" EmbedCab="yes" />
 
     <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />

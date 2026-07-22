@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Windows MSI: same-version rebuilds now upgrade in place.** `<MajorUpgrade>` now sets `AllowSameVersionUpgrades="yes"`, so reinstalling an MSI built from the same release version replaces the existing install instead of failing to trigger the upgrade logic. (`ProductVersion` itself was already correct here — it binds to the server exe's `VERSIONINFO` resource, which CMake stamps from the release git tag.)
+- **Windows MSI: installer artwork no longer stretched.** The CI-generated WixUI banner and dialog bitmaps drew the square 1024x1024 GizmoSQL logo into hardcoded 4:1 boxes, squishing it, and placed the banner logo under the wizard page title. The logo is now drawn aspect-ratio-preserved — small on the right of the banner (clear of the title text) and in the left strip of the welcome dialog (clear of the text column).
 - **Docs: Homebrew install instructions updated for Homebrew 6.0's tap-trust requirement.** Since June 2026, Homebrew requires third-party taps to be explicitly trusted (`brew trust gizmodata/tap`) before formulae can be installed from them; the README, install docs, and LTS-channel docs now include the trust step (with a note that older Homebrew versions can skip it).
 
 ## [1.34.0] - 2026-07-22
