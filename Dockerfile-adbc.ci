@@ -27,6 +27,20 @@ RUN curl -LsSf https://dbc.columnar.tech/install.sh | sh \
          dbc install --level system "$d"; \
        done \
     && dbc list --level system \
-    && rm -rf /root/.local /root/.cache
+    && rm -rf /root/.local /root/.cache \
+    # Symlink every driver .so into /usr/local/lib under its canonical name.
+    # dbc installs to versioned per-arch dirs (/etc/adbc/drivers/<name>_<os>_
+    # <arch>_v<ver>/) that consumers resolving drivers by *path* — e.g. the
+    # DuckDB snowflake extension, which searches /usr/local/lib, /usr/lib and
+    # ~/.duckdb/extensions — will never find. The symlinks give every driver a
+    # stable, version-independent path.
+    && find /etc/adbc/drivers -name 'libadbc_driver_*.so' \
+         -exec sh -c 'ln -sf "$1" "/usr/local/lib/$(basename "$1")"' _ {} \; \
+    && ls -l /usr/local/lib/libadbc_driver_*.so
+
+# Explicit override honored by the DuckDB snowflake extension; points at the
+# stable symlink so it survives driver version bumps. Baked into the image
+# because some orchestrators cannot set container env vars at provision time.
+ENV SNOWFLAKE_ADBC_DRIVER_PATH=/usr/local/lib/libadbc_driver_snowflake.so
 
 USER app_user

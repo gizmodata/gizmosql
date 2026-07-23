@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`-adbc` images: bundled ADBC drivers are now discoverable by path-resolving consumers such as the DuckDB `snowflake` extension.** `dbc` installs drivers into versioned per-arch directories under `/etc/adbc/drivers/` that the extension's search paths (`/usr/local/lib`, `/usr/lib`, `~/.duckdb/extensions/...`) never see, so `snowflake_query()` failed with "ADBC Snowflake driver (libadbc_driver_snowflake.so) not found" even though the driver was present. Every bundled driver `.so` is now symlinked to a stable, version-independent path in `/usr/local/lib/`, and `SNOWFLAKE_ADBC_DRIVER_PATH=/usr/local/lib/libadbc_driver_snowflake.so` is baked into the image (some orchestrators cannot set container env vars at provision time).
+
 ## [1.35.0] - 2026-07-23
 
 ### Changed
