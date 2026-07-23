@@ -991,6 +991,8 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
+          # BACKPORT BRANCH (release/v1.34.x): do not mark as the Latest release
+          make_latest: "false"
           body_path: release_notes.md
           files: |
             artifacts/gizmosql_cli_*.zip
@@ -1069,9 +1071,11 @@ jobs:
                 for d in "${digests[@]}"; do
                   sources+=("${repo}@sha256:${d}")
                 done
-                echo "Creating ${repo}:latest${sfx} and ${repo}:${REF_NAME}${sfx} from ${sources[*]}"
+                # BACKPORT BRANCH (release/v1.34.x): version tags ONLY — this
+                # branch must never move the latest* tags, which belong to the
+                # newest release line (v1.35.0+).
+                echo "Creating ${repo}:${REF_NAME}${sfx} from ${sources[*]}"
                 docker buildx imagetools create \
-                  -t "${repo}:latest${sfx}" \
                   -t "${repo}:${REF_NAME}${sfx}" \
                   "${sources[@]}"
               done
@@ -1134,15 +1138,15 @@ jobs:
           provenance: mode=max
           sbom: true
           push: true
+          # BACKPORT BRANCH (release/v1.34.x): version tags ONLY — never latest*
           tags: |
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest${{ matrix.sfx }}-adbc
             ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}${{ matrix.sfx }}-adbc
-            ${{ env.GITHUB_IMAGE_NAME }}:latest${{ matrix.sfx }}-adbc
             ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}${{ matrix.sfx }}-adbc
 
   update-homebrew-tap:
     name: Update Homebrew tap (stable + LTS formulas)
-    if: startsWith(github.ref, 'refs/tags/')
+    # BACKPORT BRANCH (release/v1.34.x): never advance the tap from a backport
+    if: false
     needs: create-release
     runs-on: ubuntu-latest
     steps:
@@ -1328,7 +1332,8 @@ jobs:
 
   trigger-gizmosql-py-release:
     name: Trigger gizmosql-py release (PyPI)
-    if: startsWith(github.ref, 'refs/tags/v')
+    # BACKPORT BRANCH (release/v1.34.x): never trigger PyPI from a backport
+    if: false
     needs: create-release
     runs-on: ubuntu-latest
     steps:
