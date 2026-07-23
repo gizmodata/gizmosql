@@ -68,7 +68,7 @@ For more details, see the [Editions documentation](https://docs.gizmosql.com/edi
 
 | Component                                                                        | Version |
 |----------------------------------------------------------------------------------|---------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.4  |
+| [DuckDB](https://duckdb.org)                                                     | v1.5.5  |
 | [SQLite](https://sqlite.org)                                                     | 3.53.1  |
 | [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.0  |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2  |

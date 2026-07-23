@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Upgraded DuckDB (stable channel) from v1.5.4 to [v1.5.5](https://github.com/duckdb/duckdb/releases/tag/v1.5.5).** The iOS out-of-tree extension pins for `ducklake` and `httpfs` were re-synced to DuckDB v1.5.5's own pins; the iOS `postgres_scanner` pin remains intentionally decoupled (upstream's pin still requires an externally cross-compiled libpq). The LTS channel stays on DuckDB v1.4.5.
+
 ### Added
 
 - **`--allow-unsigned-extensions` / `GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS`: allow loading unsigned DuckDB extensions** ([#184](https://github.com/gizmodata/gizmosql/issues/184)). DuckDB's `allow_unsigned_extensions` setting is GLOBAL_ONLY — it cannot be changed via `SET` or `INIT_SQL_COMMANDS` after the database is open — so it is now applied to DuckDB's `DBConfig` at startup, enabling e.g. locally mounted extension release bundles (`LOAD '/opt/paimon/paimon.duckdb_extension'`) on Linux/Docker. Also a new trailing `allow_unsigned_extensions` parameter on the `RunFlightSQLServer()` C API. The secure default remains **off**; enabling logs a startup WARNING, and an explicit CLI `false` overrides the env var. DuckDB backend only.

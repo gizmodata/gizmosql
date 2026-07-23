@@ -573,7 +573,7 @@ gizmosql> .show
      version: v1.19.7
      edition: Core
  instance_id: a1b2c3d4-...
-      engine: duckdb v1.5.4
+      engine: duckdb v1.5.5
        arrow: 25.0.0
 --- Session ---
    connected: yes
