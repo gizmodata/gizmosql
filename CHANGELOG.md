@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-07-23
+
 ### Changed
 
 - **Upgraded DuckDB (stable channel) from v1.5.4 to [v1.5.5](https://github.com/duckdb/duckdb/releases/tag/v1.5.5).** The iOS out-of-tree extension pins for `ducklake` and `httpfs` were re-synced to DuckDB v1.5.5's own pins; the iOS `postgres_scanner` pin remains intentionally decoupled (upstream's pin still requires an externally cross-compiled libpq). The LTS channel stays on DuckDB v1.4.5.
