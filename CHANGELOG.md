@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- CI: bumped `actions/checkout` to v7, `actions/setup-python` to v7,
+  `actions/cache` (incl. restore/save) to v6, and
+  `docker/setup-qemu-action` to v4 — retiring Node 20-era action majors
+  across all workflows.
 - **ADBC driver 2.0**: docs, examples, and the integration-test
   `requirements.txt` now use [`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/)
   2.x (the `<2.0.0` cap was removed), which is powered by the
