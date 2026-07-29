@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **ADBC driver 2.0**: docs, examples, and the integration-test
+  `requirements.txt` now use [`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/)
+  2.x (the `<2.0.0` cap was removed), which is powered by the
+  [native Go GizmoSQL ADBC driver](https://github.com/gizmodata/gizmosql-adbc)
+  — same Python API, with DDL/DML immediate execution, `RETURNING`
+  support, `gizmosql://` URIs (TLS by default), and OAuth/SSO provided by
+  a shared driver library that also serves Go, C/C++, R, and any ADBC
+  driver manager. Python examples updated to the `gizmosql://` scheme.
+
 ## [1.35.1] - 2026-07-23
 
 ### Fixed

@@ -54,7 +54,7 @@ with gizmosql.connect(
         print(gdf)
 ```
 
-> **Note:** Requires `adbc-driver-gizmosql` >= 1.1.0, which auto-detects DDL/DML in `cursor.execute()`. `cursor.execute_update(query)` is also available and returns the rows-affected count directly.
+> **Note:** Requires `adbc-driver-gizmosql` >= 1.1.0 (2.x recommended — Go-backed native driver), which auto-detects DDL/DML in `cursor.execute()`. `cursor.execute_update(query)` is also available and returns the rows-affected count directly.
 
 ## Supported Geometry Types
 
@@ -243,7 +243,7 @@ For TLS-enabled servers:
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,  # Only for self-signed certs

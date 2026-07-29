@@ -6,11 +6,12 @@ GizmoSQL supports Python connectivity via [ADBC](https://arrow.apache.org/adbc/)
 
 ## Use `adbc-driver-gizmosql` (Recommended)
 
-The [`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/) package is the **recommended Python driver** for connecting to GizmoSQL. It is built on top of `adbc-driver-flightsql` and `pyarrow`, so you get all standard Flight SQL capabilities **plus**:
+The [`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/) package is the **recommended Python driver** for connecting to GizmoSQL. As of v2.0 it is a thin Python binding over the [native Go GizmoSQL ADBC driver](https://github.com/gizmodata/gizmosql-adbc) (bundled in the wheel — the same shared library also serves Go, C/C++, R, and any ADBC driver manager), so you get all standard Flight SQL capabilities **plus**:
 
 - **Automatic DDL/DML handling** — `cursor.execute()` works for all statement types (SELECT, DDL, DML) without any special handling. The driver detects DDL/DML and routes it correctly so statements are executed immediately on the server.
 - **OAuth/SSO authentication** — Built-in support for browser-based OAuth login with identity providers like Google, Okta, etc. Just set `auth_type="external"` and the driver handles the entire flow.
 - **Standalone OAuth token retrieval** — A `get_oauth_token()` helper for programmatic token acquisition.
+- **`gizmosql://` URIs** — secure (TLS) by default; append `?transport=tcp` for plaintext. Legacy `grpc+tls://` / `grpc+tcp://` URIs remain supported.
 
 ```bash
 pip install adbc-driver-gizmosql
@@ -22,7 +23,7 @@ pip install adbc-driver-gizmosql
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,
@@ -43,7 +44,7 @@ with gizmosql.connect(
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,
@@ -107,7 +108,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 table = pa.table({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]})
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,
@@ -123,7 +124,7 @@ import pandas as pd
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,
@@ -161,7 +162,7 @@ For `SELECT` queries this is transparent, because the natural workflow is `execu
 from adbc_driver_flightsql import dbapi
 
 with dbapi.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     db_kwargs={
         "username": "gizmosql_user",
         "password": "gizmosql_password",
@@ -181,7 +182,7 @@ If you must use `adbc-driver-flightsql` directly, you can work around this by dr
 from adbc_driver_flightsql import dbapi
 
 with dbapi.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     db_kwargs={
         "username": "gizmosql_user",
         "password": "gizmosql_password",

@@ -196,13 +196,17 @@ More info: [Setup guide](https://github.com/gizmodata/setup-gizmosql-jdbc-driver
 pip install adbc-driver-gizmosql
 ```
 
-The driver also supports OAuth/SSO authentication for GizmoSQL Enterprise users.
+As of v2.0, the driver is powered by the [native Go GizmoSQL ADBC driver](https://github.com/gizmodata/gizmosql-adbc)
+— same Python API, with DDL/DML immediate execution, `RETURNING` support,
+`gizmosql://` URIs, and OAuth/SSO provided by a shared driver library that
+also serves Go, C/C++, R, and other ADBC languages. The driver supports
+OAuth/SSO authentication for GizmoSQL Enterprise users.
 
 ```python
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default; legacy grpc+tls:// also works
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,  # Not needed if you use a trusted CA-signed TLS cert
@@ -319,7 +323,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 🔥 [Grafana Plugin](https://grafana.com/grafana/plugins/gizmodata-gizmosql-datasource/) **NEW!**
 - 🕸️ [JavaScript/TypeScript Client](https://github.com/gizmodata/gizmosql-client-js) **NEW!**
 - ☕️ [JDBC Driver](https://github.com/gizmodata/gizmosql-jdbc-driver/releases/latest/download/gizmosql-jdbc-driver.jar) **NEW!**
-- 🐍 [Python ADBC Driver (with OAuth/SSO)](https://github.com/gizmodata/adbc-driver-gizmosql) **NEW!**
+- 🐍 [Python ADBC Driver (with OAuth/SSO)](https://pypi.org/project/adbc-driver-gizmosql/) — v2.0 is powered by the [native Go ADBC driver](https://github.com/gizmodata/gizmosql-adbc), also loadable from Go, C/C++, R, and any ADBC driver manager **NEW!**
 - 🔌 [ODBC Driver](https://github.com/gizmodata/gizmosql-odbc-driver) **NEW!**
 - 📊 [Power BI Connector](https://github.com/gizmodata/gizmosql-powerbi-connector) **NEW!**
 - 🗺️ [QGIS Plugin (qgizmosql)](https://plugins.qgis.org/plugins/qgizmosql) 🚀 **NEW!**
