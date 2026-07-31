@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Docs/README: the Metabase integration now points to GizmoData's own
+  [`metabase-gizmosql-driver`](https://github.com/gizmodata/metabase-gizmosql-driver)
+  (v1.0.0, built on the GizmoSQL JDBC driver) instead of the upstream
+  community Arrow Flight SQL driver.
 - CI: bumped `actions/checkout` to v7, `actions/setup-python` to v7,
   `actions/cache` (incl. restore/save) to v6, and
   `docker/setup-qemu-action` to v4 — retiring Node 20-era action majors

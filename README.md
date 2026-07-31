@@ -313,7 +313,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 💿 [Apache Superset compatible SQLAlchemy driver](https://github.com/gizmodata/superset-sqlalchemy-gizmosql-adbc-dialect)
 - 🔌 [Ibis adapter](https://github.com/gizmodata/ibis-gizmosql)
 - 🌐 [Flight SQL over WebSocket Proxy](https://github.com/gizmodata/flight-sql-websocket-proxy)
-- 📈 [Metabase driver](https://github.com/J0hnG4lt/metabase-flightsql-driver)
+- 📈 [Metabase driver](https://github.com/gizmodata/metabase-gizmosql-driver) 🚀 **NEW!**
 - ⚙️ [dbt Adapter](https://github.com/gizmodata/dbt-gizmosql)
 - 🥅 [SQLMesh Adapter](https://github.com/gizmodata/sqlmesh-gizmosql) 🚀 **NEW!**
 - ✨ [PySpark SQLFrame adapter](https://github.com/gizmodata/sqlframe-gizmosql) 🚀 **NEW!**
