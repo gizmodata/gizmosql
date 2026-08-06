@@ -21,6 +21,7 @@ enable_testing()
 set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_admission_controller.cpp
         integration/test_active_session_count.cpp
+        integration/test_max_sessions.cpp
         integration/test_auth_log_level.cpp
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp

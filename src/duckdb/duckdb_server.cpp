@@ -869,6 +869,7 @@ class DuckDBFlightSqlServer::Impl {
   gizmosql::QueryProfileMode capture_query_profile_ = gizmosql::QueryProfileMode::kOff;
   AdmissionController admission_controller_;  // statement-queue admission control
   bool admin_bypass_queue_default_ = true;    // admin sessions bypass the queue by default
+  int32_t max_sessions_ = 0;                  // 0 = unlimited; reject new sessions when at cap
 
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -996,6 +997,19 @@ class DuckDBFlightSqlServer::Impl {
           "Retry against another instance.");
     }
 
+    // Reject brand-new sessions when at the configured max-sessions cap.
+    // Existing sessions (fast path above) are unaffected. 0 = unlimited.
+    if (max_sessions_ > 0) {
+      std::shared_lock read_lock(sessions_mutex_);
+      if (client_sessions_.size() >= static_cast<size_t>(max_sessions_)) {
+        return flight::MakeFlightError(
+            flight::FlightStatusCode::Unavailable,
+            "GizmoSQL instance has reached max-sessions (" +
+                std::to_string(max_sessions_) +
+                "); not accepting new connections. Retry later.");
+      }
+    }
+
     // Build the session *without* holding any lock
     auto new_session = std::make_shared<ClientSession>();
 
@@ -1067,6 +1081,17 @@ class DuckDBFlightSqlServer::Impl {
         return it->second;
       }
 
+      // Re-check the cap under the write lock to close the race between the
+      // earlier shared-lock size check and this insert.
+      if (max_sessions_ > 0 &&
+          client_sessions_.size() >= static_cast<size_t>(max_sessions_)) {
+        return flight::MakeFlightError(
+            flight::FlightStatusCode::Unavailable,
+            "GizmoSQL instance has reached max-sessions (" +
+                std::to_string(max_sessions_) +
+                "); not accepting new connections. Retry later.");
+      }
+
       client_sessions_[session_id] = new_session;
       ::gizmosql::metrics::RecordActiveConnections(1);
       GIZMOSQL_LOGKV_SESSION_AT(
@@ -1118,6 +1143,7 @@ class DuckDBFlightSqlServer::Impl {
                 const int32_t& max_queue_wait_seconds,
                 const bool& admin_bypass_queue_default,
                 const gizmosql::QueryProfileMode& capture_query_profile,
+                const int32_t& max_sessions,
                 std::shared_ptr<InstrumentationManager> instrumentation_manager)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
@@ -1132,6 +1158,7 @@ class DuckDBFlightSqlServer::Impl {
     admission_controller_.SetMaxQueued(max_queued_statements);
     admission_controller_.SetDefaultMaxQueueWaitSeconds(max_queue_wait_seconds);
     admin_bypass_queue_default_ = admin_bypass_queue_default;
+    max_sessions_ = max_sessions;
   }
 
   std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const {
@@ -1158,7 +1185,8 @@ class DuckDBFlightSqlServer::Impl {
                 const int32_t& max_queued_statements,
                 const int32_t& max_queue_wait_seconds,
                 const bool& admin_bypass_queue_default,
-                const gizmosql::QueryProfileMode& capture_query_profile)
+                const gizmosql::QueryProfileMode& capture_query_profile,
+                const int32_t& max_sessions)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
@@ -1171,6 +1199,7 @@ class DuckDBFlightSqlServer::Impl {
     admission_controller_.SetMaxQueued(max_queued_statements);
     admission_controller_.SetDefaultMaxQueueWaitSeconds(max_queue_wait_seconds);
     admin_bypass_queue_default_ = admin_bypass_queue_default;
+    max_sessions_ = max_sessions;
   }
 #endif
 
@@ -2253,7 +2282,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
     const bool& admin_bypass_queue_default, const std::string& memory_limit,
     const gizmosql::QueryProfileMode& capture_query_profile,
-    const bool& allow_unsigned_extensions,
+    const bool& allow_unsigned_extensions, const int32_t& max_sessions,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2327,13 +2356,18 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
       result.get(), db, print_queries, query_timeout, query_log_level,
       session_log_level, max_concurrent_statements, max_queued_statements,
       max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile,
-      instrumentation_manager);
+      max_sessions, instrumentation_manager);
 #else
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
       session_log_level, max_concurrent_statements, max_queued_statements,
-      max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile);
+      max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile,
+      max_sessions);
 #endif
+
+  if (max_sessions > 0) {
+    GIZMOSQL_LOG(INFO) << "Max client sessions set to: " << max_sessions;
+  }
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
   for (const auto& id_to_result : GetSqlInfoResultMap(result.get(), query_timeout)) {
