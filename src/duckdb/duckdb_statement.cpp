@@ -762,6 +762,10 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   client_session->active_sql_handle = handle;
 
+  if (!is_internal) {
+    client_session->TouchSqlActivity();
+  }
+
   // Rudimentary admin-command gate (Core): block dangerous filesystem- and
   // instance-level commands (ATTACH/DETACH, SET GLOBAL, INSTALL/LOAD, CHECKPOINT,
   // COPY/EXPORT to local files, read_* of local files, duckdb_secrets()) for

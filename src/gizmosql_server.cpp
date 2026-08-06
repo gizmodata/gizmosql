@@ -152,6 +152,12 @@ int main(int argc, char** argv) {
              "DuckDB's `memory_limit` setting (global / instance-wide). Empty leaves DuckDB's "
              "built-in default (80% of physical RAM). If empty, uses env var GIZMOSQL_MEMORY_LIMIT. "
              "Ignored for the SQLite backend.")
+            ("session-idle-timeout",
+             po::value<int32_t>()->default_value(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
+             "Seconds without user SQL after which an idle client session is evicted. "
+             "0 = off. Reuses the existing session-removal path (client sees session "
+             "not found / evicted). DuckDB backend only. If 0, uses env var "
+             "GIZMOSQL_SESSION_IDLE_TIMEOUT.")
             ("allow-unsigned-extensions", po::value<bool>()->default_value(false),
              "Allow loading unsigned DuckDB extensions (DuckDB's allow_unsigned_extensions "
              "setting). This setting is GLOBAL_ONLY in DuckDB - it cannot be changed via SET or "
@@ -466,6 +472,8 @@ int main(int argc, char** argv) {
           ? std::nullopt
           : std::optional(vm["allow-unsigned-extensions"].as<bool>());
 
+  int32_t session_idle_timeout = vm["session-idle-timeout"].as<int32_t>();
+
   std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
 
   std::string query_log_level =
@@ -584,5 +592,5 @@ int main(int argc, char** argv) {
       cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path,
       graceful_shutdown, shutdown_grace_period_seconds,
       health_check_interval_seconds, health_check_staleness_seconds,
-      allow_unsigned_extensions);
+      allow_unsigned_extensions, session_idle_timeout);
 }

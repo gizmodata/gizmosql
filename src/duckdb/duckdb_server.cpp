@@ -20,6 +20,7 @@
 #include <duckdb.hpp>
 
 #include <boost/algorithm/string.hpp>
+#include <chrono>
 #include <map>
 #include <random>
 #include <regex>
@@ -35,9 +36,12 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <condition_variable>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <jwt-cpp/jwt.h>
+#include <thread>
+#include <vector>
 
 #include "duckdb_sql_info.h"
 #include "duckdb_statement.h"
@@ -48,6 +52,7 @@
 #include "gizmosql_logging.h"
 #include "system_catalog.h"
 #include "gizmosql_telemetry.h"
+#include "session_idle.h"
 #include "telemetry_middleware.h"
 #include "flight_sql_fwd.h"
 #include "shutdown_state.h"
@@ -869,6 +874,7 @@ class DuckDBFlightSqlServer::Impl {
   gizmosql::QueryProfileMode capture_query_profile_ = gizmosql::QueryProfileMode::kOff;
   AdmissionController admission_controller_;  // statement-queue admission control
   bool admin_bypass_queue_default_ = true;    // admin sessions bypass the queue by default
+  int32_t session_idle_timeout_seconds_ = 0;  // 0 = idle eviction off
 
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -876,6 +882,12 @@ class DuckDBFlightSqlServer::Impl {
   mutable std::shared_mutex sessions_mutex_;
   std::shared_mutex transactions_mutex_;
   std::shared_mutex config_mutex_;
+
+  // Idle session sweeper (health-check-style background thread)
+  std::atomic<bool> idle_shutdown_{false};
+  std::mutex idle_mutex_;
+  std::condition_variable idle_cv_;
+  std::thread idle_thread_;
 
   // Server instance ID - generated on server creation, independent of instrumentation
   std::string instance_id_;
@@ -1011,6 +1023,7 @@ class DuckDBFlightSqlServer::Impl {
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
     new_session->connection = std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
+    new_session->TouchSqlActivity();
     // Note: query_timeout and query_log_level are intentionally left as nullopt
     // so that sessions fall through to the server's current global values via
     // GetQueryTimeout() and GetSessionOrServerLogLevel(). This ensures that
@@ -1118,6 +1131,7 @@ class DuckDBFlightSqlServer::Impl {
                 const int32_t& max_queue_wait_seconds,
                 const bool& admin_bypass_queue_default,
                 const gizmosql::QueryProfileMode& capture_query_profile,
+                const int32_t& session_idle_timeout_seconds,
                 std::shared_ptr<InstrumentationManager> instrumentation_manager)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
@@ -1132,6 +1146,8 @@ class DuckDBFlightSqlServer::Impl {
     admission_controller_.SetMaxQueued(max_queued_statements);
     admission_controller_.SetDefaultMaxQueueWaitSeconds(max_queue_wait_seconds);
     admin_bypass_queue_default_ = admin_bypass_queue_default;
+    session_idle_timeout_seconds_ = session_idle_timeout_seconds;
+    StartIdleSessionSweeper();
   }
 
   std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const {
@@ -1158,7 +1174,8 @@ class DuckDBFlightSqlServer::Impl {
                 const int32_t& max_queued_statements,
                 const int32_t& max_queue_wait_seconds,
                 const bool& admin_bypass_queue_default,
-                const gizmosql::QueryProfileMode& capture_query_profile)
+                const gizmosql::QueryProfileMode& capture_query_profile,
+                const int32_t& session_idle_timeout_seconds)
       : outer_(outer),
         db_instance_(std::move(db_instance)),
         print_queries_(print_queries),
@@ -1171,10 +1188,13 @@ class DuckDBFlightSqlServer::Impl {
     admission_controller_.SetMaxQueued(max_queued_statements);
     admission_controller_.SetDefaultMaxQueueWaitSeconds(max_queue_wait_seconds);
     admin_bypass_queue_default_ = admin_bypass_queue_default;
+    session_idle_timeout_seconds_ = session_idle_timeout_seconds;
+    StartIdleSessionSweeper();
   }
 #endif
 
   void ReleaseAllSessions() {
+    StopIdleSessionSweeper();
     std::unique_lock session_lock(sessions_mutex_);
     auto session_count = client_sessions_.size();
     // Session destructors handle active connection counter decrement,
@@ -1182,6 +1202,74 @@ class DuckDBFlightSqlServer::Impl {
     client_sessions_.clear();
     if (session_count > 0) {
       GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
+    }
+  }
+
+  void StartIdleSessionSweeper() {
+    if (session_idle_timeout_seconds_ <= 0) {
+      return;
+    }
+    idle_shutdown_.store(false, std::memory_order_release);
+    idle_thread_ = std::thread([this] { IdleSessionSweepLoop(); });
+  }
+
+  void StopIdleSessionSweeper() {
+    {
+      std::lock_guard<std::mutex> lock(idle_mutex_);
+      idle_shutdown_.store(true, std::memory_order_release);
+    }
+    idle_cv_.notify_all();
+    if (idle_thread_.joinable()) {
+      idle_thread_.join();
+    }
+  }
+
+  void IdleSessionSweepLoop() {
+    while (!idle_shutdown_.load(std::memory_order_acquire)) {
+      {
+        std::unique_lock<std::mutex> lock(idle_mutex_);
+        idle_cv_.wait_for(lock, std::chrono::seconds(1), [this] {
+          return idle_shutdown_.load(std::memory_order_acquire);
+        });
+        if (idle_shutdown_.load(std::memory_order_acquire)) {
+          return;
+        }
+      }
+      SweepIdleSessions();
+    }
+  }
+
+  void SweepIdleSessions() {
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<std::string> to_evict;
+    {
+      std::shared_lock read_lock(sessions_mutex_);
+      for (const auto& [session_id, session] : client_sessions_) {
+        if (!session) continue;
+        if (gizmosql::ShouldEvictIdleSession(session_idle_timeout_seconds_,
+                                             session->LastSqlActivity(), now,
+                                             session->HasInFlightSql())) {
+          to_evict.push_back(session_id);
+        }
+      }
+    }
+    for (const auto& session_id : to_evict) {
+#ifdef GIZMOSQL_ENTERPRISE
+      {
+        std::shared_lock read_lock(sessions_mutex_);
+        if (auto it = client_sessions_.find(session_id); it != client_sessions_.end() &&
+                                                         it->second &&
+                                                         it->second->instrumentation) {
+          it->second->instrumentation->SetStopReason("idle_timeout");
+        }
+      }
+#endif
+      auto st = RemoveSession(session_id, /*was_killed=*/false);
+      if (st.ok()) {
+        GIZMOSQL_LOG(INFO) << "Evicted idle client session " << session_id
+                           << " after " << session_idle_timeout_seconds_
+                           << "s without user SQL";
+      }
     }
   }
 
@@ -1262,7 +1350,7 @@ class DuckDBFlightSqlServer::Impl {
     return arrow::Status::KeyError("Session not found: " + session_id);
   }
 
-  ~Impl() = default;
+  ~Impl() { StopIdleSessionSweeper(); }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoStatement(
       const flight::ServerCallContext& context, const sql::StatementQuery& command,
@@ -1812,6 +1900,8 @@ class DuckDBFlightSqlServer::Impl {
         {"peer", client_session->peer}, {"session_id", client_session->session_id},
         {"user", client_session->username}, {"role", client_session->role});
 
+    client_session->TouchSqlActivity();
+
     // 1. Build a fully qualified target table name
     std::string target_table;
     if (command.catalog.has_value()) {
@@ -2254,6 +2344,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const bool& admin_bypass_queue_default, const std::string& memory_limit,
     const gizmosql::QueryProfileMode& capture_query_profile,
     const bool& allow_unsigned_extensions,
+    const int32_t& session_idle_timeout_seconds,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2327,13 +2418,19 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
       result.get(), db, print_queries, query_timeout, query_log_level,
       session_log_level, max_concurrent_statements, max_queued_statements,
       max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile,
-      instrumentation_manager);
+      session_idle_timeout_seconds, instrumentation_manager);
 #else
   result->impl_ = std::make_shared<DuckDBFlightSqlServer::Impl>(
       result.get(), db, print_queries, query_timeout, query_log_level,
       session_log_level, max_concurrent_statements, max_queued_statements,
-      max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile);
+      max_queue_wait_seconds, admin_bypass_queue_default, capture_query_profile,
+      session_idle_timeout_seconds);
 #endif
+
+  if (session_idle_timeout_seconds > 0) {
+    GIZMOSQL_LOG(INFO) << "Session idle timeout set to: " << session_idle_timeout_seconds
+                       << " seconds";
+  }
 
   // Use dynamic SQL info that queries DuckDB for keywords and functions
   for (const auto& id_to_result : GetSqlInfoResultMap(result.get(), query_timeout)) {

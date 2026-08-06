@@ -2,6 +2,7 @@
 #pragma once
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -101,9 +102,28 @@ struct ClientSession {
   // Flag for KILL SESSION support - when set, the session should be terminated
   std::atomic<bool> kill_requested{false};
 
+  // Last user-SQL activity for --session-idle-timeout (0 = unset until TouchSqlActivity)
+  std::atomic<int64_t> last_sql_activity_ns{0};
+
   // Prepared statements owned by this session
   std::map<std::string, std::shared_ptr<gizmosql::ddb::DuckDBStatement>> prepared_statements;
   mutable std::shared_mutex statements_mutex;
+
+  void TouchSqlActivity() {
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    last_sql_activity_ns.store(ns, std::memory_order_relaxed);
+  }
+
+  std::chrono::steady_clock::time_point LastSqlActivity() const {
+    return std::chrono::steady_clock::time_point(
+        std::chrono::nanoseconds(last_sql_activity_ns.load(std::memory_order_relaxed)));
+  }
+
+  bool HasInFlightSql() const {
+    return active_sql_handle.has_value() && !active_sql_handle->empty();
+  }
 
   // Destructor handles session cleanup:
   // 1. Interrupts any in-flight query on the DuckDB connection
