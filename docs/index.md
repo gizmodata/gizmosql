@@ -472,7 +472,7 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | license-key-file / GIZMOSQL_LICENSE_KEY_FILE | *[Enterprise]* Path to license key file (JWT format) | none | --license-key-file, -L |
 | license-key / GIZMOSQL_LICENSE_KEY | *[Enterprise]* Inline license key (literal JWT value, not a path). Takes precedence over license-key-file when both are set | none | --license-key |
 | allow-cross-instance-tokens / GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS | Accept tokens issued by other GizmoSQL instances sharing the same secret key | false | --allow-cross-instance-tokens |
-| session-idle-timeout / GIZMOSQL_SESSION_IDLE_TIMEOUT | Seconds without user SQL after which an idle client session is evicted (DuckDB). `0` = off. Reuses the existing session-removal path (client sees session not found / evicted). Pair with session capacity controls to reclaim abandoned seats | 0 | --session-idle-timeout |
+| session-idle-timeout / GIZMOSQL_SESSION_IDLE_TIMEOUT | Seconds without user SQL after which an idle client session is evicted (DuckDB). `0` = off. Reuses the existing session-removal path (client sees session not found / evicted). If an idle session is evicted, any work that was started but not committed is undone. Pair with session capacity controls to reclaim abandoned seats | 0 | --session-idle-timeout |
 | allow-unsigned-extensions / GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS | Allow loading unsigned DuckDB extensions (DuckDB's `allow_unsigned_extensions`, GLOBAL_ONLY — must be set at startup, cannot be changed via SET/init SQL). SECURITY: keep disabled unless loading trusted, operator-provided extensions. DuckDB backend only | false | --allow-unsigned-extensions |
 
 Notes and best practices:
