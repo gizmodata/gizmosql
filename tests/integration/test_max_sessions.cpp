@@ -25,7 +25,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -71,9 +73,14 @@ arrow::Result<HeldClient> ConnectAndExecute(int port, const std::string& usernam
 
 // Username/password Basic auth always gets role "admin". Non-admin sessions
 // (the ones the cap applies to) are minted JWTs with role "user".
+// Session ids must be UUID hex: KILL SESSION only matches [0-9a-fA-F-]+, so a
+// label like "max-sessions-user-N" is not recognized as a kill command.
 std::string MintUserToken() {
   static std::atomic<int> n{0};
-  const std::string session_id = "max-sessions-user-" + std::to_string(++n);
+  std::ostringstream ss;
+  ss << "aaaaaaaa-0000-4000-8000-" << std::hex << std::setw(12) << std::setfill('0')
+     << ++n;
+  const std::string session_id = ss.str();
   return jwt::create()
       .set_issuer("gizmosql")
       .set_type("JWT")
