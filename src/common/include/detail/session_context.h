@@ -106,6 +106,9 @@ struct ClientSession {
   // Touched on statement create and on each user-SQL FetchResult (row download).
   std::atomic<int64_t> last_sql_activity_ns{0};
 
+  // Sweeper-facing "busy executing?" flag. Do not read active_sql_handle for this.
+  std::atomic<bool> sql_in_flight{false};
+
   // Prepared statements owned by this session
   std::map<std::string, std::shared_ptr<gizmosql::ddb::DuckDBStatement>> prepared_statements;
   mutable std::shared_mutex statements_mutex;
@@ -123,7 +126,7 @@ struct ClientSession {
   }
 
   bool HasInFlightSql() const {
-    return active_sql_handle.has_value() && !active_sql_handle->empty();
+    return sql_in_flight.load(std::memory_order_relaxed);
   }
 
   // Destructor handles session cleanup:

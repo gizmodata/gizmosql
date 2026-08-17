@@ -761,6 +761,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
       {"role", client_session->role}, {"statement_id", handle});
 
   client_session->active_sql_handle = handle;
+  client_session->sql_in_flight.store(true, std::memory_order_relaxed);
 
   if (!is_internal) {
     client_session->TouchSqlActivity();
@@ -2081,6 +2082,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
           }
           if (!bind_parameters.empty()) {
             session->active_sql_handle = "";
+            session->sql_in_flight.store(false, std::memory_order_relaxed);
             return arrow::Status::Invalid(
                 "Direct query execution does not support bind parameters");
           }
@@ -2088,6 +2090,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
           auto result = session->connection->Get().Query(sql_);
 
           session->active_sql_handle = "";
+          session->sql_in_flight.store(false, std::memory_order_relaxed);
 
           if (result->HasError()) {
             if (log_queries_) {
@@ -2126,6 +2129,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
           query_result_ = stmt_->Execute(bind_parameters);
 
           session->active_sql_handle = "";
+          session->sql_in_flight.store(false, std::memory_order_relaxed);
 
           if (query_result_->HasError()) {
             if (log_queries_) {
@@ -2171,6 +2175,7 @@ arrow::Result<int> DuckDBStatement::Execute() {
     future.wait();
 
     session->active_sql_handle = "";
+    session->sql_in_flight.store(false, std::memory_order_relaxed);
 
     if (log_queries_) {
       GIZMOSQL_LOGKV_SESSION(WARNING, session, "Client SQL command timed out - completed statement interruption",
