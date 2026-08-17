@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **`--max-sessions` / `GIZMOSQL_MAX_SESSIONS`.** Launch-time cap on concurrent client sessions (DuckDB backend). `0` = unlimited (default). When the limit is reached, new sessions are rejected with a retriable Flight `UNAVAILABLE` error at session create (same pattern as graceful-drain rejects); existing sessions keep working. Counts sessions/connections, not people. Closes [#108](https://github.com/gizmodata/gizmosql/issues/108).
+- **`--max-sessions` / `GIZMOSQL_MAX_SESSIONS`.** Launch-time cap on concurrent non-admin client sessions (DuckDB backend). `0` = unlimited (default). When the limit is reached, new non-admin sessions are rejected with a retriable Flight `UNAVAILABLE` error at session create (same pattern as graceful-drain rejects); existing sessions keep working. Admin-role sessions skip the cap so an operator can still connect (e.g. to `KILL SESSION`). Counts sessions/connections, not people. Closes [#108](https://github.com/gizmodata/gizmosql/issues/108).
 
 ### Changed
 - Docs/README: the Metabase integration now points to GizmoData's own

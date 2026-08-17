@@ -262,12 +262,13 @@ int RunFlightSQLServer(
     /// operator-provided extensions (e.g. a locally mounted release bundle).
     /// nullopt = consult env var, then default off.
     std::optional<bool> allow_unsigned_extensions = std::nullopt,
-    /// Maximum number of concurrent client sessions the server will accept
-    /// (--max-sessions / GIZMOSQL_MAX_SESSIONS). When the limit is reached, new
-    /// sessions are rejected with a retriable Flight UNAVAILABLE error (same
-    /// pattern as graceful-drain rejects). 0 = unlimited. Counts sessions /
-    /// connections, not people — one IDE may consume multiple slots. DuckDB
-    /// backend only (SQLite has no ClientSession map). If 0, uses env var
-    /// GIZMOSQL_MAX_SESSIONS.
+    /// Maximum number of concurrent non-admin client sessions the server will
+    /// accept (--max-sessions / GIZMOSQL_MAX_SESSIONS). When the limit is reached,
+    /// new non-admin sessions are rejected with a retriable Flight UNAVAILABLE
+    /// error (same pattern as graceful-drain rejects). Admin-role sessions skip
+    /// the cap so an operator can still connect (e.g. to KILL SESSION). 0 =
+    /// unlimited. Counts sessions / connections, not people — one IDE may consume
+    /// multiple slots. DuckDB backend only (SQLite has no ClientSession map). If
+    /// 0, uses env var GIZMOSQL_MAX_SESSIONS.
     int32_t max_sessions = DEFAULT_MAX_SESSIONS);
 }

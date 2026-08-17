@@ -153,10 +153,12 @@ int main(int argc, char** argv) {
              "built-in default (80% of physical RAM). If empty, uses env var GIZMOSQL_MEMORY_LIMIT. "
              "Ignored for the SQLite backend.")
             ("max-sessions", po::value<int32_t>()->default_value(DEFAULT_MAX_SESSIONS),
-             "Maximum number of concurrent client sessions the server will accept. When the "
-             "limit is reached, new sessions are rejected with a retriable UNAVAILABLE error. "
-             "0 = unlimited. Counts sessions/connections (not people); one IDE may use multiple "
-             "slots. DuckDB backend only. If 0, uses env var GIZMOSQL_MAX_SESSIONS.")
+             "Maximum number of concurrent non-admin client sessions the server will accept. "
+             "When the limit is reached, new non-admin sessions are rejected with a retriable "
+             "UNAVAILABLE error. Admin-role sessions always get in (so an operator can still "
+             "connect and KILL SESSION). 0 = unlimited. Counts sessions/connections (not people); "
+             "one IDE may use multiple slots. DuckDB backend only. If 0, uses env var "
+             "GIZMOSQL_MAX_SESSIONS.")
             ("allow-unsigned-extensions", po::value<bool>()->default_value(false),
              "Allow loading unsigned DuckDB extensions (DuckDB's allow_unsigned_extensions "
              "setting). This setting is GLOBAL_ONLY in DuckDB - it cannot be changed via SET or "

@@ -955,6 +955,20 @@ class DuckDBFlightSqlServer::Impl {
         "Session not found — it may have been evicted. Please re-connect.");
   }
 
+  // True when non-admin sessions are at --max-sessions. Admin-role sessions
+  // are excluded so an operator can still connect (e.g. to KILL SESSION).
+  // Caller must hold sessions_mutex_.
+  bool AtNonAdminSessionCap() const {
+    if (max_sessions_ <= 0) return false;
+    size_t regular = 0;
+    for (const auto& entry : client_sessions_) {
+      if (entry.second->role != "admin") {
+        if (++regular >= static_cast<size_t>(max_sessions_)) return true;
+      }
+    }
+    return false;
+  }
+
   arrow::Result<std::shared_ptr<ClientSession>> GetClientSession(
       const flight::ServerCallContext& context) {
     ARROW_ASSIGN_OR_RAISE(auto session_id, GetSessionID());
@@ -997,11 +1011,14 @@ class DuckDBFlightSqlServer::Impl {
           "Retry against another instance.");
     }
 
-    // Reject brand-new sessions when at the configured max-sessions cap.
-    // Existing sessions (fast path above) are unaffected. 0 = unlimited.
-    if (max_sessions_ > 0) {
+    // Reject brand-new *non-admin* sessions when at the configured
+    // max-sessions cap. Admin-role sessions skip the cap so an operator can
+    // still connect to run KILL SESSION (or otherwise free seats). Existing
+    // sessions (fast path above) are unaffected. 0 = unlimited.
+    const bool is_admin = tl_request_ctx.role.value_or("") == "admin";
+    if (!is_admin && max_sessions_ > 0) {
       std::shared_lock read_lock(sessions_mutex_);
-      if (client_sessions_.size() >= static_cast<size_t>(max_sessions_)) {
+      if (AtNonAdminSessionCap()) {
         return flight::MakeFlightError(
             flight::FlightStatusCode::Unavailable,
             "GizmoSQL instance has reached max-sessions (" +
@@ -1082,9 +1099,8 @@ class DuckDBFlightSqlServer::Impl {
       }
 
       // Re-check the cap under the write lock to close the race between the
-      // earlier shared-lock size check and this insert.
-      if (max_sessions_ > 0 &&
-          client_sessions_.size() >= static_cast<size_t>(max_sessions_)) {
+      // earlier shared-lock size check and this insert. Admins skip this too.
+      if (!is_admin && AtNonAdminSessionCap()) {
         return flight::MakeFlightError(
             flight::FlightStatusCode::Unavailable,
             "GizmoSQL instance has reached max-sessions (" +
