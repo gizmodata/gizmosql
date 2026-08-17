@@ -102,7 +102,8 @@ struct ClientSession {
   // Flag for KILL SESSION support - when set, the session should be terminated
   std::atomic<bool> kill_requested{false};
 
-  // Last user-SQL activity for --session-idle-timeout (0 = unset until TouchSqlActivity)
+  // Last user-SQL activity for --session-idle-timeout (0 = unset until TouchSqlActivity).
+  // Touched on statement create and on each user-SQL FetchResult (row download).
   std::atomic<int64_t> last_sql_activity_ns{0};
 
   // Prepared statements owned by this session

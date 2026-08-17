@@ -2252,6 +2252,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult() {
   ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
+  // Fetch is still the same user query: refresh idle so a slow DoGet is not evicted.
+  if (!is_internal_) {
+    session->TouchSqlActivity();
+  }
+
   std::string status;
 
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
