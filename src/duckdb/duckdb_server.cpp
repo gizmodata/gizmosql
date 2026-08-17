@@ -1027,7 +1027,9 @@ class DuckDBFlightSqlServer::Impl {
       }
     }
 
-    // Build the session *without* holding any lock
+    // Fill cheap session metadata without opening DuckDB. TrackedDuckDBConnection
+    // is created only after the write-lock admission check succeeds, so a
+    // rejected attempt does not create and destroy a DuckDB connection.
     auto new_session = std::make_shared<ClientSession>();
 
     new_session->server = outer_->shared_from_this();
@@ -1041,7 +1043,6 @@ class DuckDBFlightSqlServer::Impl {
     new_session->user_agent = tl_request_ctx.user_agent.value_or("");
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
-    new_session->connection = std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
     // Note: query_timeout and query_log_level are intentionally left as nullopt
     // so that sessions fall through to the server's current global values via
     // GetQueryTimeout() and GetSessionOrServerLogLevel(). This ensures that
@@ -1056,27 +1057,7 @@ class DuckDBFlightSqlServer::Impl {
       new_session->bypass_queue = admin_bypass_queue_default_;
     }
 
-#ifdef GIZMOSQL_ENTERPRISE
-    // Create session instrumentation if manager is available (Enterprise feature)
-    if (instrumentation_manager_ && instrumentation_manager_->IsEnabled()) {
-      auto instance_id = GetInstanceId();
-      if (!instance_id.empty()) {
-        new_session->instrumentation = std::make_unique<SessionInstrumentation>(
-            instrumentation_manager_, instance_id, session_id,
-            new_session->username, new_session->role, new_session->auth_method,
-            new_session->peer, new_session->peer_identity, new_session->user_agent,
-            new_session->connection_protocol);
-      } else {
-        GIZMOSQL_LOG(WARNING) << "Cannot create session instrumentation - instance_id is empty";
-      }
-    } else {
-      GIZMOSQL_LOG(DEBUG) << "Skipping session instrumentation - manager="
-                          << (instrumentation_manager_ ? "set" : "null")
-                          << ", enabled=" << (instrumentation_manager_ ? (instrumentation_manager_->IsEnabled() ? "true" : "false") : "n/a");
-    }
-#endif
-
-    // Slow path: take exclusive lock and check again
+    // Slow path: take exclusive lock, admit, then open DuckDB.
     {
       std::unique_lock write_lock(sessions_mutex_);
 
@@ -1107,6 +1088,29 @@ class DuckDBFlightSqlServer::Impl {
                 std::to_string(max_sessions_) +
                 "); not accepting new connections. Retry later.");
       }
+
+      new_session->connection =
+          std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
+
+#ifdef GIZMOSQL_ENTERPRISE
+      // Create session instrumentation if manager is available (Enterprise feature)
+      if (instrumentation_manager_ && instrumentation_manager_->IsEnabled()) {
+        auto instance_id = GetInstanceId();
+        if (!instance_id.empty()) {
+          new_session->instrumentation = std::make_unique<SessionInstrumentation>(
+              instrumentation_manager_, instance_id, session_id,
+              new_session->username, new_session->role, new_session->auth_method,
+              new_session->peer, new_session->peer_identity, new_session->user_agent,
+              new_session->connection_protocol);
+        } else {
+          GIZMOSQL_LOG(WARNING) << "Cannot create session instrumentation - instance_id is empty";
+        }
+      } else {
+        GIZMOSQL_LOG(DEBUG) << "Skipping session instrumentation - manager="
+                            << (instrumentation_manager_ ? "set" : "null")
+                            << ", enabled=" << (instrumentation_manager_ ? (instrumentation_manager_->IsEnabled() ? "true" : "false") : "n/a");
+      }
+#endif
 
       client_sessions_[session_id] = new_session;
       ::gizmosql::metrics::RecordActiveConnections(1);
