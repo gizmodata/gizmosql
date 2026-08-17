@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- CI: the `ci` workflow now also runs on `pull_request`, so fork PRs get
+  build + integration-test coverage before merge. Fork PR runs execute
+  build/test only — signing, notarization, Docker registry logins, MSI
+  packaging, and the iOS build are skipped on `pull_request` events (fork
+  runs have no secrets). Same-repo PRs are skipped entirely since the
+  existing push trigger already covers every branch. The repository's
+  Actions policy now requires a maintainer (write access) to approve
+  workflow runs for all outside collaborators.
 - Docs/README: the Metabase integration now points to GizmoData's own
   [`metabase-gizmosql-driver`](https://github.com/gizmodata/metabase-gizmosql-driver)
   (v1.0.0, built on the GizmoSQL JDBC driver) instead of the upstream
