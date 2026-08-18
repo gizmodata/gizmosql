@@ -70,7 +70,7 @@ For more details, see the [Editions documentation](https://docs.gizmosql.com/edi
 |----------------------------------------------------------------------------------|---------|
 | [DuckDB](https://duckdb.org)                                                     | v1.5.5  |
 | [SQLite](https://sqlite.org)                                                     | 3.53.1  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.0  |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1  |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2  |
 | [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0 |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
@@ -318,6 +318,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 - 🥅 [SQLMesh Adapter](https://github.com/gizmodata/sqlmesh-gizmosql) 🚀 **NEW!**
 - ✨ [PySpark SQLFrame adapter](https://github.com/gizmodata/sqlframe-gizmosql) 🚀 **NEW!**
 - 🪩 [ADBC Scanner by Query.Farm](docs/adbc_scanner_duckdb.md) 🚀 **NEW!**
+- 🧲 [ADBC extension for DuckDB by Columnar](docs/adbc_duckdb_extension.md) 🚀 **NEW!**
 - ⚓️ [Kubernetes Operator](https://github.com/gizmodata/gizmosql-operator) 🚀 **NEW!**
 - 📺 [GizmoSQLLine JDBC CLI Client](https://github.com/gizmodata/gizmosqlline) **NEW!**
 - 🔥 [Grafana Plugin](https://grafana.com/grafana/plugins/gizmodata-gizmosql-datasource/) **NEW!**

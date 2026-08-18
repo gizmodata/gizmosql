@@ -9,8 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`--max-sessions` / `GIZMOSQL_MAX_SESSIONS`.** Launch-time cap on concurrent non-admin client sessions (DuckDB backend). `0` = unlimited (default). When the limit is reached, new non-admin sessions are rejected with a retriable Flight `UNAVAILABLE` error at session create (same pattern as graceful-drain rejects); existing sessions keep working. Admin-role sessions skip the cap so an operator can still connect (e.g. to `KILL SESSION`). Counts sessions/connections, not people. Closes [#108](https://github.com/gizmodata/gizmosql/issues/108).
+- **`-adbc` images now bundle the native GizmoSQL ADBC driver**: the
+  `-adbc` / `-slim-adbc` Docker image variants install
+  [`gizmosql-adbc`](https://github.com/gizmodata/gizmosql-adbc)'s prebuilt
+  shared library (from its GitHub release artifacts — the driver isn't in
+  the `dbc` registry yet) with a driver manifest in `/etc/adbc/drivers`,
+  so any ADBC driver manager in the container — including a GizmoSQL
+  server's embedded DuckDB — can load it by name (`driver 'gizmosql'`).
+  Pinned via the `GIZMOSQL_ADBC_VERSION` build arg (currently v2.0.6).
+- New doc [`docs/adbc_duckdb_extension.md`](docs/adbc_duckdb_extension.md):
+  querying GizmoSQL from DuckDB with Columnar's profile-based `adbc`
+  community extension (reads *and* writes), using the native `gizmosql`
+  driver — including a GizmoSQL-to-GizmoSQL example.
 
 ### Changed
+- **Apache Arrow 25.0.1**: bumped the vendored Arrow from 25.0.0 to
+  25.0.1 (patch release), including CI build-cache keys and version
+  mentions in the docs.
+- **Vendored dependency bumps**: OpenTelemetry C++ 1.25.0 → 1.28.0,
+  cpp-httplib 0.37.0 → 0.53.1, SQLite 3.53.1 → 3.53.4, and gflags
+  2.3.0 → 2.3.1. (Already current: nlohmann/json 3.12.0, jwt-cpp 0.7.2,
+  replxx 0.0.4, DuckDB v1.5.5 stable / v1.4.5 LTS.)
+- The [ADBC Scanner guide](docs/adbc_scanner_duckdb.md) now uses the
+  native `gizmosql` ADBC driver (with `gizmosql://` URIs, TLS by default)
+  instead of the generic `flightsql` driver, documents installing the
+  driver from the `gizmosql-adbc` release artifacts, and adds a tested
+  GizmoSQL-to-GizmoSQL federation example (ADBC Scanner running *inside*
+  a GizmoSQL server).
 - CI: the `ci` workflow now also runs on `pull_request`, so fork PRs get
   build + integration-test coverage before merge. Fork PR runs execute
   build/test only — signing, notarization, Docker registry logins, MSI

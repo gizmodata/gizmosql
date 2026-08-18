@@ -50,7 +50,7 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 |----------------------------------------------------------------------------------|----------------|-------------|
 | [DuckDB](https://duckdb.org)                                                     | v1.5.5         | v1.4.5      |
 | [SQLite](https://sqlite.org)                                                     | 3.53.1         | 3.53.1      |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.0         | 25.0.0      |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1         | 25.0.1      |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      |
 | [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0        | v1.25.0     |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     |
@@ -509,7 +509,7 @@ $ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 25.0.0
+Apache Arrow version: 25.0.1
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.5.5
 Running Init SQL command: 
@@ -537,7 +537,7 @@ The above will produce output similar to the following:
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 25.0.0
+Apache Arrow version: 25.0.1
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
 Using database file: "/Users/philip/Documents/git/gizmosql/data/TPC-H-small.sqlite"
@@ -612,10 +612,18 @@ also publishes `-adbc` variants that bundle a curated set of publicly available
 | `gizmodata/gizmosql:latest-adbc` / `:<version>-adbc` | full image |
 | `gizmodata/gizmosql:latest-slim-adbc` / `:<version>-slim-adbc` | slim image |
 
-Bundled drivers: `bigquery`, `databricks`, `exasol`, `flightsql`, `mssql`,
-`mysql`, `postgresql`, `redshift`, `snowflake`, `trino`. (`datafusion`,
+Bundled drivers: `gizmosql` (the [native GizmoSQL ADBC driver](https://github.com/gizmodata/gizmosql-adbc),
+installed from its GitHub release artifacts — it isn't in the `dbc` registry
+yet), plus `bigquery`, `databricks`, `exasol`, `flightsql`, `mssql`, `mysql`,
+`postgresql`, `redshift`, `snowflake`, `trino` via `dbc`. (`datafusion`,
 `sqlite`, and `duckdb` are omitted — GizmoSQL speaks those natively — as are the
 private-registry `oracle`/`teradata` drivers.)
+
+With the `gizmosql` driver bundled, these images can query *other GizmoSQL
+instances* out of the box — see the
+[ADBC Scanner](https://docs.gizmosql.com/adbc_scanner_duckdb.md) and
+[Columnar ADBC extension](https://docs.gizmosql.com/adbc_duckdb_extension.md)
+guides for GizmoSQL-to-GizmoSQL examples.
 
 The drivers are installed system-wide to `/etc/adbc/drivers`, where any ADBC
 driver manager in the container discovers them by name. The images are otherwise

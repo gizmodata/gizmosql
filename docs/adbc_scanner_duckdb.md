@@ -15,13 +15,54 @@ You can even use ADBC Scanner from a GizmoSQL server - allowing you to connect t
 - **Category:** Community Extension  
 - **Purpose:** Query remote databases over ADBC  
 - **Supported Backends:** Any database with a compatible ADBC driver  
-- **Example Driver Used:** `flightsql` (for Arrow Flight SQL)
+- **Example Driver Used:** `gizmosql` (the [native GizmoSQL ADBC driver](https://github.com/gizmodata/gizmosql-adbc))
 
 ---
 
-## ⚙️Setup ADBC Drivers
-You can get ADBC Drivers for your target platform pretty easily using [Columnar](https://columnar.tech)'s [dbc](https://columnar.tech/dbc/) tool - under: "Which data system do you want to connect to?" - choose: "Flight SQL":   
-![img.png](img.png)
+## ⚙️ Setup: the GizmoSQL ADBC Driver
+
+For connecting to GizmoSQL, use the [native GizmoSQL ADBC driver](https://github.com/gizmodata/gizmosql-adbc)
+— the same Go-backed shared library that powers
+[`adbc-driver-gizmosql`](https://pypi.org/project/adbc-driver-gizmosql/) 2.x. Compared to the generic
+`flightsql` driver it adds `gizmosql://` URIs (TLS by default), DDL/DML auto-detection with immediate
+server-side execution, `RETURNING` support, and OAuth/SSO — while keeping everything the Flight SQL
+driver provides.
+
+> **Note:** The GizmoSQL driver isn't available via [Columnar](https://columnar.tech)'s
+> [dbc](https://columnar.tech/dbc/) installer yet — install it from the GitHub release artifacts as
+> shown below. (`dbc` remains a great way to install *other* drivers — Snowflake, PostgreSQL,
+> `flightsql`, etc.)
+
+Download the shared library for your platform from the
+[gizmosql-adbc releases](https://github.com/gizmodata/gizmosql-adbc/releases/latest), then register it
+with a driver manifest so it can be loaded by name:
+
+```bash
+VERSION="v2.0.6"
+PLATFORM="macos_arm64"   # or: linux_amd64, linux_arm64, macos_amd64, windows_amd64, windows_arm64
+
+curl -LO "https://github.com/gizmodata/gizmosql-adbc/releases/download/${VERSION}/libadbc_driver_gizmosql-${VERSION}-${PLATFORM}.tar.gz"
+tar xzf "libadbc_driver_gizmosql-${VERSION}-${PLATFORM}.tar.gz"
+cd "libadbc_driver_gizmosql-${VERSION}-${PLATFORM}"
+
+# Install the shared library + manifest into your user-level ADBC driver directory:
+#   Linux:   ~/.config/adbc/drivers/
+#   macOS:   ~/Library/Application Support/ADBC/Drivers/
+#   Windows: %LOCALAPPDATA%\ADBC\Drivers\
+DRIVER_DIR="${HOME}/Library/Application Support/ADBC/Drivers"   # macOS example
+mkdir -p "${DRIVER_DIR}"
+cp libadbc_driver_gizmosql.* "${DRIVER_DIR}/"
+sed -e "s|@VERSION@|${VERSION#v}|" -e "s|@PREFIX@|${DRIVER_DIR}|g" \
+    gizmosql.toml.in > "${DRIVER_DIR}/gizmosql.toml"
+```
+
+Any directory listed in the `ADBC_DRIVER_PATH` environment variable works too. Once the manifest is in
+place, every ADBC driver manager (including the ADBC Scanner) can load the driver by name: `gizmosql`.
+
+> **Docker users:** the `-adbc` variants of the GizmoSQL image
+> (e.g. `gizmodata/gizmosql:latest-adbc`, `:latest-slim-adbc`) ship with the GizmoSQL driver (plus a
+> curated set of `dbc`-installed drivers) preinstalled system-wide in `/etc/adbc/drivers` — inside
+> those containers, `driver 'gizmosql'` just works.
 
 ## 🧪 Example: Query GizmoSQL from DuckDB
 
@@ -63,19 +104,20 @@ Create a secret and a connection to the remote GizmoSQL instance:
 ```sql
 CREATE SECRET gizmosql_secret (
      TYPE adbc,
-     SCOPE 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337',
-     driver 'flightsql',
-     uri 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337',
+     SCOPE 'gizmosql://try-gizmosql-adbc.gizmodata.com:31337',
+     driver 'gizmosql',
+     uri 'gizmosql://try-gizmosql-adbc.gizmodata.com:31337',
      username 'adbc-scanner',
      password 'QueryDotFarmRules!123'
  );
 
-ATTACH 'grpc+tls://try-gizmosql-adbc.gizmodata.com:31337' AS gizmosql_db (
+ATTACH 'gizmosql://try-gizmosql-adbc.gizmodata.com:31337' AS gizmosql_db (
       TYPE adbc
   );
 ```
 
-This creates an encrypted and authenticated Flight SQL connection to the **GizmoSQL** service hosted by GizmoData.
+This creates an encrypted and authenticated connection to the **GizmoSQL** service hosted by GizmoData
+(`gizmosql://` URIs use TLS by default — append `?transport=tcp` for plaintext).
 
 #### Connecting with Self-Signed Certificates (TLS Skip Verify)
 
@@ -84,9 +126,9 @@ If your GizmoSQL server uses a self-signed certificate (common in development or
 ```sql
 CREATE SECRET gizmosql_secret (
      TYPE adbc,
-     SCOPE 'grpc+tls://localhost:31337',
-     driver 'flightsql',
-     uri 'grpc+tls://localhost:31337',
+     SCOPE 'gizmosql://localhost:31337',
+     driver 'gizmosql',
+     uri 'gizmosql://localhost:31337',
      username 'gizmosql_user',
      password 'gizmosql_password',
      extra_options MAP {
@@ -94,7 +136,7 @@ CREATE SECRET gizmosql_secret (
       }
  );
 
-ATTACH 'grpc+tls://localhost:31337' AS gizmosql_db (
+ATTACH 'gizmosql://localhost:31337' AS gizmosql_db (
       TYPE adbc
   );
 ```
@@ -130,6 +172,55 @@ Output:
 │           4 │ MIDDLE EAST │  foxes boost furiously along the carefully dogged tithes. slyly regular orbits according to the special epit        │
 └─────────────┴─────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 🔁 Example: GizmoSQL to GizmoSQL
+
+Because GizmoSQL runs DuckDB under the hood, the same extension works **inside a GizmoSQL server** —
+letting one GizmoSQL instance query another (or any other ADBC source) with plain SQL, submitted
+through any GizmoSQL client (ADBC, JDBC, the CLI, etc.).
+
+The easiest way is to run one of the `-adbc` Docker image variants
+(e.g. `gizmodata/gizmosql:latest-slim-adbc`), which have the GizmoSQL ADBC driver preinstalled where
+the server's embedded DuckDB can find it by name. (On a bare-metal server, install the driver as shown
+above and set `ADBC_DRIVER_PATH` in the server's environment.)
+
+```bash
+docker run --name gizmosql \
+           --detach --rm --tty --init \
+           --publish 31337:31337 \
+           --env TLS_ENABLED="1" \
+           --env GIZMOSQL_USERNAME="gizmosql_user" \
+           --env GIZMOSQL_PASSWORD="gizmosql_password" \
+           gizmodata/gizmosql:latest-slim-adbc
+```
+
+Then, from a client session connected to that server, run:
+
+```sql
+INSTALL adbc_scanner FROM community;
+LOAD adbc_scanner;
+
+CREATE OR REPLACE SECRET remote_gizmosql (
+     TYPE adbc,
+     SCOPE 'gizmosql://try-gizmosql-adbc.gizmodata.com:31337',
+     driver 'gizmosql',
+     uri 'gizmosql://try-gizmosql-adbc.gizmodata.com:31337',
+     username 'adbc-scanner',
+     password 'QueryDotFarmRules!123'
+ );
+
+ATTACH IF NOT EXISTS 'gizmosql://try-gizmosql-adbc.gizmodata.com:31337' AS remote_db (
+      TYPE adbc
+  );
+
+-- Query the remote GizmoSQL instance through the local one:
+SELECT * FROM remote_db.main.region ORDER BY r_regionkey;
+```
+
+Your local GizmoSQL server federates the query to the remote GizmoSQL instance and streams the results
+back to your client as Arrow record batches — GizmoSQL all the way down. 🐢
 
 ---
 

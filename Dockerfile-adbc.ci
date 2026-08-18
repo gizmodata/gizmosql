@@ -1,9 +1,12 @@
 # GizmoSQL + bundled ADBC drivers (the "-adbc" image tags)
 #
 # Layers a curated set of publicly available ADBC drivers on top of an already
-# built GizmoSQL image (full or slim) via dbc (https://columnar.tech/dbc/).
-# Drivers are installed system-wide to /etc/adbc/drivers so any ADBC driver
-# manager running in the container can discover them by name.
+# built GizmoSQL image (full or slim) via dbc (https://columnar.tech/dbc/),
+# plus the native GizmoSQL ADBC driver (github.com/gizmodata/gizmosql-adbc),
+# which dbc does not carry yet and is therefore installed straight from its
+# GitHub release artifacts. Drivers are installed system-wide to
+# /etc/adbc/drivers so any ADBC driver manager running in the container can
+# discover them by name.
 #
 # BASE_IMAGE is supplied by CI as the just-published image for this release,
 # e.g. gizmodata/gizmosql:v1.30.2 (full) or gizmodata/gizmosql:v1.30.2-slim.
@@ -15,6 +18,10 @@ ARG BASE_IMAGE=gizmodata/gizmosql:latest-slim
 FROM ${BASE_IMAGE}
 
 ARG ADBC_DRIVERS="bigquery databricks exasol flightsql mssql mysql postgresql redshift snowflake trino"
+ARG GIZMOSQL_ADBC_VERSION="v2.0.6"
+
+# amd64 / arm64, injected by buildx for each platform of the multi-arch build
+ARG TARGETARCH
 
 USER root
 
@@ -37,6 +44,23 @@ RUN curl -LsSf https://dbc.columnar.tech/install.sh | sh \
     && find /etc/adbc/drivers -name 'libadbc_driver_*.so' \
          -exec sh -c 'ln -sf "$1" "/usr/local/lib/$(basename "$1")"' _ {} \; \
     && ls -l /usr/local/lib/libadbc_driver_*.so
+
+# Install the native GizmoSQL ADBC driver (Go-backed; the same library behind
+# adbc-driver-gizmosql 2.x). dbc does not carry it yet, so pull the prebuilt
+# shared library from the gizmosql-adbc GitHub release and register it with a
+# driver manifest in /etc/adbc/drivers, alongside the dbc-installed drivers,
+# so it too can be loaded by name (driver 'gizmosql').
+RUN set -eux; \
+    PKG="libadbc_driver_gizmosql-${GIZMOSQL_ADBC_VERSION}-linux_${TARGETARCH}"; \
+    curl -LsSf -o /tmp/gizmosql-adbc.tar.gz \
+      "https://github.com/gizmodata/gizmosql-adbc/releases/download/${GIZMOSQL_ADBC_VERSION}/${PKG}.tar.gz"; \
+    tar xzf /tmp/gizmosql-adbc.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/${PKG}/libadbc_driver_gizmosql.so" /usr/local/lib/; \
+    sed -e "s|@VERSION@|${GIZMOSQL_ADBC_VERSION#v}|" \
+        -e "s|@PREFIX@|/usr/local/lib|g" \
+        "/tmp/${PKG}/gizmosql.toml.in" > /etc/adbc/drivers/gizmosql.toml; \
+    rm -rf /tmp/gizmosql-adbc.tar.gz "/tmp/${PKG}"; \
+    ls -l /usr/local/lib/libadbc_driver_gizmosql.so /etc/adbc/drivers/gizmosql.toml
 
 # Explicit override honored by the DuckDB snowflake extension; points at the
 # stable symlink so it survives driver version bumps. Baked into the image
