@@ -9,7 +9,7 @@ ExternalProject_Add(
     gflags_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/gflags/gflags.git
-    GIT_TAG v2.3.0
+    GIT_TAG v2.3.1
     GIT_SHALLOW TRUE
     CMAKE_ARGS
       -DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}

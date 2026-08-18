@@ -84,9 +84,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/third_party
-          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
           restore-keys: |
-            arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-
+            arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -113,7 +113,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: build/third_party
-          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Run Tests (Core Edition - No License)
         run: |
@@ -288,9 +288,9 @@ jobs:
           path: |
             build/third_party
             build/portable-deps
-          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
+          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
           restore-keys: |
-            arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-
+            arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -353,7 +353,7 @@ jobs:
           path: |
             build/third_party
             build/portable-deps
-          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
+          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
 
       - name: Start MinIO and setup bucket
         run: |
@@ -642,9 +642,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/third_party
-          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
           restore-keys: |
-            arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-
+            arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -669,7 +669,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: build/third_party
-          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
 
       - name: Copy VC++ runtime DLLs for DuckDB extension compatibility
         run: |
