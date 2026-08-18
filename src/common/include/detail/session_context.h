@@ -2,6 +2,7 @@
 #pragma once
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -101,15 +102,63 @@ struct ClientSession {
   // Flag for KILL SESSION support - when set, the session should be terminated
   std::atomic<bool> kill_requested{false};
 
+  // Last user-SQL activity for --session-idle-timeout (0 = unset until TouchSqlActivity).
+  // Touched on statement create and on each user-SQL FetchResult (row download).
+  std::atomic<int64_t> last_sql_activity_ns{0};
+
+  // Sweeper-facing "busy executing?" count. Do not read active_sql_handle for
+  // this (plain string; racy from other threads). Maintained exclusively by
+  // ScopedSqlInFlight so no code path can leak a session into a permanently
+  // "busy" (never-evictable) state; a count (not a bool) so concurrent
+  // statements on one session cannot clear each other's busy state.
+  std::atomic<int32_t> sql_in_flight{0};
+
   // Prepared statements owned by this session
   std::map<std::string, std::shared_ptr<gizmosql::ddb::DuckDBStatement>> prepared_statements;
   mutable std::shared_mutex statements_mutex;
+
+  void TouchSqlActivity() {
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    last_sql_activity_ns.store(ns, std::memory_order_relaxed);
+  }
+
+  std::chrono::steady_clock::time_point LastSqlActivity() const {
+    return std::chrono::steady_clock::time_point(
+        std::chrono::nanoseconds(last_sql_activity_ns.load(std::memory_order_relaxed)));
+  }
+
+  bool HasInFlightSql() const {
+    return sql_in_flight.load(std::memory_order_relaxed) > 0;
+  }
 
   // Destructor handles session cleanup:
   // 1. Interrupts any in-flight query on the DuckDB connection
   // 2. Clears prepared statements (releasing DuckDB handles before connection closes)
   // 3. TrackedDuckDBConnection destructor decrements the open connection counter
   ~ClientSession();
+};
+
+// RAII marker for "this session is executing SQL right now", read by the
+// idle-session sweeper via ClientSession::HasInFlightSql(). Scope it to the
+// execution only (not statement lifetime): a statement that is created but
+// never executed, or an execute that errors out on any path, must not leave
+// the session permanently "busy" and therefore never evictable.
+class ScopedSqlInFlight {
+ public:
+  explicit ScopedSqlInFlight(std::shared_ptr<ClientSession> session)
+      : session_(std::move(session)) {
+    session_->sql_in_flight.fetch_add(1, std::memory_order_relaxed);
+  }
+  ~ScopedSqlInFlight() {
+    session_->sql_in_flight.fetch_sub(1, std::memory_order_relaxed);
+  }
+  ScopedSqlInFlight(const ScopedSqlInFlight&) = delete;
+  ScopedSqlInFlight& operator=(const ScopedSqlInFlight&) = delete;
+
+ private:
+  std::shared_ptr<ClientSession> session_;
 };
 
 // Inline utility for safe access

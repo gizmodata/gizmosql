@@ -43,6 +43,7 @@ const int32_t DEFAULT_MAX_CONCURRENT_STATEMENTS = 0;  // 0 = unlimited (queue di
 const int32_t DEFAULT_MAX_QUEUED_STATEMENTS = -1;     // -1 = auto (8 x max_concurrent_statements)
 const int32_t DEFAULT_MAX_QUEUE_WAIT_SECONDS = -1;    // -1 = use built-in default (300s)
 const int32_t DEFAULT_MAX_SESSIONS = 0;               // 0 = unlimited client sessions
+const int32_t DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS = 0;  // 0 = idle eviction off
 
 enum class BackendType { duckdb, sqlite };
 
@@ -270,5 +271,11 @@ int RunFlightSQLServer(
     /// unlimited. Counts sessions / connections, not people — one IDE may consume
     /// multiple slots. DuckDB backend only (SQLite has no ClientSession map). If
     /// 0, uses env var GIZMOSQL_MAX_SESSIONS.
-    int32_t max_sessions = DEFAULT_MAX_SESSIONS);
+    int32_t max_sessions = DEFAULT_MAX_SESSIONS,
+    /// Seconds without user SQL after which an idle client session is evicted
+    /// (--session-idle-timeout / GIZMOSQL_SESSION_IDLE_TIMEOUT). 0 = off
+    /// (default). Uses the existing session-removal path (client sees
+    /// Unauthenticated / "Session not found — it may have been evicted").
+    /// DuckDB backend only. If 0, uses env var GIZMOSQL_SESSION_IDLE_TIMEOUT.
+    int32_t session_idle_timeout_seconds = DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS);
 }

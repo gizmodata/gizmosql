@@ -762,6 +762,10 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
 
   client_session->active_sql_handle = handle;
 
+  if (!is_internal) {
+    client_session->TouchSqlActivity();
+  }
+
   // Rudimentary admin-command gate (Core): block dangerous filesystem- and
   // instance-level commands (ATTACH/DETACH, SET GLOBAL, INSTALL/LOAD, CHECKPOINT,
   // COPY/EXPORT to local files, read_* of local files, duckdb_secrets()) for
@@ -1829,6 +1833,10 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
 arrow::Result<int> DuckDBStatement::Execute() {
   ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
+  // Mark the session busy for the idle-session sweeper for exactly the
+  // duration of execution, on every exit path (RAII).
+  ScopedSqlInFlight sql_in_flight_guard(session);
+
   std::string execute_status;
 
   ARROW_ASSIGN_OR_RAISE(auto query_timeout, GetQueryTimeout());
@@ -2247,6 +2255,11 @@ arrow::Result<int> DuckDBStatement::Execute() {
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult() {
   ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
+
+  // Fetch is still the same user query: refresh idle so a slow DoGet is not evicted.
+  if (!is_internal_) {
+    session->TouchSqlActivity();
+  }
 
   std::string status;
 
