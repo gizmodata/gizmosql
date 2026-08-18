@@ -54,6 +54,7 @@
 #   GIZMOSQL_OAUTH_INSTANCE_ID           --oauth-instance-id
 #   GIZMOSQL_OAUTH_DISABLE_TLS           --oauth-disable-tls (localhost only!)
 #   GIZMOSQL_MAX_METADATA_SIZE           --max-metadata-size
+#   GIZMOSQL_MAX_SESSIONS                --max-sessions (DuckDB only)
 #   GIZMOSQL_STORAGE_VERSION             --storage-version (DuckDB only)
 #   GIZMOSQL_MAX_CONCURRENT_STATEMENTS   --max-concurrent-statements (Enterprise)
 #   GIZMOSQL_MAX_QUEUED_STATEMENTS       --max-queued-statements (Enterprise)

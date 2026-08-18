@@ -19,6 +19,13 @@ on:
       - 'v*'
     paths-ignore:
       - '**/*.md'
+  # Fork PRs: build + test only. Signing, notarization, Docker logins, MSI,
+  # and iOS are skipped on pull_request events (fork runs have no secrets).
+  # Same-repo PRs are skipped entirely — the push trigger above already
+  # covers every branch in this repo, so running them here would duplicate.
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
 
 env:
   DOCKERHUB_IMAGE_NAME: gizmodata/gizmosql
@@ -34,6 +41,8 @@ env:
 jobs:
   build-project-macos:
     name: Build Project - MacOS (${{ matrix.duckdb_channel }})
+    # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-14-xlarge
     strategy:
       fail-fast: false
@@ -168,6 +177,8 @@ jobs:
           exit $TEST_EXIT_CODE
 
       - name: Sign and notarize the server release build
+        # Skip on pull_request: fork runs have no Apple signing secrets
+        if: github.event_name != 'pull_request'
         uses: toitlang/action-macos-sign-notarize@v1.3.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
@@ -179,6 +190,8 @@ jobs:
           entitlements-path: macos/entitlements.plist
 
       - name: Sign and notarize the client release build
+        # Skip on pull_request: fork runs have no Apple signing secrets
+        if: github.event_name != 'pull_request'
         uses: toitlang/action-macos-sign-notarize@v1.3.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
@@ -202,6 +215,8 @@ jobs:
 
   build-project-linux:
     name: Build Project - Linux ${{ matrix.platform }} (${{ matrix.duckdb_channel }})
+    # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     strategy:
       fail-fast: false
       matrix:
@@ -453,6 +468,9 @@ jobs:
           mv gizmosql_client_lts gizmosql_client
 
       - name: Login to Docker Hub
+        # Skip on pull_request: fork runs have no Docker Hub secrets (the
+        # image build below is cache-only on non-tag refs anyway)
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: docker.io
@@ -535,6 +553,8 @@ jobs:
 
   build-project-windows:
     name: Build Project - Windows (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
+    # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -675,6 +695,8 @@ jobs:
   sign-windows:
     name: Sign Windows (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
     needs: build-project-windows
+    # Skip on pull_request: fork runs have no Azure signing secrets
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     environment: production
     strategy:
@@ -746,6 +768,8 @@ jobs:
   build-msi:
     name: Build MSI (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
     needs: sign-windows
+    # Skip on pull_request: fork runs have no Azure signing secrets
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     environment: production
     strategy:
@@ -1351,6 +1375,11 @@ jobs:
 
   build-ios:
     name: Build & Sign iOS App
+    # Skip on pull_request: fork runs have no iOS signing secrets. NOTE: this
+    # means iOS-only breakage (e.g. the RunFlightSQLServer positional-caller
+    # gotcha in the iOS bridge) is not caught on fork PRs — it surfaces on the
+    # push build after merge.
+    if: github.event_name != 'pull_request'
     # macos-26 runner image ships Xcode 26 / iOS 26 SDK. Apple requires
     # all App Store Connect uploads (and TestFlight builds) to be built
     # with the iOS 26 SDK starting 2026-04-28; older runners (macos-14

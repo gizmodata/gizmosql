@@ -88,6 +88,7 @@ CreateFlightSQLServer(
     int32_t health_check_interval_seconds = 0,
     int32_t health_check_staleness_seconds = 0,
     bool allow_unsigned_extensions = false,
+    int32_t max_sessions = 0,
     int32_t session_idle_timeout_seconds = 0);
 
 // Cleanup function to reset global state between test suites
@@ -148,6 +149,7 @@ struct TestServerConfig {
   int32_t health_check_interval_seconds = 0;     // Seconds between health checks (0 => env var, then 5)
   int32_t health_check_staleness_seconds = 0;    // NOT_SERVING if no check completed in this window (0 => env var, then 3x interval)
   bool allow_unsigned_extensions = false;        // [DuckDB] allow loading unsigned extensions (GLOBAL_ONLY, set at open)
+  int32_t max_sessions = 0;                      // max concurrent client sessions (0 = unlimited)
   int32_t session_idle_timeout_seconds = 0;      // idle eviction seconds (0 = off)
 };
 
@@ -268,6 +270,7 @@ class ServerTestFixture : public ::testing::Test {
         /*health_check_interval_seconds=*/config_.health_check_interval_seconds,
         /*health_check_staleness_seconds=*/config_.health_check_staleness_seconds,
         /*allow_unsigned_extensions=*/config_.allow_unsigned_extensions,
+        /*max_sessions=*/config_.max_sessions,
         /*session_idle_timeout_seconds=*/config_.session_idle_timeout_seconds);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();

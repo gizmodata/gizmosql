@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`--max-sessions` / `GIZMOSQL_MAX_SESSIONS`.** Launch-time cap on concurrent non-admin client sessions (DuckDB backend). `0` = unlimited (default). When the limit is reached, new non-admin sessions are rejected with a retriable Flight `UNAVAILABLE` error at session create (same pattern as graceful-drain rejects); existing sessions keep working. Admin-role sessions skip the cap so an operator can still connect (e.g. to `KILL SESSION`). Counts sessions/connections, not people. Closes [#108](https://github.com/gizmodata/gizmosql/issues/108).
+
 ### Changed
+- CI: the `ci` workflow now also runs on `pull_request`, so fork PRs get
+  build + integration-test coverage before merge. Fork PR runs execute
+  build/test only — signing, notarization, Docker registry logins, MSI
+  packaging, and the iOS build are skipped on `pull_request` events (fork
+  runs have no secrets). Same-repo PRs are skipped entirely since the
+  existing push trigger already covers every branch. The repository's
+  Actions policy now requires a maintainer (write access) to approve
+  workflow runs for all outside collaborators.
 - Docs/README: the Metabase integration now points to GizmoData's own
   [`metabase-gizmosql-driver`](https://github.com/gizmodata/metabase-gizmosql-driver)
   (v1.0.0, built on the GizmoSQL JDBC driver) instead of the upstream

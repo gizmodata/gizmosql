@@ -538,6 +538,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const int32_t& health_check_interval_seconds,
     const int32_t& health_check_staleness_seconds,
     const bool& allow_unsigned_extensions,
+    const int32_t& max_sessions,
     const int32_t& session_idle_timeout_seconds) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
@@ -761,6 +762,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                                              admin_bypass_queue_default, memory_limit,
                                              capture_query_profile,
                                              allow_unsigned_extensions,
+                                             max_sessions,
                                              session_idle_timeout_seconds,
                                              nullptr))  // No instrumentation manager yet
 
@@ -1195,6 +1197,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     int32_t health_check_interval_seconds,
     int32_t health_check_staleness_seconds,
     bool allow_unsigned_extensions,
+    int32_t max_sessions,
     int32_t session_idle_timeout_seconds) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
@@ -1524,7 +1527,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       memory_limit, capture_query_profile, cluster_id, enable_catalog_logging,
       log_catalog, log_schema, log_catalog_db_path,
       health_check_interval_seconds, health_check_staleness_seconds,
-      allow_unsigned_extensions, session_idle_timeout_seconds);
+      allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1795,6 +1798,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        int32_t health_check_interval_seconds,
                        int32_t health_check_staleness_seconds,
                        std::optional<bool> allow_unsigned_extensions,
+                       int32_t max_sessions,
                        int32_t session_idle_timeout_seconds) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
@@ -1970,6 +1974,27 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       }
     }
     if (max_concurrent_statements < 0) max_concurrent_statements = 0;
+  }
+
+  // Integer env var fallback for max_sessions: only consult env when the
+  // CLI/library caller left it at the sentinel default (0 = unlimited).
+  if (max_sessions <= 0) {
+    auto env = gizmosql::SafeGetEnvVarValue("GIZMOSQL_MAX_SESSIONS");
+    if (!env.empty()) {
+      try {
+        int parsed = std::stoi(env);
+        if (parsed > 0) {
+          max_sessions = parsed;
+        } else if (parsed < 0) {
+          std::cerr << "GIZMOSQL_MAX_SESSIONS must be a positive integer; got '"
+                    << env << "', ignoring." << std::endl;
+        }
+      } catch (const std::exception&) {
+        std::cerr << "GIZMOSQL_MAX_SESSIONS is not a valid integer ('" << env
+                  << "'), ignoring." << std::endl;
+      }
+    }
+    if (max_sessions < 0) max_sessions = 0;
   }
 
   // Capture whether the operator configured any statement-queue knob BEFORE the
@@ -2197,6 +2222,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       cluster_id, enable_catalog_logging.value(), log_catalog, log_schema,
       log_catalog_db_path, health_check_interval_seconds,
       health_check_staleness_seconds, allow_unsigned_extensions.value(),
+      max_sessions,
       session_idle_timeout_seconds);
 
   if (create_server_result.ok()) {

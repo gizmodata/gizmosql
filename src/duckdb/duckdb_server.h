@@ -59,7 +59,7 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
       const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
       const bool& admin_bypass_queue_default, const std::string& memory_limit,
       const gizmosql::QueryProfileMode& capture_query_profile,
-      const bool& allow_unsigned_extensions,
+      const bool& allow_unsigned_extensions, const int32_t& max_sessions,
       const int32_t& session_idle_timeout_seconds,
 #ifdef GIZMOSQL_ENTERPRISE
       std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr);

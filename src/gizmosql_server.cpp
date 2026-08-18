@@ -152,6 +152,13 @@ int main(int argc, char** argv) {
              "DuckDB's `memory_limit` setting (global / instance-wide). Empty leaves DuckDB's "
              "built-in default (80% of physical RAM). If empty, uses env var GIZMOSQL_MEMORY_LIMIT. "
              "Ignored for the SQLite backend.")
+            ("max-sessions", po::value<int32_t>()->default_value(DEFAULT_MAX_SESSIONS),
+             "Maximum number of concurrent non-admin client sessions the server will accept. "
+             "When the limit is reached, new non-admin sessions are rejected with a retriable "
+             "UNAVAILABLE error. Admin-role sessions always get in (so an operator can still "
+             "connect and KILL SESSION). 0 = unlimited. Counts sessions/connections (not people); "
+             "one IDE may use multiple slots. DuckDB backend only. If 0, uses env var "
+             "GIZMOSQL_MAX_SESSIONS.")
             ("session-idle-timeout",
              po::value<int32_t>()->default_value(DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS),
              "Seconds without user SQL after which an idle client session is evicted. "
@@ -467,6 +474,8 @@ int main(int argc, char** argv) {
 
   std::string memory_limit = vm["memory-limit"].as<std::string>();
 
+  int32_t max_sessions = vm["max-sessions"].as<int32_t>();
+
   std::optional<bool> allow_unsigned_extensions =
       vm["allow-unsigned-extensions"].defaulted()
           ? std::nullopt
@@ -592,5 +601,5 @@ int main(int argc, char** argv) {
       cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path,
       graceful_shutdown, shutdown_grace_period_seconds,
       health_check_interval_seconds, health_check_staleness_seconds,
-      allow_unsigned_extensions, session_idle_timeout);
+      allow_unsigned_extensions, max_sessions, session_idle_timeout);
 }
