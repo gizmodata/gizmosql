@@ -106,8 +106,12 @@ struct ClientSession {
   // Touched on statement create and on each user-SQL FetchResult (row download).
   std::atomic<int64_t> last_sql_activity_ns{0};
 
-  // Sweeper-facing "busy executing?" flag. Do not read active_sql_handle for this.
-  std::atomic<bool> sql_in_flight{false};
+  // Sweeper-facing "busy executing?" count. Do not read active_sql_handle for
+  // this (plain string; racy from other threads). Maintained exclusively by
+  // ScopedSqlInFlight so no code path can leak a session into a permanently
+  // "busy" (never-evictable) state; a count (not a bool) so concurrent
+  // statements on one session cannot clear each other's busy state.
+  std::atomic<int32_t> sql_in_flight{0};
 
   // Prepared statements owned by this session
   std::map<std::string, std::shared_ptr<gizmosql::ddb::DuckDBStatement>> prepared_statements;
@@ -126,7 +130,7 @@ struct ClientSession {
   }
 
   bool HasInFlightSql() const {
-    return sql_in_flight.load(std::memory_order_relaxed);
+    return sql_in_flight.load(std::memory_order_relaxed) > 0;
   }
 
   // Destructor handles session cleanup:
@@ -134,6 +138,27 @@ struct ClientSession {
   // 2. Clears prepared statements (releasing DuckDB handles before connection closes)
   // 3. TrackedDuckDBConnection destructor decrements the open connection counter
   ~ClientSession();
+};
+
+// RAII marker for "this session is executing SQL right now", read by the
+// idle-session sweeper via ClientSession::HasInFlightSql(). Scope it to the
+// execution only (not statement lifetime): a statement that is created but
+// never executed, or an execute that errors out on any path, must not leave
+// the session permanently "busy" and therefore never evictable.
+class ScopedSqlInFlight {
+ public:
+  explicit ScopedSqlInFlight(std::shared_ptr<ClientSession> session)
+      : session_(std::move(session)) {
+    session_->sql_in_flight.fetch_add(1, std::memory_order_relaxed);
+  }
+  ~ScopedSqlInFlight() {
+    session_->sql_in_flight.fetch_sub(1, std::memory_order_relaxed);
+  }
+  ScopedSqlInFlight(const ScopedSqlInFlight&) = delete;
+  ScopedSqlInFlight& operator=(const ScopedSqlInFlight&) = delete;
+
+ private:
+  std::shared_ptr<ClientSession> session_;
 };
 
 // Inline utility for safe access
