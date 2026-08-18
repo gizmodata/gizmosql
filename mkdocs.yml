@@ -90,6 +90,7 @@ nav:
   - Integrations:
       - Extensions & Tools: integrations.md
       - ADBC Scanner extension DuckDB: adbc_scanner_duckdb.md
+      - ADBC extension DuckDB (Columnar): adbc_duckdb_extension.md
   - Additional Resources:
       - One Trillion Row Challenge: one_trillion_row_challenge.md
   - Links:
