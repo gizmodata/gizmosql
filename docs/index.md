@@ -49,10 +49,10 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 | Component                                                                        | Stable channel | LTS channel |
 |----------------------------------------------------------------------------------|----------------|-------------|
 | [DuckDB](https://duckdb.org)                                                     | v1.5.5         | v1.4.5      |
-| [SQLite](https://sqlite.org)                                                     | 3.53.1         | 3.53.1      |
+| [SQLite](https://sqlite.org)                                                     | 3.53.4         | 3.53.4      |
 | [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1         | 25.0.1      |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      |
-| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.25.0        | v1.25.0     |
+| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.28.0        | v1.28.0     |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     |
 
 ### Release channels

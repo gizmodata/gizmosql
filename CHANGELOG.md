@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Docs: the component-version tables in `README.md` and `docs/index.md` now
+  reflect the v1.36.0 dependency bumps (SQLite 3.53.4, OpenTelemetry C++
+  1.28.0) — the Arrow row had been updated but these two rows were missed.
+
 ## [1.36.0] - 2026-08-18
 
 ### Added
