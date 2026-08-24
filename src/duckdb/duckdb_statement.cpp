@@ -220,24 +220,6 @@ std::optional<std::string> TryExtractUseCatalogName(const std::string& sql) {
   return first_identifier;
 }
 
-bool CatalogExistsOnConnection(duckdb::Connection& connection,
-                               const std::string& catalog_name) {
-  auto stmt = connection.Prepare(
-      "SELECT 1 FROM information_schema.schemata WHERE catalog_name = ? LIMIT 1");
-  if (!stmt || !stmt->success) {
-    return false;
-  }
-
-  duckdb::vector<duckdb::Value> bind_parameters;
-  bind_parameters.emplace_back(catalog_name);
-  auto result = stmt->Execute(bind_parameters);
-  if (!result || result->HasError()) {
-    return false;
-  }
-
-  auto row = result->Fetch();
-  return row != nullptr && row->size() > 0;
-}
 
 // Replace GizmoSQL pseudo-functions with actual values:
 //   GIZMOSQL_CURRENT_SESSION() -> current session UUID
@@ -589,6 +571,33 @@ std::string ReplaceGizmoSQLFunctions(const std::string& sql,
 }  // namespace
 
 namespace gizmosql::ddb {
+
+// Resolve whether a catalog with the given name is attached.
+//
+// Deliberately uses duckdb_databases() rather than information_schema.schemata:
+// the latter enumerates the schemas of EVERY attached catalog, and for remote
+// catalogs (DuckLake on PostgreSQL, postgres_scanner, ...) that opens one
+// metadata-store connection per attached catalog even though the predicate
+// names exactly one. duckdb_databases() is answered from the in-process
+// DatabaseManager and never touches a remote store.
+bool CatalogExistsOnConnection(duckdb::Connection& connection,
+                               const std::string& catalog_name) {
+  auto stmt = connection.Prepare(
+      "SELECT 1 FROM duckdb_databases() WHERE database_name = ? LIMIT 1");
+  if (!stmt || !stmt->success) {
+    return false;
+  }
+
+  duckdb::vector<duckdb::Value> bind_parameters;
+  bind_parameters.emplace_back(catalog_name);
+  auto result = stmt->Execute(bind_parameters);
+  if (!result || result->HasError()) {
+    return false;
+  }
+
+  auto row = result->Fetch();
+  return row != nullptr && row->size() > 0;
+}
 
 namespace {
 // Defined with the GizmoSQL settings registry below; forward-declared here because

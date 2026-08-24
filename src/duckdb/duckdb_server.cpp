@@ -121,27 +121,6 @@ class DuckDBTransactionGuard {
   bool committed_;
 };
 
-#ifdef GIZMOSQL_ENTERPRISE
-bool CatalogExistsOnConnection(duckdb::Connection& connection,
-                               const std::string& catalog_name) {
-  auto stmt = connection.Prepare(
-      "SELECT 1 FROM information_schema.schemata WHERE catalog_name = ? LIMIT 1");
-  if (!stmt || !stmt->success) {
-    return false;
-  }
-
-  duckdb::vector<duckdb::Value> bind_parameters;
-  bind_parameters.emplace_back(catalog_name);
-  auto result = stmt->Execute(bind_parameters);
-  if (!result || result->HasError()) {
-    return false;
-  }
-
-  auto row = result->Fetch();
-  return row != nullptr && row->size() > 0;
-}
-#endif
-
 int64_t GetArrayDataSize(const std::shared_ptr<arrow::ArrayData>& data) {
   if (!data) return 0;
 
@@ -1447,8 +1426,12 @@ class DuckDBFlightSqlServer::Impl {
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetCatalogs(
       const flight::ServerCallContext& context) {
+    // duckdb_databases() is answered in-process. information_schema.schemata
+    // would enumerate the schemas of every attached catalog, opening one
+    // metadata-store connection per attached DuckLake/PostgreSQL catalog just
+    // to list catalog names.
     std::string query =
-        "SELECT DISTINCT catalog_name FROM information_schema.schemata ORDER BY "
+        "SELECT database_name AS catalog_name FROM duckdb_databases() ORDER BY "
         "catalog_name";
 
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));

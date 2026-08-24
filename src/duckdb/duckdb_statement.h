@@ -35,6 +35,12 @@ using Clock = std::chrono::steady_clock;
 
 namespace gizmosql::ddb {
 
+/// Returns true if a catalog named `catalog_name` is attached on `connection`.
+/// Answered from duckdb_databases() so it never opens connections to remote
+/// catalog metadata stores (see the definition for why this matters).
+bool CatalogExistsOnConnection(duckdb::Connection& connection,
+                               const std::string& catalog_name);
+
 #ifdef GIZMOSQL_ENTERPRISE
 class StatementInstrumentation;
 class ExecutionInstrumentation;

@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.1] - 2026-08-24
+
 ### Fixed
+- **`USE <catalog>` no longer fans out across every attached DuckLake catalog.**
+  Before dispatching a `USE` (or a `SetSessionOptions` catalog change) to the
+  catalog-permission check, GizmoSQL probed whether the catalog exists with
+  `information_schema.schemata`, which enumerates the schemas of *every*
+  attached catalog — opening one metadata-store connection per attached
+  DuckLake/PostgreSQL catalog even though the statement names exactly one
+  (400 attached catalogs → 400 PostgreSQL connections and ~8s per `USE`).
+  The probe now uses `duckdb_databases()`, which is answered in-process and
+  opens no remote connections. The two duplicated copies of the probe were
+  merged into a single `CatalogExistsOnConnection()` helper. The Flight SQL
+  `GetCatalogs` RPC had the same fan-out (it listed catalog names via
+  `information_schema.schemata`) and now also uses `duckdb_databases()`. New regression
+  test `test_ducklake_catalog_fanout.cpp` (local-path and MinIO/S3 data
+  variants) asserts the PostgreSQL session count for `USE` stays bounded.
 - Docs: the component-version tables in `README.md` and `docs/index.md` now
   reflect the v1.36.0 dependency bumps (SQLite 3.53.4, OpenTelemetry C++
   1.28.0) — the Arrow row had been updated but these two rows were missed.

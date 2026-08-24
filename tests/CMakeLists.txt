@@ -49,6 +49,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_token_authorized_emails.cpp
         integration/test_tpch_benchmark.cpp
         integration/test_ducklake.cpp
+        integration/test_ducklake_catalog_fanout.cpp
         integration/test_enterprise_gating.cpp
         integration/test_geoarrow.cpp
         integration/test_client_cli.cpp
