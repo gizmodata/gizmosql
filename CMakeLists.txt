@@ -611,7 +611,8 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/duckdb_statement_batch_reader.cpp
         src/duckdb/admin_command_guard.cpp
         src/duckdb/duckdb_server.cpp
-        src/duckdb/duckdb_tables_schema_batch_reader.cpp)
+        src/duckdb/duckdb_tables_schema_batch_reader.cpp
+        src/duckdb/duckdb_arrow_ingest.cpp)
 
 # Enterprise vs Core: instrumentation source files
 if(GIZMOSQL_ENTERPRISE)

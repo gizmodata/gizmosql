@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-08-24
+
+### Changed
+- **Bulk ingest (Flight SQL `DoPut` / ADBC `adbc_ingest`) is now streamed
+  through DuckDB's Arrow scanner.** The incoming Arrow stream is exposed to
+  DuckDB as an `arrow_scan` over a session-temporary view and loaded with a
+  single `INSERT INTO <target> BY NAME SELECT * FROM <view>`, replacing the
+  previous per-cell `duckdb::Value` conversion through an `Appender` and the
+  interim temp table used for append mode. DuckDB's own vectorized
+  Arrow→DuckDB conversion now applies to every type (nested types, decimals,
+  timestamps with time zones, dictionaries), `BY NAME` fills defaults for
+  columns the client didn't send in every mode, and row counts are verified
+  against what the client streamed. Measured on TPC-H `lineitem` SF2
+  (11,997,996 rows, 50k-row batches, Python ADBC over localhost): 36.0 s →
+  5.0 s (0.33 → 2.39 M rows/s), identical checksums. Also documented the
+  16 MB gRPC message cap for batch sizing in `docs/bulk_ingestion.md`.
+
+### Fixed
+- **Geometry columns now bulk-ingest as `GEOMETRY`, not `BLOB`, server-side**
+  ([adbc-driver-gizmosql#5](https://github.com/gizmodata/adbc-driver-gizmosql/issues/5)).
+  Arrow fields tagged with a `geoarrow.*` extension (what GizmoSQL itself
+  emits for `GEOMETRY` columns) are created as `GEOMETRY` and materialized by
+  DuckDB's Arrow scanner directly, so create-mode ingests get a real
+  `GEOMETRY` column and append-mode ingests into an existing `GEOMETRY`
+  column no longer fail on a blob→geometry cast. This fixes the behaviour for
+  every client (JDBC, Go/C++/Python ADBC, `dbc`), not just the GizmoSQL ADBC
+  driver's 2.0.1 client-side workaround, which is now redundant against this
+  server version. Regression test covers create / append / replace with WKB
+  round-trip.
+
 ## [1.36.1] - 2026-08-24
 
 ### Added

@@ -175,6 +175,33 @@ with gizmosql.connect(
 2. **Stream large datasets** - Use RecordBatch readers instead of loading entire tables into memory
 3. **Use `replace` mode carefully** - It drops and recreates the table, which may be slower for incremental loads
 4. **Monitor memory** - Large batch sizes consume more client memory
+5. **Stay under the gRPC message limit** - Each Arrow batch travels as one
+   Flight message; the default gRPC cap is 16 MB, so very wide or very long
+   batches (e.g. 1,000,000 TPC-H `lineitem` rows ≈ 170 MB) are rejected with
+   `trying to send message larger than max`. 50,000–100,000 rows per batch is
+   a safe default for typical tables.
+
+### How the server loads your data
+
+Since v1.37.0 the server exposes the incoming Arrow stream to DuckDB as an
+`arrow_scan` and loads it with a single `INSERT INTO <target> BY NAME SELECT *`
+— DuckDB's own vectorized Arrow conversion, applied to every type (nested
+types, decimals, time zones, GeoArrow `GEOMETRY`), with `BY NAME` filling
+defaults for columns you don't send. Previously each cell was converted
+individually through a DuckDB `Appender`.
+
+Measured on a MacBook (Apple Silicon), TPC-H `lineitem` at scale factor 2
+(11,997,996 rows, 16 columns, 50,000-row batches, Python ADBC client over
+plaintext gRPC on localhost, fresh database file, `mode="create"`):
+
+| Server | Wall-clock | Throughput |
+|---|---|---|
+| ≤ v1.36 (per-cell `Appender`) | 36.0 s | 0.33 M rows/s |
+| v1.37 (`arrow_scan` stream) | **5.0 s** | **2.39 M rows/s** |
+
+Same row count and `sum(l_quantity)` checksum on both. At this point the
+client's Parquet decode and the gRPC transfer dominate; the server-side
+conversion is no longer the bottleneck.
 
 ## Complete Example
 

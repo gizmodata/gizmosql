@@ -189,6 +189,14 @@ with gizmosql.connect(
         )
 ```
 
+!!! info "Geometry columns arrive as `GEOMETRY`"
+    GeoPandas (and any GeoArrow-aware producer) tags geometry columns with a
+    `geoarrow.*` Arrow extension type. Since v1.37.0 the server honours that
+    tag during bulk ingest: the column is created as `GEOMETRY` (not `BLOB`)
+    and appends into an existing `GEOMETRY` column just work — for every
+    client, with no client-side conversion. Ingested geometries are immediately
+    usable with `ST_*` functions and export back as GeoArrow.
+
 ### From Shapefile
 
 ```python

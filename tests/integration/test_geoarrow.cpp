@@ -242,6 +242,97 @@ TEST_F(GeoArrowServerFixture, GeometryExportsAsGeoArrow) {
   std::cerr << "=== GeoArrow Test Complete ===" << std::endl;
 }
 
+// Regression: bulk ingest (DoPut CommandStatementIngest) of a geoarrow.wkb
+// column must land as GEOMETRY — in create mode (new table), in append mode
+// into an existing GEOMETRY column, and in replace mode — with the WKB
+// round-tripping through ST_AsText. Previously the server ignored the
+// extension metadata: create produced BLOB and append failed on the
+// blob->geometry cast (adbc-driver-gizmosql#5).
+TEST_F(GeoArrowServerFixture, GeometryIngestsAsGeometry) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto flight_client,
+                             arrow::flight::FlightClient::Connect(location, options));
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, flight_client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+  FlightSqlClient sql_client(std::move(flight_client));
+
+  auto result = RunQuery(sql_client, call_options, "INSTALL spatial; LOAD spatial;");
+  ASSERT_TRUE(result.success) << result.error_message;
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+  result = RunQuery(sql_client, call_options, "CALL register_geoarrow_extensions();");
+  ASSERT_TRUE(result.success) << result.error_message;
+#endif
+  RunQuery(sql_client, call_options, "DROP TABLE IF EXISTS geo_ingest");
+
+  // WKB (little-endian) POINT(x y)
+  auto wkb_point = [](double x, double y) {
+    std::string b;
+    b.push_back('\x01');
+    uint32_t type = 1;
+    b.append(reinterpret_cast<const char*>(&type), 4);
+    b.append(reinterpret_cast<const char*>(&x), 8);
+    b.append(reinterpret_cast<const char*>(&y), 8);
+    return b;
+  };
+  auto make_batches = [&](int first_id) {
+    auto geo_field = arrow::field(
+        "geom", arrow::binary(), /*nullable=*/true,
+        arrow::key_value_metadata({"ARROW:extension:name", "ARROW:extension:metadata"},
+                                  {"geoarrow.wkb", "{}"}));
+    auto schema = arrow::schema({arrow::field("id", arrow::int32()), geo_field});
+    arrow::Int32Builder ids;
+    arrow::BinaryBuilder geoms;
+    for (int i = 0; i < 2; ++i) {
+      EXPECT_TRUE(ids.Append(first_id + i).ok());
+      EXPECT_TRUE(geoms.Append(wkb_point(first_id + i, (first_id + i) * 10.0)).ok());
+    }
+    auto batch = arrow::RecordBatch::Make(
+        schema, 2, {ids.Finish().ValueOrDie(), geoms.Finish().ValueOrDie()});
+    return arrow::RecordBatchReader::Make({batch}, schema).ValueOrDie();
+  };
+  using arrow::flight::sql::TableDefinitionOptions;
+  using ExistsOpt = arrow::flight::sql::TableDefinitionOptionsTableExistsOption;
+  using NotExistsOpt = arrow::flight::sql::TableDefinitionOptionsTableNotExistOption;
+  auto ingest = [&](int first_id, ExistsOpt if_exists) {
+    TableDefinitionOptions opts;
+    opts.if_not_exist = NotExistsOpt::kCreate;
+    opts.if_exists = if_exists;
+    return sql_client.ExecuteIngest(call_options, make_batches(first_id), opts,
+                                    "geo_ingest", std::nullopt, std::nullopt, false,
+                                    arrow::flight::sql::no_transaction(), {});
+  };
+  auto check = [&](int64_t expected_rows, const char* expected_last_point) {
+    auto r = RunQuery(sql_client, call_options,
+                      "SELECT typeof(geom), ST_AsText(geom), count(*) OVER () "
+                      "FROM geo_ingest ORDER BY id DESC LIMIT 1");
+    ASSERT_TRUE(r.success) << r.error_message;
+    ASSERT_EQ(r.row_count, 1);
+    auto col = [&](int i) { return r.table->column(i)->GetScalar(0).ValueOrDie()->ToString(); };
+    EXPECT_EQ(col(0), "GEOMETRY");
+    EXPECT_EQ(col(1), expected_last_point);
+    EXPECT_EQ(col(2), std::to_string(expected_rows));
+  };
+
+  // create: new table gets a GEOMETRY column
+  ASSERT_ARROW_OK_AND_ASSIGN(auto n1, ingest(1, ExistsOpt::kFail));
+  EXPECT_EQ(n1, 2);
+  check(2, "POINT (2 20)");
+  // append into the existing GEOMETRY column
+  ASSERT_ARROW_OK_AND_ASSIGN(auto n2, ingest(3, ExistsOpt::kAppend));
+  EXPECT_EQ(n2, 2);
+  check(4, "POINT (4 40)");
+  // replace
+  ASSERT_ARROW_OK_AND_ASSIGN(auto n3, ingest(7, ExistsOpt::kReplace));
+  EXPECT_EQ(n3, 2);
+  check(2, "POINT (8 80)");
+  RunQuery(sql_client, call_options, "DROP TABLE IF EXISTS geo_ingest");
+}
+
 // Test various geometry types
 TEST_F(GeoArrowServerFixture, VariousGeometryTypes) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
