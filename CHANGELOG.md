@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.1] - 2026-08-24
+
+### Fixed
+- **`-adbc` / `-slim-adbc` Docker images now bundle `gizmosql-adbc` v2.0.8**
+  (was v2.0.6). Required alongside the 1.37.0 server: the driver's earlier
+  geometry-aware ingest path re-typed interim columns with `ST_GeomFromWKB`
+  unconditionally and failed against 1.37.0's server-side `GEOMETRY`
+  handling (`No function matches 'st_geomfromwkb(GEOMETRY)'`); v2.0.8 only
+  converts columns that actually landed as `BLOB`, so it works against both
+  old and new servers. If you use `adbc-driver-gizmosql` outside these
+  images, upgrade it to ≥ 2.0.8 for geometry ingest against GizmoSQL ≥ 1.37.0.
+
 ## [1.37.0] - 2026-08-24
 
 ### Changed

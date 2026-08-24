@@ -18,7 +18,7 @@ ARG BASE_IMAGE=gizmodata/gizmosql:latest-slim
 FROM ${BASE_IMAGE}
 
 ARG ADBC_DRIVERS="bigquery databricks exasol flightsql mssql mysql postgresql redshift snowflake trino"
-ARG GIZMOSQL_ADBC_VERSION="v2.0.6"
+ARG GIZMOSQL_ADBC_VERSION="v2.0.8"
 
 # amd64 / arm64, injected by buildx for each platform of the multi-arch build
 ARG TARGETARCH

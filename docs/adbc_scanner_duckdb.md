@@ -38,7 +38,7 @@ Download the shared library for your platform from the
 with a driver manifest so it can be loaded by name:
 
 ```bash
-VERSION="v2.0.6"
+VERSION="v2.0.8"
 PLATFORM="macos_arm64"   # or: linux_amd64, linux_arm64, macos_amd64, windows_amd64, windows_arm64
 
 curl -LO "https://github.com/gizmodata/gizmosql-adbc/releases/download/${VERSION}/libadbc_driver_gizmosql-${VERSION}-${PLATFORM}.tar.gz"
