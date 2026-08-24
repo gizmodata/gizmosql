@@ -20,6 +20,7 @@
 #include <duckdb.hpp>
 
 #include <boost/algorithm/string.hpp>
+#include <algorithm>
 #include <chrono>
 #include <map>
 #include <random>
@@ -37,6 +38,9 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <condition_variable>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <jwt-cpp/jwt.h>
@@ -62,6 +66,7 @@
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/catalog_permissions/catalog_permissions_handler.h"
+#include "enterprise/enterprise_features.h"
 #endif
 
 using arrow::Result;
@@ -279,50 +284,215 @@ std::string QuoteIdent(const std::string& name) {
   return q;
 }
 
+std::string SqlLiteral(const std::string& value) {
+  std::string q = "'";
+  for (char c : value) {
+    if (c == '\'')
+      q += "''";
+    else
+      q += c;
+  }
+  q += "'";
+  return q;
+}
+
+// ---------------------------------------------------------------------------
+// Catalog-scoped metadata scans
+//
+// DuckDB's information_schema views and duckdb_schemas()/duckdb_tables()
+// enumerate EVERY attached catalog and cannot push a catalog predicate down.
+// For remote catalogs (DuckLake on PostgreSQL, postgres_scanner, ...) that
+// means one metadata-store connection per attached catalog for a request that
+// names exactly one. The helpers below walk the C++ catalog API on just the
+// catalogs the request resolves to, then hand the rows to the regular SQL
+// plumbing as a VALUES list so output shape, LIKE filters, ordering and the
+// enterprise catalog-visibility filter behave exactly as before.
+// ---------------------------------------------------------------------------
+
+struct CatalogEntryRow {
+  std::string catalog_name;
+  std::string schema_name;
+  std::string table_name;  // empty for schema-only scans
+  std::string table_type;  // BASE TABLE / VIEW / LOCAL TEMPORARY
+};
+
+// Attached catalog names matching an optional LIKE pattern, resolved in-process
+// from duckdb_databases(). nullopt = the session's current database.
+Result<std::vector<std::string>> ResolveCatalogNames(
+    duckdb::Connection& conn, const std::optional<std::string>& like_pattern) {
+  std::vector<std::string> names;
+  if (!like_pattern.has_value()) {
+    names.push_back(duckdb::DatabaseManager::GetDefaultDatabase(*conn.context));
+    return names;
+  }
+  auto stmt = conn.Prepare(
+      "SELECT database_name FROM duckdb_databases() WHERE database_name LIKE ? "
+      "ORDER BY database_name");
+  if (!stmt || !stmt->success) {
+    return Status::Invalid("DuckDB metadata query failed: " + stmt->GetError());
+  }
+  duckdb::vector<duckdb::Value> binds;
+  binds.emplace_back(like_pattern.value());
+  auto result = stmt->Execute(binds);
+  if (!result || result->HasError()) {
+    return Status::Invalid("DuckDB metadata query failed: " + result->GetError());
+  }
+  for (auto& row : *result) {
+    names.push_back(row.GetValue<std::string>(0));
+  }
+  return names;
+}
+
+// Walk the schemas (and optionally the tables/views) of ONLY the given catalogs.
+Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
+    duckdb::Connection& conn, const std::vector<std::string>& catalog_names,
+    bool include_tables) {
+  std::vector<CatalogEntryRow> rows;
+  auto& context = *conn.context;
+  try {
+    context.RunFunctionInTransaction([&]() {
+      for (const auto& catalog_name : catalog_names) {
+        auto catalog = duckdb::Catalog::GetCatalogEntry(context, catalog_name);
+        if (!catalog) continue;
+        catalog->ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
+          if (!include_tables) {
+            rows.push_back({catalog_name, schema.name, "", ""});
+            return;
+          }
+          // Some catalog implementations serve views from the TABLE_ENTRY scan,
+          // others only from VIEW_ENTRY — scan both and de-duplicate by name.
+          std::unordered_set<std::string> seen;
+          auto visit = [&](duckdb::CatalogEntry& entry) {
+            // information_schema.tables hides DuckDB-internal entries (the
+            // pg_catalog / information_schema views in `system`); match it.
+            if (entry.internal) return;
+            if (!seen.insert(entry.name).second) return;
+            std::string type;
+            if (entry.type == duckdb::CatalogType::VIEW_ENTRY) {
+              type = "VIEW";
+            } else if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+              type = entry.temporary ? "LOCAL TEMPORARY" : "BASE TABLE";
+            } else {
+              return;
+            }
+            rows.push_back({catalog_name, schema.name, entry.name, std::move(type)});
+          };
+          schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, visit);
+          schema.Scan(context, duckdb::CatalogType::VIEW_ENTRY, visit);
+        });
+      }
+    });
+  } catch (const std::exception& e) {
+    return Status::Invalid(std::string("DuckDB catalog scan failed: ") + e.what());
+  }
+  return rows;
+}
+
+// Apply the enterprise catalog-visibility filter (same semantics as the SQL
+// rewrite in DuckDBStatement::Create: when the session has catalog rules and the
+// allowed list is non-empty, only those catalogs are visible).
+void FilterRowsByCatalogVisibility(const std::shared_ptr<ClientSession>& client_session,
+                                   std::vector<CatalogEntryRow>& rows) {
+#ifdef GIZMOSQL_ENTERPRISE
+  if (client_session->catalog_access.empty() ||
+      !gizmosql::enterprise::EnterpriseFeatures::Instance()
+           .IsCatalogPermissionsAvailable()) {
+    return;
+  }
+  std::shared_ptr<InstrumentationManager> instr_mgr;
+  std::string log_catalog;
+  if (auto server = GetServer(*client_session)) {
+    instr_mgr = server->GetInstrumentationManager();
+    log_catalog = server->GetLogCatalog();
+  }
+  auto allowed_vec = gizmosql::enterprise::GetAllowedCatalogs(
+      *client_session, client_session->connection->Get(), instr_mgr, log_catalog);
+  if (allowed_vec.empty()) return;
+  std::unordered_set<std::string> allowed(allowed_vec.begin(), allowed_vec.end());
+  rows.erase(std::remove_if(rows.begin(), rows.end(),
+                            [&](const CatalogEntryRow& r) {
+                              return allowed.count(r.catalog_name) == 0;
+                            }),
+             rows.end());
+#else
+  (void)client_session;
+  (void)rows;
+#endif
+}
+
+// Render rows as a VALUES-backed relation with the given column names so the
+// existing SQL filters can be applied on top. Yields an empty, correctly typed
+// relation when there are no rows.
+std::string RowsAsValuesRelation(const std::vector<CatalogEntryRow>& rows,
+                                 bool include_tables) {
+  const std::string columns = include_tables
+                                  ? "(catalog_name, db_schema_name, table_name, table_type)"
+                                  : "(catalog_name, db_schema_name)";
+  std::stringstream sql;
+  if (rows.empty()) {
+    sql << "(SELECT NULL::VARCHAR, NULL::VARCHAR"
+        << (include_tables ? ", NULL::VARCHAR, NULL::VARCHAR" : "")
+        << " WHERE false) AS t" << columns;
+    return sql.str();
+  }
+  sql << "(VALUES ";
+  for (size_t i = 0; i < rows.size(); ++i) {
+    if (i > 0) sql << ", ";
+    sql << "(" << SqlLiteral(rows[i].catalog_name) << ", "
+        << SqlLiteral(rows[i].schema_name);
+    if (include_tables) {
+      sql << ", " << SqlLiteral(rows[i].table_name) << ", "
+          << SqlLiteral(rows[i].table_type);
+    }
+    sql << ")";
+  }
+  sql << ") AS t" << columns;
+  return sql.str();
+}
+
+// Resolve a table's existence through the catalog API of the ONE catalog it
+// lives in (see "Catalog-scoped metadata scans" above).
 Result<bool> TableExists(duckdb::Connection& conn,
                          const std::optional<std::string>& catalog_name,
                          const std::optional<std::string>& schema_name,
                          const std::string& table_name, bool is_temp = false) {
-  duckdb::vector<duckdb::Value> bind_parameters;
-
-  std::string sql =
-      "SELECT 1 "
-      "FROM information_schema.tables "
-      "WHERE 1 = 1 ";
-
+  auto& context = *conn.context;
+  std::string catalog;
+  std::string schema;
   // Temporary tables live in the implicit `temp.main` catalog/schema in DuckDB,
   // not in CURRENT_DATABASE()/CURRENT_SCHEMA(). When the caller indicates the
   // target is temporary, scope the lookup there explicitly.
   if (is_temp) {
-    sql += "AND table_catalog = 'temp' AND table_schema = 'main' ";
+    catalog = "temp";
+    schema = "main";
   } else {
-    if (catalog_name.has_value()) {
-      sql += "AND table_catalog = ? ";
-      bind_parameters.emplace_back(catalog_name.value());
-    } else {
-      sql += "AND table_catalog = CURRENT_DATABASE() ";
-    }
-
+    catalog = catalog_name.has_value()
+                  ? catalog_name.value()
+                  : duckdb::DatabaseManager::GetDefaultDatabase(context);
     if (schema_name.has_value()) {
-      sql += "AND table_schema = ? ";
-      bind_parameters.emplace_back(schema_name.value());
+      schema = schema_name.value();
     } else {
-      sql += "AND table_schema = CURRENT_SCHEMA() ";
+      auto result = conn.Query("SELECT CURRENT_SCHEMA()");
+      if (!result || result->HasError()) {
+        return Status::Invalid("DuckDB metadata query failed: " + result->GetError());
+      }
+      schema = result->GetValue(0, 0).ToString();
     }
   }
-
-  sql +=
-      "  AND table_name = ? "
-      "LIMIT 1";
-  bind_parameters.emplace_back(table_name);
-
-  auto table_exists_statement = conn.Prepare(sql);
-  auto query_result = table_exists_statement->Execute(bind_parameters);
-  if (query_result->HasError()) {
-    return Status::Invalid("DuckDB metadata query failed: " + query_result->GetError());
+  bool exists = false;
+  try {
+    context.RunFunctionInTransaction([&]() {
+      auto catalog_entry = duckdb::Catalog::GetCatalogEntry(context, catalog);
+      if (!catalog_entry) return;
+      auto entry = catalog_entry->GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+                                           schema, table_name,
+                                           duckdb::OnEntryNotFound::RETURN_NULL);
+      exists = entry != nullptr;
+    });
+  } catch (const std::exception& e) {
+    return Status::Invalid(std::string("DuckDB catalog lookup failed: ") + e.what());
   }
-  auto result_set = query_result->Fetch();
-  return result_set && result_set->size() > 0;
+  return exists;
 }
 
 Result<std::string> GenerateCreateTableSQLFromArrowSchema(
@@ -674,34 +844,26 @@ arrow::Status AppendRecordBatchToDuckDB(
 }
 
 std::string PrepareQueryForGetTables(const sql::GetTables& command,
+                                     const std::string& tables_relation,
                                      duckdb::vector<duckdb::Value>& bind_parameters) {
   std::stringstream table_query;
 
-  table_query << "SELECT table_catalog as catalog_name, table_schema as db_schema_name, "
-                 "table_name, "
-                 "table_type FROM information_schema.tables where 1=1";
+  table_query << "SELECT catalog_name, db_schema_name, table_name, table_type FROM "
+              << tables_relation << " WHERE 1=1";
 
-  if (command.catalog.has_value()) {
-    table_query << " and table_catalog LIKE ?";
-    bind_parameters.emplace_back(command.catalog.value());
-  } else {
+  if (!command.catalog.has_value()) {
     // Match DuckDB CLI's `.tables` behavior: when the caller doesn't
     // specify a catalog, return tables/views from every attached
-    // catalog — not just CURRENT_DATABASE(). The previous behavior
-    // hid every non-default catalog by default, which surprised users
-    // who attached additional databases (DuckLake, secondary .duckdb
-    // files, etc.) and queried them via `.tables`.
+    // catalog — not just CURRENT_DATABASE().
     //
     // Always exclude the GizmoSQL system catalog: it's a server-managed
     // in-memory catalog hosting metadata helper views (gizmosql_index_info,
-    // gizmosql_view_definition), not user data. Same rationale as the
-    // existing exclusion of information_schema schemas.
-    table_query << " and table_catalog != '" << gizmosql::kSystemCatalogName
-                << "'";
+    // gizmosql_view_definition), not user data.
+    table_query << " and catalog_name != '" << gizmosql::kSystemCatalogName << "'";
   }
 
   if (command.db_schema_filter_pattern.has_value()) {
-    table_query << " and table_schema LIKE ?";
+    table_query << " and db_schema_name LIKE ?";
     bind_parameters.emplace_back(command.db_schema_filter_pattern.value());
   }
 
@@ -1447,26 +1609,30 @@ class DuckDBFlightSqlServer::Impl {
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetDbSchemas(
       const flight::ServerCallContext& context, const sql::GetDbSchemas& command) {
+    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    auto& conn = client_session->connection->Get();
+
+    // Scan only the requested catalog (exact name; nullopt = current database).
+    std::vector<std::string> catalogs;
+    if (command.catalog.has_value()) {
+      catalogs.push_back(command.catalog.value());
+    } else {
+      catalogs.push_back(duckdb::DatabaseManager::GetDefaultDatabase(*conn.context));
+    }
+    ARROW_ASSIGN_OR_RAISE(auto rows,
+                          ScanCatalogEntries(conn, catalogs, /*include_tables=*/false));
+    FilterRowsByCatalogVisibility(client_session, rows);
+
     std::stringstream query;
     duckdb::vector<duckdb::Value> bind_parameters;
-    query << "SELECT catalog_name, schema_name AS db_schema_name FROM "
-             "information_schema.schemata WHERE 1 = 1";
-
-    query << " AND catalog_name = ";
-    if (command.catalog.has_value()) {
-      query << "?";
-      bind_parameters.emplace_back(command.catalog.value());
-    } else {
-      query << "CURRENT_DATABASE()";
-    }
-
+    query << "SELECT catalog_name, db_schema_name FROM "
+          << RowsAsValuesRelation(rows, /*include_tables=*/false) << " WHERE 1 = 1";
     if (command.db_schema_filter_pattern.has_value()) {
-      query << " AND schema_name LIKE ?";
+      query << " AND db_schema_name LIKE ?";
       bind_parameters.emplace_back(command.db_schema_filter_pattern.value());
     }
     query << " ORDER BY catalog_name, db_schema_name";
 
-    ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     return DoGetDuckDBQuery(client_session, query.str(),
                             sql::SqlSchema::GetDbSchemasSchema(), bind_parameters,
                             print_queries_, query_timeout_, "DoGetDbSchemas", true);
@@ -1635,11 +1801,26 @@ class DuckDBFlightSqlServer::Impl {
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTables(
       const flight::ServerCallContext& context, const sql::GetTables& command) {
-    duckdb::vector<duckdb::Value> get_tables_bind_parameters;
-    std::string get_tables_query =
-        PrepareQueryForGetTables(command, get_tables_bind_parameters);
-    std::shared_ptr<DuckDBStatement> statement;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    auto& conn = client_session->connection->Get();
+
+    // Resolve the catalogs the request names (LIKE pattern; nullopt = every
+    // attached catalog) in-process, then scan only those.
+    std::vector<std::string> catalogs;
+    if (command.catalog.has_value()) {
+      ARROW_ASSIGN_OR_RAISE(catalogs, ResolveCatalogNames(conn, command.catalog));
+    } else {
+      ARROW_ASSIGN_OR_RAISE(catalogs, ResolveCatalogNames(conn, std::string("%")));
+    }
+    ARROW_ASSIGN_OR_RAISE(auto rows,
+                          ScanCatalogEntries(conn, catalogs, /*include_tables=*/true));
+    FilterRowsByCatalogVisibility(client_session, rows);
+
+    duckdb::vector<duckdb::Value> get_tables_bind_parameters;
+    std::string get_tables_query = PrepareQueryForGetTables(
+        command, RowsAsValuesRelation(rows, /*include_tables=*/true),
+        get_tables_bind_parameters);
+    std::shared_ptr<DuckDBStatement> statement;
     ARROW_ASSIGN_OR_RAISE(
         statement,
         DuckDBStatement::Create(client_session, get_tables_query,

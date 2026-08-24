@@ -21,7 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens no remote connections. The two duplicated copies of the probe were
   merged into a single `CatalogExistsOnConnection()` helper. The Flight SQL
   `GetCatalogs` RPC had the same fan-out (it listed catalog names via
-  `information_schema.schemata`) and now also uses `duckdb_databases()`. New regression
+  `information_schema.schemata`) and now also uses `duckdb_databases()`.
+- **Flight SQL `GetDbSchemas` / `GetTables` no longer fan out either.** These
+  RPCs (what JDBC/ADBC clients such as DBeaver call to browse a catalog) went
+  through `information_schema.schemata` / `information_schema.tables`, which
+  DuckDB answers by enumerating *every* attached catalog regardless of the
+  catalog filter. GizmoSQL now walks DuckDB's C++ catalog API on only the
+  catalog(s) the request resolves to and hands the rows to the same SQL
+  filters/ordering as before, so a `GetDbSchemas("x")` or `GetTables("x")`
+  touches only catalog `x`. The internal table-existence check used by
+  `CREATE TABLE ... IF NOT EXISTS` ingestion (`DoPut`) got the same treatment.
+  The regression test also covers these RPCs. New regression
   test `test_ducklake_catalog_fanout.cpp` (local-path and MinIO/S3 data
   variants) asserts the PostgreSQL session count for `USE` stays bounded.
 - Docs: the component-version tables in `README.md` and `docs/index.md` now

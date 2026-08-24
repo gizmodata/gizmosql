@@ -288,10 +288,7 @@ void RunFanoutTest(FlightSqlClient& client, arrow::flight::FlightCallOptions& op
   EXPECT_LE(cat_delta, kMaxSessionsPerUse)
       << "GetCatalogs fanned out across attached DuckLake catalogs";
 
-  // --- Flight SQL GetDbSchemas(catalog): informational only ------------------
-  // DuckDB's duckdb_schemas() cannot push a catalog filter down, so listing one
-  // catalog's schemas enumerates all of them — this is inherent to DuckDB (the
-  // same query in-process behaves identically) and is not asserted here.
+  // --- Flight SQL GetDbSchemas(catalog): scans only the named catalog --------
   ASSERT_NO_FATAL_FAILURE(DrainPools(client, opts));
   const int64_t before_sch = PgSessionsEstablished(client, opts);
   {
@@ -299,11 +296,36 @@ void RunFanoutTest(FlightSqlClient& client, arrow::flight::FlightCallOptions& op
     ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
                                client.DoGet(opts, info->endpoints()[0].ticket));
     ASSERT_ARROW_OK_AND_ASSIGN(auto table, reader->ToTable());
-    EXPECT_GE(table->num_rows(), 1);
+    ASSERT_GE(table->num_rows(), 1);
+    EXPECT_EQ(table->GetColumnByName("catalog_name")->GetScalar(0).ValueOrDie()->ToString(),
+              target);
   }
-  std::cerr << "GetDbSchemas(" << target << ") opened "
-            << PgSessionsEstablished(client, opts) - before_sch
-            << " PostgreSQL session(s) [DuckDB-inherent, not asserted]" << std::endl;
+  const int64_t sch_delta = PgSessionsEstablished(client, opts) - before_sch;
+  std::cerr << "GetDbSchemas(" << target << ") opened " << sch_delta
+            << " PostgreSQL session(s)" << std::endl;
+  EXPECT_LE(sch_delta, kMaxSessionsPerUse)
+      << "GetDbSchemas fanned out across attached DuckLake catalogs";
+
+  // --- Flight SQL GetTables(catalog): scans only the named catalog -----------
+  ASSERT_NO_FATAL_FAILURE(DrainPools(client, opts));
+  const int64_t before_tab = PgSessionsEstablished(client, opts);
+  {
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto info, client.GetTables(opts, &target, nullptr, nullptr, false, nullptr));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               client.DoGet(opts, info->endpoints()[0].ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, reader->ToTable());
+    ASSERT_EQ(table->num_rows(), 1);
+    EXPECT_EQ(table->GetColumnByName("table_name")->GetScalar(0).ValueOrDie()->ToString(),
+              "t0");
+    EXPECT_EQ(table->GetColumnByName("table_type")->GetScalar(0).ValueOrDie()->ToString(),
+              "BASE TABLE");
+  }
+  const int64_t tab_delta = PgSessionsEstablished(client, opts) - before_tab;
+  std::cerr << "GetTables(" << target << ") opened " << tab_delta
+            << " PostgreSQL session(s)" << std::endl;
+  EXPECT_LE(tab_delta, kMaxSessionsPerUse)
+      << "GetTables fanned out across attached DuckLake catalogs";
 
   // --- Qualified read of one catalog: same bound -----------------------------
   ASSERT_NO_FATAL_FAILURE(DrainPools(client, opts));
