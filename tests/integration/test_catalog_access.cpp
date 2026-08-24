@@ -1106,6 +1106,82 @@ TEST_F(CatalogAccessServerFixture, CatalogAccessRulesIgnoredWithoutEnterpriseLic
   }
 }
 
+// GetDbSchemas / GetTables walk DuckDB's catalog API directly (not the SQL
+// rewrite path), so the catalog-visibility filter is applied explicitly on
+// their rows. Verify a hidden catalog never leaks through either RPC.
+TEST_F(CatalogAccessServerFixture, GetDbSchemasAndGetTablesRPCsRespectFiltering) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  // As the full-access system user, attach a catalog the test user must not see
+  // and put a table in it.
+  {
+    arrow::flight::FlightClientOptions options;
+    ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                               arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto admin_client,
+                               arrow::flight::FlightClient::Connect(location, options));
+    arrow::flight::FlightCallOptions admin_opts;
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto bearer, admin_client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+    admin_opts.headers.push_back(bearer);
+    FlightSqlClient admin(std::move(admin_client));
+    ASSERT_ARROW_OK(ExecuteAndConsume(admin, admin_opts,
+                                      "ATTACH IF NOT EXISTS ':memory:' AS hidden_meta_cat"));
+    ASSERT_ARROW_OK(ExecuteAndConsume(
+        admin, admin_opts,
+        "CREATE TABLE IF NOT EXISTS hidden_meta_cat.main.secret_t (id INTEGER)"));
+  }
+
+  // Token: read on the default catalog only; everything else hidden.
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog +
+                               R"(", "access": "read"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("meta_rpc_filter_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  auto collect = [&](std::unique_ptr<arrow::flight::FlightInfo>& info,
+                     const std::string& column) -> std::vector<std::string> {
+    std::vector<std::string> out;
+    for (const auto& endpoint : info->endpoints()) {
+      auto reader = client->DoGet(call_options, endpoint.ticket).ValueOrDie();
+      auto table = reader->ToTable().ValueOrDie();
+      auto idx = table->schema()->GetFieldIndex(column);
+      auto vals = GetColumnValues(table, idx);
+      out.insert(out.end(), vals.begin(), vals.end());
+    }
+    return out;
+  };
+  const std::string hidden = "hidden_meta_cat";
+
+  // GetDbSchemas(hidden) -> nothing; GetDbSchemas(default) -> something.
+  {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto info, client->GetDbSchemas(call_options, &hidden, nullptr));
+    EXPECT_TRUE(collect(info, "catalog_name").empty())
+        << "GetDbSchemas must not list schemas of a hidden catalog";
+    ASSERT_ARROW_OK_AND_ASSIGN(auto info2,
+                               client->GetDbSchemas(call_options, &kDefaultCatalog, nullptr));
+    EXPECT_FALSE(collect(info2, "catalog_name").empty())
+        << "GetDbSchemas should list schemas of an authorized catalog";
+  }
+
+  // GetTables(hidden) -> nothing; GetTables(all catalogs) -> no hidden rows.
+  {
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto info, client->GetTables(call_options, &hidden, nullptr, nullptr, false, nullptr));
+    EXPECT_TRUE(collect(info, "table_name").empty())
+        << "GetTables must not list tables of a hidden catalog";
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto info2, client->GetTables(call_options, nullptr, nullptr, nullptr, false, nullptr));
+    auto cats = collect(info2, "catalog_name");
+    EXPECT_TRUE(std::find(cats.begin(), cats.end(), hidden) == cats.end())
+        << "unfiltered GetTables leaked a hidden catalog";
+    auto tabs = collect(info2, "table_name");
+    EXPECT_TRUE(std::find(tabs.begin(), tabs.end(), "secret_t") == tabs.end())
+        << "unfiltered GetTables leaked a hidden catalog's table";
+  }
+}
+
 TEST_F(CatalogAccessServerFixture, GetCatalogsRPCRespectsFiltering) {
   SKIP_WITHOUT_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
