@@ -219,10 +219,20 @@ void RunFanoutTest(FlightSqlClient& client, arrow::flight::FlightCallOptions& op
       r.table->column(0)->GetScalar(0).ValueOrDie()->ToString();
 
   // Short-lived pools so DrainPools() converges quickly. Session-scoped.
+  // The pool/reaper controls exist in the postgres extension for DuckDB
+  // >= 1.5; on older DuckDB (LTS channel) connections are held per
+  // attachment rather than churned per statement, so the per-statement
+  // session-count measurement below is not meaningful — skip there.
   for (const char* sql : {"SET pg_pool_idle_timeout_millis = 500",
                           "SET pg_pool_max_lifetime_millis = 500",
                           "SET pg_pool_enable_reaper_thread = true"}) {
     r = RunQuery(client, opts, sql);
+    if (!r.success &&
+        r.error_message.find("unrecognized configuration parameter") != std::string::npos) {
+      GTEST_SKIP() << "postgres extension has no pg_pool_* controls on this DuckDB "
+                      "version; fan-out measurement needs them: "
+                   << r.error_message;
+    }
     ASSERT_TRUE(r.success) << sql << ": " << r.error_message;
   }
 
