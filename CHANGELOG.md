@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.1-duckdb1.5.4] - 2026-08-24
+
+Special (pinned-DuckDB) release — see `docs/special_releases.md`. Identical to
+1.36.1 below (including the DuckLake catalog fan-out fixes) except that it is
+built against **DuckDB v1.5.4** instead of v1.5.5 (and bundles the v1.5.4
+DuckDB CLI in the Docker images), for deployments pinned to DuckDB v1.5.4 and
+its extension builds (`ducklake`, `postgres_scanner`, `httpfs`). It does not
+replace the regular v1.36.1 release: Docker `latest`, Homebrew and PyPI
+continue to track v1.36.1. Pull it as `gizmodata/gizmosql:v1.36.1-duckdb1.5.4`
+(also `-slim` / `-adbc` variants).
+
 ## [1.36.1] - 2026-08-24
 
 ### Added

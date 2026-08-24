@@ -37,7 +37,7 @@ set(GIZMOSQL_DUCKDB_CHANNEL "stable" CACHE STRING
     "DuckDB release channel for this build: stable | lts")
 set_property(CACHE GIZMOSQL_DUCKDB_CHANNEL PROPERTY STRINGS stable lts)
 
-set(DUCKDB_STABLE_VERSION "v1.5.5" CACHE STRING
+set(DUCKDB_STABLE_VERSION "v1.5.4" CACHE STRING
     "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=stable")
 set(DUCKDB_LTS_VERSION "v1.4.5" CACHE STRING
     "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=lts")
