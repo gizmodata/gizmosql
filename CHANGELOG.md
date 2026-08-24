@@ -1,11 +1,6 @@
-# Changelog
-
-All notable changes to GizmoSQL will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ## [Unreleased]
+
+## [1.36.1] - 2026-08-24
 
 ### Added
 - **Special (pinned-DuckDB) releases.** A tag whose name contains `-duckdb`
@@ -13,13 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   but never displaces the regular one: no Docker `latest` retag, GitHub
   release marked non-latest pre-release, and the Homebrew tap, PyPI trigger
   and TestFlight upload are skipped. See `docs/special_releases.md`.
-
-### Fixed
-- Docker images: the bundled DuckDB CLI (`DUCKDB_VERSION` build-arg, for
-  ad-hoc shell use inside the container) was still 1.5.4 on the stable
-  channel after the v1.5.5 bump; now 1.5.5, matching the linked DuckDB.
-
-## [1.36.1] - 2026-08-24
 
 ### Fixed
 - **`USE <catalog>` no longer fans out across every attached DuckLake catalog.**
@@ -49,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs: the component-version tables in `README.md` and `docs/index.md` now
   reflect the v1.36.0 dependency bumps (SQLite 3.53.4, OpenTelemetry C++
   1.28.0) — the Arrow row had been updated but these two rows were missed.
+- Docker images: the bundled DuckDB CLI (`DUCKDB_VERSION` build-arg, for
+  ad-hoc shell use inside the container) was still 1.5.4 on the stable
+  channel after the v1.5.5 bump; now 1.5.5, matching the linked DuckDB.
 
 ## [1.36.0] - 2026-08-18
 
