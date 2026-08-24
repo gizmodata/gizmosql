@@ -1182,6 +1182,57 @@ TEST_F(CatalogAccessServerFixture, GetDbSchemasAndGetTablesRPCsRespectFiltering)
   }
 }
 
+// Flight SQL: GetDbSchemas with the catalog omitted must not narrow to the
+// session's current database — every (visible) attached catalog is listed.
+TEST_F(CatalogAccessServerFixture, GetDbSchemasOmittedCatalogListsAllCatalogs) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto flight_client,
+                             arrow::flight::FlightClient::Connect(location, options));
+  arrow::flight::FlightCallOptions opts;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, flight_client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  opts.headers.push_back(bearer);
+  FlightSqlClient client(std::move(flight_client));
+
+  ASSERT_ARROW_OK(ExecuteAndConsume(client, opts, "ATTACH IF NOT EXISTS ':memory:' AS other_cat"));
+  ASSERT_ARROW_OK(ExecuteAndConsume(client, opts, "CREATE SCHEMA IF NOT EXISTS other_cat.s1"));
+  // Current database stays the default catalog — other_cat is NOT current.
+  ASSERT_ARROW_OK(ExecuteAndConsume(client, opts, "USE " + kDefaultCatalog));
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info, client.GetDbSchemas(opts, nullptr, nullptr));
+  std::vector<std::pair<std::string, std::string>> pairs;
+  for (const auto& endpoint : info->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader, client.DoGet(opts, endpoint.ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, reader->ToTable());
+    auto cats = GetColumnValues(table, table->schema()->GetFieldIndex("catalog_name"));
+    auto schemas = GetColumnValues(table, table->schema()->GetFieldIndex("db_schema_name"));
+    for (size_t i = 0; i < cats.size(); ++i) pairs.emplace_back(cats[i], schemas[i]);
+  }
+  auto has = [&](const std::string& c, const std::string& s) {
+    return std::find(pairs.begin(), pairs.end(), std::make_pair(c, s)) != pairs.end();
+  };
+  EXPECT_TRUE(has("other_cat", "s1")) << "non-current catalog's schema missing";
+  EXPECT_TRUE(has("other_cat", "main")) << "non-current catalog's main schema missing";
+  EXPECT_TRUE(has(kDefaultCatalog, "main")) << "current catalog's schema missing";
+  for (const auto& [c, s] : pairs) {
+    EXPECT_NE(c, gizmosql::kSystemCatalogName) << "system catalog leaked";
+  }
+
+  // A named catalog still scopes to exactly that catalog.
+  const std::string other = "other_cat";
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info2, client.GetDbSchemas(opts, &other, nullptr));
+  for (const auto& endpoint : info2->endpoints()) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader, client.DoGet(opts, endpoint.ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, reader->ToTable());
+    for (auto& c : GetColumnValues(table, table->schema()->GetFieldIndex("catalog_name"))) {
+      EXPECT_EQ(c, other);
+    }
+  }
+}
+
 TEST_F(CatalogAccessServerFixture, GetCatalogsRPCRespectsFiltering) {
   SKIP_WITHOUT_LICENSE();
   ASSERT_TRUE(IsServerReady()) << "Server not ready";

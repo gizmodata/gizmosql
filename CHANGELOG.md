@@ -40,7 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filters/ordering as before, so a `GetDbSchemas("x")` or `GetTables("x")`
   touches only catalog `x`. The internal table-existence check used by
   `CREATE TABLE ... IF NOT EXISTS` ingestion (`DoPut`) got the same treatment.
-  The regression test also covers these RPCs. New regression
+  The regression test also covers these RPCs.
+- **Flight SQL `GetDbSchemas` with the catalog omitted now lists every
+  attached catalog's schemas**, per the Flight SQL spec ("if omitted the
+  catalog name should not be used to narrow the search"), instead of only the
+  session's current database. This fixes ADBC `GetObjects(depth=db_schemas,
+  catalog_filter=X)` — arrow-adbc's Flight SQL driver calls `GetDbSchemas`
+  without a catalog and filters client-side, so non-current catalogs came
+  back empty unless preceded by `USE X`. Named-catalog requests stay scoped
+  to that one catalog. The GizmoSQL system catalog is excluded from the
+  unfiltered listing, matching `GetTables`. New regression
   test `test_ducklake_catalog_fanout.cpp` (local-path and MinIO/S3 data
   variants) asserts the PostgreSQL session count for `USE` stays bounded.
 - Docs: the component-version tables in `README.md` and `docs/index.md` now

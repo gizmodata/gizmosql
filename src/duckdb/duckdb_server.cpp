@@ -1633,12 +1633,20 @@ class DuckDBFlightSqlServer::Impl {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
     auto& conn = client_session->connection->Get();
 
-    // Scan only the requested catalog (exact name; nullopt = current database).
+    // Flight SQL: "If omitted the catalog name should not be used to narrow
+    // the search" — so an omitted catalog enumerates every attached catalog
+    // (resolved in-process from duckdb_databases()), matching GetTables. A
+    // named catalog scopes the scan to exactly that one. Trade-off: with the
+    // catalog omitted, listing schemas of N attached DuckLake/PostgreSQL
+    // catalogs legitimately touches N metadata stores — that is what the
+    // client asked for; the win is that a filtered request stays scoped to
+    // one catalog. (arrow-adbc's Flight SQL driver never passes the catalog
+    // through to GetDbSchemas; it filters client-side, so it always pays N.)
     std::vector<std::string> catalogs;
     if (command.catalog.has_value()) {
       catalogs.push_back(command.catalog.value());
     } else {
-      catalogs.push_back(duckdb::DatabaseManager::GetDefaultDatabase(*conn.context));
+      ARROW_ASSIGN_OR_RAISE(catalogs, ResolveCatalogNames(conn, std::string("%")));
     }
     ARROW_ASSIGN_OR_RAISE(auto rows,
                           ScanCatalogEntries(conn, catalogs, /*include_tables=*/false));
@@ -1648,6 +1656,11 @@ class DuckDBFlightSqlServer::Impl {
     duckdb::vector<duckdb::Value> bind_parameters;
     query << "SELECT catalog_name, db_schema_name FROM "
           << RowsAsValuesRelation(rows, /*include_tables=*/false) << " WHERE 1 = 1";
+    if (!command.catalog.has_value()) {
+      // Same exclusion as GetTables: the GizmoSQL system catalog is server
+      // plumbing, not user data.
+      query << " AND catalog_name != '" << gizmosql::kSystemCatalogName << "'";
+    }
     if (command.db_schema_filter_pattern.has_value()) {
       query << " AND db_schema_name LIKE ?";
       bind_parameters.emplace_back(command.db_schema_filter_pattern.value());
