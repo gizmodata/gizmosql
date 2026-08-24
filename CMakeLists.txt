@@ -131,6 +131,17 @@ else()
     set(VERSION_PATCH 0)
 endif()
 
+# Numeric-only components for the Windows version resource (FILEVERSION must
+# be integers). Special release tags such as v1.36.1-duckdb1.5.4 carry a
+# suffix on the patch component; strip it here and leave PROJECT_VERSION
+# (the human-readable version string) untouched.
+foreach(component MAJOR MINOR PATCH)
+    string(REGEX MATCH "^[0-9]+" VERSION_${component}_NUMERIC "${VERSION_${component}}")
+    if(NOT VERSION_${component}_NUMERIC)
+        set(VERSION_${component}_NUMERIC 0)
+    endif()
+endforeach()
+
 # Configure a header file with the version
 configure_file(
         ${CMAKE_SOURCE_DIR}/src/common/include/version.h.in

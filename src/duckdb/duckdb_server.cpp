@@ -21,6 +21,7 @@
 
 #include <boost/algorithm/string.hpp>
 #include <algorithm>
+#include <functional>
 #include <chrono>
 #include <map>
 #include <random>
@@ -344,6 +345,15 @@ Result<std::vector<std::string>> ResolveCatalogNames(
 }
 
 // Walk the schemas (and optionally the tables/views) of ONLY the given catalogs.
+//
+// Two-phase on purpose: CatalogSet::Scan invokes its callback while holding
+// that set's lock, so scanning a schema's tables from *inside* the
+// ScanSchemas callback nests the tables scan under the schemas-set lock. On
+// first touch of a catalog that still has default entries to materialize
+// (e.g. system.information_schema / pg_catalog views) the nested scan
+// re-enters the schemas set and deadlocks (MSVC reports "resource deadlock
+// would occur"; seen on DuckDB v1.4.5). Collect the schema entries first,
+// then scan their tables after ScanSchemas has returned.
 Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
     duckdb::Connection& conn, const std::vector<std::string>& catalog_names,
     bool include_tables) {
@@ -354,11 +364,22 @@ Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
       for (const auto& catalog_name : catalog_names) {
         auto catalog = duckdb::Catalog::GetCatalogEntry(context, catalog_name);
         if (!catalog) continue;
+
+        // Phase 1: schemas.
+        std::vector<std::reference_wrapper<duckdb::SchemaCatalogEntry>> schemas;
         catalog->ScanSchemas(context, [&](duckdb::SchemaCatalogEntry& schema) {
-          if (!include_tables) {
-            rows.push_back({catalog_name, schema.name, "", ""});
-            return;
+          schemas.emplace_back(schema);
+        });
+        if (!include_tables) {
+          for (auto& schema_ref : schemas) {
+            rows.push_back({catalog_name, schema_ref.get().name, "", ""});
           }
+          continue;
+        }
+
+        // Phase 2: tables/views per schema, outside the schemas-set scan.
+        for (auto& schema_ref : schemas) {
+          auto& schema = schema_ref.get();
           // Some catalog implementations serve views from the TABLE_ENTRY scan,
           // others only from VIEW_ENTRY — scan both and de-duplicate by name.
           std::unordered_set<std::string> seen;
@@ -379,7 +400,7 @@ Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
           };
           schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, visit);
           schema.Scan(context, duckdb::CatalogType::VIEW_ENTRY, visit);
-        });
+        }
       }
     });
   } catch (const std::exception& e) {

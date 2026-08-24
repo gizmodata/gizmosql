@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (e.g. `v1.36.1-duckdb1.5.4`) is built and published like a normal release
   but never displaces the regular one: no Docker `latest` retag, GitHub
   release marked non-latest pre-release, and the Homebrew tap, PyPI trigger
-  and TestFlight upload are skipped. See `docs/special_releases.md`.
+  and TestFlight upload are skipped. The Windows version resource
+  (`FILEVERSION`) now tolerates the non-numeric tag suffix. See
+  `docs/special_releases.md`.
 
 ### Fixed
 - **`USE <catalog>` no longer fans out across every attached DuckLake catalog.**
