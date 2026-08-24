@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release marked non-latest pre-release, and the Homebrew tap, PyPI trigger
   and TestFlight upload are skipped. See `docs/special_releases.md`.
 
+### Fixed
+- Docker images: the bundled DuckDB CLI (`DUCKDB_VERSION` build-arg, for
+  ad-hoc shell use inside the container) was still 1.5.4 on the stable
+  channel after the v1.5.5 bump; now 1.5.5, matching the linked DuckDB.
+
 ## [1.36.1] - 2026-08-24
 
 ### Fixed
