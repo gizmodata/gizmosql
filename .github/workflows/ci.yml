@@ -27,6 +27,15 @@ on:
     paths-ignore:
       - '**/*.md'
 
+# ---- Special (pinned-DuckDB) releases ------------------------------------
+# A tag whose name contains "-duckdb" (e.g. v1.36.1-duckdb1.5.4) is a
+# "special" release: a normal release build cut from a branch whose
+# CMakeLists.txt pins a different DUCKDB_STABLE_VERSION. It publishes its
+# own artifacts, Docker tags and GitHub release, but must NEVER displace the
+# regular release: no Docker `latest`, GitHub release marked non-latest
+# pre-release, no Homebrew tap update, no gizmosql-py/PyPI trigger, no
+# TestFlight upload. The gate is `contains(github.ref_name, '-duckdb')`.
+# See docs/special_releases.md.
 env:
   DOCKERHUB_IMAGE_NAME: gizmodata/gizmosql
   DOCKERHUB_LTS_IMAGE_NAME: gizmodata/gizmosql-lts
@@ -1016,6 +1025,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           body_path: release_notes.md
+          # Special (pinned-DuckDB) releases must not become the repo's
+          # "Latest" release.
+          prerelease: ${{ contains(github.ref_name, '-duckdb') }}
+          make_latest: ${{ !contains(github.ref_name, '-duckdb') && 'true' || 'false' }}
           files: |
             artifacts/gizmosql_cli_*.zip
             artifacts/GizmoSQL-*.msi
@@ -1060,6 +1073,8 @@ jobs:
       - name: Create and push multi-arch manifests
         env:
           REF_NAME: ${{ github.ref_name }}
+          # Special (pinned-DuckDB) releases never move `latest`.
+          SPECIAL_RELEASE: ${{ contains(github.ref_name, '-duckdb') }}
         run: |
           set -euo pipefail
           for channel in stable lts; do
@@ -1093,10 +1108,13 @@ jobs:
                 for d in "${digests[@]}"; do
                   sources+=("${repo}@sha256:${d}")
                 done
-                echo "Creating ${repo}:latest${sfx} and ${repo}:${REF_NAME}${sfx} from ${sources[*]}"
+                tags=(-t "${repo}:${REF_NAME}${sfx}")
+                if [ "${SPECIAL_RELEASE}" != "true" ]; then
+                  tags+=(-t "${repo}:latest${sfx}")
+                fi
+                echo "Creating ${repo}:${REF_NAME}${sfx}$([ "${SPECIAL_RELEASE}" != "true" ] && echo " and ${repo}:latest${sfx}") from ${sources[*]}"
                 docker buildx imagetools create \
-                  -t "${repo}:latest${sfx}" \
-                  -t "${repo}:${REF_NAME}${sfx}" \
+                  "${tags[@]}" \
                   "${sources[@]}"
               done
             done
@@ -1158,15 +1176,17 @@ jobs:
           provenance: mode=max
           sbom: true
           push: true
+          # `latest` tags are omitted (empty lines are ignored) for special
+          # pinned-DuckDB releases.
           tags: |
-            ${{ env.DOCKERHUB_IMAGE_NAME }}:latest${{ matrix.sfx }}-adbc
             ${{ env.DOCKERHUB_IMAGE_NAME }}:${{ github.ref_name }}${{ matrix.sfx }}-adbc
-            ${{ env.GITHUB_IMAGE_NAME }}:latest${{ matrix.sfx }}-adbc
             ${{ env.GITHUB_IMAGE_NAME }}:${{ github.ref_name }}${{ matrix.sfx }}-adbc
+            ${{ !contains(github.ref_name, '-duckdb') && format('{0}:latest{1}-adbc', env.DOCKERHUB_IMAGE_NAME, matrix.sfx) || '' }}
+            ${{ !contains(github.ref_name, '-duckdb') && format('{0}:latest{1}-adbc', env.GITHUB_IMAGE_NAME, matrix.sfx) || '' }}
 
   update-homebrew-tap:
     name: Update Homebrew tap (stable + LTS formulas)
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-duckdb')
     needs: create-release
     runs-on: ubuntu-latest
     steps:
@@ -1352,7 +1372,7 @@ jobs:
 
   trigger-gizmosql-py-release:
     name: Trigger gizmosql-py release (PyPI)
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-duckdb')
     needs: create-release
     runs-on: ubuntu-latest
     steps:
@@ -1568,7 +1588,7 @@ jobs:
 
       # ---- TestFlight upload (only for tag pushes) ----
       - name: Upload to TestFlight
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-duckdb')
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}

@@ -70,6 +70,7 @@ nav:
       - Quick Start: quickstart.md
       - Editions: editions.md
       - LTS Channel: lts_channel.md
+      - Special (pinned-DuckDB) Releases: special_releases.md
       - Security Guide: security.md
       - Python ADBC Driver: python_adbc.md
       - Python Library (run a server): python_library.md

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Special (pinned-DuckDB) releases.** A tag whose name contains `-duckdb`
+  (e.g. `v1.36.1-duckdb1.5.4`) is built and published like a normal release
+  but never displaces the regular one: no Docker `latest` retag, GitHub
+  release marked non-latest pre-release, and the Homebrew tap, PyPI trigger
+  and TestFlight upload are skipped. See `docs/special_releases.md`.
+
 ## [1.36.1] - 2026-08-24
 
 ### Fixed
