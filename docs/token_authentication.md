@@ -204,7 +204,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 token = os.getenv("GIZMOSQL_TOKEN")
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="token",
     password=token,
     tls_skip_verify=True,

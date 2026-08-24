@@ -202,7 +202,7 @@ In the Python shell - you can query data using `cursor.execute()` and `fetch_arr
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,  # Not needed if you use a trusted CA-signed TLS cert
@@ -234,7 +234,7 @@ Starting with `adbc-driver-gizmosql` **v1.1.0**, `cursor.execute()` automaticall
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,

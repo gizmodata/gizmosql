@@ -74,7 +74,7 @@ For GizmoSQL Enterprise servers configured with [OAuth/SSO](oauth_sso_setup.md),
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://gizmosql.example.com:31337",
+    "gizmosql://gizmosql.example.com:31337",  # TLS by default
     auth_type="external",
     tls_skip_verify=True,
 ) as conn:
@@ -137,7 +137,7 @@ with gizmosql.connect(
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `uri` | *(required)* | Flight SQL URI (e.g., `grpc+tls://host:31337`) |
+| `uri` | *(required)* | GizmoSQL URI (e.g., `gizmosql://host:31337`; TLS by default, `?transport=tcp` for plaintext) |
 | `username` | | Username for password authentication |
 | `password` | | Password for password authentication |
 | `auth_type` | `"password"` | `"password"` or `"external"` (OAuth/SSO) |

@@ -18,7 +18,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 import geopandas as gpd
 
 with gizmosql.connect(
-    "grpc://localhost:31337",
+    "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
     username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
@@ -143,7 +143,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 import geopandas as gpd
 
 with gizmosql.connect(
-    "grpc://localhost:31337",
+    "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
     username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
@@ -177,7 +177,7 @@ gdf = gpd.read_file("data.geojson")
 arrow_table = gdf.to_arrow()
 
 with gizmosql.connect(
-    "grpc://localhost:31337",
+    "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
     username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:

@@ -33,7 +33,7 @@ data = pa.table({
 
 # Connect to GizmoSQL and bulk ingest
 with gizmosql.connect(
-    "grpc://localhost:31337",
+    "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
     username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
@@ -76,7 +76,7 @@ lineitem_reader = duckdb_conn.table("lineitem").fetch_arrow_reader(batch_size=10
 
 # Bulk ingest into GizmoSQL
 with gizmosql.connect(
-    "grpc://localhost:31337",
+    "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
     username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
@@ -106,7 +106,7 @@ from adbc_driver_gizmosql import dbapi as gizmosql
 table = pq.read_table("data.parquet")
 
 with gizmosql.connect(
-    "grpc://localhost:31337",
+    "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
     username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
@@ -139,7 +139,7 @@ df = pd.DataFrame({
 arrow_table = pa.Table.from_pandas(df)
 
 with gizmosql.connect(
-    "grpc://localhost:31337",
+    "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
     username="gizmosql_user",
     password="gizmosql_password",
 ) as conn:
@@ -160,7 +160,7 @@ For TLS-enabled servers:
 from adbc_driver_gizmosql import dbapi as gizmosql
 
 with gizmosql.connect(
-    "grpc+tls://localhost:31337",
+    "gizmosql://localhost:31337",  # TLS by default
     username="gizmosql_user",
     password="gizmosql_password",
     tls_skip_verify=True,  # Only for self-signed certs
@@ -231,7 +231,7 @@ def bulk_ingest_tpch(scale_factor=0.1):
 
     # Step 3: Bulk ingest
     with gizmosql.connect(
-        "grpc://localhost:31337",
+        "gizmosql://localhost:31337?transport=tcp",  # plaintext; omit ?transport=tcp for TLS (default)
         username="gizmosql_user",
         password="gizmosql_password",
     ) as conn:
