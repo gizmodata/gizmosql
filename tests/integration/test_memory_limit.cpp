@@ -1,10 +1,8 @@
 // =============================================================================
 // Tests: --memory-limit / GIZMOSQL_MEMORY_LIMIT
-// An operator sets a DuckDB memory budget at startup so one shared instance
-// cannot use the whole machine. These tests verify the flag reaches DuckDB
-// (visible via current_setting('memory_limit')) and that unsafe values are
-// rejected before the server begins serving — the value is concatenated into
-// SET memory_limit, so it must stay a safe config token.
+// Verifies that the server plumbs the operator's memory budget into DuckDB
+// (visible via current_setting('memory_limit')), and that unsafe values are
+// rejected at startup before the server begins serving.
 // =============================================================================
 
 #include <gtest/gtest.h>
@@ -32,16 +30,17 @@ std::string ToLower(std::string s) {
   return s;
 }
 
-// DuckDB may render the same budget as "512.0MB" or "512.0 MiB" across versions.
-// Assert the startup flag landed as ~512 megabytes, not the exact pretty-print.
-bool LooksLike512Megabytes(const std::string& setting) {
+// Use 512MiB (not 512MB) at startup. DuckDB treats MB as decimal megabytes and
+// prints the same budget as MiB (512MB becomes "488.2 MiB"), so looking for
+// "512" after setting "512MB" fails even when the limit was applied.
+bool LooksLike512Mebibytes(const std::string& setting) {
   const std::string lower = ToLower(setting);
   const bool has_512 = lower.find("512") != std::string::npos;
-  const bool has_mb =
-      lower.find("mb") != std::string::npos || lower.find("mib") != std::string::npos;
-  return has_512 && has_mb;
+  const bool has_mib = lower.find("mib") != std::string::npos;
+  return has_512 && has_mib;
 }
 
+// Connect, authenticate, and return current_setting('memory_limit') as text.
 arrow::Result<std::string> QueryMemoryLimitSetting(int port, const std::string& username,
                                                    const std::string& password) {
   ARROW_ASSIGN_OR_RAISE(auto location,
@@ -76,7 +75,7 @@ arrow::Result<std::string> QueryMemoryLimitSetting(int port, const std::string& 
 }  // namespace
 
 // =============================================================================
-// Fixture: server started with --memory-limit=512MB
+// Fixture: server started with --memory-limit=512MiB
 // =============================================================================
 class MemoryLimitFixture
     : public gizmosql::testing::ServerTestFixture<MemoryLimitFixture> {
@@ -89,7 +88,7 @@ class MemoryLimitFixture
         .username = "testuser",
         .password = "testpassword",
         .enable_instrumentation = false,
-        .memory_limit = "512MB",
+        .memory_limit = "512MiB",
     };
   }
 };
@@ -111,14 +110,15 @@ TEST_F(MemoryLimitFixture, CurrentSettingReflectsStartupLimit) {
 
   auto setting = QueryMemoryLimitSetting(GetPort(), GetUsername(), GetPassword());
   ASSERT_TRUE(setting.ok()) << setting.status().ToString();
-  EXPECT_TRUE(LooksLike512Megabytes(*setting))
-      << "Expected --memory-limit=512MB to reach DuckDB; current_setting('memory_limit') "
+  EXPECT_TRUE(LooksLike512Mebibytes(*setting))
+      << "Expected --memory-limit=512MiB to reach DuckDB; current_setting('memory_limit') "
          "was: "
       << *setting;
 }
 
 // =============================================================================
-// Reject values that cannot be a safe SET memory_limit token (quotes / SQL).
+// Startup validation: values that could break the SET string must be rejected
+// before Serve() — same check the server runs in DuckDBFlightSqlServer::Create.
 // =============================================================================
 TEST(MemoryLimitValidation, RejectsDisallowedCharacters) {
   namespace fs = std::filesystem;
@@ -129,7 +129,8 @@ TEST(MemoryLimitValidation, RejectsDisallowedCharacters) {
   fs::remove(kDb + ".wal", ec);
 
   fs::path db_path(kDb);
-  // memory_limit is concatenated into SET; quote/semicolon must not open a server.
+  // Quote / semicolon would be dangerous if concatenated into SET memory_limit.
+  // The server must refuse this before opening for clients.
   auto result = gizmosql::CreateFlightSQLServer(
       BackendType::duckdb, db_path, "localhost", /*port=*/31616,
       /*username=*/"testuser", /*password=*/"testpassword",
