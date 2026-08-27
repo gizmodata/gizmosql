@@ -477,6 +477,12 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | allow-unsigned-extensions / GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS | Allow loading unsigned DuckDB extensions (DuckDB's `allow_unsigned_extensions`, GLOBAL_ONLY — must be set at startup, cannot be changed via SET/init SQL). SECURITY: keep disabled unless loading trusted, operator-provided extensions. DuckDB backend only | false | --allow-unsigned-extensions |
 
 Notes and best practices:
+- Query cancellation: a running statement is interrupted (DuckDB `Interrupt()`) when the client
+  explicitly cancels it (Flight `CancelFlightInfo` — sent by gizmosql-jdbc, gizmosql-adbc ≥ 2.0.9 and
+  the `gizmosql_client` shell on Ctrl+C), when `--query-timeout` elapses, and — since the version after
+  1.37.1 — when the client simply goes away mid-query (killed process, dropped connection, cancelled
+  `DoGet`, expired client deadline). With `--print-queries` these show up as `status=canceled`
+  (`reason=client_disconnected` for the last case).
 - Always set GIZMOSQL_PASSWORD in production.
 - Provide TLS cert/key via --tls cert key or TLS_CERT/TLS_KEY and prefer a trusted CA. Use an mTLS CA via --mtls-ca-cert-filename / TLS_CA and enable client verification as needed.
 - Use INIT_SQL_COMMANDS or INIT_SQL_COMMANDS_FILE for startup tuning (SELECTs in init commands do not display results).

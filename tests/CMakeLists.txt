@@ -36,6 +36,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_max_metadata_size.cpp
         integration/test_allow_unsigned_extensions.cpp
         integration/test_memory_limit.cpp
+        integration/test_client_disconnect_cancel.cpp
         integration/test_graceful_shutdown.cpp
         integration/test_graceful_shutdown_settings.cpp
         integration/test_admin_command_guard.cpp

@@ -68,7 +68,7 @@ enum class BackendType { duckdb, sqlite };
  * @param mtls_ca_cert_path The path to the mTLS CA certificate file used to verify clients (in PEM format). Default is an empty path.
  * @param init_sql_commands The initial SQL commands to execute. Default is "" - if not set, we use environment variable: "INIT_SQL_COMMANDS".
  * @param init_sql_commands_file The path to a file containing initial SQL commands. Default is an empty path - if not set, we use environment variable: "INIT_SQL_COMMANDS_FILE"
- * @param print_queries Set to true if SQL queries should be printed; false otherwise. Default is false.
+ * @param print_queries Set to true if SQL queries should be printed; false otherwise. Default is std::nullopt - if not set, we use environment variable: "PRINT_QUERIES" (falls back to false).
  * @param read_only Set to true to open the database in read-only mode; false otherwise. Default is false.
  * @param token_allowed_issuer The allowed token issuer for JWT token-based authentication. Default is an empty string.
  * @param token_allowed_audience The allowed token audience for JWT token-based authentication. Default is an empty string.
@@ -174,7 +174,7 @@ int RunFlightSQLServer(
     std::filesystem::path mtls_ca_cert_path = std::filesystem::path(),
     std::string init_sql_commands = "",
     std::filesystem::path init_sql_commands_file = std::filesystem::path(),
-    const bool& print_queries = false, const bool& read_only = false,
+    std::optional<bool> print_queries = std::nullopt, const bool& read_only = false,
     std::string token_allowed_issuer = "", std::string token_allowed_audience = "",
     std::filesystem::path token_signature_verify_cert_path = std::filesystem::path(),
     std::string token_jwks_uri = "",

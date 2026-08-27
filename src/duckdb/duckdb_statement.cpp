@@ -1840,6 +1840,13 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
 }
 
 arrow::Result<int> DuckDBStatement::Execute() {
+  // The attached Flight call (if any) is only valid for this Execute(); never
+  // let a later Execute() on a reused (prepared) statement see a stale one.
+  struct ClearCallContext {
+    const arrow::flight::ServerCallContext*& ctx;
+    ~ClearCallContext() { ctx = nullptr; }
+  } clear_call_context{call_context_};
+
   ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   // Mark the session busy for the idle-session sweeper for exactly the
@@ -2160,11 +2167,50 @@ arrow::Result<int> DuckDBStatement::Execute() {
   // Define timeout duration
   auto timeout_duration = std::chrono::seconds(query_timeout);
 
-  if (query_timeout == 0) {
-    future.wait();  // Blocks until ready
-    status = std::future_status::ready;
-  } else {
-    status = future.wait_for(timeout_duration);
+  // Wait for the execution thread, honouring the query timeout and — when a
+  // Flight call is attached — the client going away. gRPC flags the call as
+  // cancelled when the peer disconnects (killed process, dropped socket,
+  // cancelled DoGet, client deadline); without polling for that here the
+  // DuckDB query kept running with nobody left to receive the result.
+  constexpr auto kClientGonePollInterval = std::chrono::milliseconds(100);
+  const auto wait_deadline = std::chrono::steady_clock::now() + timeout_duration;
+  bool client_gone = false;
+  while (true) {
+    status = future.wait_for(kClientGonePollInterval);
+    if (status == std::future_status::ready) break;
+    if (call_context_ != nullptr && call_context_->is_cancelled()) {
+      client_gone = true;
+      break;
+    }
+    if (query_timeout != 0 && std::chrono::steady_clock::now() >= wait_deadline) {
+      status = std::future_status::timeout;
+      break;
+    }
+  }
+
+  if (client_gone) {
+    if (log_queries_) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, session,
+                             "Client went away during execution - interrupting statement",
+                             {"kind", "sql"}, {"status", "canceled"},
+                             {"reason", "client_disconnected"},
+                             {"statement_id", statement_id_}, {"sql", logged_sql_},
+                             {"flight_method", flight_method_});
+    }
+
+    session->connection->Get().Interrupt();
+    future.wait();  // let the execution thread unwind cleanly
+    session->active_sql_handle = "";
+
+#ifdef GIZMOSQL_ENTERPRISE
+    if (execution_instrumentation_) {
+      execution_instrumentation_->SetCancelled();
+    }
+#endif
+    record_query_metric("CANCELED");
+    execute_status = "canceled";
+
+    return arrow::Status::Cancelled("Query cancelled: client disconnected");
   }
 
   if (status == std::future_status::timeout) {

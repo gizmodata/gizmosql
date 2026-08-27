@@ -1748,7 +1748,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
                        std::string password, std::string secret_key,
                        fs::path tls_cert_path, fs::path tls_key_path,
                        fs::path mtls_ca_cert_path, std::string init_sql_commands,
-                       fs::path init_sql_commands_file, const bool& print_queries,
+                       fs::path init_sql_commands_file, std::optional<bool> print_queries,
                        const bool& read_only, std::string token_allowed_issuer,
                        std::string token_allowed_audience,
                        fs::path token_signature_verify_cert_path,
@@ -1883,6 +1883,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
       if (!val.has_value()) val = false;  // default to false if env var not set or invalid
     }
   };
+  // PRINT_QUERIES is the documented name (docs/index.md, the Docker start
+  // scripts); until now only those scripts honoured it, not the binary.
+  resolve_bool_env(print_queries, "PRINT_QUERIES");
   resolve_bool_env(enable_instrumentation, "GIZMOSQL_ENABLE_INSTRUMENTATION");
   resolve_bool_env(enable_catalog_logging, "GIZMOSQL_ENABLE_CATALOG_LOGGING");
   resolve_bool_env(allow_cross_instance_tokens, "GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS");
@@ -2207,7 +2210,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
-      init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
+      init_sql_commands_file, print_queries.value(), read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
       token_default_role, token_authorized_emails, access_logging_enabled,
       query_timeout, query_level, auth_level, session_level, health_port, health_check_query,

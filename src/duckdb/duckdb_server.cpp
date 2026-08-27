@@ -1234,6 +1234,7 @@ class DuckDBFlightSqlServer::Impl {
         DuckDBStatement::Create(client_session, query,
                                 arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
                                 nullptr, "GetFlightInfoStatement", false))
+    statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
                           EncodeTransactionQuery(query, command.transaction_id))
@@ -1255,6 +1256,7 @@ class DuckDBFlightSqlServer::Impl {
         auto statement,
         DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_,
                                 nullptr, "DoGetStatement", false))
+    statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
     return std::make_unique<flight::RecordBatchStream>(reader);
@@ -1444,6 +1446,7 @@ class DuckDBFlightSqlServer::Impl {
       statement = search->second;
     }
 
+    statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
 
     return std::make_unique<flight::RecordBatchStream>(reader);
@@ -1489,6 +1492,7 @@ class DuckDBFlightSqlServer::Impl {
 
     ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
 
+    statement->SetCallContext(&context);
     return statement->ExecuteUpdate();
   }
 
@@ -1543,6 +1547,7 @@ class DuckDBFlightSqlServer::Impl {
         auto statement,
         DuckDBStatement::Create(client_session, sql, std::nullopt, print_queries_,
                                 nullptr, "DoPutCommandStatementUpdate", false))
+    statement->SetCallContext(&context);
     return statement->ExecuteUpdate();
   }
 

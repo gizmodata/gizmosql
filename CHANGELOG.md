@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Queries are interrupted when their client goes away.** The statement
+  execute-wait loop now polls the Flight call's `is_cancelled()` and calls
+  DuckDB `Interrupt()` when gRPC reports the peer gone — a killed client
+  process (`kill -9`, OOM), a dropped connection, a cancelled `DoGet`, or a
+  client-side deadline. Previously such a query ran to completion (or until
+  `--query-timeout`) with nobody left to receive the result. Logged under
+  `--print-queries` as `status=canceled reason=client_disconnected`,
+  recorded as `cancelled` in instrumentation, and counted as `CANCELED` in
+  the query metrics. Complements the explicit `CancelFlightInfo` path that
+  gizmosql-jdbc and gizmosql-adbc ≥ 2.0.9 use for graceful cancels.
+- Integration tests for `--memory-limit` / `GIZMOSQL_MEMORY_LIMIT` plumbing
+  and startup validation (contributed by @EmmS21 in #187).
+
+### Fixed
+- **`PRINT_QUERIES` env var is now honoured by `gizmosql_server` itself.** It
+  was documented and mapped by the Docker start scripts, but the binary only
+  read `--print-queries`. Follows the library-owned `std::optional<bool>`
+  fallback pattern; an explicit CLI flag still wins.
+
 ## [1.37.1] - 2026-08-24
 
 ### Fixed

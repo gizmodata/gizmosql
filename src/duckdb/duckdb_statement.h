@@ -33,6 +33,10 @@
 
 using Clock = std::chrono::steady_clock;
 
+namespace arrow::flight {
+class ServerCallContext;
+}
+
 namespace gizmosql::ddb {
 
 /// Returns true if a catalog named `catalog_name` is attached on `connection`.
@@ -85,6 +89,20 @@ class DuckDBStatement {
   arrow::Result<int> Execute();
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
 
+  /// \brief Attach the Flight call that is driving the next Execute().
+  ///
+  /// While the statement runs, the execute-wait loop polls the call's
+  /// is_cancelled() and interrupts DuckDB if the client goes away (process
+  /// killed, connection dropped, DoGet cancelled, client deadline hit) —
+  /// otherwise such a query would run to completion or the query timeout.
+  /// The pointer is only dereferenced inside Execute() and is cleared when
+  /// Execute() returns, so it must outlive that call (Flight keeps the
+  /// ServerCallContext alive for the whole RPC, including streaming the
+  /// FlightDataStream a DoGet handler returns).
+  void SetCallContext(const arrow::flight::ServerCallContext* context) {
+    call_context_ = context;
+  }
+
   std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
 
   /// \brief Executes an UPDATE, INSERT or DELETE statement.
@@ -133,6 +151,8 @@ class DuckDBStatement {
   bool is_internal_ = false;  // Flag to indicate whether the statement is an internal query
   std::string flight_method_;  // The Flight RPC method that created this statement
   duckdb::shared_ptr<duckdb::ClientContext> client_context_;
+  // Flight call driving the current Execute(); see SetCallContext().
+  const arrow::flight::ServerCallContext* call_context_ = nullptr;
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
   std::string creation_trace_id_;
   std::string creation_span_id_;

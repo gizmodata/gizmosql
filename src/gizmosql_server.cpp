@@ -410,7 +410,10 @@ int main(int argc, char** argv) {
     mtls_ca_cert_path = fs::path(vm["mtls-ca-cert-filename"].as<std::string>());
   }
 
-  bool print_queries = vm["print-queries"].as<bool>();
+  // nullopt when the flag is absent so the library can fall back to PRINT_QUERIES.
+  std::optional<bool> print_queries =
+      vm["print-queries"].defaulted() ? std::nullopt
+                                      : std::optional(vm["print-queries"].as<bool>());
 
   bool read_only = vm["readonly"].as<bool>();
 
