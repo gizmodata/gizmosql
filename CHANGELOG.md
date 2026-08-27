@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration tests for `--memory-limit` / `GIZMOSQL_MEMORY_LIMIT` plumbing
   and startup validation (contributed by @EmmS21 in #187).
 
+### Changed
+- **CI: warm third-party caches across releases.** GitHub Actions caches are
+  only restorable from the run's own ref or the default branch, so with
+  main's runs cancelled every release tag rebuilt Arrow (with bundled gRPC/
+  protobuf/abseil), DuckDB + extensions and the portable OpenSSL/Boost from
+  source on all 11 build jobs (~800 job-minutes for v1.37.1). Branch pushes
+  now run the build jobs only when a dependency input changes (so `main`
+  saves a fresh cache the next tag restores), the Arrow-and-friends cache is
+  shared between the stable and LTS DuckDB channels with DuckDB cached
+  separately per channel/version, the Windows vcpkg cache no longer keys on
+  the workflow file, and superseded runs on the same branch are cancelled.
+  `workflow_dispatch` (`force_build`) still builds unconditionally.
+
 ### Fixed
 - **`PRINT_QUERIES` env var is now honoured by `gizmosql_server` itself.** It
   was documented and mapped by the Docker start scripts, but the binary only

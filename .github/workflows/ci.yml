@@ -12,6 +12,11 @@ on:
           - Release
           - Debug
           - RelWithDebInfo
+      force_build:
+        description: "Run the build jobs even if no dependency inputs changed (also warms the caches on this ref)"
+        type: boolean
+        required: false
+        default: true
   push:
     branches:
       - '**'
@@ -26,6 +31,27 @@ on:
   pull_request:
     paths-ignore:
       - '**/*.md'
+
+# Superseded runs on the same branch are cancelled automatically (pushing
+# twice in a row no longer pays for two builds). Tag runs are never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+# ---- Build-job gating & the cost of cold caches --------------------------
+# Every job below that compiles the project restores Arrow (with its bundled
+# gRPC/protobuf/abseil), DuckDB + extensions and the portable OpenSSL/Boost
+# prefixes from actions/cache. GitHub only lets a run restore caches saved
+# on its own ref or on the default branch — never on another tag — so a
+# release tag can only start warm if `main` saved the caches first. When
+# main's runs are skipped or cancelled, every release rebuilds everything
+# from source on all platforms (~800 job-minutes, ~2 h wall for v1.37.1).
+#
+# So branch pushes now run the build jobs only when a dependency input
+# changed (see the `changes` job) — exactly when the caches need refreshing
+# — while tags, fork PRs and workflow_dispatch always build. A cache saved by
+# such a main run is what the next tag restores. Keep this and the cache
+# keys below in sync.
 
 # ---- Special (pinned-DuckDB) releases ------------------------------------
 # A tag whose name contains "-duckdb" (e.g. v1.36.1-duckdb1.5.4) is a
@@ -48,10 +74,79 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  changes:
+    name: Detect dependency changes
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the build jobs should run
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          FORCE: ${{ github.event.inputs.force_build }}
+        run: |
+          set -euo pipefail
+          build=false
+          reason=""
+          if [[ "$REF" == refs/tags/* ]]; then
+            build=true; reason="tag push"
+          elif [[ "$EVENT" == "pull_request" ]]; then
+            build=true; reason="pull request"
+          elif [[ "$EVENT" == "workflow_dispatch" ]]; then
+            if [[ "${FORCE:-true}" != "false" ]]; then build=true; reason="workflow_dispatch"; else reason="workflow_dispatch with force_build=false"; fi
+          else
+            # Compare against the previous push; for a brand-new branch (or a
+            # force push whose old tip is gone) compare against main instead,
+            # so opening a branch does not by itself cost a full build.
+            base="$BEFORE"
+            if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              base=$(git merge-base origin/main "$AFTER" 2>/dev/null || true)
+            fi
+            if [[ -z "$base" ]]; then
+              build=true; reason="no base commit to compare against"
+            else
+              # Inputs that feed the third-party caches (see the cache keys in
+              # the build jobs). A change here must be built so main saves a
+              # fresh cache for the next tag to restore. CMakeLists.txt only
+              # counts when the DuckDB version pins change.
+              changed=$(git diff --name-only "$base" "$AFTER")
+              pattern='^(third_party/|scripts/build_portable_linux\.sh$|\.github/workflows/ci\.yml$|ios/scripts/|ios/cmake/|ios/CMakeLists\.txt$)'
+              hits=$(printf '%s\n' "$changed" | grep -E "$pattern" || true)
+              pins=$(git diff -U0 "$base" "$AFTER" -- CMakeLists.txt | grep -E '^[+-]set\(DUCKDB_(STABLE|LTS)_VERSION' || true)
+              if [[ -n "$hits" || -n "$pins" ]]; then
+                build=true; reason="dependency inputs changed since $base:"$'\n'"$hits"$'\n'"$pins"
+              else
+                reason="no dependency inputs changed between $base and $AFTER"
+              fi
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Build jobs: $build"
+            echo ""
+            echo '```'
+            echo "$reason"
+            echo '```'
+            if [[ "$build" == "false" ]]; then
+              echo ""
+              echo "Skipped to save GitHub Actions minutes. Re-run via workflow_dispatch to force a build."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build-project-macos:
     name: Build Project - MacOS (${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: changes
+    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-14-xlarge
     strategy:
       fail-fast: false
@@ -88,14 +183,39 @@ jobs:
           echo "OPENSSL_CRYPTO_LIBRARY=${OPENSSL_PREFIX}/lib/libcrypto.a" >> "$GITHUB_ENV"
           echo "OPENSSL_SSL_LIBRARY=${OPENSSL_PREFIX}/lib/libssl.a" >> "$GITHUB_ENV"
 
-      - name: Restore Arrow cache
+      - name: Resolve DuckDB version for the cache key
+        id: duckdb-tag
+        shell: bash
+        run: |
+          var=DUCKDB_$(echo "${{ matrix.duckdb_channel }}" | tr '[:lower:]' '[:upper:]')_VERSION
+          tag=$(sed -nE "s/^set\(${var} \"([^\"]+)\".*/\1/p" CMakeLists.txt | head -1)
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "DuckDB ${{ matrix.duckdb_channel }} = $tag"
+
+      # Two caches so the Arrow/gRPC/OTel/... build (the long pole, identical
+      # for both DuckDB channels) is stored once per platform and shared,
+      # while DuckDB + extensions is cached per channel and version.
+      - name: Restore third-party cache (Arrow & friends)
         id: arrow-cache
         uses: actions/cache/restore@v6
         with:
-          path: build/third_party
-          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          path: |
+            build/third_party
+            !build/third_party/duckdb
+            !build/third_party/src/duckdb_project*
+          key: deps-v3-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-
+            deps-v3-macos-arm64-apache-arrow-25.0.1-
+
+      - name: Restore DuckDB cache
+        id: duckdb-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: duckdb-macos-arm64-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -117,12 +237,24 @@ jobs:
             OPENSSL_CRYPTO_LIBRARY=${{ env.OPENSSL_CRYPTO_LIBRARY }}
             OPENSSL_SSL_LIBRARY=${{ env.OPENSSL_SSL_LIBRARY }}
 
-      - name: Save Arrow cache
+      - name: Save third-party cache (Arrow & friends)
         if: steps.arrow-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
-          path: build/third_party
-          key: arrow-macos-arm64-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          path: |
+            build/third_party
+            !build/third_party/duckdb
+            !build/third_party/src/duckdb_project*
+          key: deps-v3-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+
+      - name: Save DuckDB cache
+        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: duckdb-macos-arm64-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Run Tests (Core Edition - No License)
         run: |
@@ -225,7 +357,8 @@ jobs:
   build-project-linux:
     name: Build Project - Linux ${{ matrix.platform }} (${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: changes
+    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     strategy:
       fail-fast: false
       matrix:
@@ -288,18 +421,42 @@ jobs:
       # Build deps (compilers, Boost, OpenSSL, ...) live inside the manylinux
       # build container — the host only needs docker, python, and zip (all
       # preinstalled on the runner image).
-      - name: Restore Arrow cache
+      - name: Resolve DuckDB version for the cache key
+        id: duckdb-tag
+        shell: bash
+        run: |
+          var=DUCKDB_$(echo "${{ matrix.duckdb_channel }}" | tr '[:lower:]' '[:upper:]')_VERSION
+          tag=$(sed -nE "s/^set\(${var} \"([^\"]+)\".*/\1/p" CMakeLists.txt | head -1)
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "DuckDB ${{ matrix.duckdb_channel }} = $tag"
+
+      # Two caches so the Arrow/gRPC/OTel/... build (the long pole, identical
+      # for both DuckDB channels) is stored once per platform and shared,
+      # while DuckDB + extensions is cached per channel and version.
+      # build/portable-deps holds the static OpenSSL + Boost prefixes built by
+      # scripts/build_portable_linux.sh (stamp-file guarded).
+      - name: Restore third-party cache (Arrow & friends)
         id: arrow-cache
         uses: actions/cache/restore@v6
         with:
-          # portable-deps holds the static OpenSSL + Boost prefixes built by
-          # scripts/build_portable_linux.sh (stamp-file guarded).
           path: |
             build/third_party
+            !build/third_party/duckdb
+            !build/third_party/src/duckdb_project*
             build/portable-deps
-          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
+          key: deps-v3-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
           restore-keys: |
-            arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-
+            deps-v3-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-
+
+      - name: Restore DuckDB cache
+        id: duckdb-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: duckdb-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -355,14 +512,25 @@ jobs:
              /bin-under-test/gizmosql_server${{ env.bin_suffix }} --version && \
              /bin-under-test/gizmosql_server${{ env.bin_suffix }} --verify-tls '$OIDC'"
 
-      - name: Save Arrow cache
+      - name: Save third-party cache (Arrow & friends)
         if: steps.arrow-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: |
             build/third_party
+            !build/third_party/duckdb
+            !build/third_party/src/duckdb_project*
             build/portable-deps
-          key: arrow-linux-portable228-v2-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'scripts/build_portable_linux.sh') }}
+          key: deps-v3-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
+
+      - name: Save DuckDB cache
+        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: duckdb-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Start MinIO and setup bucket
         run: |
@@ -563,7 +731,8 @@ jobs:
   build-project-windows:
     name: Build Project - Windows (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: changes
+    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -584,6 +753,8 @@ jobs:
             vc_arch: arm64
     env:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.vc_arch }}-windows-static
+      # Bump when the `vcpkg install` package list below changes.
+      VCPKG_PACKAGES_KEY: boost-program-options-boost-algorithm-boost-uuid-zlib-openssl
       # VS 2022 sets VCPKG_ROOT to its own vcpkg copy, conflicting with the
       # runner's vcpkg at C:\vcpkg. Override to suppress the mismatch warning.
       VCPKG_ROOT: C:\vcpkg
@@ -616,9 +787,11 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
-          key: vcpkg-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          # Keyed on the package list, not the workflow file, so unrelated
+          # workflow edits do not rebuild OpenSSL/Boost from source.
+          key: vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ env.VCPKG_PACKAGES_KEY }}
           restore-keys: |
-            vcpkg-${{ env.VCPKG_DEFAULT_TRIPLET }}-
+            vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-
 
       - name: Install vcpkg dependencies
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -630,7 +803,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
-          key: vcpkg-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ env.VCPKG_PACKAGES_KEY }}
 
       # ilammy passes the arch through to vcvarsall.bat verbatim. On the
       # windows-11-arm runner `arm64` selects the native ARM64-hosted
@@ -646,14 +819,39 @@ jobs:
         shell: pwsh
         run: echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Restore Arrow cache
+      - name: Resolve DuckDB version for the cache key
+        id: duckdb-tag
+        shell: bash
+        run: |
+          var=DUCKDB_$(echo "${{ matrix.duckdb_channel }}" | tr '[:lower:]' '[:upper:]')_VERSION
+          tag=$(sed -nE "s/^set\(${var} \"([^\"]+)\".*/\1/p" CMakeLists.txt | head -1)
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "DuckDB ${{ matrix.duckdb_channel }} = $tag"
+
+      # Two caches so the Arrow/gRPC/OTel/... build (the long pole, identical
+      # for both DuckDB channels) is stored once per platform and shared,
+      # while DuckDB + extensions is cached per channel and version.
+      - name: Restore third-party cache (Arrow & friends)
         id: arrow-cache
         uses: actions/cache/restore@v6
         with:
-          path: build/third_party
-          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          path: |
+            build/third_party
+            !build/third_party/duckdb
+            !build/third_party/src/duckdb_project*
+          key: deps-v3-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-
+            deps-v3-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-
+
+      - name: Restore DuckDB cache
+        id: duckdb-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: duckdb-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -673,12 +871,24 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }}
 
-      - name: Save Arrow cache
+      - name: Save third-party cache (Arrow & friends)
         if: steps.arrow-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
-          path: build/third_party
-          key: arrow-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake') }}
+          path: |
+            build/third_party
+            !build/third_party/duckdb
+            !build/third_party/src/duckdb_project*
+          key: deps-v3-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+
+      - name: Save DuckDB cache
+        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: duckdb-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Copy VC++ runtime DLLs for DuckDB extension compatibility
         run: |
@@ -1399,7 +1609,8 @@ jobs:
     # means iOS-only breakage (e.g. the RunFlightSQLServer positional-caller
     # gotcha in the iOS bridge) is not caught on fork PRs — it surfaces on the
     # push build after merge.
-    if: github.event_name != 'pull_request'
+    needs: changes
+    if: needs.changes.outputs.build == 'true' && github.event_name != 'pull_request'
     # macos-26 runner image ships Xcode 26 / iOS 26 SDK. Apple requires
     # all App Store Connect uploads (and TestFlight builds) to be built
     # with the iOS 26 SDK starting 2026-04-28; older runners (macos-14
