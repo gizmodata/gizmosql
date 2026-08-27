@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-08-27
+
 ### Added
 - **Queries are interrupted when their client goes away.** The statement
   execute-wait loop now polls the Flight call's `is_cancelled()` and calls
@@ -18,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded as `cancelled` in instrumentation, and counted as `CANCELED` in
   the query metrics. Complements the explicit `CancelFlightInfo` path that
   gizmosql-jdbc and gizmosql-adbc ≥ 2.0.9 use for graceful cancels.
+- **`-adbc` image variants now bundle GizmoData's Oracle, Db2 and Quack ADBC
+  drivers** ([adbc-driver-oracle](https://github.com/gizmodata/adbc-driver-oracle)
+  v0.4.2, [adbc-driver-db2](https://github.com/gizmodata/adbc-driver-db2)
+  v0.1.11, [adbc-driver-quack](https://github.com/gizmodata/adbc-driver-quack)
+  v0.1.0-alpha.11 for DuckDB's remote protocol) — pure Go, no Oracle Instant
+  Client or IBM CLI required — installed to `/usr/local/lib` with driver
+  manifests in `/etc/adbc/drivers` so they load by name (`oracle`, `db2`,
+  `quack`) from any ADBC driver manager, DuckDB's ADBC
+  extension, or a connection profile. The bundled gizmosql-adbc driver is
+  bumped to v2.0.9 (server-side query cancellation).
 - Integration tests for `--memory-limit` / `GIZMOSQL_MEMORY_LIMIT` plumbing
   and startup validation (contributed by @EmmS21 in #187).
 

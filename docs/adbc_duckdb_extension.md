@@ -35,7 +35,13 @@ copy the shared library into your ADBC driver directory and generate `gizmosql.t
 manifest template. Once registered, the driver loads by name: `gizmosql`.
 
 > **Docker users:** the `-adbc` GizmoSQL image variants (e.g. `gizmodata/gizmosql:latest-slim-adbc`)
-> ship with the driver preinstalled in `/etc/adbc/drivers`.
+> ship with the driver preinstalled in `/etc/adbc/drivers` — alongside GizmoData's pure-Go
+> [Oracle](https://github.com/gizmodata/adbc-driver-oracle) and
+> [Db2](https://github.com/gizmodata/adbc-driver-db2) and
+> [Quack](https://github.com/gizmodata/adbc-driver-quack) (DuckDB remote protocol) ADBC drivers
+> (`oracle`, `db2`, `quack`) and the
+> dbc-installed drivers (bigquery, databricks, exasol, flightsql, mssql, mysql, postgresql,
+> redshift, snowflake, trino).
 
 ### 2️⃣ Create a connection profile
 

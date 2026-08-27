@@ -2,8 +2,10 @@
 #
 # Layers a curated set of publicly available ADBC drivers on top of an already
 # built GizmoSQL image (full or slim) via dbc (https://columnar.tech/dbc/),
-# plus the native GizmoSQL ADBC driver (github.com/gizmodata/gizmosql-adbc),
-# which dbc does not carry yet and is therefore installed straight from its
+# plus GizmoData's own ADBC drivers — the native GizmoSQL driver
+# (github.com/gizmodata/gizmosql-adbc) and the pure-Go Oracle, Db2 and Quack
+# (DuckDB remote protocol) drivers (github.com/gizmodata/adbc-driver-oracle,
+# adbc-driver-db2, adbc-driver-quack) — which dbc does not carry and are therefore installed straight from their
 # GitHub release artifacts. Drivers are installed system-wide to
 # /etc/adbc/drivers so any ADBC driver manager running in the container can
 # discover them by name.
@@ -12,13 +14,17 @@
 # e.g. gizmodata/gizmosql:v1.30.2 (full) or gizmodata/gizmosql:v1.30.2-slim.
 #
 # Excludes datafusion, sqlite, and duckdb (GizmoSQL already speaks DuckDB/SQLite
-# natively) and the private-registry drivers oracle/teradata (need credentials).
+# natively) and the private-registry dbc drivers oracle/teradata (need
+# credentials) — Oracle is covered by GizmoData's pure-Go driver below instead.
 
 ARG BASE_IMAGE=gizmodata/gizmosql:latest-slim
 FROM ${BASE_IMAGE}
 
 ARG ADBC_DRIVERS="bigquery databricks exasol flightsql mssql mysql postgresql redshift snowflake trino"
-ARG GIZMOSQL_ADBC_VERSION="v2.0.8"
+ARG GIZMOSQL_ADBC_VERSION="v2.0.9"
+ARG ORACLE_ADBC_VERSION="v0.4.2"
+ARG DB2_ADBC_VERSION="v0.1.11"
+ARG QUACK_ADBC_VERSION="v0.1.0-alpha.11"
 
 # amd64 / arm64, injected by buildx for each platform of the multi-arch build
 ARG TARGETARCH
@@ -61,6 +67,48 @@ RUN set -eux; \
         "/tmp/${PKG}/gizmosql.toml.in" > /etc/adbc/drivers/gizmosql.toml; \
     rm -rf /tmp/gizmosql-adbc.tar.gz "/tmp/${PKG}"; \
     ls -l /usr/local/lib/libadbc_driver_gizmosql.so /etc/adbc/drivers/gizmosql.toml
+
+# Install GizmoData's pure-Go Oracle, Db2 and Quack ADBC drivers (no Oracle
+# Instant Client / IBM CLI needed; Quack speaks DuckDB's remote protocol). Their releases ship bare shared libraries plus a
+# .sha256, so verify the checksum and write the driver manifest here; the
+# entrypoints match what each driver's own `install-manifest` command writes,
+# so they load by name ('oracle', 'db2', 'quack') exactly as a pip install would.
+RUN set -eux; \
+    install_gizmodata_driver() { \
+      name="$1"; repo="$2"; version="$3"; entrypoint="$4"; title="$5"; \
+      lib="libadbc_driver_${name}-linux-${TARGETARCH}.so"; \
+      base="https://github.com/gizmodata/${repo}/releases/download/${version}"; \
+      curl -LsSf -o "/tmp/${lib}" "${base}/${lib}"; \
+      curl -LsSf -o "/tmp/${lib}.sha256" "${base}/${lib}.sha256"; \
+      (cd /tmp && echo "$(cut -d' ' -f1 "${lib}.sha256")  ${lib}" | sha256sum -c -); \
+      install -m 0755 "/tmp/${lib}" "/usr/local/lib/libadbc_driver_${name}.so"; \
+      rm -f "/tmp/${lib}" "/tmp/${lib}.sha256"; \
+      { \
+        echo "manifest_version = 1"; \
+        echo ""; \
+        echo "name = '${title}'"; \
+        echo "version = '${version#v}'"; \
+        echo "publisher = 'GizmoData'"; \
+        echo "license = 'Apache-2.0'"; \
+        echo "url = 'https://github.com/gizmodata/${repo}'"; \
+        echo ""; \
+        echo "[ADBC]"; \
+        echo "version = '1.1.0'"; \
+        echo ""; \
+        echo "[Driver]"; \
+        echo "entrypoint = '${entrypoint}'"; \
+        echo ""; \
+        echo "[Driver.shared]"; \
+        echo "linux_amd64 = '/usr/local/lib/libadbc_driver_${name}.so'"; \
+        echo "linux_arm64 = '/usr/local/lib/libadbc_driver_${name}.so'"; \
+      } > "/etc/adbc/drivers/${name}.toml"; \
+    }; \
+    install_gizmodata_driver oracle adbc-driver-oracle "${ORACLE_ADBC_VERSION}" OracleDriverInit "Oracle Database (GizmoData)"; \
+    install_gizmodata_driver db2 adbc-driver-db2 "${DB2_ADBC_VERSION}" Db2DriverInit "IBM Db2 (GizmoData)"; \
+    install_gizmodata_driver quack adbc-driver-quack "${QUACK_ADBC_VERSION}" QuackDriverInit "DuckDB Quack remote protocol (GizmoData)"; \
+    ls -l /usr/local/lib/libadbc_driver_oracle.so /usr/local/lib/libadbc_driver_db2.so /usr/local/lib/libadbc_driver_quack.so \
+          /etc/adbc/drivers/oracle.toml /etc/adbc/drivers/db2.toml /etc/adbc/drivers/quack.toml; \
+    cat /etc/adbc/drivers/oracle.toml
 
 # Explicit override honored by the DuckDB snowflake extension; points at the
 # stable symlink so it survives driver version bumps. Baked into the image
