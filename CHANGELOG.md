@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separately per channel/version, the Windows vcpkg cache no longer keys on
   the workflow file, and superseded runs on the same branch are cancelled.
   `workflow_dispatch` (`force_build`) still builds unconditionally.
+- **CI: third-party cache split now actually excludes DuckDB.** actions/cache
+  archives a matched directory whole and ignores negations of its children,
+  so the 1.38.0 "Arrow & friends" cache still contained DuckDB and the set
+  blew past the 10 GB repo limit (evicting the macOS and Linux-arm64
+  entries). The shared cache now globs `build/third_party/*` children
+  individually so `!…/duckdb` applies, and tag runs no longer save caches
+  (tag-scoped caches are unrestorable by any other ref and only evict
+  main's).
 
 ### Fixed
 - **`PRINT_QUERIES` env var is now honoured by `gizmosql_server` itself.** It

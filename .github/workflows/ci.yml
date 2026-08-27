@@ -200,13 +200,19 @@ jobs:
         id: arrow-cache
         uses: actions/cache/restore@v6
         with:
+          # Children are globbed individually on purpose: actions/cache tars a
+          # matched *directory* whole and ignores negations of its children,
+          # so `build/third_party` + `!build/third_party/duckdb` would still
+          # archive DuckDB (which is what made the caches blow past 10 GB).
           path: |
-            build/third_party
+            build/third_party/*
             !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v3-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v4-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            deps-v3-macos-arm64-apache-arrow-25.0.1-
+            deps-v4-macos-arm64-apache-arrow-25.0.1-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -238,17 +244,27 @@ jobs:
             OPENSSL_SSL_LIBRARY=${{ env.OPENSSL_SSL_LIBRARY }}
 
       - name: Save third-party cache (Arrow & friends)
-        if: steps.arrow-cache.outputs.cache-hit != 'true'
+        # Tag-scoped caches can never be restored by another ref and only
+        # evict main's, so only non-tag runs (i.e. main) save.
+        if: steps.arrow-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
         uses: actions/cache/save@v6
         with:
+          # Children are globbed individually on purpose: actions/cache tars a
+          # matched *directory* whole and ignores negations of its children,
+          # so `build/third_party` + `!build/third_party/duckdb` would still
+          # archive DuckDB (which is what made the caches blow past 10 GB).
           path: |
-            build/third_party
+            build/third_party/*
             !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v3-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v4-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
 
       - name: Save DuckDB cache
-        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        # Tag-scoped caches can never be restored by another ref and only
+        # evict main's, so only non-tag runs (i.e. main) save.
+        if: steps.duckdb-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
         uses: actions/cache/save@v6
         with:
           path: |
@@ -440,14 +456,20 @@ jobs:
         id: arrow-cache
         uses: actions/cache/restore@v6
         with:
+          # Children are globbed individually on purpose: actions/cache tars a
+          # matched *directory* whole and ignores negations of its children,
+          # so `build/third_party` + `!build/third_party/duckdb` would still
+          # archive DuckDB (which is what made the caches blow past 10 GB).
           path: |
-            build/third_party
+            build/third_party/*
             !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
             !build/third_party/src/duckdb_project*
             build/portable-deps
-          key: deps-v3-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
+          key: deps-v4-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
           restore-keys: |
-            deps-v3-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-
+            deps-v4-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -513,18 +535,28 @@ jobs:
              /bin-under-test/gizmosql_server${{ env.bin_suffix }} --verify-tls '$OIDC'"
 
       - name: Save third-party cache (Arrow & friends)
-        if: steps.arrow-cache.outputs.cache-hit != 'true'
+        # Tag-scoped caches can never be restored by another ref and only
+        # evict main's, so only non-tag runs (i.e. main) save.
+        if: steps.arrow-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
         uses: actions/cache/save@v6
         with:
+          # Children are globbed individually on purpose: actions/cache tars a
+          # matched *directory* whole and ignores negations of its children,
+          # so `build/third_party` + `!build/third_party/duckdb` would still
+          # archive DuckDB (which is what made the caches blow past 10 GB).
           path: |
-            build/third_party
+            build/third_party/*
             !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
             !build/third_party/src/duckdb_project*
             build/portable-deps
-          key: deps-v3-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
+          key: deps-v4-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
 
       - name: Save DuckDB cache
-        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        # Tag-scoped caches can never be restored by another ref and only
+        # evict main's, so only non-tag runs (i.e. main) save.
+        if: steps.duckdb-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
         uses: actions/cache/save@v6
         with:
           path: |
@@ -799,7 +831,7 @@ jobs:
           & "$env:VCPKG_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet $env:VCPKG_DEFAULT_TRIPLET --clean-after-build --x-install-root="$env:VCPKG_ROOT\installed"
 
       - name: Save vcpkg cache
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
         uses: actions/cache/save@v6
         with:
           path: ${{ env.VCPKG_ROOT }}/installed
@@ -836,13 +868,19 @@ jobs:
         id: arrow-cache
         uses: actions/cache/restore@v6
         with:
+          # Children are globbed individually on purpose: actions/cache tars a
+          # matched *directory* whole and ignores negations of its children,
+          # so `build/third_party` + `!build/third_party/duckdb` would still
+          # archive DuckDB (which is what made the caches blow past 10 GB).
           path: |
-            build/third_party
+            build/third_party/*
             !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v3-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v4-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            deps-v3-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-
+            deps-v4-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -872,17 +910,27 @@ jobs:
         run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Save third-party cache (Arrow & friends)
-        if: steps.arrow-cache.outputs.cache-hit != 'true'
+        # Tag-scoped caches can never be restored by another ref and only
+        # evict main's, so only non-tag runs (i.e. main) save.
+        if: steps.arrow-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
         uses: actions/cache/save@v6
         with:
+          # Children are globbed individually on purpose: actions/cache tars a
+          # matched *directory* whole and ignores negations of its children,
+          # so `build/third_party` + `!build/third_party/duckdb` would still
+          # archive DuckDB (which is what made the caches blow past 10 GB).
           path: |
-            build/third_party
+            build/third_party/*
             !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v3-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v4-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
 
       - name: Save DuckDB cache
-        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        # Tag-scoped caches can never be restored by another ref and only
+        # evict main's, so only non-tag runs (i.e. main) save.
+        if: steps.duckdb-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
         uses: actions/cache/save@v6
         with:
           path: |
