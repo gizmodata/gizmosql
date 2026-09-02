@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.38.1] - 2026-09-02
 
+### Changed
+- `-adbc` image variants now bundle
+  [gizmosql-adbc](https://github.com/gizmodata/gizmosql-adbc) v2.0.10
+  (was v2.0.9): `Bind`/`BindStream` now auto-prepare, so driver managers
+  without a prepare step (e.g. the Node.js `@apache-arrow/adbc-driver-manager`)
+  can bind parameters; `dbapi.connect()` gained `catalog=` / `db_schema=`.
+
 ### Fixed
 - **Prepared-statement bind parameters are now converted with their types.**
   Bound Arrow values were stringified (`Scalar::ToString()`) before being
