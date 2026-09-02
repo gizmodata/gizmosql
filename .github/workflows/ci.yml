@@ -161,6 +161,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Normalize checkout mtimes for cached build trees
+        # git does not preserve mtimes, so every checkout makes third_party/*
+        # look newer than the CMake build trees restored from cache. DuckDB's
+        # generated build.ninja lists third_party/duckdb_extensions.cmake as a
+        # configure input, so ninja re-ran CMake and rebuilt ~600 DuckDB
+        # objects on a fully warm cache (stable channel: ~14 min per Linux
+        # job). hashFiles() cache keys are content-based and unaffected.
+        shell: bash
+        run: git ls-files -z third_party scripts | xargs -0 touch -t 200001010000
+
       - name: Install build requirements
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
@@ -437,6 +447,16 @@ jobs:
       # Build deps (compilers, Boost, OpenSSL, ...) live inside the manylinux
       # build container — the host only needs docker, python, and zip (all
       # preinstalled on the runner image).
+      - name: Normalize checkout mtimes for cached build trees
+        # git does not preserve mtimes, so every checkout makes third_party/*
+        # look newer than the CMake build trees restored from cache. DuckDB's
+        # generated build.ninja lists third_party/duckdb_extensions.cmake as a
+        # configure input, so ninja re-ran CMake and rebuilt ~600 DuckDB
+        # objects on a fully warm cache (stable channel: ~14 min per Linux
+        # job). hashFiles() cache keys are content-based and unaffected.
+        shell: bash
+        run: git ls-files -z third_party scripts | xargs -0 touch -t 200001010000
+
       - name: Resolve DuckDB version for the cache key
         id: duckdb-tag
         shell: bash
@@ -797,6 +817,16 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Normalize checkout mtimes for cached build trees
+        # git does not preserve mtimes, so every checkout makes third_party/*
+        # look newer than the CMake build trees restored from cache. DuckDB's
+        # generated build.ninja lists third_party/duckdb_extensions.cmake as a
+        # configure input, so ninja re-ran CMake and rebuilt ~600 DuckDB
+        # objects on a fully warm cache (stable channel: ~14 min per Linux
+        # job). hashFiles() cache keys are content-based and unaffected.
+        shell: bash
+        run: git ls-files -z third_party scripts | xargs -0 touch -t 200001010000
 
       - name: Free disk space
         shell: pwsh
@@ -1682,6 +1712,16 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Normalize checkout mtimes for cached build trees
+        # git does not preserve mtimes, so every checkout makes third_party/*
+        # look newer than the CMake build trees restored from cache. DuckDB's
+        # generated build.ninja lists third_party/duckdb_extensions.cmake as a
+        # configure input, so ninja re-ran CMake and rebuilt ~600 DuckDB
+        # objects on a fully warm cache (stable channel: ~14 min per Linux
+        # job). hashFiles() cache keys are content-based and unaffected.
+        shell: bash
+        run: git ls-files -z third_party scripts | xargs -0 touch -t 200001010000
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CI: build jobs normalize the mtimes of `third_party/` and `scripts/` right
+  after checkout. git does not preserve mtimes, so a fresh checkout made
+  `third_party/duckdb_extensions.cmake` look newer than the DuckDB build
+  tree restored from cache; DuckDB's generated `build.ninja` lists it as a
+  configure input, so ninja re-ran CMake and rebuilt ~600 DuckDB objects on
+  a fully warm cache (stable channel, ~14 min per Linux job — the lts
+  channel's DuckDB 1.4 build does not track that input). Diagnosed with a
+  one-off `ninja -d explain` run against the restored cache.
+
 ## [1.38.1] - 2026-09-02
 
 ### Changed
