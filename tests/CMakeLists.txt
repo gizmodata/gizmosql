@@ -26,6 +26,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_auth_log_level.cpp
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
+        integration/test_prepared_statement_params.cpp
         integration/test_catalog_access.cpp
         integration/test_catalog_permissions_enterprise.cpp
         integration/test_cross_instance_tokens.cpp

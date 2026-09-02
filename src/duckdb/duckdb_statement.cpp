@@ -606,6 +606,17 @@ std::string RewriteGizmoSettings(const std::string& sql, const ClientSession& se
                                  DuckDBFlightSqlServer* server,
                                  duckdb::vector<duckdb::Value>& binds);
 }  // namespace
+bool IsUnresolvedDuckDBType(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::INVALID:
+    case duckdb::LogicalTypeId::UNKNOWN:
+    case duckdb::LogicalTypeId::ANY:
+      return true;
+    default:
+      return false;
+  }
+}
+
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType& duckdb_type) {
   switch (duckdb_type.id()) {
@@ -2257,6 +2268,12 @@ arrow::Result<int> DuckDBStatement::Execute() {
   // Get the result from the future
   auto result = future.get();
 
+  if (result.ok() && schema_unresolved_) {
+    // The real result types are only known now; re-derive on next GetSchema().
+    std::lock_guard<std::mutex> schema_lock(schema_mutex_);
+    cached_schema_.reset();
+  }
+
   end_time_ = std::chrono::steady_clock::now();
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -2468,13 +2485,21 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::GetSchema() {
     return override_schema_;
   }
 
-  // Lazily compute & memoize schema exactly once
-  std::call_once(schema_once_flag_, [this] {
-    cached_schema_ = ComputeSchema();  // Store the Result<>
-  });
+  // Lazily compute & memoize the schema. A schema with unresolved placeholder
+  // types is not memoized until Execute() has produced a result to derive the
+  // real types from (see ComputeSchema()).
+  std::lock_guard<std::mutex> lock(schema_mutex_);
+  if (cached_schema_) {
+    status = "success";
+    return cached_schema_;
+  }
+  ARROW_ASSIGN_OR_RAISE(auto schema, ComputeSchema());
+  if (!schema_unresolved_ || query_result_) {
+    cached_schema_ = schema;
+  }
 
   status = "success";
-  return cached_schema_;
+  return schema;
 }
 
 long DuckDBStatement::GetLastExecutionDurationMs() const {
@@ -2521,13 +2546,36 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
     return return_value;
   }
 
+  auto client_properties = client_context_->GetClientProperties();
+  ArrowSchema arrow_schema;
+
+  // Untyped placeholders (`SELECT ? AS x`) leave result types unresolved at
+  // prepare time; DuckDB resolves them when the bound values arrive at
+  // execution. Once a result exists, report its real types.
+  if (schema_unresolved_ && query_result_) {
+    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, query_result_->types,
+                                          query_result_->names, client_properties);
+    auto return_value = arrow::ImportSchema(&arrow_schema);
+    status = "success";
+    return return_value;
+  }
+
   // Traditional prepared statement schema retrieval
   auto names = stmt_->GetNames();
-  auto types = stmt_->GetTypes();
+  duckdb::vector<duckdb::LogicalType> types = stmt_->GetTypes();
 
-  auto client_properties = client_context_->GetClientProperties();
+  // Placeholder columns are reported as VARCHAR until execution — the Arrow
+  // converter would otherwise throw on the unresolved type (which surfaced to
+  // clients as "Unexpected error in RPC handling" when preparing such a query).
+  bool unresolved = false;
+  for (auto& type : types) {
+    if (IsUnresolvedDuckDBType(type)) {
+      type = duckdb::LogicalType::VARCHAR;
+      unresolved = true;
+    }
+  }
+  schema_unresolved_ = unresolved;
 
-  ArrowSchema arrow_schema;
   duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
 
   auto return_value = arrow::ImportSchema(&arrow_schema);

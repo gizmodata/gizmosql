@@ -32,6 +32,7 @@
 #include <unordered_set>
 
 #include <arrow/api.h>
+#include <arrow/util/checked_cast.h>
 #include <arrow/flight/server.h>
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/types.h>
@@ -570,10 +571,141 @@ std::string PrepareQueryForGetTables(const sql::GetTables& command,
   return table_query.str();
 }
 
-Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& stmt,
-                                      flight::FlightMessageReader* reader) {
-  // Clear existing parameters for re-execution of the same prepared statement
-  stmt->bind_parameters.clear();
+namespace {
+
+int64_t TimeUnitToMicros(int64_t value, arrow::TimeUnit::type unit) {
+  switch (unit) {
+    case arrow::TimeUnit::SECOND:
+      return value * 1000000;
+    case arrow::TimeUnit::MILLI:
+      return value * 1000;
+    case arrow::TimeUnit::MICRO:
+      return value;
+    case arrow::TimeUnit::NANO:
+      return value / 1000;
+  }
+  return value;
+}
+
+/// Convert one bound Arrow parameter value to a typed DuckDB Value.
+///
+/// Nulls become SQL NULL, dictionary-encoded values are unwrapped to the
+/// value they encode, and the common scalar types are passed through with
+/// their native type so DuckDB does not have to re-parse text (and so
+/// untyped placeholders resolve to the client's type). Anything else falls
+/// back to the scalar's string form as VARCHAR, which DuckDB casts.
+arrow::Result<duckdb::Value> ArrowScalarToDuckDBValue(const arrow::Scalar& scalar) {
+  using arrow::internal::checked_cast;
+  if (!scalar.is_valid) {
+    return duckdb::Value();
+  }
+  try {
+    switch (scalar.type->id()) {
+      case arrow::Type::DICTIONARY: {
+        ARROW_ASSIGN_OR_RAISE(
+            auto encoded,
+            checked_cast<const arrow::DictionaryScalar&>(scalar).GetEncodedValue());
+        return ArrowScalarToDuckDBValue(*encoded);
+      }
+      case arrow::Type::BOOL:
+        return duckdb::Value::BOOLEAN(
+            checked_cast<const arrow::BooleanScalar&>(scalar).value);
+      case arrow::Type::INT8:
+        return duckdb::Value::TINYINT(
+            checked_cast<const arrow::Int8Scalar&>(scalar).value);
+      case arrow::Type::INT16:
+        return duckdb::Value::SMALLINT(
+            checked_cast<const arrow::Int16Scalar&>(scalar).value);
+      case arrow::Type::INT32:
+        return duckdb::Value::INTEGER(
+            checked_cast<const arrow::Int32Scalar&>(scalar).value);
+      case arrow::Type::INT64:
+        return duckdb::Value::BIGINT(
+            checked_cast<const arrow::Int64Scalar&>(scalar).value);
+      case arrow::Type::UINT8:
+        return duckdb::Value::UTINYINT(
+            checked_cast<const arrow::UInt8Scalar&>(scalar).value);
+      case arrow::Type::UINT16:
+        return duckdb::Value::USMALLINT(
+            checked_cast<const arrow::UInt16Scalar&>(scalar).value);
+      case arrow::Type::UINT32:
+        return duckdb::Value::UINTEGER(
+            checked_cast<const arrow::UInt32Scalar&>(scalar).value);
+      case arrow::Type::UINT64:
+        return duckdb::Value::UBIGINT(
+            checked_cast<const arrow::UInt64Scalar&>(scalar).value);
+      case arrow::Type::FLOAT:
+        return duckdb::Value::FLOAT(
+            checked_cast<const arrow::FloatScalar&>(scalar).value);
+      case arrow::Type::DOUBLE:
+        return duckdb::Value::DOUBLE(
+            checked_cast<const arrow::DoubleScalar&>(scalar).value);
+      case arrow::Type::STRING:
+      case arrow::Type::LARGE_STRING:
+      case arrow::Type::STRING_VIEW: {
+        const auto view = checked_cast<const arrow::BaseBinaryScalar&>(scalar).view();
+        return duckdb::Value(std::string(view));
+      }
+      case arrow::Type::BINARY:
+      case arrow::Type::LARGE_BINARY:
+      case arrow::Type::BINARY_VIEW:
+      case arrow::Type::FIXED_SIZE_BINARY: {
+        const auto view = checked_cast<const arrow::BaseBinaryScalar&>(scalar).view();
+        return duckdb::Value::BLOB(
+            reinterpret_cast<duckdb::const_data_ptr_t>(view.data()), view.size());
+      }
+      case arrow::Type::DATE32:
+        return duckdb::Value::DATE(duckdb::Date::EpochDaysToDate(
+            checked_cast<const arrow::Date32Scalar&>(scalar).value));
+      case arrow::Type::DATE64:
+        return duckdb::Value::DATE(duckdb::Date::EpochDaysToDate(static_cast<int32_t>(
+            checked_cast<const arrow::Date64Scalar&>(scalar).value / 86400000)));
+      case arrow::Type::TIMESTAMP: {
+        const auto& ts_type = checked_cast<const arrow::TimestampType&>(*scalar.type);
+        const int64_t raw = checked_cast<const arrow::TimestampScalar&>(scalar).value;
+        if (ts_type.unit() == arrow::TimeUnit::NANO && ts_type.timezone().empty()) {
+          return duckdb::Value::TIMESTAMPNS(duckdb::timestamp_ns_t(raw));
+        }
+        const int64_t micros = TimeUnitToMicros(raw, ts_type.unit());
+        if (!ts_type.timezone().empty()) {
+          return duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t(micros));
+        }
+        return duckdb::Value::TIMESTAMP(duckdb::timestamp_t(micros));
+      }
+      case arrow::Type::TIME32: {
+        const auto& t_type = checked_cast<const arrow::Time32Type&>(*scalar.type);
+        const int64_t raw = checked_cast<const arrow::Time32Scalar&>(scalar).value;
+        return duckdb::Value::TIME(duckdb::dtime_t(TimeUnitToMicros(raw, t_type.unit())));
+      }
+      case arrow::Type::TIME64: {
+        const auto& t_type = checked_cast<const arrow::Time64Type&>(*scalar.type);
+        const int64_t raw = checked_cast<const arrow::Time64Scalar&>(scalar).value;
+        return duckdb::Value::TIME(duckdb::dtime_t(TimeUnitToMicros(raw, t_type.unit())));
+      }
+      case arrow::Type::DECIMAL128: {
+        const auto& d_type = checked_cast<const arrow::Decimal128Type&>(*scalar.type);
+        const auto& value = checked_cast<const arrow::Decimal128Scalar&>(scalar).value;
+        duckdb::hugeint_t h;
+        h.upper = value.high_bits();
+        h.lower = value.low_bits();
+        return duckdb::Value::DECIMAL(h, static_cast<uint8_t>(d_type.precision()),
+                                      static_cast<uint8_t>(d_type.scale()));
+      }
+      default:
+        return duckdb::Value(scalar.ToString());
+    }
+  } catch (const std::exception& e) {
+    return arrow::Status::Invalid("Cannot convert bind parameter of Arrow type ",
+                                  scalar.type->ToString(),
+                                  " to a DuckDB value: ", e.what());
+  }
+}
+
+/// Read every bound parameter batch from the DoPut stream into one
+/// DuckDB parameter list per row (Flight SQL binds one row per execution).
+arrow::Result<std::vector<duckdb::vector<duckdb::Value>>> ReadBindParameterRows(
+    flight::FlightMessageReader* reader) {
+  std::vector<duckdb::vector<duckdb::Value>> rows;
 
   while (true) {
     ARROW_ASSIGN_OR_RAISE(flight::FlightStreamChunk chunk, reader->Next())
@@ -581,21 +713,26 @@ Status SetParametersOnDuckDBStatement(const std::shared_ptr<DuckDBStatement>& st
     if (record_batch == nullptr) break;
 
     const int64_t num_rows = record_batch->num_rows();
-    const int& num_columns = record_batch->num_columns();
+    const int num_columns = record_batch->num_columns();
 
-    for (int row_index = 0; row_index < num_rows; ++row_index) {
+    for (int64_t row_index = 0; row_index < num_rows; ++row_index) {
+      duckdb::vector<duckdb::Value> row;
+      row.reserve(num_columns);
       for (int column_index = 0; column_index < num_columns; ++column_index) {
         const std::shared_ptr<arrow::Array>& column = record_batch->column(column_index);
         ARROW_ASSIGN_OR_RAISE(const std::shared_ptr<arrow::Scalar> scalar,
                               column->GetScalar(row_index))
-
-        stmt->bind_parameters.emplace_back(scalar->ToString());
+        ARROW_ASSIGN_OR_RAISE(auto value, ArrowScalarToDuckDBValue(*scalar));
+        row.push_back(std::move(value));
       }
+      rows.push_back(std::move(row));
     }
   }
 
-  return Status::OK();
+  return rows;
 }
+
+}  // namespace
 
 Result<std::unique_ptr<flight::FlightDataStream>> DoGetDuckDBQuery(
     const std::shared_ptr<ClientSession>& client_session, const std::string& query,
@@ -648,8 +785,10 @@ Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoForCommand(
     const std::shared_ptr<arrow::Schema>& schema) {
   std::vector<flight::FlightEndpoint> endpoints{
       flight::FlightEndpoint{flight::Ticket{descriptor.cmd}, {}, std::nullopt, ""}};
+  // A null schema is omitted from the FlightInfo; clients then take the
+  // schema from the DoGet stream.
   ARROW_ASSIGN_OR_RAISE(auto result,
-                        flight::FlightInfo::Make(*schema, descriptor, endpoints, -1, -1))
+                        flight::FlightInfo::Make(schema, descriptor, endpoints, -1, -1))
 
   return std::make_unique<flight::FlightInfo>(result);
 }
@@ -1351,43 +1490,62 @@ class DuckDBFlightSqlServer::Impl {
       client_session->prepared_statements[handle] = statement;
     }
 
-    ARROW_ASSIGN_OR_RAISE(auto dataset_schema, statement->GetSchema())
+    // DuckDB/Arrow type conversion throws C++ exceptions; surface them as a
+    // proper error rather than Flight's opaque "Unexpected error in RPC handling".
+    try {
+      ARROW_ASSIGN_OR_RAISE(auto dataset_schema, statement->GetSchema())
 
-    std::shared_ptr<duckdb::PreparedStatement> stmt = statement->GetDuckDBStmt();
-    arrow::FieldVector parameter_fields;
-    size_t parameter_count = 0;
+      std::shared_ptr<duckdb::PreparedStatement> stmt = statement->GetDuckDBStmt();
+      arrow::FieldVector parameter_fields;
+      size_t parameter_count = 0;
 
-    if (stmt != nullptr) {
-      // Traditional prepared statement - extract parameter information
-      parameter_count = stmt->named_param_map.size();
-      parameter_fields.reserve(parameter_count);
+      if (stmt != nullptr) {
+        // Traditional prepared statement - extract parameter information
+        parameter_count = stmt->named_param_map.size();
+        parameter_fields.reserve(parameter_count);
 
-      duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data =
-          stmt->data;
+        duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data =
+            stmt->data;
 
-      // Note: Readonly role check and instrumentation database protection are
-      // handled in DuckDBStatement::Create which is called before this point
+        // Note: Readonly role check and instrumentation database protection are
+        // handled in DuckDBStatement::Create which is called before this point
 
-      auto bind_parameter_map = prepared_statement_data->value_map;
+        auto bind_parameter_map = prepared_statement_data->value_map;
 
-      for (size_t i = 0; i < parameter_count; i++) {
-        std::string parameter_idx_str = std::to_string(i + 1);
-        std::string parameter_name = std::string("parameter_") + parameter_idx_str;
-        auto parameter_duckdb_type = prepared_statement_data->GetType(parameter_idx_str);
-        auto parameter_arrow_type = GetDataTypeFromDuckDbType(parameter_duckdb_type);
-        parameter_fields.emplace_back(field(parameter_name, parameter_arrow_type));
+        for (size_t i = 0; i < parameter_count; i++) {
+          std::string parameter_idx_str = std::to_string(i + 1);
+          std::string parameter_name = std::string("parameter_") + parameter_idx_str;
+          // An untyped placeholder (`SELECT ? AS x`) has no type until a value is
+          // bound — DuckDB has no entry for it in the value map (GetType() would
+          // throw "Could not find parameter") or reports it unresolved. Advertise
+          // VARCHAR; DuckDB resolves the real type from the bound value at execution.
+          duckdb::LogicalType parameter_duckdb_type;
+          if (!prepared_statement_data->TryGetType(parameter_idx_str,
+                                                   parameter_duckdb_type)) {
+            parameter_duckdb_type = duckdb::LogicalType::UNKNOWN;
+          }
+          auto parameter_arrow_type =
+              (IsUnresolvedDuckDBType(parameter_duckdb_type) ||
+               parameter_duckdb_type.id() == duckdb::LogicalTypeId::SQLNULL)
+                  ? arrow::utf8()
+                  : GetDataTypeFromDuckDbType(parameter_duckdb_type);
+          parameter_fields.emplace_back(field(parameter_name, parameter_arrow_type));
+        }
       }
+      // For direct execution mode (stmt == nullptr), parameter_fields remains empty
+
+      const std::shared_ptr<arrow::Schema>& parameter_schema =
+          arrow::schema(parameter_fields);
+
+      sql::ActionCreatePreparedStatementResult result{
+          .dataset_schema = dataset_schema,
+          .parameter_schema = parameter_schema,
+          .prepared_statement_handle = handle};
+
+      return result;
+    } catch (const std::exception& e) {
+      return Status::Invalid("Failed to prepare statement: ", e.what());
     }
-    // For direct execution mode (stmt == nullptr), parameter_fields remains empty
-
-    const std::shared_ptr<arrow::Schema>& parameter_schema =
-        arrow::schema(parameter_fields);
-
-    sql::ActionCreatePreparedStatementResult result{.dataset_schema = dataset_schema,
-                                                    .parameter_schema = parameter_schema,
-                                                    .prepared_statement_handle = handle};
-
-    return result;
   }
 
   Status ClosePreparedStatement(const flight::ServerCallContext& context,
@@ -1426,6 +1584,11 @@ class DuckDBFlightSqlServer::Impl {
       statement = search->second;
     }
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
+    if (statement->HasUnresolvedSchema()) {
+      // Untyped placeholders: the real schema is only known once the bound
+      // parameters are applied in DoGet, so leave it out of the FlightInfo.
+      schema = nullptr;
+    }
 
     return GetFlightInfoForCommand(descriptor, schema);
   }
@@ -1468,7 +1631,15 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
-    ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
+    ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
+    if (rows.size() > 1) {
+      return Status::Invalid(
+          "Prepared statement query received ", rows.size(),
+          " rows of bind parameters; a query accepts exactly one row of parameters. "
+          "Use a prepared statement update to execute once per row.");
+    }
+    statement->bind_parameters =
+        rows.empty() ? duckdb::vector<duckdb::Value>() : std::move(rows.front());
 
     return Status::OK();
   }
@@ -1490,10 +1661,25 @@ class DuckDBFlightSqlServer::Impl {
       statement = search->second;
     }
 
-    ARROW_RETURN_NOT_OK(SetParametersOnDuckDBStatement(statement, reader));
+    ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
 
-    statement->SetCallContext(&context);
-    return statement->ExecuteUpdate();
+    if (rows.empty()) {
+      // No parameters bound: execute once.
+      statement->bind_parameters.clear();
+      statement->SetCallContext(&context);
+      return statement->ExecuteUpdate();
+    }
+
+    // Flight SQL semantics: one execution per bound row; report the total
+    // number of affected rows.
+    int64_t total_affected = 0;
+    for (auto& row : rows) {
+      statement->bind_parameters = std::move(row);
+      statement->SetCallContext(&context);  // Execute() clears it on return
+      ARROW_ASSIGN_OR_RAISE(const int64_t affected, statement->ExecuteUpdate());
+      total_affected += affected;
+    }
+    return total_affected;
   }
 
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTables(

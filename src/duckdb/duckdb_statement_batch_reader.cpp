@@ -50,8 +50,19 @@ arrow::Result<std::shared_ptr<DuckDBStatementBatchReader>>
 DuckDBStatementBatchReader::Create(const std::shared_ptr<DuckDBStatement>& statement_) {
   ARROW_ASSIGN_OR_RAISE(auto schema, statement_->GetSchema());
 
+  bool already_executed = false;
+  if (statement_->HasUnresolvedSchema()) {
+    // Untyped placeholders: the stream schema is only known once the bound
+    // parameters have been applied, so execute up front and take the schema
+    // from the result rather than the prepare-time placeholder.
+    ARROW_RETURN_NOT_OK(statement_->Execute());
+    already_executed = true;
+    ARROW_ASSIGN_OR_RAISE(schema, statement_->GetSchema());
+  }
+
   std::shared_ptr<DuckDBStatementBatchReader> result(
       new DuckDBStatementBatchReader(statement_, schema));
+  result->already_executed_ = already_executed;
 
   return result;
 }

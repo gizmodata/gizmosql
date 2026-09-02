@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Prepared-statement bind parameters are now converted with their types.**
+  Bound Arrow values were stringified (`Scalar::ToString()`) before being
+  handed to DuckDB, which caused three bugs reported from the Node.js ADBC
+  driver: a **NULL parameter was stored as the string `'null'`**, a
+  **dictionary-encoded string** (what Arrow JS `tableFromArrays` produces
+  for string columns) was stored as a dump of the whole dictionary, and a
+  **multi-row parameter batch** was flattened into one positional parameter
+  list and rejected by DuckDB with `Parameter argument/count mismatch`.
+  Bound values now become typed DuckDB values (NULLs, booleans, integers,
+  floats, strings, binary, dates, times, timestamps, decimals; dictionaries
+  are unwrapped; other types still fall back to text), and a multi-row
+  batch on a prepared **update** executes once per row and reports the
+  total affected count, per Flight SQL semantics. A multi-row batch on a
+  prepared **query** is rejected with a clear error instead of a DuckDB
+  parameter-count mismatch.
+- **Preparing a query with an untyped placeholder (`SELECT ? AS x`) no
+  longer fails** with `Unexpected error in RPC handling`. DuckDB only
+  resolves such types at execution, and the Arrow schema conversion threw on
+  the unresolved type. The prepare response now advertises VARCHAR for
+  unresolved result and parameter columns; the `FlightInfo` returned after
+  binding omits the schema (clients take it from the `DoGet` stream), and the
+  stream carries the real types resolved from the bound values.
+
+
 ## [1.38.0] - 2026-08-27
 
 ### Added

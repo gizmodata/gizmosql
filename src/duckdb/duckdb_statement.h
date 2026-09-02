@@ -20,6 +20,7 @@
 #include <duckdb.hpp>
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include <arrow/flight/sql/column_metadata.h>
@@ -49,6 +50,11 @@ bool CatalogExistsOnConnection(duckdb::Connection& connection,
 class StatementInstrumentation;
 class ExecutionInstrumentation;
 #endif
+
+/// \brief True when DuckDB could not resolve the type at prepare time — an
+/// untyped placeholder such as `SELECT ? AS x`. DuckDB resolves such types
+/// at execute time from the bound values.
+bool IsUnresolvedDuckDBType(const duckdb::LogicalType& type);
 
 std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
     const duckdb::LogicalType& duckdb_type);
@@ -85,6 +91,12 @@ class DuckDBStatement {
   /// \brief Creates an Arrow Schema based on the results of this statement.
   /// \return              The resulting Schema.
   arrow::Result<std::shared_ptr<arrow::Schema>> GetSchema();
+
+  /// \brief True when the prepare-time result schema contains placeholder types
+  /// (untyped parameters such as `SELECT ? AS x`). GetSchema() then reports
+  /// VARCHAR for those columns until Execute() has run with bound parameters,
+  /// after which it returns the real schema of the result.
+  bool HasUnresolvedSchema() const { return schema_unresolved_; }
 
   arrow::Result<int> Execute();
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
@@ -157,10 +169,13 @@ class DuckDBStatement {
   std::string creation_trace_id_;
   std::string creation_span_id_;
 #endif
-  arrow::Result<std::shared_ptr<arrow::Schema>> cached_schema_;
+  // Memoized result schema (nullptr until computed). Guarded by schema_mutex_.
+  std::shared_ptr<arrow::Schema> cached_schema_;
+  std::mutex schema_mutex_;
+  // Set when the prepare-time schema had unresolved placeholder types; see
+  // HasUnresolvedSchema().
+  bool schema_unresolved_ = false;
   std::shared_ptr<arrow::RecordBatch> synthetic_result_batch_;
-  // Used to ensure thread-safe lazy init
-  std::once_flag schema_once_flag_;
 
   DuckDBStatement(const std::shared_ptr<ClientSession>& client_session,
                   const std::string& handle,
