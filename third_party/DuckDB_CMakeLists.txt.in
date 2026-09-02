@@ -10,6 +10,7 @@ ExternalProject_Add(
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/duckdb/duckdb
     GIT_TAG @DUCKDB_GIT_TAG@
+    UPDATE_DISCONNECTED TRUE
     GIT_SHALLOW TRUE
     CMAKE_ARGS
           -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/duckdb

@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (was v2.0.9): `Bind`/`BindStream` now auto-prepare, so driver managers
   without a prepare step (e.g. the Node.js `@apache-arrow/adbc-driver-manager`)
   can bind parameters; `dbapi.connect()` gained `catalog=` / `db_schema=`.
+- CI: the third-party superbuilds (Arrow, DuckDB, OpenTelemetry, jwt-cpp,
+  replxx, cpp-httplib, gflags) now set `UPDATE_DISCONNECTED` on their
+  `ExternalProject_Add`. Without it CMake treats a git ExternalProject's
+  update step as always out of date, so every configure re-ran
+  update → patch → configure → build → install for each dependency even
+  when the third-party caches were restored — the Linux jobs spent 20+
+  minutes re-driving Arrow's configure inside the manylinux container on
+  a fully warm cache. A restored cache is now a true no-op.
 
 ### Fixed
 - **Bulk ingest of a typeless (Arrow `null`) column no longer fails table

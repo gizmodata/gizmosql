@@ -18,6 +18,7 @@ ExternalProject_Add(
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
     GIT_TAG v0.53.1
+    UPDATE_DISCONNECTED TRUE
     GIT_SHALLOW TRUE
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=@CMAKE_BINARY_DIR@/third_party/cpp-httplib
