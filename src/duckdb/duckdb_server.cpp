@@ -209,7 +209,11 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
     }
 
     case Type::NA:
-      return duckdb::LogicalType::SQLNULL;
+      // A typeless Arrow column (e.g. a pandas object column whose values are
+      // all None in the ingested chunk). SQLNULL would render as a "NULL"
+      // column type in generated DDL, which DuckLake rejects ("unsupported
+      // type NULL"); VARCHAR accepts whatever later appends bring.
+      return duckdb::LogicalType::VARCHAR;
 
     case Type::LIST:
     case Type::LARGE_LIST: {
@@ -510,9 +514,15 @@ Result<std::string> GenerateCreateTableSQLFromArrowSchema(
     // geoarrow.* extension columns (what GizmoSQL itself emits for GEOMETRY)
     // become GEOMETRY, not BLOB; DuckDB's arrow_scan materializes them as
     // GEOMETRY directly when the spatial extension is loaded.
-    const std::string col_type = IsGeoArrowField(*field)
-                                     ? std::string("GEOMETRY")
-                                     : GetDuckDBTypeFromArrowType(field->type()).ToString();
+    const duckdb::LogicalType duckdb_type = GetDuckDBTypeFromArrowType(field->type());
+    if (duckdb_type.id() == duckdb::LogicalTypeId::STRUCT &&
+        duckdb::StructType::GetChildCount(duckdb_type) == 0) {
+      return Status::Invalid("Cannot create column ", QuoteIdent(field->name()),
+                             ": DuckDB cannot store an empty struct (Arrow type ",
+                             field->type()->ToString(), ")");
+    }
+    const std::string col_type =
+        IsGeoArrowField(*field) ? std::string("GEOMETRY") : duckdb_type.ToString();
 
     oss << "    " << col_name << " " << col_type;
     if (!field->nullable()) {

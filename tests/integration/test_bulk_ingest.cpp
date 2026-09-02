@@ -273,3 +273,84 @@ TEST_F(BulkIngestServerFixture, ExecuteIngestTemporaryRepeatable) {
     }
   }
 }
+
+// Regression: a typeless (Arrow `null`) column — what pandas produces for an
+// object column whose values are all None in the ingested chunk — rendered as
+// a "NULL" column type in the generated CREATE TABLE. Plain DuckDB silently
+// resolved that to INTEGER; DuckLake catalogs rejected it outright
+// ("Failed to convert DuckDB type to DuckLake - unsupported type NULL").
+// It must become VARCHAR, and a later append with real strings must work.
+TEST_F(BulkIngestServerFixture, NullTypedColumnIngestsAsVarchar) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, arrow::flight::FlightClient::Connect(
+                                              location, arrow::flight::FlightClientOptions{}));
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+  arrow::flight::sql::FlightSqlClient sql_client(std::move(client));
+
+  auto schema = arrow::schema(
+      {arrow::field("id", arrow::int32()), arrow::field("sparse", arrow::null())});
+
+  // First chunk: every value of "sparse" is null -> Arrow null type.
+  arrow::Int32Builder id_builder;
+  ARROW_EXPECT_OK(id_builder.AppendValues({1, 2}));
+  std::shared_ptr<arrow::Array> ids;
+  ARROW_EXPECT_OK(id_builder.Finish(&ids));
+  auto nulls = std::make_shared<arrow::NullArray>(2);
+  auto first = arrow::RecordBatch::Make(schema, 2, {ids, nulls});
+  ASSERT_ARROW_OK_AND_ASSIGN(auto first_reader, arrow::RecordBatchReader::Make({first}));
+
+  TableDefinitionOptions create_opts;
+  create_opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kCreate;
+  create_opts.if_exists = TableDefinitionOptionsTableExistsOption::kReplace;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto created_rows,
+      sql_client.ExecuteIngest(call_options, first_reader, create_opts, "null_col_ingest",
+                               std::nullopt, std::nullopt, false,
+                               arrow::flight::sql::no_transaction(), {}));
+  EXPECT_EQ(created_rows, 2);
+
+  // Second chunk: the same column now carries strings -> must append cleanly.
+  auto typed_schema = arrow::schema(
+      {arrow::field("id", arrow::int32()), arrow::field("sparse", arrow::utf8())});
+  arrow::Int32Builder id2_builder;
+  arrow::StringBuilder str_builder;
+  ARROW_EXPECT_OK(id2_builder.AppendValues({3}));
+  ARROW_EXPECT_OK(str_builder.Append("value"));
+  std::shared_ptr<arrow::Array> ids2, strs;
+  ARROW_EXPECT_OK(id2_builder.Finish(&ids2));
+  ARROW_EXPECT_OK(str_builder.Finish(&strs));
+  auto second = arrow::RecordBatch::Make(typed_schema, 1, {ids2, strs});
+  ASSERT_ARROW_OK_AND_ASSIGN(auto second_reader, arrow::RecordBatchReader::Make({second}));
+
+  TableDefinitionOptions append_opts;
+  append_opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kFail;
+  append_opts.if_exists = TableDefinitionOptionsTableExistsOption::kAppend;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto appended_rows,
+      sql_client.ExecuteIngest(call_options, second_reader, append_opts, "null_col_ingest",
+                               std::nullopt, std::nullopt, false,
+                               arrow::flight::sql::no_transaction(), {}));
+  EXPECT_EQ(appended_rows, 1);
+
+  // Column type is VARCHAR and the data round-trips.
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info, sql_client.Execute(call_options,
+                                    "SELECT typeof(sparse), COUNT(*), COUNT(sparse) "
+                                    "FROM null_col_ingest GROUP BY 1"));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto stream,
+                             sql_client.DoGet(call_options, info->endpoints()[0].ticket));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, stream->ToTable());
+  ASSERT_EQ(table->num_rows(), 1);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto type_name, table->column(0)->GetScalar(0));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto total, table->column(1)->GetScalar(0));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto non_null, table->column(2)->GetScalar(0));
+  EXPECT_EQ(type_name->ToString(), "VARCHAR");
+  EXPECT_EQ(total->ToString(), "3");
+  EXPECT_EQ(non_null->ToString(), "1");
+}

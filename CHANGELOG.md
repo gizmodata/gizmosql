@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can bind parameters; `dbapi.connect()` gained `catalog=` / `db_schema=`.
 
 ### Fixed
+- **Bulk ingest of a typeless (Arrow `null`) column no longer fails table
+  creation.** pandas produces an Arrow `null` column for an object column
+  whose values are all `None` in the ingested chunk (typical when loading a
+  sparse DataFrame in chunks with `mode="replace"` on the first one). The
+  generated `CREATE TABLE` rendered it as a `"NULL"` column type, which
+  DuckLake catalogs reject with `Failed to convert DuckDB type to DuckLake -
+  unsupported type "NULL"` (plain DuckDB silently made it INTEGER, breaking
+  later appends of strings). Such columns are now created as VARCHAR, so
+  subsequent chunks carrying real values append cleanly. An empty Arrow
+  struct column now fails with a clear message instead of a parser error.
 - **Prepared-statement bind parameters are now converted with their types.**
   Bound Arrow values were stringified (`Scalar::ToString()`) before being
   handed to DuckDB, which caused three bugs reported from the Node.js ADBC
