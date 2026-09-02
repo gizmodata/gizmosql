@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.1] - 2026-09-02
+
 ### Fixed
 - **Prepared-statement bind parameters are now converted with their types.**
   Bound Arrow values were stringified (`Scalar::ToString()`) before being
