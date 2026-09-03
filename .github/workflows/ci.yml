@@ -233,6 +233,21 @@ jobs:
             build/third_party/src/duckdb_project*
           key: duckdb-macos-arm64-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
+      - name: Restore OpenTelemetry/cpp-httplib cache
+        id: otel-cache
+        uses: actions/cache/restore@v6
+        with:
+          # These two superbuilds use their own PREFIX, so their build trees
+          # and ExternalProject stamps live outside build/third_party and were
+          # never cached: OpenTelemetry was re-downloaded and rebuilt on every
+          # job (~2.5 min per Linux job) even with warm Arrow/DuckDB caches.
+          # Keyed on Arrow's config too, since OTel builds against Arrow's
+          # bundled protobuf/absl.
+          path: |
+            build/opentelemetry/third_party/*
+            build/cpp-httplib/third_party/*
+          key: otel-httplib-v1-macos-arm64-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
 
@@ -281,6 +296,15 @@ jobs:
             build/third_party/duckdb
             build/third_party/src/duckdb_project*
           key: duckdb-macos-arm64-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
+
+      - name: Save OpenTelemetry/cpp-httplib cache
+        if: steps.otel-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/opentelemetry/third_party/*
+            build/cpp-httplib/third_party/*
+          key: otel-httplib-v1-macos-arm64-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
       - name: Run Tests (Core Edition - No License)
         run: |
@@ -500,6 +524,21 @@ jobs:
             build/third_party/src/duckdb_project*
           key: duckdb-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
+      - name: Restore OpenTelemetry/cpp-httplib cache
+        id: otel-cache
+        uses: actions/cache/restore@v6
+        with:
+          # These two superbuilds use their own PREFIX, so their build trees
+          # and ExternalProject stamps live outside build/third_party and were
+          # never cached: OpenTelemetry was re-downloaded and rebuilt on every
+          # job (~2.5 min per Linux job) even with warm Arrow/DuckDB caches.
+          # Keyed on Arrow's config too, since OTel builds against Arrow's
+          # bundled protobuf/absl.
+          path: |
+            build/opentelemetry/third_party/*
+            build/cpp-httplib/third_party/*
+          key: otel-httplib-v1-linux-portable228-${{ matrix.platform }}-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
 
@@ -583,6 +622,15 @@ jobs:
             build/third_party/duckdb
             build/third_party/src/duckdb_project*
           key: duckdb-linux-portable228-${{ matrix.platform }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
+
+      - name: Save OpenTelemetry/cpp-httplib cache
+        if: steps.otel-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/opentelemetry/third_party/*
+            build/cpp-httplib/third_party/*
+          key: otel-httplib-v1-linux-portable228-${{ matrix.platform }}-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
       - name: Start MinIO and setup bucket
         run: |

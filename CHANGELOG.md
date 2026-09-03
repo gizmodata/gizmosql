@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a fully warm cache (stable channel, ~14 min per Linux job — the lts
   channel's DuckDB 1.4 build does not track that input). Diagnosed with a
   one-off `ninja -d explain` run against the restored cache.
+- Build: the third-party superbuilds (Arrow, DuckDB, OpenTelemetry, jwt-cpp,
+  cpp-httplib, replxx) are skipped entirely when their ExternalProject
+  "done" stamp exists and the hash of their inputs (generated superbuild
+  `CMakeLists.txt`, patch/config files, build type, generator) matches the
+  hash recorded when the tree was built. ExternalProject otherwise re-drives
+  update → configure → build → install on every configure, and DuckDB 1.5's
+  configure regenerates sources that forced a ~600-object partial rebuild on
+  a warm cache. A warm re-configure now takes under a second;
+  `-DGIZMOSQL_FORCE_SUPERBUILDS=ON` bypasses the guard.
+- CI: OpenTelemetry and cpp-httplib build trees (which live outside
+  `build/third_party` because of their superbuild `PREFIX`) are now cached
+  on Linux and macOS; OpenTelemetry was re-downloaded and rebuilt on every
+  job before.
 
 ## [1.38.1] - 2026-09-02
 

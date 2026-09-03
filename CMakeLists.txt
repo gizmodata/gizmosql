@@ -168,6 +168,58 @@ if(WIN32)
     )
 endif()
 
+# --------------------- Superbuild guard ---------------------
+# Every third-party dependency below is an ExternalProject superbuild driven
+# at configure time through execute_process. ExternalProject re-drives its
+# whole step chain on each invocation (update -> patch -> configure -> build
+# -> install) even when nothing changed, and some dependencies regenerate
+# sources on the way (DuckDB 1.5's configure step), so a warm CI cache still
+# cost 10-20 minutes per Linux job. Skip a superbuild entirely when its
+# ExternalProject "done" stamp exists and the hash of its inputs (the
+# generated superbuild CMakeLists.txt plus any patch/config files, the build
+# type and the generator) matches the hash recorded when the tree was built.
+# The recorded hash lives in the ExternalProject stamp directory (whose
+# location depends on the superbuild's PREFIX), so it travels with the CI
+# cache. -DGIZMOSQL_FORCE_SUPERBUILDS=ON bypasses the guard.
+option(GIZMOSQL_FORCE_SUPERBUILDS "Always re-drive the third-party superbuilds" OFF)
+
+function(gizmosql_superbuild_check project_name stamp_dir superbuild_dir out_skip out_hash)
+    set(inputs "${superbuild_dir}/CMakeLists.txt" ${ARGN})
+    set(digest "generator=${CMAKE_GENERATOR}\nbuild_type=${CMAKE_BUILD_TYPE}\n")
+    foreach(input IN LISTS inputs)
+        if(EXISTS "${input}")
+            file(SHA256 "${input}" input_hash)
+        else()
+            set(input_hash "missing")
+        endif()
+        string(APPEND digest "${input}=${input_hash}\n")
+    endforeach()
+    string(SHA256 digest_hash "${digest}")
+    set(${out_hash} "${digest_hash}" PARENT_SCOPE)
+    set(skip FALSE)
+    if(NOT GIZMOSQL_FORCE_SUPERBUILDS
+       AND EXISTS "${stamp_dir}/${project_name}-done"
+       AND EXISTS "${stamp_dir}/gizmosql-inputs.sha256")
+        file(READ "${stamp_dir}/gizmosql-inputs.sha256" recorded_hash)
+        string(STRIP "${recorded_hash}" recorded_hash)
+        if(recorded_hash STREQUAL digest_hash)
+            set(skip TRUE)
+        endif()
+    endif()
+    if(skip)
+        message(STATUS "${project_name}: inputs unchanged and build complete — skipping superbuild")
+    else()
+        message(STATUS "${project_name}: driving superbuild")
+    endif()
+    set(${out_skip} ${skip} PARENT_SCOPE)
+endfunction()
+
+function(gizmosql_superbuild_done project_name stamp_dir hash)
+    if(EXISTS "${stamp_dir}/${project_name}-done")
+        file(WRITE "${stamp_dir}/gizmosql-inputs.sha256" "${hash}\n")
+    endif()
+endfunction()
+
 # --------------------- Arrow ---------------------
 # Arrow's SIMD auto-detection defines __SSE4_2__ etc., which causes Abseil
 # (bundled by Arrow) to include x86intrin.h — a GCC/Clang header that MSVC
@@ -253,19 +305,24 @@ endif()
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
 )
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
-        COMMAND_ERROR_IS_FATAL ANY
-)
-execute_process(COMMAND "${CMAKE_COMMAND}" --build .
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
-        COMMAND_ERROR_IS_FATAL ANY
-)
-# Arrow 23 doesn't build grpc++_reflection by default, but we need it for gRPC server reflection
-execute_process(COMMAND "${CMAKE_COMMAND}" --build . --target grpc++_reflection
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build"
-        COMMAND_ERROR_IS_FATAL ANY
-)
+gizmosql_superbuild_check(arrow_project "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-stamp" "${CMAKE_BINARY_DIR}/arrow" ARROW_SB_SKIP ARROW_SB_HASH
+        "${CMAKE_SOURCE_DIR}/third_party/patch_arrow.cmake")
+if(NOT ARROW_SB_SKIP)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    # Arrow 23 doesn't build grpc++_reflection by default, but we need it for gRPC server reflection
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build . --target grpc++_reflection
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-build"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    gizmosql_superbuild_done(arrow_project "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-stamp" "${ARROW_SB_HASH}")
+endif()
 set(ARROW_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/arrow")
 
 find_package(Arrow REQUIRED PATHS ${ARROW_INSTALL_DIR} NO_DEFAULT_PATH)
@@ -329,14 +386,19 @@ set_property(TARGET sqlite PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${SQLITE_INCLU
 set(DUCKDB_EXTENSION_CONFIGS "${CMAKE_SOURCE_DIR}/third_party/duckdb_extensions.cmake")
 
 configure_file(third_party/DuckDB_CMakeLists.txt.in duckdb/CMakeLists.txt)
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
-        COMMAND_ERROR_IS_FATAL ANY
-)
-execute_process(COMMAND "${CMAKE_COMMAND}" --build .
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
-        COMMAND_ERROR_IS_FATAL ANY
-)
+gizmosql_superbuild_check(duckdb_project "${CMAKE_BINARY_DIR}/third_party/src/duckdb_project-stamp" "${CMAKE_BINARY_DIR}/duckdb" DUCKDB_SB_SKIP DUCKDB_SB_HASH
+        "${DUCKDB_EXTENSION_CONFIGS}")
+if(NOT DUCKDB_SB_SKIP)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    gizmosql_superbuild_done(duckdb_project "${CMAKE_BINARY_DIR}/third_party/src/duckdb_project-stamp" "${DUCKDB_SB_HASH}")
+endif()
 
 set(DUCKDB_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/duckdb")
 
@@ -442,24 +504,28 @@ if(WITH_OPENTELEMETRY)
     set(ARROW_ABSL_INCLUDE_DIR "${ARROW_BUILD_DIR_OTEL}/_deps/absl-src")
     set(ARROW_UTF8_RANGE_INCLUDE_DIR "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-src/third_party/utf8_range")
     configure_file(third_party/OpenTelemetry_CMakeLists.txt.in opentelemetry/CMakeLists.txt @ONLY)
-    execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
-            RESULT_VARIABLE OTEL_CONFIG_RESULT
-            OUTPUT_VARIABLE OTEL_CONFIG_OUTPUT
-            ERROR_VARIABLE OTEL_CONFIG_ERROR
-    )
-    if(NOT OTEL_CONFIG_RESULT EQUAL 0)
-        message(FATAL_ERROR "OpenTelemetry configure failed:\nOutput: ${OTEL_CONFIG_OUTPUT}\nError: ${OTEL_CONFIG_ERROR}")
-    endif()
+    gizmosql_superbuild_check(opentelemetry_project "${CMAKE_BINARY_DIR}/opentelemetry/third_party/src/opentelemetry_project-stamp" "${CMAKE_BINARY_DIR}/opentelemetry" OTEL_SB_SKIP OTEL_SB_HASH)
+    if(NOT OTEL_SB_SKIP)
+        execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
+                RESULT_VARIABLE OTEL_CONFIG_RESULT
+                OUTPUT_VARIABLE OTEL_CONFIG_OUTPUT
+                ERROR_VARIABLE OTEL_CONFIG_ERROR
+        )
+        if(NOT OTEL_CONFIG_RESULT EQUAL 0)
+            message(FATAL_ERROR "OpenTelemetry configure failed:\nOutput: ${OTEL_CONFIG_OUTPUT}\nError: ${OTEL_CONFIG_ERROR}")
+        endif()
 
-    execute_process(COMMAND "${CMAKE_COMMAND}" --build . -- -j4
-            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
-            RESULT_VARIABLE OTEL_BUILD_RESULT
-            OUTPUT_VARIABLE OTEL_BUILD_OUTPUT
-            ERROR_VARIABLE OTEL_BUILD_ERROR
-    )
-    if(NOT OTEL_BUILD_RESULT EQUAL 0)
-        message(FATAL_ERROR "OpenTelemetry build failed:\nOutput: ${OTEL_BUILD_OUTPUT}\nError: ${OTEL_BUILD_ERROR}")
+        execute_process(COMMAND "${CMAKE_COMMAND}" --build . -- -j4
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
+                RESULT_VARIABLE OTEL_BUILD_RESULT
+                OUTPUT_VARIABLE OTEL_BUILD_OUTPUT
+                ERROR_VARIABLE OTEL_BUILD_ERROR
+        )
+        if(NOT OTEL_BUILD_RESULT EQUAL 0)
+            message(FATAL_ERROR "OpenTelemetry build failed:\nOutput: ${OTEL_BUILD_OUTPUT}\nError: ${OTEL_BUILD_ERROR}")
+        endif()
+        gizmosql_superbuild_done(opentelemetry_project "${CMAKE_BINARY_DIR}/opentelemetry/third_party/src/opentelemetry_project-stamp" "${OTEL_SB_HASH}")
     endif()
 
     set(OTEL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/opentelemetry")
@@ -473,14 +539,18 @@ endif()
 # --------------------- JWT-CPP ---------------------
 
 configure_file(third_party/JWTCPP_CMakeLists.txt.in jwt-cpp/CMakeLists.txt)
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
-        COMMAND_ERROR_IS_FATAL ANY
-)
-execute_process(COMMAND "${CMAKE_COMMAND}" --build .
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
-        COMMAND_ERROR_IS_FATAL ANY
-)
+gizmosql_superbuild_check(jwt_cpp_project "${CMAKE_BINARY_DIR}/third_party/src/jwt_cpp_project-stamp" "${CMAKE_BINARY_DIR}/jwt-cpp" JWT_SB_SKIP JWT_SB_HASH)
+if(NOT JWT_SB_SKIP)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    gizmosql_superbuild_done(jwt_cpp_project "${CMAKE_BINARY_DIR}/third_party/src/jwt_cpp_project-stamp" "${JWT_SB_HASH}")
+endif()
 
 set(JWT_CPP_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include")
 
@@ -504,23 +574,27 @@ endforeach()
 message(STATUS "cpp-httplib OpenSSL args: ${GIZMOSQL_HTTPLIB_OPENSSL_ARGS}")
 
 configure_file(third_party/httplib_CMakeLists.txt.in cpp-httplib/CMakeLists.txt @ONLY)
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
-        RESULT_VARIABLE _httplib_configure_rc
-        OUTPUT_VARIABLE _httplib_configure_output
-        ERROR_VARIABLE _httplib_configure_output
-)
-if(NOT _httplib_configure_rc EQUAL 0)
-    message(FATAL_ERROR "cpp-httplib configure failed (rc=${_httplib_configure_rc}):\n${_httplib_configure_output}")
-endif()
-execute_process(COMMAND "${CMAKE_COMMAND}" --build .
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
-        RESULT_VARIABLE _httplib_build_rc
-        OUTPUT_VARIABLE _httplib_build_output
-        ERROR_VARIABLE _httplib_build_output
-)
-if(NOT _httplib_build_rc EQUAL 0)
-    message(FATAL_ERROR "cpp-httplib build failed (rc=${_httplib_build_rc}):\n${_httplib_build_output}")
+gizmosql_superbuild_check(httplib_project "${CMAKE_BINARY_DIR}/cpp-httplib/third_party/src/httplib_project-stamp" "${CMAKE_BINARY_DIR}/cpp-httplib" HTTPLIB_SB_SKIP HTTPLIB_SB_HASH)
+if(NOT HTTPLIB_SB_SKIP)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
+            RESULT_VARIABLE _httplib_configure_rc
+            OUTPUT_VARIABLE _httplib_configure_output
+            ERROR_VARIABLE _httplib_configure_output
+    )
+    if(NOT _httplib_configure_rc EQUAL 0)
+        message(FATAL_ERROR "cpp-httplib configure failed (rc=${_httplib_configure_rc}):\n${_httplib_configure_output}")
+    endif()
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
+            RESULT_VARIABLE _httplib_build_rc
+            OUTPUT_VARIABLE _httplib_build_output
+            ERROR_VARIABLE _httplib_build_output
+    )
+    if(NOT _httplib_build_rc EQUAL 0)
+        message(FATAL_ERROR "cpp-httplib build failed (rc=${_httplib_build_rc}):\n${_httplib_build_output}")
+    endif()
+    gizmosql_superbuild_done(httplib_project "${CMAKE_BINARY_DIR}/cpp-httplib/third_party/src/httplib_project-stamp" "${HTTPLIB_SB_HASH}")
 endif()
 
 set(HTTPLIB_INCLUDE_DIR "${CMAKE_BINARY_DIR}/third_party/cpp-httplib/include")
@@ -786,14 +860,18 @@ install(TARGETS gizmosql_server
 configure_file(third_party/replxx_CMakeLists.txt.in
         replxx/CMakeLists.txt
 )
-execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/replxx"
-        COMMAND_ERROR_IS_FATAL ANY
-)
-execute_process(COMMAND "${CMAKE_COMMAND}" --build .
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/replxx"
-        COMMAND_ERROR_IS_FATAL ANY
-)
+gizmosql_superbuild_check(replxx_project "${CMAKE_BINARY_DIR}/third_party/src/replxx_project-stamp" "${CMAKE_BINARY_DIR}/replxx" REPLXX_SB_SKIP REPLXX_SB_HASH)
+if(NOT REPLXX_SB_SKIP)
+    execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/replxx"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build .
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/replxx"
+            COMMAND_ERROR_IS_FATAL ANY
+    )
+    gizmosql_superbuild_done(replxx_project "${CMAKE_BINARY_DIR}/third_party/src/replxx_project-stamp" "${REPLXX_SB_HASH}")
+endif()
 
 set(REPLXX_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/replxx")
 set(REPLXX_INCLUDE_DIR "${REPLXX_INSTALL_DIR}/include")
