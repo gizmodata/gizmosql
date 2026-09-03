@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Logging: `GIZMOSQL_LOG_SCOPE_STATUS` emitted its `function-scope-lifecycle`
+  END line immediately after BEGIN — always with `duration_ms=0` and
+  `status=error` — because the RAII scope guard was declared inside the
+  `if (log level enabled)` block and so was destroyed at that block's closing
+  brace, before the function body ran (and before callers set the status to
+  `success`). The guard now lives at the enclosing function's scope; the
+  enabled check is captured once at BEGIN and re-used by the guard. Affects
+  every DEBUG-level `DuckDBStatement::*` / `DuckDBFlightSqlServer::*` scope
+  log, which previously looked like every call failed instantly.
+
 ### Changed
 - CI: build jobs normalize the mtimes of `third_party/` and `scripts/` right
   after checkout. git does not preserve mtimes, so a fresh checkout made
