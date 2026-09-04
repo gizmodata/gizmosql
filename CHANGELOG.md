@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- OpenTelemetry: emit `gizmosql.statement_queue.depth` (an async gauge, labeled
+  `state=active|queued`) reporting live statement admission-queue depth, so an
+  external control plane consuming the OTLP metrics export (`--otel-enabled`) can
+  observe queue pressure without a SQL connection. Registered automatically
+  whenever telemetry is enabled; a no-op otherwise.
+
 ### Changed
 - CI: build jobs normalize the mtimes of `third_party/` and `scripts/` right
   after checkout. git does not preserve mtimes, so a fresh checkout made

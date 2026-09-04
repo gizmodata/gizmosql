@@ -90,9 +90,17 @@ if(GIZMOSQL_ENTERPRISE)
     )
 endif()
 
+# OpenTelemetry-only integration tests (only built when WITH_OPENTELEMETRY is ON)
+if(WITH_OPENTELEMETRY)
+    set(GIZMOSQL_OTEL_TEST_SRCS
+            integration/test_admission_queue_telemetry.cpp
+    )
+endif()
+
 add_executable(gizmosql_integration_tests
         ${GIZMOSQL_CORE_TEST_SRCS}
         ${GIZMOSQL_ENTERPRISE_TEST_SRCS}
+        ${GIZMOSQL_OTEL_TEST_SRCS}
         ${GIZMOSQL_CLIENT_LIB_SRCS}
 )
 
@@ -129,6 +137,33 @@ if(GIZMOSQL_ENTERPRISE)
     target_link_libraries(gizmosql_integration_tests PRIVATE
             nlohmann_json::nlohmann_json
     )
+endif()
+
+# Add OpenTelemetry include/link dependencies when building with OTel support.
+# gizmosqlserver links these PRIVATE (it's a static lib, so that doesn't propagate),
+# and test_admission_queue_telemetry.cpp calls into the OTel SDK directly, so the
+# test binary needs its own copy of this wiring — mirrors the gizmosqlserver target
+# in the top-level CMakeLists.txt.
+if(WITH_OPENTELEMETRY)
+    target_include_directories(gizmosql_integration_tests PRIVATE ${OTEL_INCLUDE_DIR})
+
+    find_package(CURL REQUIRED)
+    if(NOT OTEL_STATIC_LIBS)
+        message(FATAL_ERROR "No OpenTelemetry static libraries found in ${OTEL_LIB_DIR}")
+    endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(gizmosql_integration_tests PRIVATE
+                "$<LINK_GROUP:RESCAN,${OTEL_STATIC_LIBS};${ARROW_PROTOBUF_LIB}>"
+                CURL::libcurl
+        )
+    else()
+        target_link_libraries(gizmosql_integration_tests PRIVATE
+                ${OTEL_STATIC_LIBS}
+                ${ARROW_PROTOBUF_LIB}
+                CURL::libcurl
+        )
+    endif()
 endif()
 
 # Pass the build directory so CLI tests can find the gizmosql_client/server binaries
