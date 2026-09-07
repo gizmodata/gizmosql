@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Boot log: the `CPU:` and `Memory:` lines now show the container's cgroup
+  limits (cgroup v2 `cpu.max` / `memory.max`, v1 fallback) next to the host
+  figures, and spell out DuckDB's resulting default `memory_limit` (80% of
+  the lower value). `sysconf()` only sees the host, so a 476 GB-capped pod on a
+  512 GB node used to log "Memory: 494.8 GB" while being OOM-killed — the
+  numbers the engine actually works with were invisible. Diagnosing a
+  customer OOM (2026-09-07) took a container experiment to learn them.
+
 ### Fixed
 - Logging: `GIZMOSQL_LOG_SCOPE_STATUS` emitted its `function-scope-lifecycle`
   END line immediately after BEGIN — always with `duration_ms=0` and

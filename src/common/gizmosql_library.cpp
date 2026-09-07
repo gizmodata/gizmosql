@@ -17,6 +17,7 @@
 
 #include "gizmosql_library.h"
 #include "system_catalog.h"
+#include "detail/cgroup_limits.h"
 
 #include <algorithm>
 #include <atomic>
@@ -280,8 +281,14 @@ struct SystemInfo {
   std::string os_version;       // "22.04", "14.0", etc.
   std::string cpu_arch;         // "x86_64", "arm64", etc.
   std::string cpu_model;        // "Apple M1 Pro", "Intel(R) Xeon(R)...", etc.
-  int cpu_count;                // Number of logical CPUs
-  int64_t memory_total_bytes;   // Total physical memory in bytes
+  int cpu_count;                // Number of logical CPUs (host view)
+  int64_t memory_total_bytes;   // Total physical memory in bytes (host view)
+  // Container limits from the cgroup (Linux). sysconf() sees the HOST, so in
+  // a pod these are what the engine actually gets: DuckDB caps its default
+  // memory_limit at 80% of min(physical, cgroup) and sizes threads from the
+  // CPU quota. -1 = no limit / not in a container.
+  int64_t memory_cgroup_limit_bytes = -1;
+  double cpu_cgroup_quota = -1.0;
 };
 
 static SystemInfo GetSystemInfo() {
@@ -451,6 +458,15 @@ static SystemInfo GetSystemInfo() {
   if (pages > 0 && page_size > 0) {
     info.memory_total_bytes = static_cast<int64_t>(pages) * page_size;
   }
+
+  // Linux: container (cgroup) limits — what a pod actually gets.
+  const auto cgroup = ReadCGroupLimits();
+  if (cgroup.has_memory_limit()) {
+    info.memory_cgroup_limit_bytes = cgroup.memory_limit_bytes;
+  }
+  if (cgroup.has_cpu_quota()) {
+    info.cpu_cgroup_quota = cgroup.cpu_quota;
+  }
 #endif  // __APPLE__
 #endif  // _WIN32
 
@@ -551,8 +567,32 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   auto sys_info = GetSystemInfo();
   GIZMOSQL_LOG(INFO) << "System: " << sys_info.os_name
                      << " (" << sys_info.os_platform << "/" << sys_info.cpu_arch << ")";
-  GIZMOSQL_LOG(INFO) << "CPU: " << sys_info.cpu_model << " (" << sys_info.cpu_count << " cores)";
-  GIZMOSQL_LOG(INFO) << "Memory: " << FormatBytes(sys_info.memory_total_bytes);
+  {
+    // Inside a container the host numbers mislead (a 512 GB node hosting a
+    // 476 GB-capped pod printed "Memory: 494.8 GB" while being OOM-killed), so
+    // show the cgroup limits next to them — those are what DuckDB sizes from.
+    std::ostringstream cpu_line;
+    cpu_line << "CPU: " << sys_info.cpu_model << " (" << sys_info.cpu_count << " cores";
+    if (sys_info.cpu_cgroup_quota > 0.0) {
+      cpu_line << " on the host; cgroup CPU quota " << std::fixed << std::setprecision(1)
+               << sys_info.cpu_cgroup_quota << " CPUs";
+    }
+    cpu_line << ")";
+    GIZMOSQL_LOG(INFO) << cpu_line.str();
+
+    std::ostringstream mem_line;
+    mem_line << "Memory: " << FormatBytes(sys_info.memory_total_bytes);
+    if (sys_info.memory_cgroup_limit_bytes > 0) {
+      const int64_t effective = std::min(sys_info.memory_total_bytes, sys_info.memory_cgroup_limit_bytes);
+      mem_line << " on the host; cgroup memory limit "
+               << FormatBytes(sys_info.memory_cgroup_limit_bytes)
+               << " (DuckDB's default memory_limit is 80% of that: "
+               << FormatBytes(static_cast<int64_t>(effective * 0.8))
+               << "; it bounds the buffer pool only — set memory_limit lower to leave headroom "
+                  "for result buffers and per-thread scratch)";
+    }
+    GIZMOSQL_LOG(INFO) << mem_line.str();
+  }
 
   GIZMOSQL_LOG(INFO) << "Apache Arrow version: " << ARROW_VERSION_STRING;
 
