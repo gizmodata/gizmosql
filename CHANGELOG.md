@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.2] - 2026-09-07
+
 ### Added
 - Boot log: the `CPU:` and `Memory:` lines now show the container's cgroup
   limits (cgroup v2 `cpu.max` / `memory.max`, v1 fallback) next to the host
