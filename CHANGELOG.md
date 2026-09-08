@@ -14,6 +14,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   observe queue pressure without a SQL connection. Registered automatically
   whenever telemetry is enabled; a no-op otherwise.
 
+## [1.38.2] - 2026-09-07
+
+### Added
+- Boot log: the `CPU:` and `Memory:` lines now show the container's cgroup
+  limits (cgroup v2 `cpu.max` / `memory.max`, v1 fallback) next to the host
+  figures, and spell out DuckDB's resulting default `memory_limit` (80% of
+  the lower value). `sysconf()` only sees the host, so a 476 GB-capped pod on a
+  512 GB node used to log "Memory: 494.8 GB" while being OOM-killed — the
+  numbers the engine actually works with were invisible. Diagnosing a
+  customer OOM (2026-09-07) took a container experiment to learn them.
+
+### Fixed
+- Logging: `GIZMOSQL_LOG_SCOPE_STATUS` emitted its `function-scope-lifecycle`
+  END line immediately after BEGIN — always with `duration_ms=0` and
+  `status=error` — because the RAII scope guard was declared inside the
+  `if (log level enabled)` block and so was destroyed at that block's closing
+  brace, before the function body ran (and before callers set the status to
+  `success`). The guard now lives at the enclosing function's scope; the
+  enabled check is captured once at BEGIN and re-used by the guard. Affects
+  every DEBUG-level `DuckDBStatement::*` / `DuckDBFlightSqlServer::*` scope
+  log, which previously looked like every call failed instantly.
+
 ### Changed
 - CI: build jobs normalize the mtimes of `third_party/` and `scripts/` right
   after checkout. git does not preserve mtimes, so a fresh checkout made

@@ -286,27 +286,37 @@ ScopeGuard<F> MakeScopeGuard(F f) {
 #define GIZMOSQL_CONCAT_INNER(a, b) a##b
 #define GIZMOSQL_CONCAT(a, b) GIZMOSQL_CONCAT_INNER(a, b)
 
-// Function-scope BEGIN/END logging with timing — conditional on IsEnabled()
+// Function-scope BEGIN/END logging with timing — conditional on IsEnabled().
+//
+// The scope guard that emits the END line MUST live at the enclosing function's
+// scope. It used to be declared inside the `if (enabled)` block, so it was
+// destroyed at that block's closing brace — the END line fired immediately after
+// BEGIN, before the function body ran, always with duration_ms=0 and the default
+// status "error" (callers set STATUS_VAR = "success" later, which nobody saw).
+// Now the enabled check is captured once at BEGIN and re-used by the guard.
 #define GIZMOSQL_LOG_SCOPE_STATUS(SEV, OPERATION, STATUS_VAR, ...)                       \
   STATUS_VAR = "initial";                                                                \
-  if (GIZMOSQL_LOG_ENABLED(SEV)) {                                                       \
-    auto GIZMOSQL_CONCAT(_gizmosql_start_, __LINE__) = std::chrono::steady_clock::now(); \
+  const bool GIZMOSQL_CONCAT(_gizmosql_enabled_, __LINE__) = GIZMOSQL_LOG_ENABLED(SEV);  \
+  const auto GIZMOSQL_CONCAT(_gizmosql_start_, __LINE__) = std::chrono::steady_clock::now(); \
+  if (GIZMOSQL_CONCAT(_gizmosql_enabled_, __LINE__)) {                                   \
     GIZMOSQL_LOGKV(SEV, OPERATION " - BEGIN", {"operation", std::string(OPERATION)},     \
                    {"kind", "function-scope-lifecycle"}, {"lifecycle", "begin"},         \
                    {"status", STATUS_VAR}, __VA_ARGS__);                                 \
     STATUS_VAR = "error";                                                                \
-    auto GIZMOSQL_CONCAT(_gizmosql_guard_, __LINE__) = ::gizmosql::MakeScopeGuard(       \
-        [&, _gizmosql_start_local = GIZMOSQL_CONCAT(_gizmosql_start_, __LINE__)] {       \
-          auto _gizmosql_end = std::chrono::steady_clock::now();                         \
-          auto _gizmosql_ms = std::chrono::duration_cast<std::chrono::milliseconds>(     \
-                                  _gizmosql_end - _gizmosql_start_local)                 \
-                                  .count();                                              \
-          GIZMOSQL_LOGKV(SEV, OPERATION " - END", {"operation", std::string(OPERATION)}, \
-                         {"kind", "function-scope-lifecycle"}, {"lifecycle", "end"},     \
-                         {"status", STATUS_VAR},                                         \
-                         {"duration_ms", std::to_string(_gizmosql_ms)}, __VA_ARGS__);    \
-        });                                                                              \
-  }
+  }                                                                                      \
+  const auto GIZMOSQL_CONCAT(_gizmosql_guard_, __LINE__) = ::gizmosql::MakeScopeGuard(   \
+      [&, _gizmosql_enabled_local = GIZMOSQL_CONCAT(_gizmosql_enabled_, __LINE__),       \
+       _gizmosql_start_local = GIZMOSQL_CONCAT(_gizmosql_start_, __LINE__)] {            \
+        if (!_gizmosql_enabled_local) return;                                            \
+        auto _gizmosql_end = std::chrono::steady_clock::now();                           \
+        auto _gizmosql_ms = std::chrono::duration_cast<std::chrono::milliseconds>(       \
+                                _gizmosql_end - _gizmosql_start_local)                   \
+                                .count();                                                \
+        GIZMOSQL_LOGKV(SEV, OPERATION " - END", {"operation", std::string(OPERATION)},   \
+                       {"kind", "function-scope-lifecycle"}, {"lifecycle", "end"},       \
+                       {"status", STATUS_VAR},                                           \
+                       {"duration_ms", std::to_string(_gizmosql_ms)}, __VA_ARGS__);      \
+      })
 
 // Dynamic-level logging variant (for ArrowLogLevel values)
 #define GIZMOSQL_LOGKV_DYNAMIC(SEV, MSG, ...)                            \
