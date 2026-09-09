@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `-adbc` Docker image tags now bundle `gizmosql-adbc` v2.0.13 (was v2.0.10),
+  which fixes parameterized DDL/DML issued via `cursor.execute(sql, params)`
+  being silently lost or interrupted (see the gizmosql-adbc 2.0.13 notes).
+
 ## [1.38.3] - 2026-09-09
 
 ### Fixed
