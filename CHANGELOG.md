@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.4] - 2026-09-09
+
 ### Fixed
 - CI: Linux release builds took 50-75 minutes per job (v1.38.2, v1.38.3)
   because the restored Arrow/DuckDB cache trees predated the superbuild-skip
