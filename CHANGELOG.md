@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- CI: Linux release builds took 50-75 minutes per job (v1.38.2, v1.38.3)
+  because the restored Arrow/DuckDB cache trees predated the superbuild-skip
+  logic and carried no recorded input hash, so every run re-drove both
+  superbuilds from source. Cache key generations bumped (`deps-v5`,
+  `duckdb-v2`) so fresh trees with the hash stamp are saved and the skip
+  fires again.
+
 ### Added
 - OpenTelemetry: emit `gizmosql.statement_queue.depth` (an async gauge, labeled
   `state=active|queued`) reporting live statement admission-queue depth, so an
