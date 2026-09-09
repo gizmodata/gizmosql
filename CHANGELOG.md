@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   superbuilds from source. Cache key generations bumped (`deps-v5`,
   `duckdb-v2`) so fresh trees with the hash stamp are saved and the skip
   fires again.
+- CMake: a third-party superbuild is no longer skipped when its install
+  output is missing. The OpenTelemetry/cpp-httplib superbuild trees are
+  cached separately from the shared `build/third_party` install prefix, so
+  a run could restore their "done" stamps without the installed libraries
+  and fail to configure with `No OpenTelemetry static libraries found`. The
+  configure/build/install stamps are now dropped so ExternalProject
+  re-installs from the cached build tree.
 
 ### Added
 - OpenTelemetry: emit `gizmosql.statement_queue.depth` (an async gauge, labeled

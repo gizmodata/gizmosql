@@ -305,8 +305,30 @@ endif()
 configure_file(third_party/Arrow_CMakeLists.txt.in
         arrow/CMakeLists.txt
 )
+# A superbuild's stamps can outlive its install prefix: CI caches the
+# OpenTelemetry/cpp-httplib superbuild trees (build/opentelemetry, build/cpp-httplib)
+# separately from the shared install prefix (build/third_party), so a run can
+# restore "done" stamps + a matching input hash while the installed libraries
+# are gone. Never skip in that case, and drop the configure/build/install/done
+# stamps so ExternalProject re-runs those steps instead of reporting no work.
+function(gizmosql_superbuild_require_install project_name stamp_dir install_probe skip_var)
+    if(EXISTS "${install_probe}")
+        return()
+    endif()
+    if(${skip_var})
+        message(STATUS "${project_name}: install output missing (${install_probe}) — re-driving superbuild")
+    endif()
+    set(${skip_var} FALSE PARENT_SCOPE)
+    foreach(step configure build install done)
+        file(REMOVE "${stamp_dir}/${project_name}-${step}")
+    endforeach()
+    file(REMOVE "${stamp_dir}/gizmosql-inputs.sha256")
+endfunction()
+
 gizmosql_superbuild_check(arrow_project "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-stamp" "${CMAKE_BINARY_DIR}/arrow" ARROW_SB_SKIP ARROW_SB_HASH
         "${CMAKE_SOURCE_DIR}/third_party/patch_arrow.cmake")
+gizmosql_superbuild_require_install(arrow_project "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-stamp"
+        "${CMAKE_BINARY_DIR}/third_party/arrow/include/arrow/api.h" ARROW_SB_SKIP)
 if(NOT ARROW_SB_SKIP)
     execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/arrow"
@@ -388,6 +410,8 @@ set(DUCKDB_EXTENSION_CONFIGS "${CMAKE_SOURCE_DIR}/third_party/duckdb_extensions.
 configure_file(third_party/DuckDB_CMakeLists.txt.in duckdb/CMakeLists.txt)
 gizmosql_superbuild_check(duckdb_project "${CMAKE_BINARY_DIR}/third_party/src/duckdb_project-stamp" "${CMAKE_BINARY_DIR}/duckdb" DUCKDB_SB_SKIP DUCKDB_SB_HASH
         "${DUCKDB_EXTENSION_CONFIGS}")
+gizmosql_superbuild_require_install(duckdb_project "${CMAKE_BINARY_DIR}/third_party/src/duckdb_project-stamp"
+        "${CMAKE_BINARY_DIR}/third_party/duckdb/include/duckdb.hpp" DUCKDB_SB_SKIP)
 if(NOT DUCKDB_SB_SKIP)
     execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/duckdb"
@@ -505,6 +529,8 @@ if(WITH_OPENTELEMETRY)
     set(ARROW_UTF8_RANGE_INCLUDE_DIR "${ARROW_BUILD_DIR_OTEL}/_deps/protobuf-src/third_party/utf8_range")
     configure_file(third_party/OpenTelemetry_CMakeLists.txt.in opentelemetry/CMakeLists.txt @ONLY)
     gizmosql_superbuild_check(opentelemetry_project "${CMAKE_BINARY_DIR}/opentelemetry/third_party/src/opentelemetry_project-stamp" "${CMAKE_BINARY_DIR}/opentelemetry" OTEL_SB_SKIP OTEL_SB_HASH)
+    gizmosql_superbuild_require_install(opentelemetry_project "${CMAKE_BINARY_DIR}/opentelemetry/third_party/src/opentelemetry_project-stamp"
+                "${CMAKE_BINARY_DIR}/third_party/opentelemetry/lib" OTEL_SB_SKIP)
     if(NOT OTEL_SB_SKIP)
         execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
                 WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/opentelemetry"
@@ -540,6 +566,8 @@ endif()
 
 configure_file(third_party/JWTCPP_CMakeLists.txt.in jwt-cpp/CMakeLists.txt)
 gizmosql_superbuild_check(jwt_cpp_project "${CMAKE_BINARY_DIR}/third_party/src/jwt_cpp_project-stamp" "${CMAKE_BINARY_DIR}/jwt-cpp" JWT_SB_SKIP JWT_SB_HASH)
+gizmosql_superbuild_require_install(jwt_cpp_project "${CMAKE_BINARY_DIR}/third_party/src/jwt_cpp_project-stamp"
+        "${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include/jwt-cpp/jwt.h" JWT_SB_SKIP)
 if(NOT JWT_SB_SKIP)
     execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/jwt-cpp"
@@ -575,6 +603,8 @@ message(STATUS "cpp-httplib OpenSSL args: ${GIZMOSQL_HTTPLIB_OPENSSL_ARGS}")
 
 configure_file(third_party/httplib_CMakeLists.txt.in cpp-httplib/CMakeLists.txt @ONLY)
 gizmosql_superbuild_check(httplib_project "${CMAKE_BINARY_DIR}/cpp-httplib/third_party/src/httplib_project-stamp" "${CMAKE_BINARY_DIR}/cpp-httplib" HTTPLIB_SB_SKIP HTTPLIB_SB_HASH)
+gizmosql_superbuild_require_install(httplib_project "${CMAKE_BINARY_DIR}/cpp-httplib/third_party/src/httplib_project-stamp"
+        "${CMAKE_BINARY_DIR}/third_party/cpp-httplib/include/httplib.h" HTTPLIB_SB_SKIP)
 if(NOT HTTPLIB_SB_SKIP)
     execute_process(COMMAND "${CMAKE_COMMAND}" -G "${CMAKE_GENERATOR}" . -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
             WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/cpp-httplib"
