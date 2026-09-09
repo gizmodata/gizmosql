@@ -98,12 +98,14 @@ The following metric instruments are emitted:
 - `gizmosql.rows.transferred` (counter)
 - `gizmosql.connections.active` (up/down counter)
 - `gizmosql.duckdb.connections.open` (up/down counter)
+- `gizmosql.statement_queue.depth` (async/observable gauge)
 
 Common attributes:
 
 - `gizmosql.rpc.duration` / `gizmosql.rpc.count`: `rpc.method`, `rpc.status`
 - `gizmosql.query.duration` / `gizmosql.query.count`: `db.operation`, `db.status`
 - `gizmosql.bytes.transferred` / `gizmosql.rows.transferred`: `direction` (`inbound`/`outbound`)
+- `gizmosql.statement_queue.depth`: `state` (`active`/`queued`)
 
 Metric semantics:
 
@@ -113,6 +115,7 @@ Metric semantics:
 - `db.operation` is derived from the leading SQL keyword (for example `SELECT`, `INSERT`, `CALL`) and uses `ADMIN` for GizmoSQL admin commands.
 - `db.status` records execution outcome (`OK`, `TIMEOUT`, or an Arrow status code string on failure).
 - `direction=outbound` measures query result batches sent to clients; `direction=inbound` measures Arrow record batches received by ingest paths.
+- `gizmosql.statement_queue.depth{state="active"}` is the number of statements currently holding an admission slot (executing); `{state="queued"}` is the number currently blocked waiting for one. Both read 0 when `--max-concurrent-statements` is unset/0 (admission control disabled) or when statement queuing isn't licensed (Core edition). See [Statement Queuing](statement_queuing.md) for the admission-control feature itself.
 
 ### Logs
 

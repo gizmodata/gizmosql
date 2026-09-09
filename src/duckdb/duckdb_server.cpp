@@ -1196,6 +1196,7 @@ class DuckDBFlightSqlServer::Impl {
     max_sessions_ = max_sessions;
     session_idle_timeout_seconds_ = session_idle_timeout_seconds;
     StartIdleSessionSweeper();
+    ::gizmosql::metrics::RegisterAdmissionQueueGauges(admission_controller_);
   }
 
   std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const {
@@ -1240,6 +1241,7 @@ class DuckDBFlightSqlServer::Impl {
     max_sessions_ = max_sessions;
     session_idle_timeout_seconds_ = session_idle_timeout_seconds;
     StartIdleSessionSweeper();
+    ::gizmosql::metrics::RegisterAdmissionQueueGauges(admission_controller_);
   }
 #endif
 

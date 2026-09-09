@@ -17,6 +17,7 @@
 
 #include "gizmosql_telemetry.h"
 
+#include "admission_controller.h"
 #include "gizmosql_library.h"
 #include "gizmosql_logging.h"
 
@@ -74,6 +75,27 @@ static opentelemetry::nostd::unique_ptr<metrics_api::UpDownCounter<int64_t>>
     g_active_connections;
 static opentelemetry::nostd::unique_ptr<metrics_api::UpDownCounter<int64_t>>
     g_open_duckdb_connections;
+static opentelemetry::nostd::shared_ptr<metrics_api::ObservableInstrument>
+    g_statement_queue_gauge;
+// The AdmissionController is owned by the server for the process lifetime; telemetry
+// is always shut down (which stops the exporter, and therefore this callback) before
+// the server is destroyed — see ShutdownTelemetry()/g_flight_server teardown order.
+static std::atomic<AdmissionController*> g_admission_controller_for_metrics{nullptr};
+
+static void ObserveAdmissionQueueDepth(metrics_api::ObserverResult observer_result,
+                                       void* /*state*/) {
+  AdmissionController* controller =
+      g_admission_controller_for_metrics.load(std::memory_order_acquire);
+  if (!controller) return;
+
+  auto observer = opentelemetry::nostd::get<
+      opentelemetry::nostd::shared_ptr<metrics_api::ObserverResultT<int64_t>>>(
+      observer_result);
+  observer->Observe(static_cast<int64_t>(controller->ActiveCount()),
+                    {{"state", "active"}});
+  observer->Observe(static_cast<int64_t>(controller->QueuedCount()),
+                    {{"state", "queued"}});
+}
 
 static otlp::OtlpHeaders ParseHeaders(const std::string& headers_str) {
   otlp::OtlpHeaders headers;
@@ -241,8 +263,10 @@ void ShutdownTelemetry() {
     g_rows_counter.reset();
     g_active_connections.reset();
     g_open_duckdb_connections.reset();
+    g_statement_queue_gauge = nullptr;
     g_metrics_initialized = false;
   }
+  g_admission_controller_for_metrics.store(nullptr, std::memory_order_release);
 
   GIZMOSQL_LOG(INFO) << "OpenTelemetry shutdown complete";
 #endif
@@ -390,6 +414,23 @@ void RecordRowsTransferred(const std::string& direction, int64_t rows) {
                       opentelemetry::context::Context{});
 }
 
+void RegisterAdmissionQueueGauges(gizmosql::AdmissionController& controller) {
+  if (!IsTelemetryEnabled()) return;
+
+  g_admission_controller_for_metrics.store(&controller, std::memory_order_release);
+
+  std::lock_guard<std::mutex> lock(g_metrics_mutex);
+  if (g_statement_queue_gauge) return;  // already registered
+
+  auto meter = GetMeter();
+  g_statement_queue_gauge = meter->CreateInt64ObservableGauge(
+      "gizmosql.statement_queue.depth",
+      "Number of statements in the admission queue, by state (active=executing, "
+      "queued=waiting for a slot)",
+      "1");
+  g_statement_queue_gauge->AddCallback(&ObserveAdmissionQueueDepth, /*state=*/nullptr);
+}
+
 }  // namespace metrics
 
 #else
@@ -402,6 +443,7 @@ void RecordActiveConnections(int64_t) {}
 void RecordOpenDuckDBConnections(int64_t) {}
 void RecordBytesTransferred(const std::string&, int64_t) {}
 void RecordRowsTransferred(const std::string&, int64_t) {}
+void RegisterAdmissionQueueGauges(gizmosql::AdmissionController&) {}
 
 }  // namespace metrics
 

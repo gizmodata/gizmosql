@@ -30,6 +30,8 @@
 
 namespace gizmosql {
 
+class AdmissionController;
+
 // -----------------------------------------------------------------------------
 // Telemetry Configuration
 // -----------------------------------------------------------------------------
@@ -172,6 +174,14 @@ void RecordBytesTransferred(const std::string& direction, int64_t bytes);
 
 // Record rows transferred
 void RecordRowsTransferred(const std::string& direction, int64_t rows);
+
+// Register (once) an observable gauge that reports live statement admission-queue
+// depth — gizmosql.statement_queue.depth{state="active"|"queued"} — by polling
+// controller.ActiveCount()/QueuedCount() on each export. The controller must outlive
+// telemetry shutdown (ShutdownTelemetry() stops the exporter, and therefore this
+// callback, before the server that owns the controller is destroyed). No-op if
+// telemetry is disabled or not compiled in.
+void RegisterAdmissionQueueGauges(gizmosql::AdmissionController& controller);
 
 }  // namespace metrics
 
