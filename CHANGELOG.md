@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.3] - 2026-09-09
+
 ### Fixed
 - Bind parameters of Arrow's canonical `arrow.uuid` extension type (what
   pyarrow, pandas and polars send for UUID columns) now bind as native DuckDB
