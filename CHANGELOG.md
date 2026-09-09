@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Bind parameters of Arrow's canonical `arrow.uuid` extension type (what
+  pyarrow, pandas and polars send for UUID columns) now bind as native DuckDB
+  `UUID` values on both the prepared-query and prepared-update paths. They
+  previously fell into the generic `ToString()` fallback and failed with
+  `Conversion Error: Could not convert string '[ ... ]' to INT128`. Other
+  extension types are now unwrapped to their storage scalar instead of being
+  stringified.
+
 ## [1.38.2] - 2026-09-07
 
 ### Added

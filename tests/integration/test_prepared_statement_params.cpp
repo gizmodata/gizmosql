@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include "arrow/api.h"
+#include "arrow/extension/uuid.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/flight/sql/types.h"
 #include "arrow/testing/gtest_util.h"
@@ -349,4 +350,44 @@ TEST_F(PreparedParamsFixture, TypedPreparedQueryStillReportsSchemaInFlightInfo) 
   ASSERT_EQ(table->num_rows(), 1);
   ASSERT_ARROW_OK_AND_ASSIGN(auto scalar, table->column(0)->GetScalar(0));
   EXPECT_EQ(scalar->ToString(), "b");
+}
+
+// Arrow's canonical `arrow.uuid` extension type (what pyarrow, pandas and
+// polars send for UUID columns) must bind as a native DuckDB UUID on both the
+// query and update paths. It used to fall into the ToString() fallback and
+// fail with "Could not convert string '[ ... ]' to INT128".
+TEST_F(PreparedParamsFixture, UuidExtensionParameterBindsAsUuid) {
+  Exec("CREATE OR REPLACE TABLE pp_uuid (id UUID, v INT)");
+  Exec("INSERT INTO pp_uuid VALUES ('0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', 7)");
+
+  const std::string bytes(
+      "\x0f\x1e\x2d\x3c\x4b\x5a\x69\x78\x87\x96\xa5\xb4\xc3\xd2\xe1\xf0", 16);
+  arrow::FixedSizeBinaryBuilder storage_b(arrow::fixed_size_binary(16));
+  ARROW_EXPECT_OK(storage_b.Append(bytes));
+  std::shared_ptr<arrow::Array> storage;
+  ARROW_EXPECT_OK(storage_b.Finish(&storage));
+  auto uuid_type = arrow::extension::uuid();
+  auto uuid_array = arrow::ExtensionType::WrapArray(uuid_type, storage);
+  auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("id", uuid_type)}),
+                                        1, {uuid_array});
+
+  // Query path: DoPut(params) + GetFlightInfo + DoGet.
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto query, sql_client_->Prepare(call_options_, "SELECT v FROM pp_uuid WHERE id = ?"));
+  ASSERT_ARROW_OK(query->SetParameters(batch));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info, query->Execute(call_options_));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto stream,
+                             sql_client_->DoGet(call_options_, info->endpoints()[0].ticket));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, stream->ToTable());
+  ASSERT_EQ(table->num_rows(), 1);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto v, table->column(0)->GetScalar(0));
+  EXPECT_EQ(v->ToString(), "7");
+
+  // Update path: DoPut(params) prepared-statement update.
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto del, sql_client_->Prepare(call_options_, "DELETE FROM pp_uuid WHERE id = ?"));
+  ASSERT_ARROW_OK(del->SetParameters(batch));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto affected, del->ExecuteUpdate(call_options_));
+  EXPECT_EQ(affected, 1);
+  EXPECT_EQ(Scalar("SELECT count(*) FROM pp_uuid"), "0");
 }

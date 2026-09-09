@@ -701,6 +701,36 @@ arrow::Result<duckdb::Value> ArrowScalarToDuckDBValue(const arrow::Scalar& scala
         return duckdb::Value::DECIMAL(h, static_cast<uint8_t>(d_type.precision()),
                                       static_cast<uint8_t>(d_type.scale()));
       }
+      case arrow::Type::EXTENSION: {
+        // Extension scalars wrap a storage scalar. The canonical `arrow.uuid`
+        // type (16-byte fixed-size binary; what pyarrow/pandas/polars send for
+        // UUID columns) maps to DuckDB's native UUID; every other extension
+        // type is unwrapped and converted as its storage type. Falling through
+        // to ToString() would hand DuckDB an unparseable pretty-printed blob.
+        const auto& ext = checked_cast<const arrow::ExtensionScalar&>(scalar);
+        if (ext.value == nullptr) {
+          return duckdb::Value();
+        }
+        const auto& ext_type = checked_cast<const arrow::ExtensionType&>(*scalar.type);
+        if (ext_type.extension_name() == "arrow.uuid" && ext.value->is_valid &&
+            ext.value->type->id() == arrow::Type::FIXED_SIZE_BINARY) {
+          const auto bytes =
+              checked_cast<const arrow::FixedSizeBinaryScalar&>(*ext.value).view();
+          if (bytes.size() == 16) {
+            static constexpr char kHex[] = "0123456789abcdef";
+            std::string text;
+            text.reserve(36);
+            for (size_t i = 0; i < 16; ++i) {
+              if (i == 4 || i == 6 || i == 8 || i == 10) text.push_back('-');
+              const auto byte = static_cast<uint8_t>(bytes[i]);
+              text.push_back(kHex[byte >> 4]);
+              text.push_back(kHex[byte & 0x0f]);
+            }
+            return duckdb::Value::UUID(text);
+          }
+        }
+        return ArrowScalarToDuckDBValue(*ext.value);
+      }
       default:
         return duckdb::Value(scalar.ToString());
     }
