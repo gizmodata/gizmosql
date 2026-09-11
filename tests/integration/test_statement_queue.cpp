@@ -174,9 +174,9 @@ TEST_F(StatementQueueServerFixture, GizmoSqlSettingsIsComposable) {
     ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
   }
   ASSERT_NE(table, nullptr);
-  // The four gizmosql.max* settings: max_concurrent_statements, max_queue_wait,
-  // max_queued_statements, and the startup-only max_sessions.
-  EXPECT_EQ(table->num_rows(), 4);
+  // The five gizmosql.max* settings: max_concurrent_statements, max_queue_wait,
+  // max_queued_statements, and the startup-only max_sessions and max_metadata_size.
+  EXPECT_EQ(table->num_rows(), 5);
   EXPECT_EQ(table->num_columns(), 3);
 }
 

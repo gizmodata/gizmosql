@@ -1040,6 +1040,36 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     }
 #endif
 
+    // Snapshot the startup-only facts for gizmosql_settings().
+    {
+      gizmosql::ddb::DuckDBFlightSqlServer::StartupSettings startup;
+      startup.backend = "duckdb";
+      startup.read_only = read_only;
+      startup.max_metadata_size = max_metadata_size;
+      startup.memory_limit = memory_limit;
+      startup.storage_version = storage_version;
+      startup.allow_unsigned_extensions = allow_unsigned_extensions;
+      startup.admin_bypass_queue_default = admin_bypass_queue_default;
+      startup.health_check_interval_seconds = health_check_interval_seconds;
+      startup.health_check_staleness_seconds = health_check_staleness_seconds;
+      startup.auth_log_level = log_level_arrow_log_level_to_string(auth_log_level);
+      startup.session_log_level = log_level_arrow_log_level_to_string(session_log_level);
+      startup.instance_tag = instance_tag;
+#ifdef GIZMOSQL_ENTERPRISE
+      startup.enable_instrumentation = enable_instrumentation;
+      if (enable_instrumentation) {
+        startup.instrumentation_catalog = instr_catalog;
+        startup.instrumentation_schema = instr_schema;
+      }
+      startup.enable_catalog_logging = enable_catalog_logging;
+      if (enable_catalog_logging) {
+        startup.log_catalog = log_cat;
+        startup.log_schema = log_sch;
+      }
+#endif
+      duckdb_server->SetStartupSettings(std::move(startup));
+    }
+
     server = duckdb_server;
   }
 

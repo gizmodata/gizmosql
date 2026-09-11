@@ -288,6 +288,33 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   int32_t GetMaxSessions() const;
   int32_t GetSessionIdleTimeoutSeconds() const;
 
+  // Startup facts fixed by CLI flags / environment variables that the server
+  // does not otherwise keep. Snapshotted by the library once the server is
+  // built so gizmosql_settings() can report them (scope STARTUP, settable
+  // false). Never secrets, paths or endpoints.
+  struct StartupSettings {
+    std::string backend = "duckdb";
+    bool read_only = false;
+    int32_t max_metadata_size = 0;
+    std::string memory_limit;      // empty = DuckDB default
+    std::string storage_version;   // empty = DuckDB default
+    bool allow_unsigned_extensions = false;
+    bool admin_bypass_queue_default = true;
+    int32_t health_check_interval_seconds = 0;
+    int32_t health_check_staleness_seconds = 0;
+    std::string auth_log_level;
+    std::string session_log_level;
+    std::string instance_tag;
+    bool enable_instrumentation = false;
+    std::string instrumentation_catalog;
+    std::string instrumentation_schema;
+    bool enable_catalog_logging = false;
+    std::string log_catalog;
+    std::string log_schema;
+  };
+  void SetStartupSettings(StartupSettings settings);
+  const StartupSettings& GetStartupSettings() const;
+
   // Interrupt the in-flight query on every active session (best-effort). Used by
   // the forced graceful-shutdown path (second signal / grace-period elapsed) so
   // synchronous query handlers unwind promptly instead of blocking the gRPC

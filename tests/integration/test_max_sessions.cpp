@@ -36,6 +36,7 @@
 #include "arrow/flight/types.h"
 #include "arrow/testing/gtest_util.h"
 #include "duckdb_server.h"
+#include "gizmosql_library.h"
 #include "jwt-cpp/jwt.h"
 #include "test_server_fixture.h"
 
@@ -291,6 +292,52 @@ TEST_F(MaxSessionsFixture, StartupOnlySettingsAreVisibleButNotSettable) {
   // Runtime-adjustable settings say so.
   expect_cell("gizmosql.query_timeout", "settable", "true");
   expect_cell("gizmosql.query_timeout", "cli_flag", "--query-timeout");
+
+  // Other startup facts snapshotted from the launch configuration.
+  expect_cell("gizmosql.version", "value", GIZMOSQL_SERVER_VERSION);
+  {
+    auto edition = QueryScalarString(
+        *admin, "SELECT value FROM gizmosql_settings() WHERE name = 'gizmosql.edition'");
+    ASSERT_TRUE(edition.ok()) << edition.status().ToString();
+    auto fn = QueryScalarString(*admin, "SELECT GIZMOSQL_EDITION()");
+    ASSERT_TRUE(fn.ok()) << fn.status().ToString();
+    EXPECT_EQ(*edition, *fn) << "gizmosql.edition must match GIZMOSQL_EDITION()";
+  }
+  expect_cell("gizmosql.backend", "value", "duckdb");
+  expect_cell("gizmosql.read_only", "value", "false");
+  expect_cell("gizmosql.read_only", "cli_flag", "--readonly");
+  expect_cell("gizmosql.admin_bypass_queue_default", "value", "true");
+  expect_cell("gizmosql.health_check_interval_seconds", "value", "0");
+  expect_cell("gizmosql.session_log_level", "scope", "STARTUP");
+  auto duckdb_server =
+      std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server_);
+  ASSERT_NE(duckdb_server, nullptr);
+  expect_cell("gizmosql.instance_id", "value", duckdb_server->GetInstanceId());
+  expect_cell("gizmosql.cluster_id", "value", "");
+  // Instrumentation is off in this fixture: the admin sees the rows, reporting off/empty.
+  expect_cell("gizmosql.enable_instrumentation", "value", "false");
+  expect_cell("gizmosql.instrumentation_catalog", "value", "");
+
+  // A non-admin session sees the same startup facts, but never the admin-only rows.
+  auto user = ConnectUserAndExecute(GetPort());
+  ASSERT_TRUE(user.ok()) << user.status().ToString();
+  auto user_backend = QueryScalarString(
+      *user, "SELECT value FROM gizmosql_settings() WHERE name = 'gizmosql.backend'");
+  ASSERT_TRUE(user_backend.ok()) << user_backend.status().ToString();
+  EXPECT_EQ(*user_backend, "duckdb");
+  auto user_idle = QueryScalarString(
+      *user, "SELECT value FROM gizmosql_settings() WHERE name = 'gizmosql.session_idle_timeout'");
+  ASSERT_TRUE(user_idle.ok()) << user_idle.status().ToString();
+  EXPECT_EQ(*user_idle, "0");
+  auto hidden = QueryScalarString(
+      *user,
+      "SELECT CAST(COUNT(*) AS VARCHAR) FROM gizmosql_settings() WHERE name IN ("
+      "'gizmosql.enable_instrumentation', 'gizmosql.instrumentation_catalog', "
+      "'gizmosql.instrumentation_schema', 'gizmosql.enable_catalog_logging', "
+      "'gizmosql.log_catalog', 'gizmosql.log_schema')");
+  ASSERT_TRUE(hidden.ok()) << hidden.status().ToString();
+  EXPECT_EQ(*hidden, "0") << "admin-only settings rows leaked to a non-admin";
+  CloseHeld(*user);
 
   // SET (any scope) on a startup-only setting is refused with a pointer to the flag.
   for (const std::string sql : {"SET GLOBAL gizmosql.max_sessions = 5",

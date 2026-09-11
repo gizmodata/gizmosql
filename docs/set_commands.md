@@ -135,6 +135,38 @@ with `scope = 'STARTUP'` and `settable = false`.
 |-----------|------|---------|----------|----------------------|
 | `gizmosql.max_sessions` | Integer | `0` (unlimited) | `--max-sessions` | `GIZMOSQL_MAX_SESSIONS` |
 | `gizmosql.session_idle_timeout` | Integer (seconds) | `0` (off) | `--session-idle-timeout` | `GIZMOSQL_SESSION_IDLE_TIMEOUT` |
+| `gizmosql.version` | String | build version | | |
+| `gizmosql.edition` | String | `Core` / `Enterprise` | | |
+| `gizmosql.backend` | String | `duckdb` | `--backend` | |
+| `gizmosql.read_only` | Boolean | `false` | `--readonly` | |
+| `gizmosql.max_metadata_size` | Integer (bytes) | `0` (gRPC default) | `--max-metadata-size` | `GIZMOSQL_MAX_METADATA_SIZE` |
+| `gizmosql.memory_limit` | String | empty (DuckDB default) | `--memory-limit` | `GIZMOSQL_MEMORY_LIMIT` |
+| `gizmosql.storage_version` | String | empty (DuckDB default) | `--storage-version` | `GIZMOSQL_STORAGE_VERSION` |
+| `gizmosql.allow_unsigned_extensions` | Boolean | `false` | `--allow-unsigned-extensions` | `GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS` |
+| `gizmosql.admin_bypass_queue_default` *(Enterprise)* | Boolean | `true` | `--admin-bypass-queue-default` | `GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT` |
+| `gizmosql.health_check_interval_seconds` | Integer (seconds) | `0` | `--health-check-interval-seconds` | `GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS` |
+| `gizmosql.health_check_staleness_seconds` | Integer (seconds) | `0` | `--health-check-staleness-seconds` | `GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS` |
+| `gizmosql.auth_log_level` | String | `INFO` | `--auth-log-level` | `GIZMOSQL_AUTH_LOG_LEVEL` |
+| `gizmosql.session_log_level` | String | `INFO` | `--session-log-level` | `GIZMOSQL_SESSION_LOG_LEVEL` |
+| `gizmosql.instance_id` | String (UUID) | generated | | |
+| `gizmosql.cluster_id` | String (UUID) | empty | `--cluster-id` | `GIZMOSQL_CLUSTER_ID` |
+| `gizmosql.instance_tag` *(Enterprise)* | JSON string | empty | `--instance-tag` | `GIZMOSQL_INSTANCE_TAG` |
+
+The following rows are **visible to admin sessions only**, because they name
+the system-managed catalogs that non-admins cannot see:
+
+| Parameter | Type | CLI flag | Environment variable |
+|-----------|------|----------|----------------------|
+| `gizmosql.enable_instrumentation` *(Enterprise)* | Boolean | `--enable-instrumentation` | `GIZMOSQL_ENABLE_INSTRUMENTATION` |
+| `gizmosql.instrumentation_catalog` *(Enterprise)* | String | `--instrumentation-catalog` | `GIZMOSQL_INSTRUMENTATION_CATALOG` |
+| `gizmosql.instrumentation_schema` *(Enterprise)* | String | `--instrumentation-schema` | `GIZMOSQL_INSTRUMENTATION_SCHEMA` |
+| `gizmosql.enable_catalog_logging` *(Enterprise)* | Boolean | `--enable-catalog-logging` | `GIZMOSQL_ENABLE_CATALOG_LOGGING` |
+| `gizmosql.log_catalog` *(Enterprise)* | String | `--log-catalog` | `GIZMOSQL_LOG_CATALOG` |
+| `gizmosql.log_schema` *(Enterprise)* | String | `--log-schema` | `GIZMOSQL_LOG_SCHEMA` |
+
+Secrets, file paths and network endpoints (credentials, license keys, token
+verification material, OAuth and OpenTelemetry settings, database and log file
+paths, listen addresses) are deliberately not reported.
 
 `session_idle_timeout` matters to long-lived clients such as the GizmoSQL MCP
 server or a connection pool: once a session is evicted, the next request on its

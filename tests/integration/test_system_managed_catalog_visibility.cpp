@@ -171,6 +171,18 @@ TEST_F(SystemManagedCatalogVisibilityFixture, AdminSeesInstrumentationCatalog) {
       auto tables, admin.client->GetTables(admin.options, &kInstrCatalog, nullptr, nullptr, false, nullptr));
   ASSERT_ARROW_OK_AND_ASSIGN(auto names, Column(admin, tables, "table_name"));
   EXPECT_TRUE(Contains(names, "sessions")) << "admin GetTables should list the instrumentation tables";
+
+  // And gizmosql_settings() tells the admin where instrumentation lives.
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto instr_catalog,
+      Query(admin, "SELECT value FROM gizmosql_settings() WHERE name = 'gizmosql.instrumentation_catalog'", "value"));
+  ASSERT_EQ(instr_catalog.size(), 1u);
+  EXPECT_EQ(instr_catalog[0], kInstrCatalog);
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto instr_on,
+      Query(admin, "SELECT value FROM gizmosql_settings() WHERE name = 'gizmosql.enable_instrumentation'", "value"));
+  ASSERT_EQ(instr_on.size(), 1u);
+  EXPECT_EQ(instr_on[0], "true");
 }
 
 TEST_F(SystemManagedCatalogVisibilityFixture, NonAdminNeverSeesInstrumentationCatalog) {
@@ -220,6 +232,16 @@ TEST_F(SystemManagedCatalogVisibilityFixture, NonAdminNeverSeesInstrumentationCa
     ASSERT_ARROW_OK_AND_ASSIGN(auto values, Query(user, sql, column));
     EXPECT_FALSE(Contains(values, kInstrCatalog)) << sql << " listed the instrumentation catalog";
   }
+
+  // gizmosql_settings() does not name the hidden catalog to a non-admin either.
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto setting_names,
+      Query(user, "SELECT name FROM gizmosql_settings() WHERE name LIKE 'gizmosql.%instrumentation%' OR name LIKE 'gizmosql.log_%'", "name"));
+  EXPECT_TRUE(setting_names.empty()) << "admin-only settings rows visible to a non-admin";
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto setting_values,
+      Query(user, "SELECT value FROM gizmosql_settings() WHERE value = '" + kInstrCatalog + "'", "value"));
+  EXPECT_TRUE(setting_values.empty()) << "instrumentation catalog name leaked through gizmosql_settings()";
 
   // Reading it stays denied, as before.
   auto denied = user.client->Execute(user.options, "SELECT * FROM " + kInstrCatalog + ".main.sessions LIMIT 1");

@@ -937,6 +937,9 @@ class DuckDBFlightSqlServer::Impl {
   // startup (via SetClusterId) before serving begins, then read-only.
   std::string cluster_id_;
 
+  // Startup facts reported by gizmosql_settings(); set once before serving.
+  DuckDBFlightSqlServer::StartupSettings startup_settings_;
+
   // Name of the attached catalog the server forks logs into (catalog logging),
   // empty when off. Set once at startup; read by the catalog-permissions handler
   // to gate the log catalog as admin-read-only.
@@ -1395,6 +1398,13 @@ class DuckDBFlightSqlServer::Impl {
 
   std::string GetClusterId() const { return cluster_id_; }
   void SetClusterId(const std::string& cluster_id) { cluster_id_ = cluster_id; }
+
+  const DuckDBFlightSqlServer::StartupSettings& GetStartupSettings() const {
+    return startup_settings_;
+  }
+  void SetStartupSettings(DuckDBFlightSqlServer::StartupSettings settings) {
+    startup_settings_ = std::move(settings);
+  }
 
   std::string GetLogCatalog() const { return log_catalog_; }
   void SetLogCatalog(const std::string& log_catalog) { log_catalog_ = log_catalog; }
@@ -2907,6 +2917,15 @@ std::string DuckDBFlightSqlServer::GetClusterId() const {
 
 void DuckDBFlightSqlServer::SetClusterId(const std::string& cluster_id) {
   impl_->SetClusterId(cluster_id);
+}
+
+void DuckDBFlightSqlServer::SetStartupSettings(StartupSettings settings) {
+  impl_->SetStartupSettings(std::move(settings));
+}
+
+const DuckDBFlightSqlServer::StartupSettings& DuckDBFlightSqlServer::GetStartupSettings()
+    const {
+  return impl_->GetStartupSettings();
 }
 
 std::string DuckDBFlightSqlServer::GetLogCatalog() const {

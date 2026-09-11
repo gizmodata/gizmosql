@@ -1238,6 +1238,9 @@ struct GizmoSetting {
   std::string cli_flag;                      // "--flag" if none
   std::string default_value;
   std::string description;
+  // Row shown only to admin sessions (e.g. names of system-managed catalogs
+  // that non-admins cannot see anywhere else).
+  bool admin_only = false;
   // Value accessors for gizmosql_settings() (canonical strings; nullopt = unset /
   // not-applicable-at-this-scope).
   std::function<std::optional<std::string>(const ClientSession&)> get_session;
@@ -1696,6 +1699,264 @@ SettingsRegistry::SettingsRegistry() {
       },
   });
 
+  // Further startup-only facts, read from the snapshot the library stores on
+  // the server (DuckDBFlightSqlServer::StartupSettings).
+  using Startup = DuckDBFlightSqlServer::StartupSettings;
+  auto startup_str = [](std::string Startup::*field) {
+    return [field](DuckDBFlightSqlServer& srv,
+                   const ClientSession&) -> std::optional<std::string> {
+      return std::optional(srv.GetStartupSettings().*field);
+    };
+  };
+  auto startup_bool = [](bool Startup::*field) {
+    return [field](DuckDBFlightSqlServer& srv,
+                   const ClientSession&) -> std::optional<std::string> {
+      return std::optional(std::string(srv.GetStartupSettings().*field ? "true" : "false"));
+    };
+  };
+  auto startup_int = [](int32_t Startup::*field) {
+    return [field](DuckDBFlightSqlServer& srv,
+                   const ClientSession&) -> std::optional<std::string> {
+      return std::optional(std::to_string(srv.GetStartupSettings().*field));
+    };
+  };
+  auto startup = [&](GizmoSetting d) {
+    d.scope = SetScopeKind::kStartupOnly;
+    settings_.push_back(std::move(d));
+  };
+
+  startup(GizmoSetting{
+      .name = "gizmosql.version",
+      .input_type = "VARCHAR",
+      .default_value = "",
+      .description = "GizmoSQL server version (as GIZMOSQL_VERSION()).",
+      .get_global = [](DuckDBFlightSqlServer&,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(GIZMOSQL_SERVER_VERSION);
+      },
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.edition",
+      .input_type = "VARCHAR",
+      .default_value = "Core",
+      .description = "Licensed edition, Core or Enterprise (as GIZMOSQL_EDITION()).",
+      .get_global = [](DuckDBFlightSqlServer&,
+                       const ClientSession&) -> std::optional<std::string> {
+#ifdef GIZMOSQL_ENTERPRISE
+        return std::optional(enterprise::EnterpriseFeatures::Instance().GetEditionName());
+#else
+        return std::optional(std::string("Core"));
+#endif
+      },
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.backend",
+      .input_type = "VARCHAR",
+      .cli_flag = "--backend",
+      .default_value = "duckdb",
+      .description = "Database engine behind this server (duckdb or sqlite).",
+      .get_global = startup_str(&Startup::backend),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.read_only",
+      .input_type = "BOOLEAN",
+      .cli_flag = "--readonly",
+      .default_value = "false",
+      .description = "Database opened read-only: every write statement is rejected.",
+      .get_global = startup_bool(&Startup::read_only),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.max_metadata_size",
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_MAX_METADATA_SIZE",
+      .cli_flag = "--max-metadata-size",
+      .default_value = "0",
+      .description = "gRPC max metadata size in bytes accepted per call (0 = gRPC default).",
+      .get_global = startup_int(&Startup::max_metadata_size),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.memory_limit",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_MEMORY_LIMIT",
+      .cli_flag = "--memory-limit",
+      .default_value = "",
+      .description = "DuckDB memory_limit (e.g. 8GB, 75%); empty = DuckDB default.",
+      .get_global = startup_str(&Startup::memory_limit),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.storage_version",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_STORAGE_VERSION",
+      .cli_flag = "--storage-version",
+      .default_value = "",
+      .description = "DuckDB storage_version for new databases; empty = DuckDB default.",
+      .get_global = startup_str(&Startup::storage_version),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.allow_unsigned_extensions",
+      .input_type = "BOOLEAN",
+      .env_var = "GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS",
+      .cli_flag = "--allow-unsigned-extensions",
+      .default_value = "false",
+      .description = "DuckDB may load unsigned extensions.",
+      .get_global = startup_bool(&Startup::allow_unsigned_extensions),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.admin_bypass_queue_default",
+      .enterprise = true,
+      .enterprise_feature = "statement_queue",
+      .input_type = "BOOLEAN",
+      .env_var = "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT",
+      .cli_flag = "--admin-bypass-queue-default",
+      .default_value = "true",
+      .description = "Default of gizmosql.bypass_queue for admin sessions.",
+      .get_global = startup_bool(&Startup::admin_bypass_queue_default),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.health_check_interval_seconds",
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS",
+      .cli_flag = "--health-check-interval-seconds",
+      .default_value = "0",
+      .description = "Seconds between background health-check queries (0 = on demand).",
+      .get_global = startup_int(&Startup::health_check_interval_seconds),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.health_check_staleness_seconds",
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS",
+      .cli_flag = "--health-check-staleness-seconds",
+      .default_value = "0",
+      .description = "Age after which a cached health-check result is reported unhealthy (0 = off).",
+      .get_global = startup_int(&Startup::health_check_staleness_seconds),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.auth_log_level",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_AUTH_LOG_LEVEL",
+      .cli_flag = "--auth-log-level",
+      .default_value = "INFO",
+      .description = "Log level of authentication events.",
+      .get_global = startup_str(&Startup::auth_log_level),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.session_log_level",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_SESSION_LOG_LEVEL",
+      .cli_flag = "--session-log-level",
+      .default_value = "INFO",
+      .description = "Log level of session lifecycle events.",
+      .get_global = startup_str(&Startup::session_log_level),
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.instance_id",
+      .input_type = "VARCHAR",
+      .default_value = "",
+      .description = "This server instance's UUID, generated at startup.",
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(srv.GetInstanceId());
+      },
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.cluster_id",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_CLUSTER_ID",
+      .cli_flag = "--cluster-id",
+      .default_value = "",
+      .description = "Cluster grouping UUID shared by the instances of one deployment; empty when unset.",
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(srv.GetClusterId());
+      },
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.instance_tag",
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_INSTANCE_TAG",
+      .cli_flag = "--instance-tag",
+      .default_value = "",
+      .description = "JSON instance tag recorded in instrumentation.",
+      .get_global = startup_str(&Startup::instance_tag),
+  });
+
+  // Admin-only: these name the system-managed catalogs, which non-admins
+  // cannot see anywhere else.
+  startup(GizmoSetting{
+      .name = "gizmosql.enable_instrumentation",
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "BOOLEAN",
+      .env_var = "GIZMOSQL_ENABLE_INSTRUMENTATION",
+      .cli_flag = "--enable-instrumentation",
+      .default_value = "false",
+      .description = "Session/statement instrumentation is recorded.",
+      .get_global = startup_bool(&Startup::enable_instrumentation),
+      .admin_only = true,
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.instrumentation_catalog",
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_INSTRUMENTATION_CATALOG",
+      .cli_flag = "--instrumentation-catalog",
+      .default_value = "",
+      .description = "Catalog holding the instrumentation tables (empty when instrumentation is off).",
+      .get_global = startup_str(&Startup::instrumentation_catalog),
+      .admin_only = true,
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.instrumentation_schema",
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_INSTRUMENTATION_SCHEMA",
+      .cli_flag = "--instrumentation-schema",
+      .default_value = "",
+      .description = "Schema holding the instrumentation tables (empty when instrumentation is off).",
+      .get_global = startup_str(&Startup::instrumentation_schema),
+      .admin_only = true,
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.enable_catalog_logging",
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "BOOLEAN",
+      .env_var = "GIZMOSQL_ENABLE_CATALOG_LOGGING",
+      .cli_flag = "--enable-catalog-logging",
+      .default_value = "false",
+      .description = "Server logs are forked into an attached catalog.",
+      .get_global = startup_bool(&Startup::enable_catalog_logging),
+      .admin_only = true,
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.log_catalog",
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_LOG_CATALOG",
+      .cli_flag = "--log-catalog",
+      .default_value = "",
+      .description = "Catalog the server logs are forked into (empty when catalog logging is off).",
+      .get_global = startup_str(&Startup::log_catalog),
+      .admin_only = true,
+  });
+  startup(GizmoSetting{
+      .name = "gizmosql.log_schema",
+      .enterprise = true,
+      .enterprise_feature = "instrumentation",
+      .input_type = "VARCHAR",
+      .env_var = "GIZMOSQL_LOG_SCHEMA",
+      .cli_flag = "--log-schema",
+      .default_value = "",
+      .description = "Schema of the logs table (empty when catalog logging is off).",
+      .get_global = startup_str(&Startup::log_schema),
+      .admin_only = true,
+  });
+
   for (size_t i = 0; i < settings_.size(); ++i) {
     by_name_[settings_[i].name] = i;
   }
@@ -1734,9 +1995,11 @@ std::string BuildGizmoSettingsValues(const ClientSession& session,
   };
 
   std::string rows;
+  const bool is_admin = session.role == "admin";
   const auto& settings = SettingsRegistry::Instance().All();
   for (size_t r = 0; r < settings.size(); ++r) {
     const GizmoSetting& d = settings[r];
+    if (d.admin_only && !is_admin) continue;
     std::optional<std::string> sess = d.get_session ? d.get_session(session) : std::nullopt;
     std::optional<std::string> glob =
         (d.get_global && server) ? d.get_global(*server, session) : std::nullopt;
@@ -1758,7 +2021,7 @@ std::string BuildGizmoSettingsValues(const ClientSession& session,
     binds.push_back(duckdb::Value::BOOLEAN(d.enterprise));                // enterprise
     push(d.description);                                                  // description
 
-    if (r) rows += ", ";
+    if (!rows.empty()) rows += ", ";
     rows += kRow;
   }
 

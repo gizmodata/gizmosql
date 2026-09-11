@@ -8,11 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `gizmosql_settings()` now reports the startup-only session-capacity
-  settings `gizmosql.max_sessions` and `gizmosql.session_idle_timeout`
-  (`--max-sessions` / `--session-idle-timeout`), so clients such as the
-  GizmoSQL MCP server can size their keepalive and idle handling from the
-  server's actual configuration. Two new columns say how a setting can be
+- `gizmosql_settings()` now reports the server's startup-only configuration
+  alongside the runtime settings, so clients such as the GizmoSQL MCP server
+  can adapt to the server's actual configuration: `gizmosql.version`,
+  `edition`, `max_sessions`,
+  `session_idle_timeout`, `backend`, `read_only`, `max_metadata_size`,
+  `memory_limit`, `storage_version`, `allow_unsigned_extensions`,
+  `admin_bypass_queue_default`, `health_check_interval_seconds`,
+  `health_check_staleness_seconds`, `auth_log_level`, `session_log_level`,
+  `instance_id`, `cluster_id` and `instance_tag`; plus, for admin sessions
+  only (they name the system-managed catalogs), `enable_instrumentation`,
+  `instrumentation_catalog`, `instrumentation_schema`,
+  `enable_catalog_logging`, `log_catalog` and `log_schema`. Secrets, paths
+  and endpoints are never reported. Two new columns say how a setting can be
   changed: `settable` (BOOLEAN, `false` when only a restart with a different
   flag changes it; `scope` then reads `STARTUP`) and `cli_flag`. `SET` on a
   startup-only setting fails with a message naming the flag and environment
