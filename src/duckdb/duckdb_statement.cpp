@@ -1893,8 +1893,8 @@ SettingsRegistry::SettingsRegistry() {
       .cli_flag = "--enable-instrumentation",
       .default_value = "false",
       .description = "Session/statement instrumentation is recorded.",
-      .get_global = startup_bool(&Startup::enable_instrumentation),
       .admin_only = true,
+      .get_global = startup_bool(&Startup::enable_instrumentation),
   });
   startup(GizmoSetting{
       .name = "gizmosql.instrumentation_catalog",
@@ -1905,8 +1905,8 @@ SettingsRegistry::SettingsRegistry() {
       .cli_flag = "--instrumentation-catalog",
       .default_value = "",
       .description = "Catalog holding the instrumentation tables (empty when instrumentation is off).",
-      .get_global = startup_str(&Startup::instrumentation_catalog),
       .admin_only = true,
+      .get_global = startup_str(&Startup::instrumentation_catalog),
   });
   startup(GizmoSetting{
       .name = "gizmosql.instrumentation_schema",
@@ -1917,8 +1917,8 @@ SettingsRegistry::SettingsRegistry() {
       .cli_flag = "--instrumentation-schema",
       .default_value = "",
       .description = "Schema holding the instrumentation tables (empty when instrumentation is off).",
-      .get_global = startup_str(&Startup::instrumentation_schema),
       .admin_only = true,
+      .get_global = startup_str(&Startup::instrumentation_schema),
   });
   startup(GizmoSetting{
       .name = "gizmosql.enable_catalog_logging",
@@ -1929,8 +1929,8 @@ SettingsRegistry::SettingsRegistry() {
       .cli_flag = "--enable-catalog-logging",
       .default_value = "false",
       .description = "Server logs are forked into an attached catalog.",
-      .get_global = startup_bool(&Startup::enable_catalog_logging),
       .admin_only = true,
+      .get_global = startup_bool(&Startup::enable_catalog_logging),
   });
   startup(GizmoSetting{
       .name = "gizmosql.log_catalog",
@@ -1941,8 +1941,8 @@ SettingsRegistry::SettingsRegistry() {
       .cli_flag = "--log-catalog",
       .default_value = "",
       .description = "Catalog the server logs are forked into (empty when catalog logging is off).",
-      .get_global = startup_str(&Startup::log_catalog),
       .admin_only = true,
+      .get_global = startup_str(&Startup::log_catalog),
   });
   startup(GizmoSetting{
       .name = "gizmosql.log_schema",
@@ -1953,8 +1953,8 @@ SettingsRegistry::SettingsRegistry() {
       .cli_flag = "--log-schema",
       .default_value = "",
       .description = "Schema of the logs table (empty when catalog logging is off).",
-      .get_global = startup_str(&Startup::log_schema),
       .admin_only = true,
+      .get_global = startup_str(&Startup::log_schema),
   });
 
   for (size_t i = 0; i < settings_.size(); ++i) {
