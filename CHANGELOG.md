@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.5] - 2026-09-11
+
 ### Added
 - `gizmosql_settings()` now reports the server's startup-only configuration
   alongside the runtime settings, so clients such as the GizmoSQL MCP server
