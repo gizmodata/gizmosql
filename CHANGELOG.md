@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.38.5] - 2026-09-11
 
+### Changed
+- CI: the MinIO used by the instrumentation tests is pinned to the last
+  published `minio/minio` and `minio/mc` images and the bucket is created
+  from the `mc` image. MinIO archived its open-source projects and
+  `dl.min.io` now answers HTTP 410 for the client binary, which broke the
+  Linux jobs. `docker-compose.test.yml` is pinned the same way.
+
 ### Added
 - `gizmosql_settings()` now reports the server's startup-only configuration
   alongside the runtime settings, so clients such as the GizmoSQL MCP server

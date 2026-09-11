@@ -641,30 +641,27 @@ jobs:
 
       - name: Start MinIO and setup bucket
         run: |
-          # Start MinIO server using docker (matching docker-compose.test.yml)
+          # Start MinIO server using docker (matching docker-compose.test.yml).
+          # MinIO archived its open-source projects in 2025: dl.min.io answers
+          # 410 for the mc binary, so pin the last published images and run the
+          # client from its image instead of downloading it.
           docker run -d --name minio \
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest server /data --console-address ":9001"
+            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
 
-          # Install MinIO client (architecture-aware)
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-            MC_ARCH="arm64"
-          else
-            MC_ARCH="amd64"
-          fi
-          curl -sL "https://dl.min.io/client/mc/release/linux-${MC_ARCH}/mc" -o /tmp/mc
-          chmod +x /tmp/mc
-
-          # Wait for MinIO to be ready and create bucket
+          # Wait for MinIO to be ready
           for i in {1..30}; do
-            /tmp/mc alias set myminio http://localhost:9000 minioadmin minioadmin && break
+            curl -sf http://localhost:9000/minio/health/live && break
             echo "Waiting for MinIO to be ready... (attempt $i)"
             sleep 2
           done
-          /tmp/mc mb --ignore-existing myminio/instrumentation
+
+          # Create the bucket with the mc image (no host install)
+          docker run --rm --network host --entrypoint /bin/sh \
+            minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
+            "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb --ignore-existing myminio/instrumentation"
 
       - name: Run Tests (Core Edition - No License)
         run: |
