@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- System-managed catalogs (the instrumentation catalog and the catalog-logging
+  catalog) are now hidden from every non-admin session in metadata listings,
+  not only denied on read. Previously the visibility filter ran only when the
+  session's token carried `catalog_access` rules (and the feature was
+  licensed), so a non-admin service account with no rules saw
+  `_gizmosql_instr` and its tables in Flight SQL `GetCatalogs` /
+  `GetDbSchemas` / `GetTables` (hence in ADBC/JDBC/MCP schema browsers),
+  `duckdb_databases()` / `duckdb_tables()`, `information_schema.*` and
+  `SHOW DATABASES` / `SHOW ALL TABLES`, and then got "Only administrators can
+  read the system-managed catalog" when it tried to use them. The hiding is
+  unconditional for non-admins; admins are unaffected. Token `catalog_access`
+  rules continue to work as before.
+
+### Fixed
+- Build on a Homebrew Mac with a newer `protobuf` formula installed (36.x)
+  failed with "Protobuf C++ gencode is built with an incompatible version of
+  Protobuf C++ headers/runtime" because `/opt/homebrew/include` (reached via
+  `Boost_INCLUDE_DIRS`) shadowed the protobuf 31.x headers vendored by the
+  Arrow superbuild. The vendored protobuf, gRPC and absl include directories
+  are now prepended (`BEFORE PRIVATE`), the same treatment the vendored
+  DuckDB headers already had.
+
 ## [1.38.4] - 2026-09-09
 
 ### Fixed

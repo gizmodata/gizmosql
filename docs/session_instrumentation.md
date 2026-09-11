@@ -94,7 +94,7 @@ When `instrumentation_catalog` is set:
 
 **Important: Dedicated Catalog Required**
 
-The instrumentation catalog is protected as **read-only** for clients (only administrators can read the data, no one can modify it). This protection applies to the **entire catalog**, not just the instrumentation schema.
+The instrumentation catalog is protected as **read-only** for clients (only administrators can read the data, no one can modify it), and it is **invisible to non-admin sessions**: it does not appear in Flight SQL metadata (`GetCatalogs`, `GetDbSchemas`, `GetTables`), `duckdb_databases()` / `duckdb_tables()`, `information_schema` views or `SHOW DATABASES` / `SHOW ALL TABLES` for any session whose role is not `admin`, regardless of licensing or token `catalog_access` rules. This protection applies to the **entire catalog**, not just the instrumentation schema.
 
 **Do NOT** use a shared catalog that contains other application tables. If you do, you will not be able to modify any tables in that catalog. Always use a dedicated catalog for instrumentation.
 

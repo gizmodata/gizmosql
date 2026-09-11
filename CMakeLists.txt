@@ -783,6 +783,17 @@ target_include_directories(gizmosqlserver
 # first call to DuckDBFlightSqlServer::Create.
 target_include_directories(gizmosqlserver BEFORE PRIVATE ${DUCKDB_INCLUDE_DIR})
 
+# Same for the protobuf / gRPC / absl headers that Arrow's superbuild vendors:
+# a brew-installed protobuf (36.x at the time of writing) under
+# /opt/homebrew/include otherwise shadows the 31.x headers the generated
+# health.pb.{h,cc} were produced for, and the build fails with "Protobuf C++
+# gencode is built with an incompatible version of Protobuf C++ headers".
+target_include_directories(gizmosqlserver BEFORE PRIVATE
+        ${PROTOBUF_INCLUDE_DIR}
+        ${GRPC_INCLUDE_DIR}
+        ${ABSL_INCLUDE_DIR}
+)
+
 # Add enterprise-specific include directories and compile definition
 if(GIZMOSQL_ENTERPRISE)
     target_include_directories(gizmosqlserver PRIVATE

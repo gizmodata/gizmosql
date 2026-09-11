@@ -388,11 +388,54 @@ Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
   return rows;
 }
 
-// Apply the enterprise catalog-visibility filter (same semantics as the SQL
-// rewrite in DuckDBStatement::Create: when the session has catalog rules and the
-// allowed list is non-empty, only those catalogs are visible).
+// Catalog names a non-admin session must not see at all: the system-managed
+// catalogs (instrumentation, catalog logging). Independent of licensing and of
+// catalog_access rules, mirroring the always-on read denial.
+std::unordered_set<std::string> HiddenCatalogNames(
+    const std::shared_ptr<ClientSession>& client_session) {
+  std::unordered_set<std::string> hidden;
+#ifdef GIZMOSQL_ENTERPRISE
+  std::shared_ptr<InstrumentationManager> instr_mgr;
+  std::string log_catalog;
+  if (auto server = GetServer(*client_session)) {
+    instr_mgr = server->GetInstrumentationManager();
+    log_catalog = server->GetLogCatalog();
+  }
+  for (auto& name :
+       gizmosql::enterprise::GetHiddenCatalogs(*client_session, instr_mgr, log_catalog)) {
+    hidden.insert(std::move(name));
+  }
+#else
+  (void)client_session;
+#endif
+  return hidden;
+}
+
+// Drop the hidden catalogs from a list of catalog names before scanning them,
+// so a non-admin request never touches the system-managed catalogs' metadata.
+void RemoveHiddenCatalogs(const std::shared_ptr<ClientSession>& client_session,
+                          std::vector<std::string>& catalog_names) {
+  auto hidden = HiddenCatalogNames(client_session);
+  if (hidden.empty()) return;
+  catalog_names.erase(std::remove_if(catalog_names.begin(), catalog_names.end(),
+                                     [&](const std::string& n) { return hidden.count(n) > 0; }),
+                      catalog_names.end());
+}
+
+// Apply the catalog-visibility rules (same semantics as the SQL rewrite in
+// DuckDBStatement::Create): the system-managed catalogs are always dropped for
+// non-admins, and when the session has catalog rules and the allowed list is
+// non-empty, only those catalogs are visible.
 void FilterRowsByCatalogVisibility(const std::shared_ptr<ClientSession>& client_session,
                                    std::vector<CatalogEntryRow>& rows) {
+  auto hidden = HiddenCatalogNames(client_session);
+  if (!hidden.empty()) {
+    rows.erase(std::remove_if(rows.begin(), rows.end(),
+                              [&](const CatalogEntryRow& r) {
+                                return hidden.count(r.catalog_name) > 0;
+                              }),
+               rows.end());
+  }
 #ifdef GIZMOSQL_ENTERPRISE
   if (client_session->catalog_access.empty() ||
       !gizmosql::enterprise::EnterpriseFeatures::Instance()
@@ -414,9 +457,6 @@ void FilterRowsByCatalogVisibility(const std::shared_ptr<ClientSession>& client_
                               return allowed.count(r.catalog_name) == 0;
                             }),
              rows.end());
-#else
-  (void)client_session;
-  (void)rows;
 #endif
 }
 
@@ -1490,6 +1530,7 @@ class DuckDBFlightSqlServer::Impl {
     } else {
       ARROW_ASSIGN_OR_RAISE(catalogs, ResolveCatalogNames(conn, std::string("%")));
     }
+    RemoveHiddenCatalogs(client_session, catalogs);
     ARROW_ASSIGN_OR_RAISE(auto rows,
                           ScanCatalogEntries(conn, catalogs, /*include_tables=*/false));
     FilterRowsByCatalogVisibility(client_session, rows);
@@ -1737,6 +1778,7 @@ class DuckDBFlightSqlServer::Impl {
     } else {
       ARROW_ASSIGN_OR_RAISE(catalogs, ResolveCatalogNames(conn, std::string("%")));
     }
+    RemoveHiddenCatalogs(client_session, catalogs);
     ARROW_ASSIGN_OR_RAISE(auto rows,
                           ScanCatalogEntries(conn, catalogs, /*include_tables=*/true));
     FilterRowsByCatalogVisibility(client_session, rows);

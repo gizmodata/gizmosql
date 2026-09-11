@@ -348,6 +348,67 @@ std::vector<std::string> GetAllowedCatalogs(
   return allowed;
 }
 
+std::vector<std::string> GetHiddenCatalogs(
+    const ClientSession& client_session,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+    const std::string& log_catalog) {
+  std::vector<std::string> hidden;
+  if (client_session.role == "admin") {
+    return hidden;
+  }
+  if (instrumentation_manager && !instrumentation_manager->GetCatalog().empty()) {
+    hidden.push_back(instrumentation_manager->GetCatalog());
+  }
+  if (!log_catalog.empty() &&
+      std::find(hidden.begin(), hidden.end(), log_catalog) == hidden.end()) {
+    hidden.push_back(log_catalog);
+  }
+  return hidden;
+}
+
+std::string GetCatalogVisibilityFilter(
+    const ClientSession& client_session,
+    duckdb::Connection& connection,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+    const std::string& log_catalog) {
+  // Rule-based allow list first: GetCatalogAccess already leaves the
+  // system-managed catalogs out of it for non-admins.
+  auto allowed = GetAllowedCatalogs(client_session, connection, instrumentation_manager,
+                                    log_catalog);
+  if (!allowed.empty()) {
+    return BuildCatalogFilterIN(allowed);
+  }
+  auto hidden = GetHiddenCatalogs(client_session, instrumentation_manager, log_catalog);
+  if (!hidden.empty()) {
+    return BuildCatalogFilterNotIN(hidden);
+  }
+  return "";
+}
+
+namespace {
+
+// ('a','b') with single quotes doubled.
+std::string QuotedCatalogList(const std::vector<std::string>& catalogs) {
+  std::string result = "(";
+  for (size_t i = 0; i < catalogs.size(); ++i) {
+    if (i > 0) result += ',';
+    result += '\'';
+    for (char c : catalogs[i]) {
+      if (c == '\'') result += "''";
+      else result += c;
+    }
+    result += '\'';
+  }
+  result += ')';
+  return result;
+}
+
+}  // namespace
+
+std::string BuildCatalogFilterNotIN(const std::vector<std::string>& hidden_catalogs) {
+  return "NOT IN " + QuotedCatalogList(hidden_catalogs);
+}
+
 std::string BuildCatalogFilterIN(const std::vector<std::string>& allowed_catalogs) {
   std::string result = "IN (";
   for (size_t i = 0; i < allowed_catalogs.size(); ++i) {
@@ -561,8 +622,68 @@ std::string NormalizeQuotedMetadataReferences(const std::string& sql) {
 
 }  // namespace
 
+namespace {
+
+// SHOW DATABASES / SHOW ALL TABLES used as a subquery, e.g.
+// `SELECT * FROM (SHOW ALL TABLES)`. RewriteShowCommand only handles the bare
+// statement; here every embedded occurrence (outside string literals, at
+// identifier boundaries) becomes a filtered SELECT over the same command.
+std::string RewriteEmbeddedShowCommands(const std::string& sql, const std::string& filter_in) {
+  struct Embedded {
+    std::string keyword_lower;
+    std::string replacement;
+  };
+  const std::vector<Embedded> forms = {
+      {"show all tables", "SELECT * FROM (SHOW ALL TABLES) WHERE database " + filter_in},
+      {"show databases",
+       "SELECT database_name FROM duckdb_databases() WHERE database_name " + filter_in},
+  };
+  std::string result;
+  result.reserve(sql.size() * 2);
+  size_t i = 0;
+  while (i < sql.size()) {
+    if (sql[i] == '\'') {
+      result += sql[i++];
+      while (i < sql.size()) {
+        result += sql[i];
+        if (sql[i] == '\'') {
+          ++i;
+          if (i < sql.size() && sql[i] == '\'') {
+            result += sql[i++];
+            continue;
+          }
+          break;
+        }
+        ++i;
+      }
+      continue;
+    }
+    if (i > 0 && IsIdentChar(sql[i - 1])) {
+      result += sql[i++];
+      continue;
+    }
+    bool matched = false;
+    for (const auto& form : forms) {
+      const size_t len = form.keyword_lower.size();
+      if (i + len > sql.size()) continue;
+      if (boost::to_lower_copy(sql.substr(i, len)) != form.keyword_lower) continue;
+      const size_t end = i + len;
+      if (end < sql.size() && IsIdentChar(sql[end])) continue;
+      result += form.replacement;
+      i = end;
+      matched = true;
+      break;
+    }
+    if (!matched) result += sql[i++];
+  }
+  return result;
+}
+
+}  // namespace
+
 std::string FilterMetadataReferences(const std::string& sql, const std::string& filter_in) {
-  std::string normalized_sql = NormalizeQuotedMetadataReferences(sql);
+  std::string normalized_sql =
+      RewriteEmbeddedShowCommands(NormalizeQuotedMetadataReferences(sql), filter_in);
   const auto& patterns = GetMetadataPatterns();
   std::string result;
   result.reserve(normalized_sql.size() * 2);

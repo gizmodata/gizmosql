@@ -880,13 +880,14 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     }
   }
 
-  // Catalog visibility filtering: rewrite metadata queries to hide unauthorized catalogs
-  if (!client_session->catalog_access.empty() &&
-      enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
-    auto allowed = enterprise::GetAllowedCatalogs(
+  // Catalog visibility filtering: rewrite metadata queries so catalogs the
+  // session may not see are hidden, not just denied. The predicate is either
+  // an allow list from the token's catalog_access rules or, for any non-admin,
+  // a NOT IN over the system-managed catalogs (instrumentation, logging).
+  {
+    std::string filter_in = enterprise::GetCatalogVisibilityFilter(
         *client_session, client_session->connection->Get(), instr_mgr, log_catalog);
-    if (!allowed.empty()) {
-      auto filter_in = enterprise::BuildCatalogFilterIN(allowed);
+    if (!filter_in.empty()) {
       std::string rewritten;
       if (enterprise::RewriteShowCommand(effective_sql, filter_in, rewritten)) {
         GIZMOSQL_LOGKV_SESSION(DEBUG, client_session,

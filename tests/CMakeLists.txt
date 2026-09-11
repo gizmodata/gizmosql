@@ -87,6 +87,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_query_profile_capture.cpp
             integration/test_oauth_server.cpp
             integration/test_inline_license_key.cpp
+            integration/test_system_managed_catalog_visibility.cpp
     )
 endif()
 
@@ -118,6 +119,15 @@ target_include_directories(gizmosql_integration_tests PRIVATE
         ${CMAKE_BINARY_DIR}/third_party/jwt-cpp/include
         ${HTTPLIB_INCLUDE_DIR}
         ${HEALTH_PROTO_GEN_DIR}
+        ${PROTOBUF_INCLUDE_DIR}
+        ${GRPC_INCLUDE_DIR}
+        ${ABSL_INCLUDE_DIR}
+)
+
+# Vendored protobuf / gRPC / absl must win over a brew-installed protobuf
+# reachable via /opt/homebrew/include (see the matching note in the root
+# CMakeLists.txt); test_health_check.cpp includes the generated health stubs.
+target_include_directories(gizmosql_integration_tests BEFORE PRIVATE
         ${PROTOBUF_INCLUDE_DIR}
         ${GRPC_INCLUDE_DIR}
         ${ABSL_INCLUDE_DIR}

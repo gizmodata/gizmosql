@@ -154,6 +154,35 @@ std::vector<std::string> GetAllowedCatalogs(
     const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
     const std::string& log_catalog = "");
 
+/// Catalogs a session must never see listed, whatever the licensing state or
+/// its catalog_access rules: the system-managed catalogs (instrumentation and
+/// catalog logging) for every non-admin session. Read access to them is denied
+/// separately; this keeps them out of GetCatalogs/GetDbSchemas/GetTables,
+/// information_schema, duckdb_*() and SHOW output as well.
+///
+/// @param client_session The session to check
+/// @param instrumentation_manager Optional instrumentation manager (names its catalog)
+/// @param log_catalog Optional catalog-logging catalog name (empty if off)
+/// @return Catalog names to hide; empty for admins or when neither feature is on
+std::vector<std::string> GetHiddenCatalogs(
+    const ClientSession& client_session,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
+    const std::string& log_catalog = "");
+
+/// The predicate that scopes a metadata query to the catalogs the session may
+/// see, to be placed after a catalog-name column: "IN (...)" when the session
+/// has catalog_access rules (and the feature is licensed), otherwise
+/// "NOT IN (...)" naming the hidden system-managed catalogs, otherwise "" when
+/// nothing needs filtering.
+std::string GetCatalogVisibilityFilter(
+    const ClientSession& client_session,
+    duckdb::Connection& connection,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
+    const std::string& log_catalog = "");
+
+/// Build an SQL NOT IN clause for hidden catalogs, e.g. NOT IN ('_gizmosql_instr').
+std::string BuildCatalogFilterNotIN(const std::vector<std::string>& hidden_catalogs);
+
 /// Build an SQL IN clause for allowed catalogs.
 /// Returns e.g. IN ('production','staging','system','temp')
 /// Single quotes in catalog names are escaped by doubling.

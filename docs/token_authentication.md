@@ -292,7 +292,7 @@ The `catalog` field supports glob wildcards, similar to AWS IAM resource policie
 --catalog-access '[{"catalog": "prod_*", "access": "write"}, {"catalog": "analytics_*", "access": "read"}, {"catalog": "*", "access": "none"}]'
 ```
 
-> **Note:** The `_gizmosql_instr` instrumentation database has special protection: only admin users can read it, and no one can write to it via client connections (it's system-managed). Token-based `catalog_access` rules do not override this protection.
+> **Note:** The `_gizmosql_instr` instrumentation database (and the catalog-logging catalog, when enabled) has special protection: only admin users can read it, no one can write to it via client connections (it's system-managed), and it is **hidden** from every non-admin session in metadata listings (Flight SQL `GetCatalogs`/`GetDbSchemas`/`GetTables`, `duckdb_*()`, `information_schema`, `SHOW`), whether or not the token carries `catalog_access` rules. Token-based `catalog_access` rules do not override this protection.
 
 ### Metadata Visibility Filtering
 
