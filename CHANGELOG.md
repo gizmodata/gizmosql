@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.5] - 2026-09-11
+
 ### Security
 - System-managed catalogs (the instrumentation catalog and the catalog-logging
   catalog) are now hidden from every non-admin session in metadata listings,
