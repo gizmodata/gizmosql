@@ -123,15 +123,53 @@ SET GLOBAL gizmosql.max_concurrent_statements = 8;
 SET SESSION gizmosql.max_queue_wait = 30;
 ```
 
+## Startup-only parameters
+
+Some server settings are fixed when the server starts (CLI flag or environment
+variable) and cannot be changed with `SET`; a `SET` attempt fails with
+`... is fixed at server startup (--flag / ENV_VAR) and cannot be changed with SET`.
+They are still reported by `gizmosql_settings()` so clients can inspect them,
+with `scope = 'STARTUP'` and `settable = false`.
+
+| Parameter | Type | Default | CLI flag | Environment variable |
+|-----------|------|---------|----------|----------------------|
+| `gizmosql.max_sessions` | Integer | `0` (unlimited) | `--max-sessions` | `GIZMOSQL_MAX_SESSIONS` |
+| `gizmosql.session_idle_timeout` | Integer (seconds) | `0` (off) | `--session-idle-timeout` | `GIZMOSQL_SESSION_IDLE_TIMEOUT` |
+
+`session_idle_timeout` matters to long-lived clients such as the GizmoSQL MCP
+server or a connection pool: once a session is evicted, the next request on its
+token silently starts a fresh session with the server defaults, so a client
+that keeps a connection open should re-apply its session state (`USE`, `SET`)
+after an idle gap shorter than this value.
+
 ## Inspecting settings — `gizmosql_settings()`
 
 The `gizmosql_settings()` table function lists every `gizmosql.*` setting with its current effective value, session/global values, scope, default, and environment variable — the GizmoSQL analog of DuckDB's `duckdb_settings()`. It is composable like any relation:
 
 ```sql
-SELECT name, value, scope, env_var FROM gizmosql_settings();
+SELECT name, value, scope, settable, cli_flag, env_var FROM gizmosql_settings();
 
 SELECT name, value FROM gizmosql_settings() WHERE name LIKE 'gizmosql.max%';
+
+-- What a client can rely on the server to enforce, and whether it can change it
+SELECT name, value, settable FROM gizmosql_settings()
+WHERE name IN ('gizmosql.session_idle_timeout', 'gizmosql.max_sessions', 'gizmosql.query_timeout');
 ```
+
+| Column | Type | Meaning |
+|--------|------|---------|
+| `name` | VARCHAR | `gizmosql.<parameter>` |
+| `value` | VARCHAR | Effective value for this session: session override, else global, else default |
+| `session_value` | VARCHAR | This session's override, or NULL |
+| `global_value` | VARCHAR | Server-wide value, or NULL when the setting has no global scope |
+| `scope` | VARCHAR | `SESSION`, `GLOBAL`, `SESSION_OR_GLOBAL`, or `STARTUP` (fixed at launch) |
+| `settable` | BOOLEAN | `true` when `SET` (session or global) can change it while the server runs; `false` for `STARTUP` settings |
+| `cli_flag` | VARCHAR | Server flag that sets the startup/global default, or NULL |
+| `input_type` | VARCHAR | `INTEGER`, `BOOLEAN` or `VARCHAR` |
+| `default_value` | VARCHAR | Built-in default |
+| `env_var` | VARCHAR | Environment variable that sets the startup/global default, or NULL |
+| `enterprise` | BOOLEAN | Requires an Enterprise license feature |
+| `description` | VARCHAR | What the setting does |
 
 ## Scope and Precedence
 

@@ -283,6 +283,11 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   // Statement-queue admission controller (server-wide, shared across sessions).
   AdmissionController& GetAdmissionController();
 
+  // Session-capacity settings fixed at startup (--max-sessions /
+  // --session-idle-timeout); read-only at runtime, reported by gizmosql_settings().
+  int32_t GetMaxSessions() const;
+  int32_t GetSessionIdleTimeoutSeconds() const;
+
   // Interrupt the in-flight query on every active session (best-effort). Used by
   // the forced graceful-shutdown path (second signal / grace-period elapsed) so
   // synchronous query handlers unwind promptly instead of blocking the gRPC

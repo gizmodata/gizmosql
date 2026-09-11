@@ -257,3 +257,50 @@ TEST_F(MaxSessionsFixture, AdminBypassesCapAndKillFreesSlot) {
   CloseHeld(*c2);
   CloseHeld(*c3);
 }
+
+// gizmosql_settings() reports the startup-only session-capacity settings with
+// their live values, marks them non-settable, names the flag that sets them,
+// and SET refuses to change them.
+TEST_F(MaxSessionsFixture, StartupOnlySettingsAreVisibleButNotSettable) {
+  ASSERT_TRUE(IsServerReady());
+  auto admin = ConnectAndExecute(GetPort(), GetUsername(), GetPassword());
+  ASSERT_TRUE(admin.ok()) << admin.status().ToString();
+
+  // One cell of gizmosql_settings() for a setting, as a string.
+  auto expect_cell = [&](const std::string& name, const std::string& col,
+                         const std::string& expected) {
+    auto r = QueryScalarString(*admin, "SELECT CAST(" + col +
+                                           " AS VARCHAR) FROM gizmosql_settings() WHERE name = '" +
+                                           name + "'");
+    ASSERT_TRUE(r.ok()) << name << "." << col << ": " << r.status().ToString();
+    EXPECT_EQ(*r, expected) << name << "." << col;
+  };
+
+  // max_sessions: the fixture starts the server with 2.
+  expect_cell("gizmosql.max_sessions", "value", "2");
+  expect_cell("gizmosql.max_sessions", "scope", "STARTUP");
+  expect_cell("gizmosql.max_sessions", "settable", "false");
+  expect_cell("gizmosql.max_sessions", "cli_flag", "--max-sessions");
+  expect_cell("gizmosql.max_sessions", "env_var", "GIZMOSQL_MAX_SESSIONS");
+
+  // session_idle_timeout: not configured here, so the default 0 (off).
+  expect_cell("gizmosql.session_idle_timeout", "value", "0");
+  expect_cell("gizmosql.session_idle_timeout", "settable", "false");
+  expect_cell("gizmosql.session_idle_timeout", "cli_flag", "--session-idle-timeout");
+
+  // Runtime-adjustable settings say so.
+  expect_cell("gizmosql.query_timeout", "settable", "true");
+  expect_cell("gizmosql.query_timeout", "cli_flag", "--query-timeout");
+
+  // SET (any scope) on a startup-only setting is refused with a pointer to the flag.
+  for (const std::string sql : {"SET GLOBAL gizmosql.max_sessions = 5",
+                                "SET gizmosql.session_idle_timeout = 30"}) {
+    auto st = ExecuteOn(*admin, sql);
+    ASSERT_FALSE(st.ok()) << sql << " should be rejected";
+    EXPECT_NE(st.ToString().find("fixed at server startup"), std::string::npos) << st.ToString();
+    EXPECT_NE(st.ToString().find("--"), std::string::npos) << st.ToString();
+  }
+  expect_cell("gizmosql.max_sessions", "value", "2");
+
+  CloseHeld(*admin);
+}

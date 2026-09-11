@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `gizmosql_settings()` now reports the startup-only session-capacity
+  settings `gizmosql.max_sessions` and `gizmosql.session_idle_timeout`
+  (`--max-sessions` / `--session-idle-timeout`), so clients such as the
+  GizmoSQL MCP server can size their keepalive and idle handling from the
+  server's actual configuration. Two new columns say how a setting can be
+  changed: `settable` (BOOLEAN, `false` when only a restart with a different
+  flag changes it; `scope` then reads `STARTUP`) and `cli_flag`. `SET` on a
+  startup-only setting fails with a message naming the flag and environment
+  variable.
+
 ### Security
 - System-managed catalogs (the instrumentation catalog and the catalog-logging
   catalog) are now hidden from every non-admin session in metadata listings,

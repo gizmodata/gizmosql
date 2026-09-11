@@ -2475,6 +2475,8 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   AdmissionController& GetAdmissionController() { return admission_controller_; }
+  int32_t GetMaxSessions() const { return max_sessions_; }
+  int32_t GetSessionIdleTimeoutSeconds() const { return session_idle_timeout_seconds_; }
 };
 
 Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
@@ -2855,6 +2857,12 @@ Result<int32_t> DuckDBFlightSqlServer::GetQueryTimeout(
 
 AdmissionController& DuckDBFlightSqlServer::GetAdmissionController() {
   return impl_->GetAdmissionController();
+}
+
+int32_t DuckDBFlightSqlServer::GetMaxSessions() const { return impl_->GetMaxSessions(); }
+
+int32_t DuckDBFlightSqlServer::GetSessionIdleTimeoutSeconds() const {
+  return impl_->GetSessionIdleTimeoutSeconds();
 }
 
 Status DuckDBFlightSqlServer::SetPrintQueries(

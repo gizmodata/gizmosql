@@ -1224,7 +1224,9 @@ namespace {
 // SettingsRegistry::Apply(), which centralizes the cross-cutting checks:
 // unknown-name, enterprise license, scope validity, and the admin gate for
 // GLOBAL writes. Adding a setting = one descriptor.
-enum class SetScopeKind { kSessionOnly, kGlobalOnly, kSessionOrGlobal };
+// kStartupOnly: fixed by a CLI flag / environment variable when the server
+// starts; reported by gizmosql_settings() (settable = false) but never SET-able.
+enum class SetScopeKind { kSessionOnly, kGlobalOnly, kSessionOrGlobal, kStartupOnly };
 
 struct GizmoSetting {
   std::string name;
@@ -1233,6 +1235,7 @@ struct GizmoSetting {
   const char* enterprise_feature = nullptr;  // mirrors enterprise::kFeature* values
   std::string input_type;                    // INTEGER / BOOLEAN / VARCHAR (display)
   std::string env_var;                       // "" if none
+  std::string cli_flag;                      // "--flag" if none
   std::string default_value;
   std::string description;
   // Value accessors for gizmosql_settings() (canonical strings; nullopt = unset /
@@ -1290,6 +1293,14 @@ class SettingsRegistry {
     const GizmoSetting* d = Find(name);
     if (!d) {
       return arrow::Status::Invalid("Unknown GizmoSQL configuration parameter: " + name);
+    }
+    if (d->scope == SetScopeKind::kStartupOnly) {
+      std::string how;
+      if (!d->cli_flag.empty()) how += d->cli_flag;
+      if (!d->env_var.empty()) how += (how.empty() ? "" : " / ") + d->env_var;
+      return arrow::Status::Invalid(d->name + " is fixed at server startup" +
+                                    (how.empty() ? "" : " (" + how + ")") +
+                                    " and cannot be changed with SET");
     }
 
     // Enterprise license gate (centralized).
@@ -1349,6 +1360,7 @@ SettingsRegistry::SettingsRegistry() {
       .scope = SetScopeKind::kSessionOrGlobal,
       .input_type = "INTEGER",
       .env_var = "GIZMOSQL_QUERY_TIMEOUT",
+      .cli_flag = "--query-timeout",
       .default_value = "0",
       .description = "Per-statement timeout in seconds (0 = no timeout).",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
@@ -1377,6 +1389,7 @@ SettingsRegistry::SettingsRegistry() {
       .scope = SetScopeKind::kSessionOrGlobal,
       .input_type = "VARCHAR",
       .env_var = "GIZMOSQL_QUERY_LOG_LEVEL",
+      .cli_flag = "--query-log-level",
       .default_value = "INFO",
       .description = "Query-execution log level (DEBUG/INFO/WARNING/ERROR).",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
@@ -1417,6 +1430,7 @@ SettingsRegistry::SettingsRegistry() {
       .enterprise_feature = "instrumentation",
       .input_type = "VARCHAR",
       .env_var = "GIZMOSQL_CAPTURE_QUERY_PROFILE",
+      .cli_flag = "--capture-query-profile",
       .default_value = "off",
       .description =
           "Capture DuckDB query profiles into instrumentation "
@@ -1526,6 +1540,7 @@ SettingsRegistry::SettingsRegistry() {
       .enterprise_feature = "statement_queue",
       .input_type = "INTEGER",
       .env_var = "GIZMOSQL_MAX_CONCURRENT_STATEMENTS",
+      .cli_flag = "--max-concurrent-statements",
       .default_value = "0",
       .description = "Max concurrently executing statements (0 = unlimited).",
       .get_global = [](DuckDBFlightSqlServer& srv,
@@ -1548,6 +1563,7 @@ SettingsRegistry::SettingsRegistry() {
       .enterprise_feature = "statement_queue",
       .input_type = "INTEGER",
       .env_var = "GIZMOSQL_MAX_QUEUED_STATEMENTS",
+      .cli_flag = "--max-queued-statements",
       .default_value = "0",
       .description = "Max statements that may wait for a slot (0 = unbounded).",
       .get_global = [](DuckDBFlightSqlServer& srv,
@@ -1569,6 +1585,7 @@ SettingsRegistry::SettingsRegistry() {
       .enterprise_feature = "statement_queue",
       .input_type = "INTEGER",
       .env_var = "GIZMOSQL_MAX_QUEUE_WAIT",
+      .cli_flag = "--max-queue-wait",
       .default_value = "300",
       .description =
           "Seconds a statement may wait in the queue before rejection (0 = forever).",
@@ -1599,6 +1616,7 @@ SettingsRegistry::SettingsRegistry() {
       .scope = SetScopeKind::kGlobalOnly,
       .input_type = "BOOLEAN",
       .env_var = "GIZMOSQL_GRACEFUL_SHUTDOWN",
+      .cli_flag = "--graceful-shutdown",
       .default_value = "false",
       .description =
           "Drain in-flight queries on SIGINT/SIGTERM instead of stopping "
@@ -1621,6 +1639,7 @@ SettingsRegistry::SettingsRegistry() {
       .scope = SetScopeKind::kGlobalOnly,
       .input_type = "INTEGER",
       .env_var = "GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS",
+      .cli_flag = "--shutdown-grace-period-seconds",
       .default_value = "300",
       .description =
           "Max seconds to wait for in-flight queries to drain during graceful "
@@ -1641,6 +1660,42 @@ SettingsRegistry::SettingsRegistry() {
       },
   });
 
+  // Startup-only session-capacity settings: visible so clients (the MCP
+  // server, connection pools) can size their own idle/keepalive behaviour,
+  // but changeable only by restarting with a different flag.
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.max_sessions",
+      .scope = SetScopeKind::kStartupOnly,
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_MAX_SESSIONS",
+      .cli_flag = "--max-sessions",
+      .default_value = "0",
+      .description =
+          "Max concurrent non-admin client sessions; new ones are rejected with "
+          "UNAVAILABLE at the cap (0 = unlimited). Fixed at startup.",
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(std::to_string(srv.GetMaxSessions()));
+      },
+  });
+
+  settings_.push_back(GizmoSetting{
+      .name = "gizmosql.session_idle_timeout",
+      .scope = SetScopeKind::kStartupOnly,
+      .input_type = "INTEGER",
+      .env_var = "GIZMOSQL_SESSION_IDLE_TIMEOUT",
+      .cli_flag = "--session-idle-timeout",
+      .default_value = "0",
+      .description =
+          "Seconds without user SQL after which a client session is evicted; the "
+          "next request on its token starts a fresh session with server defaults "
+          "(0 = off). Fixed at startup.",
+      .get_global = [](DuckDBFlightSqlServer& srv,
+                       const ClientSession&) -> std::optional<std::string> {
+        return std::optional(std::to_string(srv.GetSessionIdleTimeoutSeconds()));
+      },
+  });
+
   for (size_t i = 0; i < settings_.size(); ++i) {
     by_name_[settings_[i].name] = i;
   }
@@ -1654,6 +1709,8 @@ const char* ScopeToString(SetScopeKind scope) {
       return "GLOBAL";
     case SetScopeKind::kSessionOrGlobal:
       return "SESSION_OR_GLOBAL";
+    case SetScopeKind::kStartupOnly:
+      return "STARTUP";
   }
   return "";
 }
@@ -1668,8 +1725,8 @@ std::string BuildGizmoSettingsValues(const ClientSession& session,
                                      duckdb::vector<duckdb::Value>& binds) {
   static constexpr const char* kRow =
       "(CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),"
-      "CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS VARCHAR),"
-      "CAST(? AS BOOLEAN),CAST(? AS VARCHAR))";
+      "CAST(? AS VARCHAR),CAST(? AS BOOLEAN),CAST(? AS VARCHAR),CAST(? AS VARCHAR),"
+      "CAST(? AS VARCHAR),CAST(? AS VARCHAR),CAST(? AS BOOLEAN),CAST(? AS VARCHAR))";
 
   auto push = [&](const std::string& v) { binds.push_back(duckdb::Value(v)); };
   auto push_opt = [&](const std::optional<std::string>& v) {
@@ -1690,6 +1747,10 @@ std::string BuildGizmoSettingsValues(const ClientSession& session,
     push_opt(sess);                // session_value
     push_opt(glob);                // global_value
     push(ScopeToString(d.scope));  // scope
+    // settable: can SET (SESSION or GLOBAL) change it while the server runs?
+    binds.push_back(duckdb::Value::BOOLEAN(d.scope != SetScopeKind::kStartupOnly));
+    push_opt(d.cli_flag.empty() ? std::optional<std::string>()
+                                : std::optional<std::string>(d.cli_flag));  // cli_flag
     push(d.input_type);            // input_type
     push(d.default_value);         // default_value
     push_opt(d.env_var.empty() ? std::optional<std::string>()
@@ -1703,7 +1764,7 @@ std::string BuildGizmoSettingsValues(const ClientSession& session,
 
   return "(VALUES " + rows +
          ") AS gizmosql_settings(name, value, session_value, global_value, scope, "
-         "input_type, default_value, env_var, enterprise, description)";
+         "settable, cli_flag, input_type, default_value, env_var, enterprise, description)";
 }
 
 // Case-insensitively replace each "gizmosql_settings()" token with the
