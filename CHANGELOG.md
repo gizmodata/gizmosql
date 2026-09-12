@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot enforce, matching the existing unlicensed Enterprise behavior.
 
 ### Fixed
+- Metrics floating-point counters work on the older Apple libc++ used by macOS
+  CI through atomic compare/exchange, without introducing a shared mutex.
+- Integration CI pulls the pinned MinIO test images from Quay after Docker Hub
+  stopped serving the existing image references.
 - Queued statements honor client cancellation and deadlines before acquiring a
   slot, preventing an abandoned eager write from starting later.
 - Successful `KILL SESSION` commands no longer enqueue duplicate instrumentation

@@ -1,9 +1,28 @@
 // Licensed under the Apache License, Version 2.0.
 #include <gtest/gtest.h>
 #include <cmath>
+#include <thread>
 #include "enterprise/metrics/metrics_registry.h"
 #include "enterprise/enterprise_features.h"
 using namespace gizmosql::enterprise;
+
+TEST(MetricsRegistryTest, FloatingPointUpdatesAreAtomicUnderContention) {
+  AtomicMetricValue value;
+  std::vector<std::thread> workers;
+  for (int worker = 0; worker < 8; ++worker) {
+    workers.emplace_back([&] {
+      for (int i = 0; i < 10000; ++i) {
+        value.fetch_add(.5);
+        value.fetch_sub(.25);
+      }
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  EXPECT_EQ(value.load(), 20000);
+  value.store(NAN);
+  EXPECT_TRUE(std::isnan(value.fetch_add(1)));
+  EXPECT_TRUE(std::isnan(value.load()));
+}
 
 TEST(MetricsRegistryTest, HistogramsAreCumulativeAndCountEveryOutcome) {
   MetricsRegistry registry;

@@ -726,7 +726,7 @@ jobs:
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
 
           # Wait for MinIO to be ready
           for i in {1..30}; do
@@ -737,7 +737,7 @@ jobs:
 
           # Create the bucket with the mc image (no host install)
           docker run --rm --network host --entrypoint /bin/sh \
-            minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
+            quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
             "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb --ignore-existing myminio/instrumentation"
 
       - name: Run Tests (Unlicensed Enterprise Build)

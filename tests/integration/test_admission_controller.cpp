@@ -381,7 +381,7 @@ TEST(AdmissionControllerTest, PolledAbortDoesNotNeedWakeOrSlotRelease) {
   controller.SetLimit(1);
   auto held = AcquireOk(controller);
   std::atomic<bool> abort{false}, done{false}, cancelled{false};
-  std::jthread waiter([&] {
+  std::thread waiter([&] {
     auto result = controller.Acquire(
         true, 5, [&] { return abort.load(); }, std::chrono::milliseconds(20));
     cancelled.store(!result.ok() && result.status().IsCancelled());
@@ -393,4 +393,5 @@ TEST(AdmissionControllerTest, PolledAbortDoesNotNeedWakeOrSlotRelease) {
   EXPECT_TRUE(cancelled.load());
   EXPECT_EQ(controller.QueuedCount(), 0);
   EXPECT_EQ(controller.ActiveCount(), 1);
+  waiter.join();
 }

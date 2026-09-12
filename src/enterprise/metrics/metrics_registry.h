@@ -12,6 +12,32 @@
 #include <duckdb/common/enums/statement_type.hpp>
 
 namespace gizmosql::enterprise {
+// Older Apple libc++ supports atomic<double> load/store/CAS but not the C++20
+// floating-point fetch_add extension. Preserve atomic updates without a mutex.
+class AtomicMetricValue {
+ public:
+  explicit AtomicMetricValue(double value = 0) : value_(value) {}
+  double load(std::memory_order order = std::memory_order_relaxed) const {
+    return value_.load(order);
+  }
+  void store(double value, std::memory_order order = std::memory_order_relaxed) {
+    value_.store(value, order);
+  }
+  double fetch_add(double delta, std::memory_order order = std::memory_order_relaxed) {
+    double previous = value_.load(std::memory_order_relaxed);
+    while (!value_.compare_exchange_weak(previous, previous + delta, order,
+                                         std::memory_order_relaxed)) {
+    }
+    return previous;
+  }
+  double fetch_sub(double delta, std::memory_order order = std::memory_order_relaxed) {
+    return fetch_add(-delta, order);
+  }
+
+ private:
+  std::atomic<double> value_;
+};
+
 using MetricLabels = std::map<std::string, std::string>;
 struct MetricSample {
   std::string name, kind;
@@ -38,7 +64,7 @@ class MetricsRegistry {
   struct Series {
     std::string name, kind, help;
     MetricLabels labels;
-    std::atomic<double> value{0};
+    AtomicMetricValue value{0};
   };
   // Registration happens before the registry is published to query threads.
   MetricsRegistry();
@@ -55,7 +81,7 @@ class MetricsRegistry {
  private:
   struct Histogram {
     std::array<std::atomic<uint64_t>, 15> buckets{};
-    std::atomic<double> sum{0};
+    AtomicMetricValue sum{0};
     void Observe(double seconds);
   };
   static constexpr std::array<double, 14> kBounds{.005, .01, .025, .05, .1, .25, .5,
