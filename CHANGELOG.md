@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Contributor guide covering local quality checks, tests, and SQL binding, plus
+  a proposed contributor agreement and required-CLA rollout instructions.
+- CI formatting and script lint gates, pinned local quality tools, and clang-tidy
+  checks against both DuckDB channels. Source and test changes trigger builds.
+- Enterprise metrics, licensed through the new `metrics` feature: a Prometheus
+  HTTP endpoint and `gizmosql_metrics()` SQL table function sharing one registry.
+  Background collection keeps DuckDB and process measurements off the query path.
+
+### Security
+- Core edition rejects external tokens containing catalog access restrictions it
+  cannot enforce, matching the existing unlicensed Enterprise behavior.
+
+### Fixed
+- Queued statements honor client cancellation and deadlines before acquiring a
+  slot, preventing an abandoned eager write from starting later.
+- Successful `KILL SESSION` commands no longer enqueue duplicate instrumentation
+  statement records.
+- SQLite reports NULL parameter binding failures instead of ignoring them.
+- CLI tags and table metadata correctly quote embedded quotes. Table row counts
+  use fully qualified identifiers and distinguish names shared across catalogs.
+- The CLI joins its signal watcher before destroying the connection, synchronizes
+  cancellation with disconnect, and bounds cancellation/session-close RPCs.
+  SIGTERM no longer invokes unsafe gRPC cleanup from an asynchronous signal handler.
+- Reinitializing the library without a valid license clears previous Enterprise
+  entitlements, so a later server cannot inherit an earlier server's license.
+- DuckDB DDL/DML without a result set executes during GetFlightInfo. Fetching
+  the resulting execution ticket replays the cached result instead of repeating
+  the write. Reusing a prepared statement creates a distinct execution each time.
+- Prepared DDL/DML advertises an empty dataset schema, allowing Flight SQL JDBC
+  clients to select the update RPC and report affected-row counts correctly.
+
 ## [1.38.5] - 2026-09-11
 
 ### Changed

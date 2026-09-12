@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -98,6 +99,9 @@ class FlightConnection {
   // cancel watcher thread. Using the main client_ concurrently is not safe.
   std::unique_ptr<arrow::flight::FlightClient> cancel_client_;
   arrow::flight::FlightCallOptions cancel_call_options_;
+  // Only cancellation and connection lifecycle take this per-client lock.
+  // Query execution and result streaming never acquire it.
+  std::mutex cancel_mutex_;
 
   std::atomic<bool> cancel_requested_{false};
 };

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -178,11 +179,14 @@ class AdmissionController {
   /// slot it will never use. A cancelled acquire returns arrow::StatusCode::Cancelled
   /// and holds no slot. The predicate runs while the internal mutex is held, so it
   /// must be cheap and must not call back into the controller.
+  /// A positive abort_poll_interval also rechecks cancellation without an external
+  /// WakeWaiters(), for transports which expose cancellation only through polling.
   ///
   /// Waiters are admitted in strict FIFO order. The returned handle releases its
   /// slot on destruction (RAII); hold it for the full duration of execution.
-  arrow::Result<AdmissionSlot> Acquire(bool enforce, int32_t max_queue_wait_seconds,
-                                       std::function<bool()> is_aborted = {}) {
+  arrow::Result<AdmissionSlot> Acquire(
+      bool enforce, int32_t max_queue_wait_seconds, std::function<bool()> is_aborted = {},
+      std::chrono::milliseconds abort_poll_interval = std::chrono::milliseconds::zero()) {
     if (!enforce) return AdmissionSlot{};
 
     std::unique_lock<std::mutex> lock(mutex_);
@@ -224,7 +228,19 @@ class AdmissionController {
     };
 
     bool signaled;
-    if (max_queue_wait_seconds <= 0) {
+    if (is_aborted && abort_poll_interval > std::chrono::milliseconds::zero()) {
+      const auto deadline = max_queue_wait_seconds > 0
+                                ? std::chrono::steady_clock::now() +
+                                      std::chrono::seconds(max_queue_wait_seconds)
+                                : std::chrono::steady_clock::time_point::max();
+      signaled = done();
+      while (!signaled && std::chrono::steady_clock::now() < deadline) {
+        signaled = self.cv.wait_until(
+            lock,
+            std::min(deadline, std::chrono::steady_clock::now() + abort_poll_interval),
+            done);
+      }
+    } else if (max_queue_wait_seconds <= 0) {
       self.cv.wait(lock, done);
       signaled = true;
     } else {
@@ -290,8 +306,7 @@ class AdmissionController {
   // caller map it to a Flight CANCELLED, separate from the UNAVAILABLE used for
   // queue-full / wait-timeout rejections.
   static arrow::Status AbortedStatus() {
-    return arrow::Status::Cancelled(
-        "Statement cancelled while queued (session was killed)");
+    return arrow::Status::Cancelled("Statement cancelled while queued");
   }
 
   /// Hand free capacity to the oldest waiters, in FIFO order, until the limit is

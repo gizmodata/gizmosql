@@ -53,6 +53,9 @@ markdown_extensions:
 exclude_docs: |
   VIEW_DOCS_LOCALLY.md
   websocket-migration-plan.md
+  code_quality.md
+  cla_administration.md
+  release-validation/
 
 # Redirects legacy Docsify hash URLs (e.g. /#/quickstart) to real page URLs
 extra_javascript:
@@ -81,6 +84,8 @@ nav:
       - DuckLake Integration: ducklake.md
       - Geometry & Spatial: geometry.md
   - Features:
+      - Eager DDL/DML Execution: eager_execution.md
+      - Prometheus Metrics (Enterprise): monitoring.md
       - SET Commands: set_commands.md
       - Session Instrumentation (Enterprise): session_instrumentation.md
       - Catalog Logging (Enterprise): catalog_logging.md
@@ -95,6 +100,7 @@ nav:
   - Additional Resources:
       - One Trillion Row Challenge: one_trillion_row_challenge.md
   - Links:
+      - Contributing: https://github.com/gizmodata/gizmosql/blob/main/CONTRIBUTING.md
       - GitHub: https://github.com/gizmodata/gizmosql
       - Docker Hub: https://hub.docker.com/r/gizmodata/gizmosql
       - GizmoData™: https://gizmodata.com

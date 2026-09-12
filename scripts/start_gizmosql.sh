@@ -30,6 +30,10 @@
 #   GIZMOSQL_HEALTH_CHECK_INTERVAL_SECONDS   --health-check-interval-seconds (default 5)
 #   GIZMOSQL_HEALTH_CHECK_STALENESS_SECONDS  --health-check-staleness-seconds (default 3x interval)
 #   GIZMOSQL_ENABLE_INSTRUMENTATION  --enable-instrumentation
+# GIZMOSQL_ENABLE_METRICS       Enable licensed Enterprise metrics (default: false).
+# GIZMOSQL_METRICS_PORT         Metrics HTTP port (default: 9091; 0 disables HTTP only).
+# GIZMOSQL_METRICS_BIND_ADDRESS Metrics bind address (default: 0.0.0.0; no auth/TLS).
+
 #   GIZMOSQL_INSTRUMENTATION_DB_PATH --instrumentation-db-path
 #   GIZMOSQL_INSTRUMENTATION_CATALOG --instrumentation-catalog
 #   GIZMOSQL_INSTRUMENTATION_SCHEMA  --instrumentation-schema

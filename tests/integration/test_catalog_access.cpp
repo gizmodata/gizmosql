@@ -33,13 +33,29 @@
 #include "arrow/testing/gtest_util.h"
 #include "test_util.h"
 #include "test_server_fixture.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/enterprise_features.h"
+#endif
 
 using arrow::flight::sql::FlightSqlClient;
 
 // Helper to check if enterprise license is available for catalog_permissions tests
 bool HasEnterpriseLicense() {
-  const char* license_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
-  return license_file != nullptr && license_file[0] != '\0';
+#ifdef GIZMOSQL_ENTERPRISE
+  return gizmosql::enterprise::EnterpriseFeatures::Instance()
+      .IsCatalogPermissionsAvailable();
+#else
+  return false;
+#endif
+}
+
+bool HasInstrumentationLicense() {
+#ifdef GIZMOSQL_ENTERPRISE
+  return gizmosql::enterprise::EnterpriseFeatures::Instance()
+      .IsInstrumentationAvailable();
+#else
+  return false;
+#endif
 }
 
 // Macro to skip tests that require enterprise catalog_permissions feature
@@ -197,6 +213,7 @@ TEST_F(CatalogAccessServerFixture, SystemUserHasFullAccess) {
 }
 
 TEST_F(CatalogAccessServerFixture, SystemUserCanReadInstrumentation) {
+  if (!HasInstrumentationLicense()) GTEST_SKIP() << "Requires licensed instrumentation";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -218,6 +235,7 @@ TEST_F(CatalogAccessServerFixture, SystemUserCanReadInstrumentation) {
 }
 
 TEST_F(CatalogAccessServerFixture, SystemUserCannotWriteInstrumentation) {
+  if (!HasInstrumentationLicense()) GTEST_SKIP() << "Requires licensed instrumentation";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   arrow::flight::FlightClientOptions options;
@@ -435,6 +453,7 @@ TEST_F(CatalogAccessServerFixture, FirstMatchWinsWildcardDeniesSpecificAfter) {
 // ============================================================================
 
 TEST_F(CatalogAccessServerFixture, NonAdminCannotReadInstrumentation) {
+  if (!HasInstrumentationLicense()) GTEST_SKIP() << "Requires licensed instrumentation";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create a token with user role (non-admin) and full wildcard access
@@ -453,6 +472,7 @@ TEST_F(CatalogAccessServerFixture, NonAdminCannotReadInstrumentation) {
 }
 
 TEST_F(CatalogAccessServerFixture, AdminCanReadInstrumentationWithToken) {
+  if (!HasInstrumentationLicense()) GTEST_SKIP() << "Requires licensed instrumentation";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create a token with admin role
@@ -468,6 +488,7 @@ TEST_F(CatalogAccessServerFixture, AdminCanReadInstrumentationWithToken) {
 }
 
 TEST_F(CatalogAccessServerFixture, AdminCannotWriteInstrumentationWithToken) {
+  if (!HasInstrumentationLicense()) GTEST_SKIP() << "Requires licensed instrumentation";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create a token with admin role and full wildcard write access
@@ -485,6 +506,7 @@ TEST_F(CatalogAccessServerFixture, AdminCannotWriteInstrumentationWithToken) {
 }
 
 TEST_F(CatalogAccessServerFixture, InstrumentationProtectionIgnoresTokenRules) {
+  if (!HasInstrumentationLicense()) GTEST_SKIP() << "Requires licensed instrumentation";
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
   // Create a token with explicit write access to instrumentation catalog

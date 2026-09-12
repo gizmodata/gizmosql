@@ -87,6 +87,12 @@ class DuckDBStatement {
       bool is_internal = false);
 
   ~DuckDBStatement();
+#ifdef GIZMOSQL_ENTERPRISE
+  std::shared_ptr<gizmosql::enterprise::MetricsRegistry> GetMetricsRegistry() const {
+    auto session = is_internal_ ? nullptr : client_session_.lock();
+    return session ? session->metrics : nullptr;
+  }
+#endif
 
   /// \brief Creates an Arrow Schema based on the results of this statement.
   /// \return              The resulting Schema.
@@ -97,6 +103,12 @@ class DuckDBStatement {
   /// VARCHAR for those columns until Execute() has run with bound parameters,
   /// after which it returns the real schema of the result.
   bool HasUnresolvedSchema() const { return schema_unresolved_; }
+
+  /// True only for fully bound DDL/DML with no user result set.
+  bool ShouldExecuteEagerly() const;
+
+  // Serializes prepared bind/update/GetFlightInfo operations.
+  std::mutex execution_mutex;
 
   arrow::Result<int> Execute();
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();
@@ -114,6 +126,9 @@ class DuckDBStatement {
   void SetCallContext(const arrow::flight::ServerCallContext* context) {
     call_context_ = context;
   }
+
+  /// Set display severity only; the independent query-log threshold still applies.
+  void SetExecutionLogLevel(arrow::util::ArrowLogLevel level) { log_level_ = level; }
 
   std::shared_ptr<duckdb::PreparedStatement> GetDuckDBStmt() const;
 
@@ -135,6 +150,12 @@ class DuckDBStatement {
 #endif
 
  private:
+  static arrow::Result<std::shared_ptr<DuckDBStatement>> CreateImpl(
+      const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
+      const std::string& sql, const std::optional<arrow::util::ArrowLogLevel>& log_level,
+      const bool& log_queries, const std::shared_ptr<arrow::Schema>& override_schema,
+      const std::string& flight_method, bool is_internal);
+  arrow::Result<int> ExecuteImpl();
 #ifdef GIZMOSQL_ENTERPRISE
   std::unique_ptr<StatementInstrumentation> instrumentation_;
   std::unique_ptr<ExecutionInstrumentation> execution_instrumentation_;

@@ -586,7 +586,6 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
                         .with_issuer(std::string(token_allowed_issuer_))
                         .with_audience(token_allowed_audience_);
 
-    bool verified_via_jwks = false;
 
 #ifdef GIZMOSQL_ENTERPRISE
     if (jwks_manager_) {
@@ -642,7 +641,6 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
         return Status::Invalid("Unsupported JWT algorithm: " + alg);
       }
 
-      verified_via_jwks = true;
     } else
 #endif
     if (!token_signature_verify_cert_file_contents_.empty()) {
@@ -668,10 +666,15 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
       }
     }
 
-#ifdef GIZMOSQL_ENTERPRISE
     // Check if token has catalog_access claim - this requires enterprise license
     if (decoded.has_payload_claim("catalog_access")) {
+#ifdef GIZMOSQL_ENTERPRISE
       if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+#else
+      // Core cannot enforce these restrictions. Reject rather than accepting a
+      // restricted external identity with unrestricted catalog access.
+      {
+#endif
         GIZMOSQL_LOGKV(WARNING,
                        "peer=" + context.peer() +
                            " - Bootstrap Token contains 'catalog_access' claim but "
@@ -685,7 +688,6 @@ BasicAuthServerMiddlewareFactory::VerifyAndDecodeBootstrapToken(
             "Please obtain an Enterprise license or remove the catalog_access claim from your token.");
       }
     }
-#endif
 
     // Determine the role: from token claim or default
     std::string role = decoded.has_payload_claim("role")

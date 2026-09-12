@@ -36,6 +36,7 @@
 #include "arrow/testing/gtest_util.h"
 #include "test_util.h"
 #include "test_server_fixture.h"
+#include "duckdb_server.h"
 
 using arrow::flight::sql::FlightSqlClient;
 
@@ -187,7 +188,8 @@ void HoldSlot(int port, std::string user, std::string password, int ms) {
   auto ac = ConnectAdmin(port, user, password);
   if (!ac.ok()) return;
   if (!RunStatement(*ac, "SET SESSION gizmosql.bypass_queue = false").ok()) return;
-  RunStatement(*ac, "SELECT sleep_ms(" + std::to_string(ms) + ")");
+  auto status = RunStatement(*ac, "SELECT sleep_ms(" + std::to_string(ms) + ")");
+  EXPECT_TRUE(status.ok()) << status.ToString();
 }
 
 // True if DuckDB's sleep_ms() is available AND actually blocks on this build.
@@ -405,4 +407,42 @@ TEST_F(StatementQueueServerFixture, KilledWhileQueuedRecordsCancelled) {
   }
   EXPECT_TRUE(cancelled_recorded)
       << "a statement killed while queued should be recorded as 'cancelled'";
+}
+
+TEST_F(StatementQueueServerFixture, ExpiredQueuedWriteNeverExecutesAfterSlotRelease) {
+  SKIP_IF_NO_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  ASSERT_ARROW_OK_AND_ASSIGN(auto admin,
+                             ConnectAdmin(GetPort(), GetUsername(), GetPassword()));
+  ASSERT_OK(RunStatement(admin, "CREATE OR REPLACE TABLE cancelled_queue_write(n INT)"));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto writer,
+                             ConnectAdmin(GetPort(), GetUsername(), GetPassword()));
+  ASSERT_OK(RunStatement(writer, "SET SESSION gizmosql.bypass_queue = false"));
+  auto server = std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server_);
+  ASSERT_TRUE(server);
+  auto& controller = server->GetAdmissionController();
+  // Reserve both slots directly so this test needs no slow or CPU-heavy query.
+  ASSERT_ARROW_OK_AND_ASSIGN(auto first, controller.Acquire(true, 1));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto second, controller.Acquire(true, 1));
+  writer.call_options.timeout = std::chrono::milliseconds(150);
+  auto result = writer.sql_client->Execute(
+      writer.call_options, "INSERT INTO cancelled_queue_write VALUES (42)");
+  EXPECT_FALSE(result.ok());
+  EXPECT_TRUE(WaitFor([&] { return controller.QueuedCount() == 0; },
+                      std::chrono::milliseconds(1000)));
+  first = gizmosql::AdmissionSlot{};
+  second = gizmosql::AdmissionSlot{};
+  ASSERT_TRUE(WaitFor([&] { return controller.ActiveCount() == 0; }));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info, admin.sql_client->Execute(admin.call_options,
+                                           "SELECT count(*) FROM cancelled_queue_write"));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto stream,
+      admin.sql_client->DoGet(admin.call_options, info->endpoints()[0].ticket));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, stream->ToTable());
+  ASSERT_EQ(table->num_rows(), 1);
+  EXPECT_EQ(
+      std::static_pointer_cast<arrow::Int64Array>(table->column(0)->chunk(0))->Value(0),
+      0);
+  ASSERT_OK(RunStatement(admin, "DROP TABLE cancelled_queue_write"));
 }

@@ -169,6 +169,7 @@ std::string LicenseManager::FormatLicenseForDisplay(const LicenseInfo& license) 
       {kFeatureCatalogPermissions, "Catalog Permissions"},
       {kFeatureExternalAuth, "SSO/OAuth (External Auth)"},
       {kFeatureStatementQueue, "Statement Queue"},
+      {kFeatureMetrics, "Metrics"},
   };
 
   oss << "GizmoSQL Enterprise Edition - Copyright (c) 2026 GizmoData LLC\n";

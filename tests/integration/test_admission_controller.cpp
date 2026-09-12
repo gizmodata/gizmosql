@@ -375,3 +375,22 @@ TEST(AdmissionControllerTest, AbortBeforeQueuingReturnsCancelled) {
   EXPECT_EQ(controller.QueuedCount(), 0);
   EXPECT_EQ(controller.ActiveCount(), 1);
 }
+
+TEST(AdmissionControllerTest, PolledAbortDoesNotNeedWakeOrSlotRelease) {
+  AdmissionController controller;
+  controller.SetLimit(1);
+  auto held = AcquireOk(controller);
+  std::atomic<bool> abort{false}, done{false}, cancelled{false};
+  std::jthread waiter([&] {
+    auto result = controller.Acquire(
+        true, 5, [&] { return abort.load(); }, std::chrono::milliseconds(20));
+    cancelled.store(!result.ok() && result.status().IsCancelled());
+    done.store(true);
+  });
+  EXPECT_TRUE(WaitFor([&] { return controller.QueuedCount() == 1; }));
+  abort.store(true);
+  EXPECT_TRUE(WaitFor([&] { return done.load(); }, std::chrono::milliseconds(500)));
+  EXPECT_TRUE(cancelled.load());
+  EXPECT_EQ(controller.QueuedCount(), 0);
+  EXPECT_EQ(controller.ActiveCount(), 1);
+}

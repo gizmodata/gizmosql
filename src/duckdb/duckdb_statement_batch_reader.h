@@ -42,6 +42,7 @@ public:
       const std::shared_ptr<arrow::Schema>& schema);
 
   std::shared_ptr<arrow::Schema> schema() const override;
+  ~DuckDBStatementBatchReader() override;
 
   arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* out) override;
 
@@ -51,6 +52,10 @@ private:
   int rc_;
   bool already_executed_;
   bool results_read_;
+#ifdef GIZMOSQL_ENTERPRISE
+  std::shared_ptr<gizmosql::enterprise::MetricsRegistry> metrics_;
+  bool metrics_sending_ = false;
+#endif
   // Counts this query's execution + result streaming as in-flight work for the
   // whole lifetime of the reader, so a graceful drain waits for it to finish.
   gizmosql::InFlightGuard inflight_guard_;
@@ -58,4 +63,4 @@ private:
   DuckDBStatementBatchReader(std::shared_ptr<DuckDBStatement> statement,
                              std::shared_ptr<arrow::Schema> schema);
 };
-} // namespace gizmosql::ddb
+}  // namespace gizmosql::ddb

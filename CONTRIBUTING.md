@@ -1,135 +1,204 @@
 # Contributing to GizmoSQL
 
-Thank you for your interest in contributing to GizmoSQL! This guide will help you get started with development.
+Use the same pinned quality tools as CI, add tests for changed behavior, and
+update the documentation and changelog before opening a pull request.
 
-## Prerequisites
+## Contributor License Agreement
 
-- CMake 3.20 or higher
-- C++17 compatible compiler (Clang, GCC, or MSVC)
-- Boost libraries (program_options)
-- OpenSSL 3.x
+GizmoData's contribution policy requires a signed CLA covering every human
+contributor represented in a PR before merge, including coauthors and any
+required employer authorization. Signing does not transfer your ownership;
+the agreement grants rights to use contributions in open-source and commercial
+GizmoData products.
 
-On macOS with Homebrew:
-```bash
-brew install cmake boost openssl@3
+**Rollout status:** the [proposed CLA](CLA.md) is a draft for legal review and
+is not yet open for signature. The signing service and required GitHub status
+check will be activated after approval. See the
+[administration guide](docs/cla_administration.md) for the activation checklist.
+Do not post private contact details or employer documents in public PR comments.
+
+## Set up formatting and linting
+
+Use Python 3.12 or newer. From the repository root:
+
+```sh
+python3 -m venv .venv-quality
+. .venv-quality/bin/activate
+python -m pip install -r scripts/quality-requirements.txt
 ```
 
-On Ubuntu/Debian:
-```bash
-sudo apt-get install cmake libboost-program-options-dev libssl-dev
+On Windows, activate with `.venv-quality\Scripts\Activate.ps1` in PowerShell.
+Use Git Bash to run the shell checks. Install ShellCheck separately:
+
+```sh
+# macOS
+brew install shellcheck
+
+# Debian / Ubuntu
+sudo apt-get install shellcheck
 ```
 
-## Building
+The requirements file pins clang-format, clang-tidy, and Ruff. Keep these
+versions in sync with CI; a different formatter version can produce a different
+result even with the same configuration.
 
-```bash
-# Clone the repository
-git clone https://github.com/gizmodata/gizmosql.git
-cd gizmosql
+## Format and lint your changes
 
-# Configure the build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+```sh
+# Apply C/C++ formatting using the existing .clang-format style.
+python scripts/check_quality.py format --fix
 
-# Build (use -j to parallelize)
-cmake --build build -j12
+# Apply safe Python lint fixes and Python formatting.
+# Shell errors are reported for you to fix manually.
+python scripts/check_quality.py lint --fix
+
+# Verify without modifying files.
+python scripts/check_quality.py format
+python scripts/check_quality.py lint
+git diff --check
 ```
 
-The first build will download and compile dependencies (Arrow, DuckDB, gRPC, etc.) which may take some time.
+By default these commands compare your working tree with `HEAD`, including
+untracked source files. **After committing, compare your whole branch with its
+base** so the check includes your committed changes:
 
-## Running the Server
-
-```bash
-# Start with an in-memory database
-./build/gizmosql_server --password mypassword
-
-# Start with a persistent database
-./build/gizmosql_server --database-filename mydb.db --password mypassword
-
-# See all options
-./build/gizmosql_server --help
+```sh
+python scripts/check_quality.py format --base origin/main
+python scripts/check_quality.py lint --base origin/main
 ```
 
-## Running Tests
+C/C++ formatting is limited to changed lines and their surrounding syntactic
+constructs. Python linting and formatting check complete changed files. Shell
+scripts receive Bash syntax checks and ShellCheck checks at error severity.
+Generated files and third-party sources are outside the check scope.
 
-### Integration Tests
+Use `--all` for a repository-wide audit. Existing files may have older formatting
+debt; keep unrelated mass-formatting changes out of a feature or bug-fix PR.
+Review the diff after any automatic fix.
 
-The integration tests start actual GizmoSQL server instances, so ensure ports 31337-31342 are available.
+## Build and run clang-tidy
 
-```bash
-# Run all integration tests
-./build/tests/gizmosql_integration_tests
+Build prerequisites include CMake 3.30 or newer, Ninja, a C++20 compiler,
+Boost.ProgramOptions, and OpenSSL 3.x. For example:
 
-# Run a specific test suite
-./build/tests/gizmosql_integration_tests --gtest_filter="InstrumentationServerFixture.*"
+```sh
+# macOS
+brew install cmake ninja boost openssl@3
 
-# Run a specific test
-./build/tests/gizmosql_integration_tests --gtest_filter="InstrumentationServerFixture.InstrumentationRecordsCreated"
-
-# List all available tests
-./build/tests/gizmosql_integration_tests --gtest_list_tests
-
-# Run with verbose output
-./build/tests/gizmosql_integration_tests --gtest_print_time=1
+# Debian / Ubuntu (use a compiler and CMake meeting the requirements above)
+sudo apt-get install build-essential cmake ninja-build libboost-program-options-dev libssl-dev
 ```
 
-### Test Suites
+The first build downloads and compiles Arrow, DuckDB, gRPC, and other dependencies
+and can take substantially longer than subsequent builds. Clang-tidy needs
+the real compiler options, generated headers, and dependency headers; running
+it on an isolated source file without that context is insufficient.
 
-| Suite | Description |
-|-------|-------------|
-| `BulkIngestServerFixture` | Tests for bulk data ingestion |
-| `GeoArrowServerFixture` | Tests for GeoArrow/GEOMETRY type support |
-| `InstrumentationServerFixture` | Tests for session instrumentation |
-| `InstrumentationManagerTest` | Tests for instrumentation manager internals |
-| `KillSessionServerFixture` | Tests for KILL SESSION functionality |
+```sh
+cmake -S . -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build build
 
-### Python Tests
+python scripts/check_quality.py tidy --jobs 3
+# For committed branch changes:
+python scripts/check_quality.py tidy --base origin/main --jobs 3
+```
 
-Python tests verify end-to-end functionality using ADBC (Arrow Database Connectivity).
+The `.clang-tidy` configuration focuses on correctness and selected concurrency
+checks. Enabled findings fail the check. Fix the cause; use a narrowly scoped
+`NOLINT(check-name)` with an explanation only for a verified false positive.
+Do not disable an entire check simply to make a PR pass.
 
-```bash
-# Install Python test dependencies
-pip install adbc-driver-gizmosql pyarrow geopandas shapely duckdb
+A changed header causes all project translation units to be analyzed, with
+diagnostics limited to changed lines. `--all` removes that diagnostic filter.
+Logs are written to `build/quality/`. See [Code quality checks](docs/code_quality.md)
+for implementation details and the documented check exclusions.
 
-# Start the server (in a separate terminal)
-./build/gizmosql_server --password gizmosql_password
+## Test behavior
 
-# Run all Python tests
+For manual testing, run `./build/gizmosql_server --password local_test_password`
+from the repository root; add `--database-filename local_test.duckdb` for a
+persistent database, or use `--help` to inspect startup options.
+
+Add integration coverage under `tests/integration/`, follow the CRTP fixture
+pattern in `test_server_fixture.h`, and register new test files in
+`tests/CMakeLists.txt`. Use unique ports and clean up test-owned databases.
+
+```sh
+cmake --build build --target gizmosql_integration_tests
+cd build
+./tests/gizmosql_integration_tests --gtest_filter='*YourFeature*'
+./tests/gizmosql_integration_tests
+```
+
+Some integration tests require PostgreSQL, MinIO, or an Enterprise test license.
+Check test output for skips and state which dependencies and licensed cases you
+actually exercised. Never commit license files, signing keys, credentials, or
+local `.env` files. Changes to Flight SQL execution should also exercise the
+released ADBC, JDBC, and ODBC clients, including prepared-statement reuse and
+transaction behavior.
+
+Python end-to-end tests also use released ADBC packages. Install their dependencies
+in a separate environment, start a test server, and run the relevant scripts:
+
+```sh
+python -m pip install adbc-driver-gizmosql pyarrow geopandas shapely duckdb
 python tests/test_geoarrow.py
 python tests/test_bulk_ingest.py
-
-# Run with custom connection settings
-GIZMOSQL_HOST=localhost \
-GIZMOSQL_PORT=31337 \
-GIZMOSQL_PASSWORD=gizmosql_password \
-python tests/test_geoarrow.py
-
-# Run with TLS enabled
-TLS_ENABLED=1 python tests/test_geoarrow.py
 ```
 
-| Test | Description |
-|------|-------------|
-| `test_geoarrow.py` | Tests GeoArrow/GEOMETRY export and GeoPandas integration |
-| `test_bulk_ingest.py` | Tests ADBC bulk ingestion with TPC-H data |
+Use the connection environment variables documented in each script. The
+additional driver compatibility tests under `tests/drivers/` document their
+artifact paths and configuration at the top of each file.
 
-## Code Style
+For concurrency changes, test cancellation and shutdown as well as successful
+requests. Keep locks scoped to the affected session or object and keep network
+I/O and expensive work outside shared locks wherever possible. Formatting and
+static analysis supplement runtime testing; they do not prove race freedom.
 
-- Use `clang-format` for C++ code formatting
-- Follow existing code conventions in the repository
-- Add tests for new functionality
+## Construct SQL safely
 
-## Pull Requests
+**Bind data values instead of concatenating them into SQL.** For example, the
+DuckDB C++ connection accepts explicitly typed parameter values:
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Make your changes
-4. Run the tests to ensure they pass
-5. Commit your changes with a descriptive message
-6. Push to your fork and open a pull request
+```cpp
+auto result = connection.Query(
+    "SELECT * FROM postgres_query(?, 'SELECT 1')", duckdb::Value(catalog_name));
+```
 
-## Reporting Issues
+Use the relevant driver's prepared-statement/bind API for client SQL. Catalog
+names used as table-function arguments are values and should also be bound.
+Add regression tests containing quotes, semicolons, comment markers, and Unicode.
 
-Please report issues on the [GitHub issue tracker](https://github.com/gizmodata/gizmosql/issues) with:
-- A clear description of the problem
-- Steps to reproduce
-- Expected vs actual behavior
-- GizmoSQL version and environment details
+SQL identifiers such as table or schema names generally cannot be bound. Use
+a fixed allowlist where practical; otherwise quote each identifier component
+correctly, including embedded quote characters. Do not treat an identifier as
+a string literal. If a statement's parser cannot accept parameters, document
+that limitation and use a centralized, tested literal-quoting helper. Never
+substitute an unescaped value into SQL.
+
+## Documentation and pull requests
+
+- Add every user-facing change to `CHANGELOG.md` under `Unreleased`.
+- Update relevant documentation in `docs/` and CLI help for changed options.
+- Resolve environment-variable fallbacks in `src/common/gizmosql_library.cpp`,
+  so library callers and CLI users behave consistently. Keep both startup
+  scripts' environment-variable tables in sync.
+- Document public library API changes in `gizmosql_library.h`.
+- Put Enterprise implementations under `src/enterprise/`, guard them with
+  `GIZMOSQL_ENTERPRISE`, and test license rejection as well as licensed use.
+- Describe the behavior change, tests run, skipped cases, and remaining risks
+  in the PR. Preserve the independence of query, authentication, and global
+  log-level controls.
+
+## What CI runs
+
+GitHub Actions checks formatting and script linting before the build jobs.
+Source and test changes trigger builds. Both macOS DuckDB channels run
+clang-tidy against their actual compilation databases and upload diagnostics.
+The existing platform integration tests continue to run as well.
+
+Run the local commands above before pushing. If CI reports a formatting or lint
+failure, reproduce it using the same comparison commit shown in the job and the
+pinned tool versions, then fix and re-run the checks.

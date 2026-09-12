@@ -56,8 +56,8 @@ def test_system_catalog_index_info_view():
         cur.execute(
             'SELECT "TABLE_NAME", "NON_UNIQUE", "INDEX_NAME", "ORDINAL_POSITION", '
             '       "COLUMN_NAME", "ASC_OR_DESC", "TYPE" '
-            'FROM _gizmosql_system.main.gizmosql_index_info '
-            'WHERE "TABLE_NAME" = \'v122_ix\' '
+            "FROM _gizmosql_system.main.gizmosql_index_info "
+            "WHERE \"TABLE_NAME\" = 'v122_ix' "
             'ORDER BY "INDEX_NAME", "ORDINAL_POSITION"'
         )
         rows = cur.fetchall()
@@ -78,7 +78,9 @@ def test_system_catalog_index_info_view():
         assert ix_c_rows[0][1] is False, "unique index should have NON_UNIQUE=false"
 
         # TYPE should be tableIndexOther (3) per the JDBC contract.
-        assert all(r[6] == 3 for r in rows), f"unexpected TYPE values: {[r[6] for r in rows]}"
+        assert all(r[6] == 3 for r in rows), (
+            f"unexpected TYPE values: {[r[6] for r in rows]}"
+        )
         assert all(r[5] == "A" for r in rows), "ASC_OR_DESC should be 'A'"
 
         cur.execute("DROP TABLE v122_ix CASCADE")
@@ -95,7 +97,7 @@ def test_system_catalog_view_definition():
 
         cur.execute(
             'SELECT "VIEW_DEFINITION" FROM _gizmosql_system.main.gizmosql_view_definition '
-            'WHERE "TABLE_NAME" = \'v122_vv\''
+            "WHERE \"TABLE_NAME\" = 'v122_vv'"
         )
         rows = cur.fetchall()
         assert len(rows) == 1

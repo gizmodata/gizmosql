@@ -79,6 +79,7 @@
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/jwks/jwks_manager.h"
 #include "enterprise/oauth/oauth_http_server.h"
+#include "enterprise/metrics/metrics_service.h"
 #endif
 #include "version.h"
 
@@ -115,6 +116,7 @@ static std::shared_ptr<gizmosql::ddb::InstrumentationManager> g_instrumentation_
 static std::shared_ptr<gizmosql::enterprise::CatalogLogSink> g_catalog_log_sink;
 // Static storage for OAuth HTTP server (Enterprise feature)
 static std::unique_ptr<gizmosql::enterprise::OAuthHttpServer> g_oauth_http_server;
+static std::unique_ptr<gizmosql::enterprise::MetricsService> g_metrics_service;
 #endif
 
 // Split SQL string on semicolons, respecting single-quoted strings.
@@ -518,44 +520,31 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const fs::path& mtls_ca_cert_path, const std::string& init_sql_commands,
     const bool& read_only, const bool& print_queries,
     const std::string& token_allowed_issuer, const std::string& token_allowed_audience,
-    const fs::path& token_signature_verify_cert_path,
-    const std::string& token_jwks_uri, const std::string& token_default_role,
-    const std::string& token_authorized_emails,
-    const bool& access_logging_enabled,
-    const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
+    const fs::path& token_signature_verify_cert_path, const std::string& token_jwks_uri,
+    const std::string& token_default_role, const std::string& token_authorized_emails,
+    const bool& access_logging_enabled, const int32_t& query_timeout,
+    const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level,
     const arrow::util::ArrowLogLevel& session_log_level, const int& health_port,
-    const std::string& health_check_query,
-    const bool& enable_instrumentation,
+    const std::string& health_check_query, const bool& enable_instrumentation,
     const std::string& instrumentation_db_path,
-    const std::string& instrumentation_catalog,
-    const std::string& instrumentation_schema,
-    const std::string& instance_tag,
-    const bool& allow_cross_instance_tokens,
-    const std::string& oauth_client_id,
-    const std::string& oauth_client_secret,
-    const std::string& oauth_scopes,
-    const int& oauth_port,
-    const std::string& oauth_base_url,
-    const std::string& oauth_redirect_uri,
-    const std::string& oauth_instance_id,
-    const bool& oauth_disable_tls,
-    const bool& telemetry_enabled,
-    int32_t max_metadata_size,
+    const std::string& instrumentation_catalog, const std::string& instrumentation_schema,
+    const std::string& instance_tag, const bool& allow_cross_instance_tokens,
+    const std::string& oauth_client_id, const std::string& oauth_client_secret,
+    const std::string& oauth_scopes, const int& oauth_port,
+    const std::string& oauth_base_url, const std::string& oauth_redirect_uri,
+    const std::string& oauth_instance_id, const bool& oauth_disable_tls,
+    const bool& telemetry_enabled, int32_t max_metadata_size,
     const std::string& storage_version, const int32_t& max_concurrent_statements,
     const int32_t& max_queued_statements, const int32_t& max_queue_wait_seconds,
     const bool& admin_bypass_queue_default, const std::string& memory_limit,
     const gizmosql::QueryProfileMode& capture_query_profile,
-    const std::string& cluster_id,
-    const bool& enable_catalog_logging,
-    const std::string& log_catalog,
-    const std::string& log_schema,
-    const std::string& log_catalog_db_path,
-    const int32_t& health_check_interval_seconds,
-    const int32_t& health_check_staleness_seconds,
-    const bool& allow_unsigned_extensions,
-    const int32_t& max_sessions,
-    const int32_t& session_idle_timeout_seconds) {
+    const std::string& cluster_id, const bool& enable_catalog_logging,
+    const std::string& log_catalog, const std::string& log_schema,
+    const std::string& log_catalog_db_path, const int32_t& health_check_interval_seconds,
+    const int32_t& health_check_staleness_seconds, const bool& allow_unsigned_extensions,
+    const int32_t& max_sessions, const int32_t& session_idle_timeout_seconds,
+    int32_t metrics_port, const std::string& metrics_bind_address, bool enable_metrics) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -1057,6 +1046,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       startup.instance_tag = instance_tag;
 #ifdef GIZMOSQL_ENTERPRISE
       startup.enable_instrumentation = enable_instrumentation;
+      startup.enable_metrics = enable_metrics;
       if (enable_instrumentation) {
         startup.instrumentation_catalog = instr_catalog;
         startup.instrumentation_schema = instr_schema;
@@ -1130,6 +1120,41 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     // and (b) register the health service and reflection with the gRPC server.
     // The hook always runs when there is *something* to do; either condition
     // alone is sufficient.
+#ifdef GIZMOSQL_ENTERPRISE
+    if (backend == BackendType::duckdb) {
+      auto ddb = std::dynamic_pointer_cast<gizmosql::ddb::DuckDBFlightSqlServer>(server);
+      gizmosql::enterprise::RegisterMetricsFunction(*ddb->GetDuckDBInstance());
+      if (enable_metrics &&
+          gizmosql::enterprise::EnterpriseFeatures::Instance().IsMetricsAvailable()) {
+        g_metrics_service = std::make_unique<gizmosql::enterprise::MetricsService>(
+            ddb->GetDuckDBInstance(), database_filename, tls_cert_path.string(),
+            max_sessions,
+            [weak = std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer>(ddb),
+             health = g_health_service](gizmosql::enterprise::MetricsRegistry& registry) {
+              if (auto active = weak.lock()) active->SampleMetrics(registry);
+              registry.At("gizmosql_health_check_status")
+                  .value.store(health->CurrentStatus() ? 1 : 0);
+            });
+        ARROW_RETURN_NOT_OK(g_metrics_service->Start(metrics_port, metrics_bind_address));
+      } else if (enable_metrics) {
+        return arrow::Status::Invalid(
+            "Metrics requires the 'metrics' Enterprise license feature");
+      }
+    } else if (enable_metrics) {
+      return arrow::Status::Invalid("Metrics currently requires the DuckDB backend");
+    }
+#else
+    if (enable_metrics)
+      return arrow::Status::Invalid("Metrics requires GizmoSQL Enterprise Edition");
+#endif
+    if (enable_metrics && metrics_port)
+      GIZMOSQL_LOG(INFO) << "Metrics: http://" << metrics_bind_address << ":"
+                         << metrics_port << "/metrics";
+    else if (enable_metrics)
+      GIZMOSQL_LOG(INFO) << "Metrics: enabled (SQL only; HTTP listener disabled)";
+    else
+      GIZMOSQL_LOG(INFO) << "Metrics: disabled";
+
     const bool register_health = static_cast<bool>(g_health_service);
     const bool tune_metadata = max_metadata_size > 0;
     if (register_health) {
@@ -1226,49 +1251,34 @@ std::string SafeGetEnvVarValue(const std::string& env_var_name) {
 }
 
 arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQLServer(
-  const BackendType backend, fs::path& database_filename, std::string hostname,
-  int port, std::string username, std::string password, std::string secret_key,
+    const BackendType backend, fs::path& database_filename, std::string hostname,
+    int port, std::string username, std::string password, std::string secret_key,
     fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
     std::string init_sql_commands, fs::path init_sql_commands_file,
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     std::string token_jwks_uri, std::string token_default_role,
-    std::string token_authorized_emails,
-    const bool& access_logging_enabled, const int32_t& query_timeout,
-    const arrow::util::ArrowLogLevel& query_log_level,
+    std::string token_authorized_emails, const bool& access_logging_enabled,
+    const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level,
     const arrow::util::ArrowLogLevel& session_log_level, const int& health_port,
-    std::string health_check_query,
-    const bool& enable_instrumentation,
-    std::string instrumentation_db_path,
-    std::string instrumentation_catalog,
-    std::string instrumentation_schema,
-    std::string instance_tag,
-    const bool& allow_cross_instance_tokens,
-    std::string oauth_client_id,
-    std::string oauth_client_secret,
-    std::string oauth_scopes,
-    int oauth_port,
-    std::string oauth_base_url,
-    std::string oauth_redirect_uri,
-    std::string oauth_instance_id,
-    const bool& oauth_disable_tls,
-    const bool& telemetry_enabled,
-    int32_t max_metadata_size,
-    std::string storage_version, int32_t max_concurrent_statements,
-    int32_t max_queued_statements, int32_t max_queue_wait_seconds,
-    bool admin_bypass_queue_default, std::string memory_limit,
-    gizmosql::QueryProfileMode capture_query_profile,
-    std::string cluster_id,
-    bool enable_catalog_logging,
-    std::string log_catalog,
-    std::string log_schema,
-    std::string log_catalog_db_path,
-    int32_t health_check_interval_seconds,
-    int32_t health_check_staleness_seconds,
-    bool allow_unsigned_extensions,
-    int32_t max_sessions,
-    int32_t session_idle_timeout_seconds) {
+    std::string health_check_query, const bool& enable_instrumentation,
+    std::string instrumentation_db_path, std::string instrumentation_catalog,
+    std::string instrumentation_schema, std::string instance_tag,
+    const bool& allow_cross_instance_tokens, std::string oauth_client_id,
+    std::string oauth_client_secret, std::string oauth_scopes, int oauth_port,
+    std::string oauth_base_url, std::string oauth_redirect_uri,
+    std::string oauth_instance_id, const bool& oauth_disable_tls,
+    const bool& telemetry_enabled, int32_t max_metadata_size, std::string storage_version,
+    int32_t max_concurrent_statements, int32_t max_queued_statements,
+    int32_t max_queue_wait_seconds, bool admin_bypass_queue_default,
+    std::string memory_limit, gizmosql::QueryProfileMode capture_query_profile,
+    std::string cluster_id, bool enable_catalog_logging, std::string log_catalog,
+    std::string log_schema, std::string log_catalog_db_path,
+    int32_t health_check_interval_seconds, int32_t health_check_staleness_seconds,
+    bool allow_unsigned_extensions, int32_t max_sessions,
+    int32_t session_idle_timeout_seconds, int32_t metrics_port,
+    std::string metrics_bind_address, bool enable_metrics) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
   // state (e.g. a previous server in the same process, as in the test binary)
@@ -1585,19 +1595,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
       print_queries, token_allowed_issuer, token_allowed_audience,
       token_signature_verify_cert_path, token_jwks_uri, token_default_role,
-      token_authorized_emails, access_logging_enabled, query_timeout,
-      query_log_level, auth_log_level, session_log_level, health_port, health_check_query,
-      enable_instrumentation, instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, instance_tag,
-      allow_cross_instance_tokens,
-      oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
-      oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, telemetry_enabled,
-      max_metadata_size, storage_version, max_concurrent_statements,
-      max_queued_statements, max_queue_wait_seconds, admin_bypass_queue_default,
-      memory_limit, capture_query_profile, cluster_id, enable_catalog_logging,
-      log_catalog, log_schema, log_catalog_db_path,
-      health_check_interval_seconds, health_check_staleness_seconds,
-      allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds);
+      token_authorized_emails, access_logging_enabled, query_timeout, query_log_level,
+      auth_log_level, session_log_level, health_port, health_check_query,
+      enable_instrumentation, instrumentation_db_path, instrumentation_catalog,
+      instrumentation_schema, instance_tag, allow_cross_instance_tokens, oauth_client_id,
+      oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url, oauth_redirect_uri,
+      oauth_instance_id, oauth_disable_tls, telemetry_enabled, max_metadata_size,
+      storage_version, max_concurrent_statements, max_queued_statements,
+      max_queue_wait_seconds, admin_bypass_queue_default, memory_limit,
+      capture_query_profile, cluster_id, enable_catalog_logging, log_catalog, log_schema,
+      log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
+      allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds, metrics_port,
+      metrics_bind_address, enable_metrics);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1606,6 +1615,9 @@ arrow::Status StartFlightSQLServer(
 }
 
 void CleanupServerResources() {
+#ifdef GIZMOSQL_ENTERPRISE
+  g_metrics_service.reset();
+#endif
   // Reset server reference
   g_flight_server.reset();
 
@@ -1813,63 +1825,39 @@ size_t GetActiveSessionCount() {
 }
 
 const char* GetDuckDBVersion() { return duckdb_library_version(); }
-int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
-                       std::string hostname, const int& port, std::string username,
-                       std::string password, std::string secret_key,
-                       fs::path tls_cert_path, fs::path tls_key_path,
-                       fs::path mtls_ca_cert_path, std::string init_sql_commands,
-                       fs::path init_sql_commands_file, std::optional<bool> print_queries,
-                       const bool& read_only, std::string token_allowed_issuer,
-                       std::string token_allowed_audience,
-                       fs::path token_signature_verify_cert_path,
-                       std::string token_jwks_uri,
-                       std::string token_default_role,
-                       std::string token_authorized_emails,
-                       std::string log_level,
-                       std::string log_format, std::string access_log,
-                       std::string log_file, int32_t query_timeout,
-                       std::string query_log_level, std::string auth_log_level,
-                       std::string session_log_level,
-                       int health_port, std::string health_check_query,
-                       std::optional<bool> enable_instrumentation,
-                       std::string instrumentation_db_path,
-                       std::string instrumentation_catalog,
-                       std::string instrumentation_schema,
-                       std::string instance_tag,
-                       std::string license_key_file,
-                       std::string license_key,
-                       std::optional<bool> allow_cross_instance_tokens,
-                       std::string oauth_client_id,
-                       std::string oauth_client_secret,
-                       std::string oauth_scopes,
-                       int oauth_port,
-                       std::string oauth_base_url,
-                       std::string oauth_redirect_uri,
-                       std::string oauth_instance_id,
-                       std::optional<bool> oauth_disable_tls,
-                       std::optional<bool> otel_enabled, std::string otel_exporter,
-                       std::string otel_endpoint, std::string otel_service_name,
-                       std::string otel_headers,
-                       int32_t max_metadata_size,
-                       std::string storage_version,
-                       int32_t max_concurrent_statements,
-                       int32_t max_queued_statements,
-                       int32_t max_queue_wait_seconds,
-                       std::optional<bool> admin_bypass_queue_default,
-                       std::string memory_limit,
-                       std::string capture_query_profile,
-                       std::string cluster_id,
-                       std::optional<bool> enable_catalog_logging,
-                       std::string log_catalog,
-                       std::string log_schema,
-                       std::string log_catalog_db_path,
-                       std::optional<bool> graceful_shutdown,
-                       int32_t shutdown_grace_period_seconds,
-                       int32_t health_check_interval_seconds,
-                       int32_t health_check_staleness_seconds,
-                       std::optional<bool> allow_unsigned_extensions,
-                       int32_t max_sessions,
-                       int32_t session_idle_timeout_seconds) {
+int RunFlightSQLServer(
+    const BackendType backend, fs::path database_filename, std::string hostname,
+    const int& port, std::string username, std::string password, std::string secret_key,
+    fs::path tls_cert_path, fs::path tls_key_path, fs::path mtls_ca_cert_path,
+    std::string init_sql_commands, fs::path init_sql_commands_file,
+    std::optional<bool> print_queries, const bool& read_only,
+    std::string token_allowed_issuer, std::string token_allowed_audience,
+    fs::path token_signature_verify_cert_path, std::string token_jwks_uri,
+    std::string token_default_role, std::string token_authorized_emails,
+    std::string log_level, std::string log_format, std::string access_log,
+    std::string log_file, int32_t query_timeout, std::string query_log_level,
+    std::string auth_log_level, std::string session_log_level, int health_port,
+    std::string health_check_query, std::optional<bool> enable_instrumentation,
+    std::string instrumentation_db_path, std::string instrumentation_catalog,
+    std::string instrumentation_schema, std::string instance_tag,
+    std::string license_key_file, std::string license_key,
+    std::optional<bool> allow_cross_instance_tokens, std::string oauth_client_id,
+    std::string oauth_client_secret, std::string oauth_scopes, int oauth_port,
+    std::string oauth_base_url, std::string oauth_redirect_uri,
+    std::string oauth_instance_id, std::optional<bool> oauth_disable_tls,
+    std::optional<bool> otel_enabled, std::string otel_exporter,
+    std::string otel_endpoint, std::string otel_service_name, std::string otel_headers,
+    int32_t max_metadata_size, std::string storage_version,
+    int32_t max_concurrent_statements, int32_t max_queued_statements,
+    int32_t max_queue_wait_seconds, std::optional<bool> admin_bypass_queue_default,
+    std::string memory_limit, std::string capture_query_profile, std::string cluster_id,
+    std::optional<bool> enable_catalog_logging, std::string log_catalog,
+    std::string log_schema, std::string log_catalog_db_path,
+    std::optional<bool> graceful_shutdown, int32_t shutdown_grace_period_seconds,
+    int32_t health_check_interval_seconds, int32_t health_check_staleness_seconds,
+    std::optional<bool> allow_unsigned_extensions, int32_t max_sessions,
+    int32_t session_idle_timeout_seconds, std::optional<int32_t> metrics_port,
+    std::string metrics_bind_address, std::optional<bool> enable_metrics) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1957,6 +1945,7 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   // scripts); until now only those scripts honoured it, not the binary.
   resolve_bool_env(print_queries, "PRINT_QUERIES");
   resolve_bool_env(enable_instrumentation, "GIZMOSQL_ENABLE_INSTRUMENTATION");
+  resolve_bool_env(enable_metrics, "GIZMOSQL_ENABLE_METRICS");
   resolve_bool_env(enable_catalog_logging, "GIZMOSQL_ENABLE_CATALOG_LOGGING");
   resolve_bool_env(allow_cross_instance_tokens, "GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS");
   resolve_bool_env(oauth_disable_tls, "GIZMOSQL_OAUTH_DISABLE_TLS");
@@ -2126,10 +2115,6 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     memory_limit = gizmosql::SafeGetEnvVarValue("GIZMOSQL_MEMORY_LIMIT");
   }
 
-  auto now = std::chrono::system_clock::now();
-  std::time_t currentTime = std::chrono::system_clock::to_time_t(now);
-  std::tm* localTime = std::localtime(&currentTime);
-
 #ifdef GIZMOSQL_ENTERPRISE
   // Resolve license key file and inline license key: CLI arg > env var.
   if (license_key_file.empty()) {
@@ -2207,7 +2192,11 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   (void)license_key_file;  // Suppress unused variable warning
   (void)license_key;       // Suppress unused variable warning
 
-  GIZMOSQL_LOG(INFO) << "GizmoSQL Core - Copyright (c) " << (1900 + localTime->tm_year)
+  const auto current_year =
+      std::chrono::year_month_day(
+          std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now()))
+          .year();
+  GIZMOSQL_LOG(INFO) << "GizmoSQL Core - Copyright (c) " << static_cast<int>(current_year)
                      << " GizmoData LLC"
                      << "\n Licensed under the Apache License, Version 2.0"
                      << "\n https://www.apache.org/licenses/LICENSE-2.0";
@@ -2277,26 +2266,56 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
   }
   // ----------------------------------------------------------
 
+  if (!metrics_port) {
+    const auto value = gizmosql::SafeGetEnvVarValue("GIZMOSQL_METRICS_PORT");
+    if (!value.empty()) {
+      try {
+        size_t used = 0;
+        metrics_port = std::stoi(value, &used);
+        if (used != value.size()) throw std::invalid_argument("trailing characters");
+      } catch (...) {
+        std::cerr << "Invalid GIZMOSQL_METRICS_PORT: expected a port from 0 to 65535\n";
+        return EXIT_FAILURE;
+      }
+    }
+  }
+  metrics_bind_address =
+      pick(metrics_bind_address, "GIZMOSQL_METRICS_BIND_ADDRESS", "0.0.0.0");
+  bool metrics_licensed = false;
+#ifdef GIZMOSQL_ENTERPRISE
+  metrics_licensed =
+      gizmosql::enterprise::EnterpriseFeatures::Instance().IsMetricsAvailable();
+#endif
+  if (!metrics_port) metrics_port = 9091;
+  if (*metrics_port < 0 || *metrics_port > 65535) {
+    std::cerr << "metrics-port must be between 0 and 65535\n";
+    return EXIT_FAILURE;
+  }
+  if (enable_metrics.value() && !metrics_licensed) {
+    std::cerr << "Cannot enable metrics: a valid GizmoSQL Enterprise license with the "
+                 "'metrics' feature is required.\n"
+                 "Provide it with --license-key-file or GIZMOSQL_LICENSE_KEY_FILE.\n";
+    return EXIT_FAILURE;
+  }
+
   auto create_server_result = gizmosql::CreateFlightSQLServer(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries.value(), read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
-      token_default_role, token_authorized_emails, access_logging_enabled,
-      query_timeout, query_level, auth_level, session_level, health_port, health_check_query,
-      enable_instrumentation.value(), instrumentation_db_path,
-      instrumentation_catalog, instrumentation_schema, instance_tag,
-      allow_cross_instance_tokens.value(),
+      token_default_role, token_authorized_emails, access_logging_enabled, query_timeout,
+      query_level, auth_level, session_level, health_port, health_check_query,
+      enable_instrumentation.value(), instrumentation_db_path, instrumentation_catalog,
+      instrumentation_schema, instance_tag, allow_cross_instance_tokens.value(),
       oauth_client_id, oauth_client_secret, oauth_scopes, oauth_port, oauth_base_url,
       oauth_redirect_uri, oauth_instance_id, oauth_disable_tls.value(), telemetry_enabled,
       max_metadata_size, storage_version, max_concurrent_statements,
       max_queued_statements, max_queue_wait_seconds,
       admin_bypass_queue_default.value_or(true), memory_limit, capture_profile_mode,
       cluster_id, enable_catalog_logging.value(), log_catalog, log_schema,
-      log_catalog_db_path, health_check_interval_seconds,
-      health_check_staleness_seconds, allow_unsigned_extensions.value(),
-      max_sessions,
-      session_idle_timeout_seconds);
+      log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
+      allow_unsigned_extensions.value(), max_sessions, session_idle_timeout_seconds,
+      *metrics_port, metrics_bind_address, enable_metrics.value());
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
@@ -2417,6 +2436,9 @@ int RunFlightSQLServer(const BackendType backend, fs::path database_filename,
     }
 #endif
 
+#ifdef GIZMOSQL_ENTERPRISE
+    gizmosql::g_metrics_service.reset();
+#endif
     // Now safe to destroy the server
     gizmosql::ShutdownTelemetry();
     gizmosql::g_flight_server.reset();

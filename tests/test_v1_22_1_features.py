@@ -65,8 +65,8 @@ def test_index_info_includes_primary_key_and_unique():
 
         cur.execute(
             'SELECT "INDEX_NAME", "NON_UNIQUE", "COLUMN_NAME" '
-            'FROM _gizmosql_system.main.gizmosql_index_info '
-            'WHERE "TABLE_NAME" = \'v1221_t\' '
+            "FROM _gizmosql_system.main.gizmosql_index_info "
+            "WHERE \"TABLE_NAME\" = 'v1221_t' "
             'ORDER BY "INDEX_NAME", "ORDINAL_POSITION"'
         )
         rows = cur.fetchall()
@@ -77,7 +77,7 @@ def test_index_info_includes_primary_key_and_unique():
         uk_rows = [r for r in rows if r[1] is False and r[2] == "code"]
         # DuckDB quotes the expression as `"label"` because `label` is a reserved
         # word, so our str_split of `expressions` produces `'"label"'`. Accept both.
-        ix_rows = [r for r in rows if r[1] is True and r[2].strip('"\'') == "label"]
+        ix_rows = [r for r in rows if r[1] is True and r[2].strip("\"'") == "label"]
 
         assert pk_rows, f"PK-backing unique index missing from view: {rows}"
         assert uk_rows, f"UNIQUE-backing unique index missing from view: {rows}"
@@ -167,7 +167,9 @@ def test_table_schema_column_metadata():
     with _connect() as conn, conn.cursor() as cur:
         cur.execute("DROP TABLE v1221_meta CASCADE")
         cur.execute("DROP SEQUENCE v1221_meta_seq")
-    print("  OK: table schema carries nullable / REMARKS / IS_AUTO_INCREMENT / COLUMN_DEFAULT")
+    print(
+        "  OK: table schema carries nullable / REMARKS / IS_AUTO_INCREMENT / COLUMN_DEFAULT"
+    )
 
 
 def main() -> int:

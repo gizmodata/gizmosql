@@ -22,6 +22,7 @@ CMakeFiles
 .idea
 
 .venv
+.venv-quality/
 venv
 dist
 cmake-build-debug

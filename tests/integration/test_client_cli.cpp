@@ -26,6 +26,9 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 #ifdef _WIN32
 #include <process.h>
@@ -99,7 +102,12 @@ CliResult RunClient(const std::string& args, const std::string& env_prefix = "")
 
   result.exit_code = pclose(pipe);
 #ifndef _WIN32
-  result.exit_code = WEXITSTATUS(result.exit_code);
+  if (result.exit_code != -1) {
+    result.exit_code =
+        WIFEXITED(result.exit_code)
+            ? WEXITSTATUS(result.exit_code)
+            : (WIFSIGNALED(result.exit_code) ? 128 + WTERMSIG(result.exit_code) : -1);
+  }
 #endif
 
   // Read stderr
@@ -223,6 +231,16 @@ TEST_F(ClientCliFixture, DocQuickStartSingleQuery) {
   EXPECT_NE(output.find("Bob"), std::string::npos) << "Should contain Bob";
   EXPECT_NE(output.find("5 rows"), std::string::npos)
       << "Should show 5 rows. Output:\n" << output;
+}
+
+TEST_F(ClientCliFixture, RepeatedExitClosesSessionWithoutCrashing) {
+  ASSERT_TRUE(IsServerReady());
+  for (int attempt = 0; attempt < 30; ++attempt) {
+    SCOPED_TRACE(attempt);
+    const auto result = Run("--command \"SELECT 42\" --csv --no-header");
+    ASSERT_EQ(result.exit_code, 0) << result.stderr_output;
+    EXPECT_NE(result.stdout_output.find("42"), std::string::npos);
+  }
 }
 
 // ============================================================================

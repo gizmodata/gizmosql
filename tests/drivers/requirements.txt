@@ -1,0 +1,5 @@
+adbc-driver-flightsql==1.12.0
+adbc-driver-gizmosql==2.0.13
+adbc-driver-manager==1.12.0
+pyarrow==25.0.1
+pytest==9.1.1

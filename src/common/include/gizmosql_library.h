@@ -177,42 +177,30 @@ int RunFlightSQLServer(
     std::optional<bool> print_queries = std::nullopt, const bool& read_only = false,
     std::string token_allowed_issuer = "", std::string token_allowed_audience = "",
     std::filesystem::path token_signature_verify_cert_path = std::filesystem::path(),
-    std::string token_jwks_uri = "",
-    std::string token_default_role = "",
-    std::string token_authorized_emails = "",
-    std::string log_level = "", std::string log_format = "", std::string access_log = "",
-    std::string log_file = "", int32_t query_timeout = 0,
-    std::string query_log_level = "", std::string auth_log_level = "",
-    std::string session_log_level = "",
-    int health_port = DEFAULT_HEALTH_PORT,
-    std::string health_check_query = "",
+    std::string token_jwks_uri = "", std::string token_default_role = "",
+    std::string token_authorized_emails = "", std::string log_level = "",
+    std::string log_format = "", std::string access_log = "", std::string log_file = "",
+    int32_t query_timeout = 0, std::string query_log_level = "",
+    std::string auth_log_level = "", std::string session_log_level = "",
+    int health_port = DEFAULT_HEALTH_PORT, std::string health_check_query = "",
     std::optional<bool> enable_instrumentation = std::nullopt,
-    std::string instrumentation_db_path = "",
-    std::string instrumentation_catalog = "",
-    std::string instrumentation_schema = "",
-    std::string instance_tag = "",
-    std::string license_key_file = "",
-    std::string license_key = "",
+    std::string instrumentation_db_path = "", std::string instrumentation_catalog = "",
+    std::string instrumentation_schema = "", std::string instance_tag = "",
+    std::string license_key_file = "", std::string license_key = "",
     std::optional<bool> allow_cross_instance_tokens = std::nullopt,
-    std::string oauth_client_id = "",
-    std::string oauth_client_secret = "",
-    std::string oauth_scopes = "",
-    int oauth_port = 0,
-    std::string oauth_base_url = "",
-    std::string oauth_redirect_uri = "",
-    std::string oauth_instance_id = "",
+    std::string oauth_client_id = "", std::string oauth_client_secret = "",
+    std::string oauth_scopes = "", int oauth_port = 0, std::string oauth_base_url = "",
+    std::string oauth_redirect_uri = "", std::string oauth_instance_id = "",
     std::optional<bool> oauth_disable_tls = std::nullopt,
     std::optional<bool> otel_enabled = std::nullopt, std::string otel_exporter = "",
     std::string otel_endpoint = "", std::string otel_service_name = "",
-    std::string otel_headers = "",
-    int32_t max_metadata_size = DEFAULT_MAX_METADATA_SIZE,
+    std::string otel_headers = "", int32_t max_metadata_size = DEFAULT_MAX_METADATA_SIZE,
     std::string storage_version = "",
     int32_t max_concurrent_statements = DEFAULT_MAX_CONCURRENT_STATEMENTS,
     int32_t max_queued_statements = DEFAULT_MAX_QUEUED_STATEMENTS,
     int32_t max_queue_wait_seconds = DEFAULT_MAX_QUEUE_WAIT_SECONDS,
     std::optional<bool> admin_bypass_queue_default = std::nullopt,
-    std::string memory_limit = "",
-    std::string capture_query_profile = "",
+    std::string memory_limit = "", std::string capture_query_profile = "",
     /// Optional cluster grouping UUID (--cluster-id / GIZMOSQL_CLUSTER_ID). When
     /// set, recorded on the instrumentation instances row and injected into every
     /// log entry so a cluster's logs and records can be filtered together.
@@ -277,5 +265,15 @@ int RunFlightSQLServer(
     /// (default). Uses the existing session-removal path (client sees
     /// Unauthenticated / "Session not found — it may have been evicted").
     /// DuckDB backend only. If 0, uses env var GIZMOSQL_SESSION_IDLE_TIMEOUT.
-    int32_t session_idle_timeout_seconds = DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS);
+    int32_t session_idle_timeout_seconds = DEFAULT_SESSION_IDLE_TIMEOUT_SECONDS,
+    /// [Enterprise metrics license] HTTP scrape port. Explicit 0 disables HTTP.
+    /// nullopt consults GIZMOSQL_METRICS_PORT, then defaults to 9091. SQL metrics remain available when HTTP is disabled.
+    std::optional<int32_t> metrics_port = std::nullopt,
+    /// Metrics HTTP bind address; empty consults GIZMOSQL_METRICS_BIND_ADDRESS,
+    /// then defaults to 0.0.0.0. The endpoint has no TLS or authentication.
+    std::string metrics_bind_address = "",
+    /// [Enterprise metrics license] Enable the metrics registry, background
+    /// collection, HTTP listener and SQL function. nullopt consults
+    /// GIZMOSQL_ENABLE_METRICS, then defaults to false. Explicit false wins.
+    std::optional<bool> enable_metrics = std::nullopt);
 }

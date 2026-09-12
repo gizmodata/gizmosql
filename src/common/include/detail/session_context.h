@@ -12,6 +12,7 @@
 #include <optional>
 #include <vector>
 #include <duckdb.hpp>
+#include <arrow/record_batch.h>
 #include <arrow/util/logging.h>
 
 #include "request_ctx.h"  // For CatalogAccessRule, CatalogAccessLevel
@@ -26,6 +27,12 @@ class SessionInstrumentation;  // forward declare
 }
 
 namespace gizmosql {
+
+#ifdef GIZMOSQL_ENTERPRISE
+namespace enterprise {
+class MetricsRegistry;
+}
+#endif
 
 // Controls whether DuckDB query profiling is captured into the instrumentation
 // `sql_executions.query_profile` column (Enterprise feature). Settable at the
@@ -112,6 +119,23 @@ struct ClientSession {
   // "busy" (never-evictable) state; a count (not a bool) so concurrent
   // statements on one session cannot clear each other's busy state.
   std::atomic<int32_t> sql_in_flight{0};
+#ifdef GIZMOSQL_ENTERPRISE
+  // 0 = autocommit, 1 = transaction, 2 = transaction invalidated by an error.
+  std::atomic<int> metrics_transaction_state{0};
+  // Immutable after session creation: queries need no global registry lock.
+  std::shared_ptr<enterprise::MetricsRegistry> metrics;
+#endif
+
+  // Immutable, session-owned results of eager executions. Tickets identify an
+  // execution, never SQL or a reusable prepared statement. Cache misses fail
+  // closed rather than re-executing. Bounded to avoid retaining abandoned tickets.
+  struct CompletedExecution {
+    std::shared_ptr<arrow::Schema> schema;
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+    std::chrono::steady_clock::time_point created;
+  };
+  std::map<std::string, CompletedExecution> completed_executions;
+  std::mutex completed_executions_mutex;
 
   // Prepared statements owned by this session
   std::map<std::string, std::shared_ptr<gizmosql::ddb::DuckDBStatement>> prepared_statements;

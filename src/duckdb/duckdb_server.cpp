@@ -70,6 +70,7 @@
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #include "enterprise/enterprise_features.h"
+#include "enterprise/metrics/metrics_service.h"
 #endif
 
 using arrow::Result;
@@ -1098,7 +1099,6 @@ class DuckDBFlightSqlServer::Impl {
     new_session->user_agent = tl_request_ctx.user_agent.value_or("");
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
-    new_session->connection = std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
     new_session->TouchSqlActivity();
     // Note: query_timeout and query_log_level are intentionally left as nullopt
     // so that sessions fall through to the server's current global values via
@@ -1150,6 +1150,7 @@ class DuckDBFlightSqlServer::Impl {
           std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
 
 #ifdef GIZMOSQL_ENTERPRISE
+      gizmosql::enterprise::TrackMetricsSession(new_session);
       // Create session instrumentation if manager is available (Enterprise feature)
       if (instrumentation_manager_ && instrumentation_manager_->IsEnabled()) {
         auto instance_id = GetInstanceId();
@@ -1176,6 +1177,10 @@ class DuckDBFlightSqlServer::Impl {
           new_session, "Client session was successfully created.",
           {"kind", "session_create"}, {"status", "success"},
           {"auth_method", new_session->auth_method});
+#ifdef GIZMOSQL_ENTERPRISE
+      if (auto registry = new_session->metrics)
+        registry->At("gizmosql_sessions_opened_total").value.fetch_add(1);
+#endif
       return new_session;
     }
   }
@@ -1292,6 +1297,14 @@ class DuckDBFlightSqlServer::Impl {
     StopIdleSessionSweeper();
     std::unique_lock session_lock(sessions_mutex_);
     auto session_count = client_sessions_.size();
+#ifdef GIZMOSQL_ENTERPRISE
+    for (const auto& [id, session] : client_sessions_) {
+      if (session->metrics)
+        session->metrics
+            ->At("gizmosql_sessions_reaped_total", {{"reason", "server_shutdown"}})
+            .value.fetch_add(1, std::memory_order_relaxed);
+    }
+#endif
     // Session destructors handle active connection counter decrement,
     // prepared statement cleanup, and DuckDB connection counter decrement
     client_sessions_.clear();
@@ -1359,7 +1372,7 @@ class DuckDBFlightSqlServer::Impl {
         }
       }
 #endif
-      auto st = RemoveSession(session_id, /*was_killed=*/false);
+      auto st = RemoveSession(session_id, /*was_killed=*/false, "idle_timeout");
       if (st.ok()) {
         GIZMOSQL_LOG(INFO) << "Evicted idle client session " << session_id
                            << " after " << session_idle_timeout_seconds_
@@ -1437,12 +1450,46 @@ class DuckDBFlightSqlServer::Impl {
     return killed_session_ids_.count(session_id) > 0;
   }
 
-  arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false) {
+#ifdef GIZMOSQL_ENTERPRISE
+  void SampleMetrics(gizmosql::enterprise::MetricsRegistry& registry) {
+    std::array<int64_t, 4> counts{};
+    int64_t executing = 0;
+    {
+      std::shared_lock lock(sessions_mutex_);
+      for (const auto& [id, session] : client_sessions_) {
+        auto busy = session->sql_in_flight.load(std::memory_order_relaxed);
+        executing += busy;
+        auto transaction =
+            session->metrics_transaction_state.load(std::memory_order_relaxed);
+        ++counts[busy ? 0 : transaction == 2 ? 3 : transaction == 1 ? 2 : 1];
+      }
+    }
+    const char* states[] = {"active", "idle", "idle_in_transaction",
+                            "idle_in_transaction_aborted"};
+    for (size_t i = 0; i < counts.size(); ++i)
+      registry.At("gizmosql_sessions", {{"state", states[i]}}).value.store(counts[i]);
+    auto& admission = outer_->GetAdmissionController();
+    const auto queued = admission.QueuedCount();
+    registry.At("gizmosql_queue_depth").value.store(queued);
+    registry.At("gizmosql_concurrency_limit").value.store(admission.Limit());
+    registry.At("gizmosql_statements_active", {{"wait", "queue"}}).value.store(queued);
+    registry.At("gizmosql_statements_active", {{"wait", "none"}})
+        .value.store(std::max<int64_t>(0, executing - queued));
+  }
+#endif
+
+  arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false,
+                              const char* reason = "client_close") {
     std::unique_lock write_lock(sessions_mutex_);
     auto it = client_sessions_.find(session_id);
     if (it != client_sessions_.end()) {
       // Session destructor handles active connection counter decrement,
       // prepared statement cleanup, and DuckDB connection counter decrement
+#ifdef GIZMOSQL_ENTERPRISE
+      if (auto registry = it->second->metrics)
+        registry->At("gizmosql_sessions_reaped_total", {{"reason", reason}})
+            .value.fetch_add(1);
+#endif
       client_sessions_.erase(it);
       if (was_killed) {
         killed_session_ids_.insert(session_id);
@@ -1453,6 +1500,75 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   ~Impl() { StopIdleSessionSweeper(); }
+
+  static constexpr const char* kCompletedTicketPrefix = "gizmosql-completed:";
+
+  Result<std::unique_ptr<flight::FlightInfo>> ExecuteForFlightInfo(
+      const flight::ServerCallContext& context,
+      const std::shared_ptr<ClientSession>& session,
+      const std::shared_ptr<DuckDBStatement>& statement,
+      const flight::FlightDescriptor& descriptor) {
+    gizmosql::InFlightGuard inflight_guard;
+    statement->SetCallContext(&context);
+    // GetFlightInfo preparation is DEBUG to avoid duplicate lazy-query logs.
+    // An eager user write executes here and must retain normal INFO query logs.
+    statement->SetExecutionLogLevel(arrow::util::ArrowLogLevel::ARROW_INFO);
+    ARROW_RETURN_NOT_OK(statement->Execute());
+    ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema());
+    ClientSession::CompletedExecution completed{
+        schema, {}, std::chrono::steady_clock::now()};
+    int64_t rows = 0;
+    while (true) {
+      ARROW_ASSIGN_OR_RAISE(auto batch, statement->FetchResult());
+      if (!batch) break;
+      rows += batch->num_rows();
+      completed.batches.push_back(std::move(batch));
+    }
+    const auto handle = std::string(kCompletedTicketPrefix) +
+                        boost::uuids::to_string(boost::uuids::random_generator()());
+    {
+      std::lock_guard lock(session->completed_executions_mutex);
+      auto& cache = session->completed_executions;
+      const auto cutoff = completed.created - std::chrono::minutes(5);
+      std::erase_if(cache,
+                    [&](const auto& entry) { return entry.second.created < cutoff; });
+      if (cache.size() >= 1024) {
+        auto oldest = std::min_element(cache.begin(), cache.end(),
+                                       [](const auto& a, const auto& b) {
+                                         return a.second.created < b.second.created;
+                                       });
+        cache.erase(oldest);
+      }
+      cache.emplace(handle, std::move(completed));
+    }
+    ARROW_ASSIGN_OR_RAISE(auto encoded, sql::CreateStatementQueryTicket(handle));
+    std::vector<flight::FlightEndpoint> endpoints{
+        flight::FlightEndpoint{flight::Ticket{std::move(encoded)}, {}, std::nullopt, ""}};
+    ARROW_ASSIGN_OR_RAISE(
+        auto info, flight::FlightInfo::Make(*schema, descriptor, endpoints, rows, -1));
+    return std::make_unique<flight::FlightInfo>(std::move(info));
+  }
+
+  Result<std::unique_ptr<flight::FlightDataStream>> ReadCompletedExecution(
+      const std::shared_ptr<ClientSession>& session, const std::string& handle) {
+    ClientSession::CompletedExecution completed;
+    {
+      std::lock_guard lock(session->completed_executions_mutex);
+      auto entry = session->completed_executions.find(handle);
+      if (entry == session->completed_executions.end() ||
+          std::chrono::steady_clock::now() - entry->second.created >
+              std::chrono::minutes(5)) {
+        return Status::KeyError(
+            "Execution result expired or does not belong to this session; "
+            "the statement will not be executed again.");
+      }
+      completed = entry->second;
+    }
+    session->TouchSqlActivity();
+    ARROW_ASSIGN_OR_RAISE(
+        auto reader, arrow::RecordBatchReader::Make(completed.batches, completed.schema));
+    return std::make_unique<flight::RecordBatchStream>(reader);
+  }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoStatement(
       const flight::ServerCallContext& context, const sql::StatementQuery& command,
@@ -1465,6 +1581,9 @@ class DuckDBFlightSqlServer::Impl {
         DuckDBStatement::Create(client_session, query,
                                 arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
                                 nullptr, "GetFlightInfoStatement", false))
+    if (statement->ShouldExecuteEagerly()) {
+      return ExecuteForFlightInfo(context, client_session, statement, descriptor);
+    }
     statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
@@ -1479,6 +1598,10 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetStatement(
       const flight::ServerCallContext& context,
       const sql::StatementQueryTicket& command) {
+    if (command.statement_handle.starts_with(kCompletedTicketPrefix)) {
+      ARROW_ASSIGN_OR_RAISE(auto session, GetClientSession(context));
+      return ReadCompletedExecution(session, command.statement_handle);
+    }
     ARROW_ASSIGN_OR_RAISE(auto pair, DecodeTransactionQuery(command.statement_handle))
     const std::string& sql = pair.first;
     const std::string transaction_id = pair.second;
@@ -1600,6 +1723,16 @@ class DuckDBFlightSqlServer::Impl {
         duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data =
             stmt->data;
 
+        // Flight SQL's dataset schema describes a user result set. DuckDB's
+        // Count/Success columns for DDL/DML are execution metadata. JDBC uses
+        // an empty dataset schema to select DoPut/ExecuteUpdate and return the
+        // real affected-row count. GetFlightInfo still supplies the count
+        // schema when a client explicitly chooses the query execution path.
+        if (prepared_statement_data->properties.return_type !=
+            duckdb::StatementReturnType::QUERY_RESULT) {
+          dataset_schema = arrow::schema({});
+        }
+
         // Note: Readonly role check and instrumentation database protection are
         // handled in DuckDBStatement::Create which is called before this point
 
@@ -1676,6 +1809,11 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
+    if (statement->ShouldExecuteEagerly()) {
+      return ExecuteForFlightInfo(context, client_session, statement, descriptor);
+    }
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     if (statement->HasUnresolvedSchema()) {
       // Untyped placeholders: the real schema is only known once the bound
@@ -1724,6 +1862,8 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
     ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
     if (rows.size() > 1) {
       return Status::Invalid(
@@ -1754,6 +1894,8 @@ class DuckDBFlightSqlServer::Impl {
       statement = search->second;
     }
 
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
     ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
 
     if (rows.empty()) {
@@ -2267,10 +2409,24 @@ class DuckDBFlightSqlServer::Impl {
     return Status::OK();
   }
 
+  static bool IsCompletedFlightInfo(const flight::FlightInfo* info) {
+    if (!info || info->endpoints().empty()) return false;
+    for (const auto& endpoint : info->endpoints()) {
+      auto ticket = sql::StatementQueryTicket::Deserialize(endpoint.ticket.ticket);
+      if (!ticket.ok() || !ticket->statement_handle.starts_with(kCompletedTicketPrefix)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   Result<flight::CancelFlightInfoResult> CancelFlightInfo(
       const flight::ServerCallContext& context,
       const flight::CancelFlightInfoRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    // A completed execution can never cancel a later query on this session.
+    if (IsCompletedFlightInfo(request.info.get()))
+      return flight::CancelFlightInfoResult(flight::CancelStatus::kNotCancellable);
     ARROW_RETURN_NOT_OK(DoCancelActiveStatement(client_session));
     return flight::CancelFlightInfoResult(flight::CancelStatus::kCancelled);
   }
@@ -2279,6 +2435,9 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::sql::ActionCancelQueryRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    // A completed execution can never cancel a later query on this session.
+    if (IsCompletedFlightInfo(request.info.get()))
+      return flight::sql::CancelResult::kNotCancellable;
     ARROW_RETURN_NOT_OK(DoCancelActiveStatement(client_session));
     return flight::sql::CancelResult(flight::sql::CancelResult::kCancelled);
   }
@@ -2607,6 +2766,13 @@ Result<std::vector<std::string>> DuckDBFlightSqlServer::ExecuteSqlAndGetStringVe
     const std::string& sql) const {
   return impl_->ExecuteSqlAndGetStringVector(sql);
 }
+
+#ifdef GIZMOSQL_ENTERPRISE
+void DuckDBFlightSqlServer::SampleMetrics(
+    gizmosql::enterprise::MetricsRegistry& registry) {
+  impl_->SampleMetrics(registry);
+}
+#endif
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoStatement(
     const flight::ServerCallContext& context, const sql::StatementQuery& command,

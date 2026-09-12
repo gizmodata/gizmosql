@@ -1,0 +1,466 @@
+[
+  {
+    "repeat": 1,
+    "label": "baseline",
+    "binary_sha256": "5a9e80df92b342185afb0cfcbfa0789507dac0eb58a7be0f5194ea3d49062b2a",
+    "valid": true,
+    "max_sample_gap_seconds": 0.841370458016172,
+    "workloads": {
+      "read": {
+        "operations": 26841,
+        "seconds": 20.0001320829615,
+        "ops_per_second": 1342.0411369616088,
+        "p50_ms": 0.7347080390900373,
+        "p95_ms": 0.8386659901589155,
+        "cpu_seconds": 15.032883087999998
+      },
+      "bound_read": {
+        "operations": 19905,
+        "seconds": 20.000493792118505,
+        "ops_per_second": 995.225428276369,
+        "p50_ms": 0.9903330355882645,
+        "p95_ms": 1.1249580420553684,
+        "cpu_seconds": 14.542215168000002
+      },
+      "write": {
+        "operations": 32469,
+        "seconds": 20.000117833027616,
+        "ops_per_second": 1623.440435254918,
+        "p50_ms": 0.6067920476198196,
+        "p95_ms": 0.6929170340299606,
+        "cpu_seconds": 11.616995328
+      },
+      "concurrent_2": {
+        "operations": 15419,
+        "seconds": 20.007227125111967,
+        "ops_per_second": 770.671513027756,
+        "p50_ms": 2.5365001056343317,
+        "p95_ms": 3.033208893612027,
+        "cpu_seconds": 27.889399808000007
+      },
+      "concurrent_8": {
+        "operations": 17038,
+        "seconds": 20.019562624860555,
+        "ops_per_second": 851.067544245047,
+        "p50_ms": 8.61239549703896,
+        "p95_ms": 10.92345779761672,
+        "cpu_seconds": 46.56813056
+      }
+    },
+    "churn_rss_bytes": [
+      96452608,
+      96567296,
+      96731136,
+      96731136,
+      96731136
+    ],
+    "scrapes": 0,
+    "scrape_p95_ms": null
+  },
+  {
+    "repeat": 1,
+    "label": "candidate-disabled",
+    "binary_sha256": "4585869bff750c55c7fdd3128c4ef026745c4bcdf4316bad1676501f9509ed13",
+    "valid": true,
+    "max_sample_gap_seconds": 0.6316904998384416,
+    "workloads": {
+      "read": {
+        "operations": 25709,
+        "seconds": 20.000288834096864,
+        "ops_per_second": 1285.4314361786026,
+        "p50_ms": 0.7680000271648169,
+        "p95_ms": 0.8692089468240738,
+        "cpu_seconds": 14.285081447999998
+      },
+      "bound_read": {
+        "operations": 19402,
+        "seconds": 20.000255290884525,
+        "ops_per_second": 970.087617273706,
+        "p50_ms": 1.0157499928027391,
+        "p95_ms": 1.1534581426531076,
+        "cpu_seconds": 14.048019456
+      },
+      "write": {
+        "operations": 30887,
+        "seconds": 20.000583792105317,
+        "ops_per_second": 1544.3049223489065,
+        "p50_ms": 0.6401250138878822,
+        "p95_ms": 0.7242499850690365,
+        "cpu_seconds": 10.779443200000003
+      },
+      "concurrent_2": {
+        "operations": 14056,
+        "seconds": 20.009017874952406,
+        "ops_per_second": 702.4832546926511,
+        "p50_ms": 2.7733539463952184,
+        "p95_ms": 3.340750001370907,
+        "cpu_seconds": 26.6074112
+      },
+      "concurrent_8": {
+        "operations": 16893,
+        "seconds": 20.021049541886896,
+        "ops_per_second": 843.7619598641635,
+        "p50_ms": 8.826500037685037,
+        "p95_ms": 11.026958003640175,
+        "cpu_seconds": 46.684688384000005
+      }
+    },
+    "churn_rss_bytes": [
+      101138432,
+      101187584,
+      101171200,
+      101220352,
+      101236736
+    ],
+    "scrapes": 0,
+    "scrape_p95_ms": null
+  },
+  {
+    "repeat": 1,
+    "label": "candidate-collection",
+    "binary_sha256": "4585869bff750c55c7fdd3128c4ef026745c4bcdf4316bad1676501f9509ed13",
+    "valid": true,
+    "max_sample_gap_seconds": 0.21543308394029737,
+    "workloads": {
+      "read": {
+        "operations": 25460,
+        "seconds": 20.000495915999636,
+        "ops_per_second": 1272.9684357292845,
+        "p50_ms": 0.7755828555673361,
+        "p95_ms": 0.8782909717410803,
+        "cpu_seconds": 13.787428504
+      },
+      "bound_read": {
+        "operations": 19217,
+        "seconds": 20.000632375013083,
+        "ops_per_second": 960.819620084009,
+        "p50_ms": 1.023625023663044,
+        "p95_ms": 1.1706671211868525,
+        "cpu_seconds": 13.583673343999997
+      },
+      "write": {
+        "operations": 30996,
+        "seconds": 20.000542416935787,
+        "ops_per_second": 1549.7579692515553,
+        "p50_ms": 0.6369589827954769,
+        "p95_ms": 0.7227088790386915,
+        "cpu_seconds": 10.559467519999995
+      },
+      "concurrent_2": {
+        "operations": 13752,
+        "seconds": 20.00664991699159,
+        "ops_per_second": 687.371451845142,
+        "p50_ms": 2.84131255466491,
+        "p95_ms": 3.3506250474601984,
+        "cpu_seconds": 25.236678656000002
+      },
+      "concurrent_8": {
+        "operations": 17817,
+        "seconds": 20.01950650010258,
+        "ops_per_second": 889.981978322428,
+        "p50_ms": 8.802207885310054,
+        "p95_ms": 11.147000128403306,
+        "cpu_seconds": 48.397807616
+      }
+    },
+    "churn_rss_bytes": [
+      101662720,
+      101728256,
+      101826560,
+      101826560,
+      101826560
+    ],
+    "scrapes": 0,
+    "scrape_p95_ms": null
+  },
+  {
+    "repeat": 1,
+    "label": "candidate-scraped",
+    "binary_sha256": "4585869bff750c55c7fdd3128c4ef026745c4bcdf4316bad1676501f9509ed13",
+    "valid": true,
+    "max_sample_gap_seconds": 0.3981525420676917,
+    "workloads": {
+      "read": {
+        "operations": 25209,
+        "seconds": 20.000197290908545,
+        "ops_per_second": 1260.4375663563685,
+        "p50_ms": 0.7820830214768648,
+        "p95_ms": 0.8932501077651978,
+        "cpu_seconds": 13.758758895999998
+      },
+      "bound_read": {
+        "operations": 19109,
+        "seconds": 20.00069687492214,
+        "ops_per_second": 955.4167097027407,
+        "p50_ms": 1.0294998064637184,
+        "p95_ms": 1.1777500621974468,
+        "cpu_seconds": 13.58724352
+      },
+      "write": {
+        "operations": 30540,
+        "seconds": 20.000565707916394,
+        "ops_per_second": 1526.956809422246,
+        "p50_ms": 0.6457499694079161,
+        "p95_ms": 0.7395830471068621,
+        "cpu_seconds": 10.473934848000003
+      },
+      "concurrent_2": {
+        "operations": 13805,
+        "seconds": 20.009190707933158,
+        "ops_per_second": 689.9329513875168,
+        "p50_ms": 2.8352499939501286,
+        "p95_ms": 3.340291092172265,
+        "cpu_seconds": 25.281021952000003
+      },
+      "concurrent_8": {
+        "operations": 17320,
+        "seconds": 20.020584958139807,
+        "ops_per_second": 865.109587767473,
+        "p50_ms": 8.750083041377366,
+        "p95_ms": 10.974499862641096,
+        "cpu_seconds": 46.492127232
+      }
+    },
+    "churn_rss_bytes": [
+      102449152,
+      102711296,
+      102842368,
+      102842368,
+      102842368
+    ],
+    "scrapes": 1029,
+    "scrape_p95_ms": 2.046750159934163
+  },
+  {
+    "repeat": 2,
+    "label": "baseline",
+    "binary_sha256": "5a9e80df92b342185afb0cfcbfa0789507dac0eb58a7be0f5194ea3d49062b2a",
+    "valid": false,
+    "max_sample_gap_seconds": 120.0891719579231,
+    "workloads": {
+      "read": {
+        "operations": 27700,
+        "seconds": 20.000530832912773,
+        "ops_per_second": 1384.9632407964402,
+        "p50_ms": 0.7132295286282897,
+        "p95_ms": 0.8090829942375422,
+        "cpu_seconds": 14.832383936
+      },
+      "bound_read": {
+        "operations": 20455,
+        "seconds": 20.000673583941534,
+        "ops_per_second": 1022.7155557612441,
+        "p50_ms": 0.9629998821765184,
+        "p95_ms": 1.1021250393241644,
+        "cpu_seconds": 14.442778624
+      },
+      "write": {
+        "operations": 33552,
+        "seconds": 20.000561875058338,
+        "ops_per_second": 1677.5528712441303,
+        "p50_ms": 0.5885830614715815,
+        "p95_ms": 0.6673340685665607,
+        "cpu_seconds": 11.375855615999996
+      },
+      "concurrent_2": {
+        "operations": 8399,
+        "seconds": 130.84802858298644,
+        "ops_per_second": 64.18896861463362,
+        "p50_ms": 2.5142920203506947,
+        "p95_ms": 3.012959146872163,
+        "cpu_seconds": 15.161528319999995
+      },
+      "concurrent_8": {
+        "operations": 17510,
+        "seconds": 20.019956583855674,
+        "ops_per_second": 874.6272713758165,
+        "p50_ms": 8.619875530712306,
+        "p95_ms": 10.844874894246459,
+        "cpu_seconds": 48.09757695999999
+      }
+    },
+    "churn_rss_bytes": [
+      97107968,
+      97222656,
+      97239040,
+      97255424,
+      97304576
+    ],
+    "scrapes": 0,
+    "scrape_p95_ms": null
+  },
+  {
+    "repeat": 2,
+    "label": "candidate-disabled",
+    "binary_sha256": "4585869bff750c55c7fdd3128c4ef026745c4bcdf4316bad1676501f9509ed13",
+    "valid": true,
+    "max_sample_gap_seconds": 1.1712118750438094,
+    "workloads": {
+      "read": {
+        "operations": 26582,
+        "seconds": 20.000497750006616,
+        "ops_per_second": 1329.066922846518,
+        "p50_ms": 0.7434170693159103,
+        "p95_ms": 0.8379579521715641,
+        "cpu_seconds": 14.122118928
+      },
+      "bound_read": {
+        "operations": 19924,
+        "seconds": 20.00068070902489,
+        "ops_per_second": 996.1660950374409,
+        "p50_ms": 0.989624997600913,
+        "p95_ms": 1.1225829366594553,
+        "cpu_seconds": 13.953505280000002
+      },
+      "write": {
+        "operations": 31994,
+        "seconds": 20.000420707976446,
+        "ops_per_second": 1599.6663503803372,
+        "p50_ms": 0.6169171538203955,
+        "p95_ms": 0.7006670348346233,
+        "cpu_seconds": 10.903158784
+      },
+      "concurrent_2": {
+        "operations": 14675,
+        "seconds": 20.007314666872844,
+        "ops_per_second": 733.4817412702647,
+        "p50_ms": 2.6541249826550484,
+        "p95_ms": 3.19454213604331,
+        "cpu_seconds": 26.752317439999995
+      },
+      "concurrent_8": {
+        "operations": 17129,
+        "seconds": 20.018367207841948,
+        "ops_per_second": 855.6641918972256,
+        "p50_ms": 8.63875006325543,
+        "p95_ms": 10.92937495559454,
+        "cpu_seconds": 46.763401216000005
+      }
+    },
+    "churn_rss_bytes": [
+      100974592,
+      100990976,
+      101023744,
+      101089280,
+      101089280
+    ],
+    "scrapes": 0,
+    "scrape_p95_ms": null
+  },
+  {
+    "repeat": 2,
+    "label": "candidate-collection",
+    "binary_sha256": "4585869bff750c55c7fdd3128c4ef026745c4bcdf4316bad1676501f9509ed13",
+    "valid": true,
+    "max_sample_gap_seconds": 0.4076490830630064,
+    "workloads": {
+      "read": {
+        "operations": 25790,
+        "seconds": 20.000353417126462,
+        "ops_per_second": 1289.4772138334224,
+        "p50_ms": 0.7604579441249371,
+        "p95_ms": 0.8930829353630543,
+        "cpu_seconds": 14.274677352
+      },
+      "bound_read": {
+        "operations": 17772,
+        "seconds": 20.0007439579349,
+        "ops_per_second": 888.5669471784478,
+        "p50_ms": 1.0622295085340738,
+        "p95_ms": 1.5094999689608812,
+        "cpu_seconds": 13.874967552000001
+      },
+      "write": {
+        "operations": 31378,
+        "seconds": 20.00012254086323,
+        "ops_per_second": 1568.890387340881,
+        "p50_ms": 0.6257920758798718,
+        "p95_ms": 0.7303340826183558,
+        "cpu_seconds": 10.806755327999998
+      },
+      "concurrent_2": {
+        "operations": 13956,
+        "seconds": 20.007575958035886,
+        "ops_per_second": 697.5357749120368,
+        "p50_ms": 2.7484589954838157,
+        "p95_ms": 3.5749159287661314,
+        "cpu_seconds": 26.393112576000007
+      },
+      "concurrent_8": {
+        "operations": 17276,
+        "seconds": 20.020519082900137,
+        "ops_per_second": 862.9146890979326,
+        "p50_ms": 8.805229561403394,
+        "p95_ms": 11.165916919708252,
+        "cpu_seconds": 48.069595136
+      }
+    },
+    "churn_rss_bytes": [
+      102072320,
+      102072320,
+      102072320,
+      102105088,
+      102088704
+    ],
+    "scrapes": 0,
+    "scrape_p95_ms": null
+  },
+  {
+    "repeat": 2,
+    "label": "candidate-scraped",
+    "binary_sha256": "4585869bff750c55c7fdd3128c4ef026745c4bcdf4316bad1676501f9509ed13",
+    "valid": true,
+    "max_sample_gap_seconds": 0.9414918329566717,
+    "workloads": {
+      "read": {
+        "operations": 24936,
+        "seconds": 20.000653458060697,
+        "ops_per_second": 1246.759264755435,
+        "p50_ms": 0.7779590087011456,
+        "p95_ms": 0.9672918822616339,
+        "cpu_seconds": 14.233736367999999
+      },
+      "bound_read": {
+        "operations": 18368,
+        "seconds": 20.000374499941245,
+        "ops_per_second": 918.3828032847065,
+        "p50_ms": 1.048375153914094,
+        "p95_ms": 1.349917147308588,
+        "cpu_seconds": 13.924438528000003
+      },
+      "write": {
+        "operations": 30293,
+        "seconds": 20.000124874990433,
+        "ops_per_second": 1514.6405429638344,
+        "p50_ms": 0.6415420211851597,
+        "p95_ms": 0.7971669547259808,
+        "cpu_seconds": 10.790864896000004
+      },
+      "concurrent_2": {
+        "operations": 14414,
+        "seconds": 20.007208457915112,
+        "ops_per_second": 720.4403368075887,
+        "p50_ms": 2.7066870825365186,
+        "p95_ms": 3.201582934707403,
+        "cpu_seconds": 26.745055231999995
+      },
+      "concurrent_8": {
+        "operations": 17111,
+        "seconds": 20.020623707911,
+        "ops_per_second": 854.668678141067,
+        "p50_ms": 8.85745813138783,
+        "p95_ms": 11.041124816983938,
+        "cpu_seconds": 48.57029427200001
+      }
+    },
+    "churn_rss_bytes": [
+      102662144,
+      102711296,
+      102694912,
+      102711296,
+      102727680
+    ],
+    "scrapes": 1032,
+    "scrape_p95_ms": 1.9415421411395073
+  }
+]

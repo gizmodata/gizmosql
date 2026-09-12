@@ -723,6 +723,9 @@ if(GIZMOSQL_ENTERPRISE)
     # Enterprise edition: instrumentation from enterprise directory
     set(GIZMOSQL_ENTERPRISE_SRCS
             src/enterprise/enterprise_features.cpp
+            src/enterprise/metrics/metrics_registry.cpp
+            src/enterprise/metrics/metrics_service.cpp
+            src/enterprise/metrics/metrics_sql.cpp
             src/enterprise/license_mgr/license_manager.cpp
             src/enterprise/instrumentation/instrumentation_manager.cpp
             src/enterprise/instrumentation/instrumentation_records.cpp
@@ -853,7 +856,7 @@ if(WITH_OPENTELEMETRY)
 endif()
 
 if(WIN32)
-    target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 rstrtmgr ntdll)
+    target_link_libraries(gizmosqlserver PRIVATE ws2_32 iphlpapi bcrypt userenv crypt32 rstrtmgr ntdll psapi)
     target_link_options(gizmosqlserver PRIVATE /NODEFAULTLIB:msvcrt.lib /NODEFAULTLIB:msvcprt.lib)
 elseif(APPLE)
     target_link_libraries(gizmosqlserver PRIVATE "-framework CoreFoundation" "-framework Security" "-lresolv")

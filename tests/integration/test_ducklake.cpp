@@ -48,6 +48,9 @@
 #include "arrow/flight/sql/types.h"
 #include "arrow/testing/gtest_util.h"
 #include "test_server_fixture.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/enterprise_features.h"
+#endif
 #include "test_util.h"
 
 using arrow::flight::sql::FlightSqlClient;
@@ -330,14 +333,16 @@ TEST_F(DuckLakeServerFixture, DuckLakeSetupAndQuery) {
   ASSERT_EQ(result.row_count, 1) << "Expected 1 aggregation row";
   std::cerr << "  Aggregation returned " << result.row_count << " row" << std::endl;
 
-  // Give instrumentation a moment to flush
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+#ifdef GIZMOSQL_ENTERPRISE
+  if (gizmosql::enterprise::EnterpriseFeatures::Instance().IsInstrumentationAvailable()) {
+    // Give instrumentation a moment to flush
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-  // Step 10: Verify instrumentation captured DuckLake queries
-  std::cerr << "Verifying instrumentation captured DuckLake queries..." << std::endl;
+    // Step 10: Verify instrumentation captured DuckLake queries
+    std::cerr << "Verifying instrumentation captured DuckLake queries..." << std::endl;
 
-  // Query instrumentation for our session's statements
-  result = RunQuery(sql_client, call_options, R"(
+    // Query instrumentation for our session's statements
+    result = RunQuery(sql_client, call_options, R"(
     SELECT sql_text, prepare_success, is_internal
     FROM _gizmosql_instr.sql_statements
     WHERE session_id = GIZMOSQL_CURRENT_SESSION()
@@ -345,16 +350,17 @@ TEST_F(DuckLakeServerFixture, DuckLakeSetupAndQuery) {
       AND is_internal = false
     ORDER BY created_time;
   )");
-  ASSERT_TRUE(result.success) << "Failed to query instrumentation: " << result.error_message;
-  std::cerr << "  Found " << result.row_count
-            << " instrumented statements mentioning 'test_cities'" << std::endl;
+    ASSERT_TRUE(result.success)
+        << "Failed to query instrumentation: " << result.error_message;
+    std::cerr << "  Found " << result.row_count
+              << " instrumented statements mentioning 'test_cities'" << std::endl;
 
-  // We expect at least: CREATE TABLE, INSERT, SELECT, SELECT with GROUP BY
-  ASSERT_GE(result.row_count, 4)
-      << "Expected at least 4 instrumented DuckLake statements";
+    // We expect at least: CREATE TABLE, INSERT, SELECT, SELECT with GROUP BY
+    ASSERT_GE(result.row_count, 4)
+        << "Expected at least 4 instrumented DuckLake statements";
 
-  // Verify executions were recorded
-  result = RunQuery(sql_client, call_options, R"(
+    // Verify executions were recorded
+    result = RunQuery(sql_client, call_options, R"(
     SELECT e.execution_id, s.sql_text, e.status, e.rows_fetched, e.duration_ms
     FROM _gizmosql_instr.sql_executions e
     JOIN _gizmosql_instr.sql_statements s ON e.statement_id = s.statement_id
@@ -363,9 +369,11 @@ TEST_F(DuckLakeServerFixture, DuckLakeSetupAndQuery) {
       AND s.is_internal = false
     ORDER BY e.execution_start_time;
   )");
-  ASSERT_TRUE(result.success) << "Failed to query executions: " << result.error_message;
-  std::cerr << "  Found " << result.row_count << " execution records" << std::endl;
-  ASSERT_GE(result.row_count, 4) << "Expected at least 4 execution records";
+    ASSERT_TRUE(result.success) << "Failed to query executions: " << result.error_message;
+    std::cerr << "  Found " << result.row_count << " execution records" << std::endl;
+    ASSERT_GE(result.row_count, 4) << "Expected at least 4 execution records";
+  }
+#endif
 
   // Step 11: Clean up
   std::cerr << "Cleaning up..." << std::endl;

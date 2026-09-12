@@ -49,7 +49,9 @@ def test_geoarrow_export():
             cur.execute("SELECT ST_Point(1.0, 2.0) AS geom")
             arrow_table = cur.fetch_arrow_table()
 
-            assert arrow_table.num_rows == 1, f"Expected 1 row, got {arrow_table.num_rows}"
+            assert arrow_table.num_rows == 1, (
+                f"Expected 1 row, got {arrow_table.num_rows}"
+            )
             assert "geom" in arrow_table.column_names, "Missing 'geom' column"
 
             geom_field = arrow_table.schema.field("geom")
@@ -62,8 +64,9 @@ def test_geoarrow_export():
                 if b"ARROW:extension:name" in metadata:
                     ext_name = metadata[b"ARROW:extension:name"].decode()
                     print(f"  Extension name: {ext_name}")
-                    assert "geoarrow" in ext_name.lower() or "ogc" in ext_name.lower(), \
+                    assert "geoarrow" in ext_name.lower() or "ogc" in ext_name.lower(), (
                         f"Expected GeoArrow extension, got: {ext_name}"
+                    )
                     print("  ✓ GeoArrow extension metadata present")
                 else:
                     print("  ⚠ No ARROW:extension:name metadata (may be binary WKB)")
@@ -92,7 +95,9 @@ def test_geoarrow_export():
             """)
             arrow_table = cur.fetch_arrow_table()
 
-            assert arrow_table.num_rows == 3, f"Expected 3 rows, got {arrow_table.num_rows}"
+            assert arrow_table.num_rows == 3, (
+                f"Expected 3 rows, got {arrow_table.num_rows}"
+            )
             print(f"  Retrieved {arrow_table.num_rows} geometry rows")
             print("  ✓ Multiple geometry types query successful")
 

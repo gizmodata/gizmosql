@@ -215,6 +215,49 @@ TEST_F(InternalQueryLogInfoFixture, DoGetTablesNotLoggedAtInfoThreshold) {
   }
 }
 
+TEST_F(InternalQueryLogInfoFixture,
+       EagerWriteLogsOnceAtInfoAndReplayDoesNotLogExecution) {
+  ASSERT_TRUE(IsServerReady());
+  struct RestoreLogger {
+    std::shared_ptr<Logger> previous;
+    ~RestoreLogger() { LoggerRegistry::SetDefaultLogger(previous); }
+  } restore{LoggerRegistry::GetDefaultLogger()};
+  // Query logging remains independent of the global severity threshold.
+  auto capture = std::make_shared<CapturingLogger>(ArrowLogLevel::ARROW_WARNING);
+  LoggerRegistry::SetDefaultLogger(capture);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, arrow::flight::FlightClient::Connect(location));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  arrow::flight::FlightCallOptions options;
+  options.headers.push_back(bearer);
+  FlightSqlClient sql_client(std::move(client));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto info,
+      sql_client.Execute(
+          options, "INSERT INTO log_test_table VALUES (139, 'eager_log_contract')"));
+  int successes = 0;
+  for (const auto& entry : capture->TakeEntries()) {
+    if (entry.message.find("eager_log_contract") != std::string::npos &&
+        entry.message.find("Client SQL command execution succeeded") !=
+            std::string::npos) {
+      ++successes;
+      EXPECT_EQ(entry.severity, ArrowLogLevel::ARROW_INFO);
+    }
+  }
+  EXPECT_EQ(successes, 1);
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto stream,
+                               sql_client.DoGet(options, info->endpoints()[0].ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, stream->ToTable());
+    EXPECT_EQ(table->num_rows(), 1);
+  }
+  for (const auto& entry : capture->TakeEntries()) {
+    EXPECT_EQ(entry.message.find("eager_log_contract"), std::string::npos);
+  }
+}
+
 // =============================================================================
 // Test: DEBUG threshold allows internal DoGetTables query logs through
 // =============================================================================

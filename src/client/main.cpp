@@ -39,6 +39,8 @@
 #include "password_prompt.hpp"
 #include "shell_loop.hpp"
 #include "sql_processor.hpp"
+#include "signal_watcher.hpp"
+#include "sql_quoting.hpp"
 #include "version.h"
 #include "gizmosql_library.h"  // GIZMOSQL_SERVER_VERSION (channel-aware)
 
@@ -49,10 +51,8 @@ namespace {
 FlightConnection* g_conn = nullptr;
 
 void SigtermHandler(int /*signum*/) {
-  if (g_conn) {
-    g_conn->Disconnect();
-    g_conn = nullptr;
-  }
+  // gRPC, locks and object destruction are not async-signal-safe. The server
+  // reaps abandoned sessions; ordinary CLI exit closes the session explicitly.
   std::_Exit(0);
 }
 }  // namespace
@@ -305,24 +305,10 @@ int main(int argc, char** argv) {
   // Replxx is unaffected: it disables ISIG in raw mode and reads Ctrl+C as
   // a keypress (ASCII 3), so SIGINT is never generated at the prompt.
 #ifndef _WIN32
-  {
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGINT);
-    pthread_sigmask(SIG_BLOCK, &mask, nullptr);
-
-    std::thread([&conn, mask]() {
-      sigset_t wait_mask = mask;
-      while (true) {
-        int sig = 0;
-        sigwait(&wait_mask, &sig);
-        if (sig == SIGINT) {
-          conn.RequestCancel();
-          conn.SendCancelToServer();
-        }
-      }
-    }).detach();
-  }
+  SignalWatcher signal_watcher([&conn] {
+    conn.RequestCancel();
+    conn.SendCancelToServer();
+  });
 #else
   // On Windows, use signal() as fallback
   std::signal(SIGINT, [](int) {
@@ -339,16 +325,16 @@ int main(int argc, char** argv) {
 
     // Set tags if configured (can be overridden later via SET gizmosql.*)
     if (!config.session_tag.empty()) {
-      auto tag_result = conn.ExecuteUpdate(
-          "SET gizmosql.session_tag = '" + config.session_tag + "'");
+      auto tag_result = conn.ExecuteUpdate("SET gizmosql.session_tag = " +
+                                           QuoteSqlLiteral(config.session_tag));
       if (!tag_result.ok()) {
         std::cerr << "Warning: failed to set session_tag: "
                   << tag_result.status().ToString() << std::endl;
       }
     }
     if (!config.query_tag.empty()) {
-      auto tag_result = conn.ExecuteUpdate(
-          "SET gizmosql.query_tag = '" + config.query_tag + "'");
+      auto tag_result = conn.ExecuteUpdate("SET gizmosql.query_tag = " +
+                                           QuoteSqlLiteral(config.query_tag));
       if (!tag_result.ok()) {
         std::cerr << "Warning: failed to set query_tag: "
                   << tag_result.status().ToString() << std::endl;

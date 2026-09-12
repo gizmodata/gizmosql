@@ -65,9 +65,7 @@ def test_conn_commit_path() -> bool:
     try:
         with _connect(autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"CREATE TABLE {table} (id INTEGER, name VARCHAR)"
-                )
+                cur.execute(f"CREATE TABLE {table} (id INTEGER, name VARCHAR)")
                 cur.execute(
                     f"INSERT INTO {table} VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')"
                 )
@@ -90,9 +88,7 @@ def test_sql_commit_path() -> bool:
     try:
         with _connect(autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"CREATE TABLE {table} (id INTEGER, name VARCHAR)"
-                )
+                cur.execute(f"CREATE TABLE {table} (id INTEGER, name VARCHAR)")
                 cur.execute(
                     f"INSERT INTO {table} VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')"
                 )
@@ -115,9 +111,7 @@ def test_rollback_path() -> bool:
     try:
         with _connect(autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"CREATE TABLE {table} (id INTEGER, name VARCHAR)"
-                )
+                cur.execute(f"CREATE TABLE {table} (id INTEGER, name VARCHAR)")
                 cur.execute(f"INSERT INTO {table} VALUES (1, 'alice')")
             conn.rollback()
             print("  conn.rollback() succeeded")

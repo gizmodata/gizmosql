@@ -1,0 +1,39 @@
+services:
+  gizmosql:
+    image: gizmodata/gizmosql:v1.39.0
+    environment:
+      GIZMOSQL_PASSWORD: ${GIZMOSQL_PASSWORD:?Set a GizmoSQL password}
+      GIZMOSQL_LICENSE_KEY_FILE: /run/secrets/gizmosql_license
+      GIZMOSQL_ENABLE_METRICS: 'true'
+      GIZMOSQL_METRICS_PORT: '9091'
+      GIZMOSQL_METRICS_BIND_ADDRESS: 0.0.0.0
+      GIZMOSQL_ENABLE_INSTRUMENTATION: 'false'
+      TLS_ENABLED: '0'
+      DATABASE_FILENAME: /data/gizmosql.duckdb
+    secrets: [gizmosql_license]
+    ports: ['127.0.0.1:31337:31337']
+    expose: ['9091']
+    volumes: ['gizmosql_data:/data']
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./gizmosql-alerts.yml:/etc/prometheus/gizmosql-alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports: ['127.0.0.1:9090:9090']
+  grafana:
+    image: grafana/grafana:13.2.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set a Grafana admin password}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./gizmosql-dashboard.json:/var/lib/grafana/dashboards/gizmosql.json:ro
+      - grafana_data:/var/lib/grafana
+    ports: ['127.0.0.1:3000:3000']
+secrets:
+  gizmosql_license:
+    file: ${GIZMOSQL_LICENSE_FILE:?Set the path to a license with the metrics feature}
+volumes:
+  gizmosql_data:
+  prometheus_data:
+  grafana_data:

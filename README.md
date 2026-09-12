@@ -39,6 +39,7 @@ GizmoSQL is available in two editions:
 | JWT token authentication | ✅ | ✅ |
 | Query timeout | ✅ | ✅ |
 | Session Instrumentation | ❌ | ✅ |
+| [Prometheus Metrics Endpoint & SQL Metrics](docs/monitoring.md) | ❌ | ✅ |
 | Kill Session | ❌ | ✅ |
 | Per-Catalog Permissions | ❌ | ✅ |
 | SSO/OIDC Authentication (JWKS) | ❌ | ✅ |
@@ -50,6 +51,10 @@ GizmoSQL is available in two editions:
 **GizmoSQL Enterprise** requires a commercial license. Contact [sales@gizmodata.com](mailto:sales@gizmodata.com) for licensing information.
 
 For more details, see the [Editions documentation](https://docs.gizmosql.com/editions/).
+
+Runtime metrics require the **`metrics` license feature** and are disabled by
+default. See the [monitoring guide](docs/monitoring.md) for enablement, the
+configurable HTTP port/bind address, SQL access, and Prometheus/Grafana setup.
 
 ---
 
@@ -351,6 +356,9 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 ---
 
 ## 💬 Community
+
+Want to contribute code? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
+formatting, linting, clang-tidy, tests, and the checks required by CI.
 
 Join the **GizmoData Community Slack** to ask questions, share what you're building, and get help from the team and other users:
 

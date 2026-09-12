@@ -31,6 +31,7 @@ GizmoSQL Enterprise includes all Core features plus:
 
 | Feature | Description |
 |---------|-------------|
+| **Runtime Metrics** | Prometheus HTTP endpoint and `gizmosql_metrics()` SQL access. Requires the independent `metrics` license feature and explicit enablement. See [Monitoring](monitoring.md). |
 | **Session Instrumentation** | Track instances, sessions, and SQL statements for auditing, monitoring, and debugging. Records are stored in a DuckDB database for analysis. |
 | **KILL SESSION** | Terminate active client sessions programmatically via `KILL SESSION 'session-id'` SQL command. Requires admin role. |
 | **Per-Catalog Permissions** | Fine-grained access control via bootstrap tokens. Use the `catalog_access` JWT claim to grant read, write, or no access to specific catalogs on a per-user basis. |
@@ -141,6 +142,7 @@ Returns:
 | Health Check Endpoints | ✓ | ✓ |
 | Kubernetes Ready | ✓ | ✓ |
 | **Session Instrumentation** | - | ✓ |
+| **[Prometheus Endpoint & SQL Metrics](monitoring.md)** | - | ✓ (`metrics` license feature) |
 | **KILL SESSION Command** | - | ✓ |
 | **Per-Catalog Permissions** | - | ✓ |
 | **SSO/OAuth (JWKS)** | - | ✓ |

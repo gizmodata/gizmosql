@@ -28,23 +28,71 @@ using Color = replxx::Replxx::Color;
 
 // Common SQL functions for highlighting
 static const char* kBuiltinFunctions[] = {
-    "ABS",         "AVG",         "COALESCE",    "CONCAT",
-    "COUNT",       "CURRENT_DATE","CURRENT_TIME","CURRENT_TIMESTAMP",
-    "DATE_PART",   "DATE_TRUNC",  "EXTRACT",     "FIRST",
-    "GREATEST",    "IFNULL",      "LAST",        "LEAST",
-    "LENGTH",      "LIST_AGG",    "LOWER",       "MAX",
-    "MIN",         "NOW",         "NULLIF",      "PRINTF",
-    "REPLACE",     "ROUND",       "ROW_NUMBER",  "STRING_AGG",
-    "SUBSTR",      "SUBSTRING",   "SUM",         "TRIM",
-    "TYPEOF",      "UPPER",       "CAST",        "TRY_CAST",
-    "RANK",        "DENSE_RANK",  "NTILE",       "LAG",
-    "LEAD",        "FIRST_VALUE", "LAST_VALUE",  "NTH_VALUE",
-    "ARRAY_AGG",   "BIT_AND",     "BIT_OR",      "BIT_XOR",
-    "BOOL_AND",    "BOOL_OR",     "LIST",        "MAP",
-    "STRUCT_PACK", "UNNEST",      "GENERATE_SERIES",
-    "REGEXP_MATCHES", "REGEXP_REPLACE", "REGEXP_EXTRACT",
-    "STRFTIME",    "STRPTIME",    "DATE_DIFF",   "DATE_ADD",
-    "DATE_SUB",    "EPOCH",       "EPOCH_MS",
+    "ABS",
+    "AVG",
+    "COALESCE",
+    "CONCAT",
+    "COUNT",
+    "CURRENT_DATE",
+    "CURRENT_TIME",
+    "CURRENT_TIMESTAMP",
+    "DATE_PART",
+    "DATE_TRUNC",
+    "EXTRACT",
+    "FIRST",
+    "GREATEST",
+    "IFNULL",
+    "LAST",
+    "LEAST",
+    "LENGTH",
+    "LIST_AGG",
+    "LOWER",
+    "MAX",
+    "MIN",
+    "NOW",
+    "NULLIF",
+    "PRINTF",
+    "REPLACE",
+    "ROUND",
+    "ROW_NUMBER",
+    "STRING_AGG",
+    "SUBSTR",
+    "SUBSTRING",
+    "SUM",
+    "TRIM",
+    "TYPEOF",
+    "UPPER",
+    "CAST",
+    "TRY_CAST",
+    "RANK",
+    "DENSE_RANK",
+    "NTILE",
+    "LAG",
+    "LEAD",
+    "FIRST_VALUE",
+    "LAST_VALUE",
+    "NTH_VALUE",
+    "ARRAY_AGG",
+    "BIT_AND",
+    "BIT_OR",
+    "BIT_XOR",
+    "BOOL_AND",
+    "BOOL_OR",
+    "LIST",
+    "MAP",
+    "STRUCT_PACK",
+    "UNNEST",
+    "GENERATE_SERIES",
+    "REGEXP_MATCHES",
+    "REGEXP_REPLACE",
+    "REGEXP_EXTRACT",
+    "STRFTIME",
+    "STRPTIME",
+    "DATE_DIFF",
+    "DATE_ADD",
+    "DATE_SUB",
+    "EPOCH",
+    "EPOCH_MS",
 };
 
 SyntaxHighlighter::SyntaxHighlighter() {
@@ -111,7 +159,7 @@ size_t CodepointToByte(const std::string& s, size_t cp_pos) {
 }  // namespace
 
 void SyntaxHighlighter::Highlight(const std::string& input,
-                                   replxx::Replxx::colors_t& colors) {
+                                  replxx::Replxx::colors_t& colors) {
   if (!enabled_) return;
 
   // Colors vector is sized by replxx to match the number of Unicode code points.
@@ -133,23 +181,21 @@ void SyntaxHighlighter::Highlight(const std::string& input,
   bool in_single_quote = false;
   bool in_double_quote = false;
   bool in_block_comment = false;
-  bool in_line_comment = false;
 
   size_t i = 0;
   while (i < len) {
     char c = input[i];
 
     // Line comment
-    if (!in_single_quote && !in_double_quote && !in_block_comment &&
-        c == '-' && i + 1 < len && input[i + 1] == '-') {
+    if (!in_single_quote && !in_double_quote && !in_block_comment && c == '-' &&
+        i + 1 < len && input[i + 1] == '-') {
       set_color(i, len, Color::GRAY);
-      in_line_comment = true;
       break;  // Rest of line is comment
     }
 
     // Block comment start
-    if (!in_single_quote && !in_double_quote && !in_block_comment &&
-        c == '/' && i + 1 < len && input[i + 1] == '*') {
+    if (!in_single_quote && !in_double_quote && !in_block_comment && c == '/' &&
+        i + 1 < len && input[i + 1] == '*') {
       in_block_comment = true;
       set_color(i, i + 2, Color::GRAY);
       i += 2;
