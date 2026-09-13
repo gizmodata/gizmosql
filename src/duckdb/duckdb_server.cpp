@@ -491,6 +491,38 @@ std::string RowsAsValuesRelation(const std::vector<CatalogEntryRow>& rows,
   return sql.str();
 }
 
+// The effective (catalog, schema) a table reference resolves to on this
+// connection when the client omits either part.
+struct ResolvedTableTarget {
+  std::string catalog;
+  std::string schema;
+};
+
+// Temporary tables live in the implicit `temp.main` catalog/schema in DuckDB,
+// not in CURRENT_DATABASE()/CURRENT_SCHEMA(). When the caller indicates the
+// target is temporary, resolve there explicitly.
+Result<ResolvedTableTarget> ResolveTableTarget(
+    duckdb::Connection& conn, const std::optional<std::string>& catalog_name,
+    const std::optional<std::string>& schema_name, bool is_temp) {
+  if (is_temp) {
+    return ResolvedTableTarget{"temp", "main"};
+  }
+  ResolvedTableTarget target;
+  target.catalog = catalog_name.has_value()
+                       ? catalog_name.value()
+                       : duckdb::DatabaseManager::GetDefaultDatabase(*conn.context);
+  if (schema_name.has_value()) {
+    target.schema = schema_name.value();
+  } else {
+    auto result = conn.Query("SELECT CURRENT_SCHEMA()");
+    if (!result || result->HasError()) {
+      return Status::Invalid("DuckDB metadata query failed: " + result->GetError());
+    }
+    target.schema = result->GetValue(0, 0).ToString();
+  }
+  return target;
+}
+
 // Resolve a table's existence through the catalog API of the ONE catalog it
 // lives in (see "Catalog-scoped metadata scans" above).
 Result<bool> TableExists(duckdb::Connection& conn,
@@ -498,28 +530,10 @@ Result<bool> TableExists(duckdb::Connection& conn,
                          const std::optional<std::string>& schema_name,
                          const std::string& table_name, bool is_temp = false) {
   auto& context = *conn.context;
-  std::string catalog;
-  std::string schema;
-  // Temporary tables live in the implicit `temp.main` catalog/schema in DuckDB,
-  // not in CURRENT_DATABASE()/CURRENT_SCHEMA(). When the caller indicates the
-  // target is temporary, scope the lookup there explicitly.
-  if (is_temp) {
-    catalog = "temp";
-    schema = "main";
-  } else {
-    catalog = catalog_name.has_value()
-                  ? catalog_name.value()
-                  : duckdb::DatabaseManager::GetDefaultDatabase(context);
-    if (schema_name.has_value()) {
-      schema = schema_name.value();
-    } else {
-      auto result = conn.Query("SELECT CURRENT_SCHEMA()");
-      if (!result || result->HasError()) {
-        return Status::Invalid("DuckDB metadata query failed: " + result->GetError());
-      }
-      schema = result->GetValue(0, 0).ToString();
-    }
-  }
+  ARROW_ASSIGN_OR_RAISE(auto target,
+                        ResolveTableTarget(conn, catalog_name, schema_name, is_temp));
+  const std::string& catalog = target.catalog;
+  const std::string& schema = target.schema;
   bool exists = false;
   try {
     context.RunFunctionInTransaction([&]() {
@@ -2223,11 +2237,103 @@ class DuckDBFlightSqlServer::Impl {
     return Status::OK();
   }
 
+  // Bulk ingest bypasses DuckDBStatement, so it mirrors the SQL execution logs
+  // here: the same --print-queries gate, the session/server query log level as
+  // the threshold, INFO as the display severity, and the caller's session
+  // fields (user, role, peer, session_id) on every record.
   Result<int64_t> DoPutCommandStatementIngest(const flight::ServerCallContext& context,
                                               const flight::sql::StatementIngest& command,
                                               flight::FlightMessageReader* reader) {
-    std::string status;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    if (!print_queries_) {
+      return DoPutCommandStatementIngestImpl(client_session, command, reader);
+    }
+
+    arrow::util::ArrowLogLevel log_threshold;
+    if (client_session->query_log_level.has_value()) {
+      log_threshold = client_session->query_log_level.value();
+    } else {
+      ARROW_ASSIGN_OR_RAISE(log_threshold, GetQueryLogLevel(*client_session));
+    }
+    constexpr auto kDisplay = arrow::util::ArrowLogLevel::ARROW_INFO;
+
+    // Show the effective target even when the client omitted catalog/schema.
+    std::string catalog = command.catalog.value_or("");
+    std::string schema = command.schema.value_or("");
+    if (auto target =
+            ResolveTableTarget(client_session->connection->Get(), command.catalog,
+                               command.schema, command.temporary);
+        target.ok()) {
+      catalog = target->catalog;
+      schema = target->schema;
+    }
+    const std::string target_table =
+        QuoteIdent(catalog) + "." + QuoteIdent(schema) + "." + QuoteIdent(command.table);
+
+    using ExistsOpt = sql::TableDefinitionOptionsTableExistsOption;
+    using NotExistsOpt = sql::TableDefinitionOptionsTableNotExistOption;
+    const char* if_exists = "unspecified";
+    switch (command.table_definition_options.if_exists) {
+      case ExistsOpt::kFail:
+        if_exists = "fail";
+        break;
+      case ExistsOpt::kAppend:
+        if_exists = "append";
+        break;
+      case ExistsOpt::kReplace:
+        if_exists = "replace";
+        break;
+      case ExistsOpt::kUnspecified:
+        break;
+    }
+    const char* if_not_exist = "unspecified";
+    switch (command.table_definition_options.if_not_exist) {
+      case NotExistsOpt::kFail:
+        if_not_exist = "fail";
+        break;
+      case NotExistsOpt::kCreate:
+        if_not_exist = "create";
+        break;
+      case NotExistsOpt::kUnspecified:
+        break;
+    }
+
+    GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+        log_threshold, kDisplay, client_session, "Client is attempting a bulk ingest",
+        {"kind", "ingest"}, {"status", "attempt"}, {"target_table", target_table},
+        {"catalog", catalog}, {"schema", schema}, {"table", command.table},
+        {"temporary", command.temporary ? "true" : "false"}, {"if_exists", if_exists},
+        {"if_not_exist", if_not_exist}, {"flight_method", "DoPutCommandStatementIngest"});
+
+    const auto started = std::chrono::steady_clock::now();
+    auto result = DoPutCommandStatementIngestImpl(client_session, command, reader);
+    const auto duration_ms =
+        std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - started)
+                           .count());
+
+    if (result.ok()) {
+      GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+          log_threshold, kDisplay, client_session, "Bulk ingest succeeded",
+          {"kind", "ingest"}, {"status", "success"}, {"target_table", target_table},
+          {"catalog", catalog}, {"schema", schema}, {"table", command.table},
+          {"rows_ingested", std::to_string(*result)}, {"duration_ms", duration_ms},
+          {"flight_method", "DoPutCommandStatementIngest"});
+    } else {
+      GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+          log_threshold, kDisplay, client_session, "Bulk ingest failed",
+          {"kind", "ingest"}, {"status", "failure"}, {"target_table", target_table},
+          {"catalog", catalog}, {"schema", schema}, {"table", command.table},
+          {"error", result.status().ToString()}, {"duration_ms", duration_ms},
+          {"flight_method", "DoPutCommandStatementIngest"});
+    }
+    return result;
+  }
+
+  Result<int64_t> DoPutCommandStatementIngestImpl(
+      const std::shared_ptr<ClientSession>& client_session,
+      const flight::sql::StatementIngest& command, flight::FlightMessageReader* reader) {
+    std::string status;
 
     GIZMOSQL_LOG_SCOPE_STATUS(
         DEBUG, "DuckDBFlightSqlServer::DoPutCommandStatementIngest", status,

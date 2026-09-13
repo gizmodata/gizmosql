@@ -37,6 +37,7 @@ HTML version lives at the same path without the `.md` extension).
 ## Integrations
 
 - [Extensions & Tools](https://docs.gizmosql.com/integrations.md): ecosystem integrations
+- [MCP Server](https://github.com/gizmodata/gizmosql-mcp): Model Context Protocol server and Claude Desktop extension so AI agents can explore schemas and run SQL against GizmoSQL
 - [ADBC Scanner extension for DuckDB](https://docs.gizmosql.com/adbc_scanner_duckdb.md): query remote ADBC sources from DuckDB
 - [ADBC extension for DuckDB (Columnar)](https://docs.gizmosql.com/adbc_duckdb_extension.md): profile-based ADBC reads and writes from DuckDB
 

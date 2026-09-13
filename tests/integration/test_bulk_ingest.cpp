@@ -19,13 +19,23 @@
 #include <thread>
 #include <chrono>
 #include <iostream>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
 
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/api.h"
 #include "arrow/testing/gtest_util.h"
+#include "arrow/util/logger.h"
 #include "test_util.h"
 #include "test_server_fixture.h"
+
+using arrow::util::ArrowLogLevel;
+using arrow::util::LogDetails;
+using arrow::util::Logger;
+using arrow::util::LoggerRegistry;
 
 using arrow::flight::sql::FlightSqlClient;
 using arrow::flight::sql::TableDefinitionOptions;
@@ -70,9 +80,45 @@ class BulkIngestServerFixture
         .health_port = DEFAULT_HEALTH_PORT,
         .username = "tester",
         .password = "tester",
+        .print_queries = true,
     };
   }
 };
+
+namespace {
+
+// Captures every log record so tests can assert on the structured fields.
+class CapturingLogger final : public Logger {
+ public:
+  struct Entry {
+    ArrowLogLevel severity;
+    std::string message;
+  };
+
+  explicit CapturingLogger(ArrowLogLevel threshold) : threshold_(threshold) {}
+
+  bool is_enabled() const override { return true; }
+  ArrowLogLevel severity_threshold() const override { return threshold_; }
+
+  void Log(const LogDetails& d) override {
+    std::lock_guard<std::mutex> lk(mu_);
+    entries_.push_back({d.severity, std::string(d.message)});
+  }
+
+  std::vector<Entry> TakeEntries() {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto result = std::move(entries_);
+    entries_.clear();
+    return result;
+  }
+
+ private:
+  ArrowLogLevel threshold_;
+  mutable std::mutex mu_;
+  std::vector<Entry> entries_;
+};
+
+}  // namespace
 
 // Static member definitions required by the template
 template <>
@@ -353,4 +399,76 @@ TEST_F(BulkIngestServerFixture, NullTypedColumnIngestsAsVarchar) {
   EXPECT_EQ(type_name->ToString(), "VARCHAR");
   EXPECT_EQ(total->ToString(), "3");
   EXPECT_EQ(non_null->ToString(), "1");
+}
+
+// Bulk ingest bypasses DuckDBStatement, so it must emit its own query-style
+// logs: caller, fully qualified target table, and ingested row count at INFO,
+// independent of the global --log-level (query logs use their own threshold).
+TEST_F(BulkIngestServerFixture, ExecuteIngestLogsCallerTargetAndRowCount) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  struct RestoreLogger {
+    std::shared_ptr<Logger> previous;
+    ~RestoreLogger() { LoggerRegistry::SetDefaultLogger(previous); }
+  } restore{LoggerRegistry::GetDefaultLogger()};
+  auto capture = std::make_shared<CapturingLogger>(ArrowLogLevel::ARROW_WARNING);
+  LoggerRegistry::SetDefaultLogger(capture);
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, arrow::flight::FlightClient::Connect(location));
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+  arrow::flight::sql::FlightSqlClient sql_client(std::move(client));
+
+  TableDefinitionOptions table_opts;
+  table_opts.if_not_exist = TableDefinitionOptionsTableNotExistOption::kCreate;
+  table_opts.if_exists = TableDefinitionOptionsTableExistsOption::kAppend;
+
+  // Omit catalog and schema: the log must still show the effective ones.
+  auto reader = MakeTestBatches();
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto rows,
+      sql_client.ExecuteIngest(call_options, reader, table_opts, "ingest_logging_table",
+                               std::nullopt, std::nullopt, false /* temporary */,
+                               arrow::flight::sql::no_transaction(), {}));
+  ASSERT_EQ(rows, 3);
+
+  const CapturingLogger::Entry* attempt = nullptr;
+  const CapturingLogger::Entry* success = nullptr;
+  auto entries = capture->TakeEntries();
+  for (const auto& entry : entries) {
+    if (entry.message.find("\"kind\":\"ingest\"") == std::string::npos) continue;
+    if (entry.message.find("\"status\":\"attempt\"") != std::string::npos)
+      attempt = &entry;
+    if (entry.message.find("\"status\":\"success\"") != std::string::npos)
+      success = &entry;
+  }
+  ASSERT_NE(attempt, nullptr) << "no ingest attempt log record";
+  ASSERT_NE(success, nullptr) << "no ingest success log record";
+
+  for (const auto* entry : {attempt, success}) {
+    EXPECT_EQ(entry->severity, ArrowLogLevel::ARROW_INFO) << entry->message;
+    EXPECT_NE(entry->message.find("\"user\":\"tester\""), std::string::npos)
+        << entry->message;
+    EXPECT_NE(entry->message.find("\"session_id\":\""), std::string::npos)
+        << entry->message;
+    EXPECT_NE(entry->message.find("\"catalog\":\"bulk_ingest_tester\""),
+              std::string::npos)
+        << entry->message;
+    EXPECT_NE(entry->message.find("\"schema\":\"main\""), std::string::npos)
+        << entry->message;
+    EXPECT_NE(entry->message.find("\"table\":\"ingest_logging_table\""),
+              std::string::npos)
+        << entry->message;
+    EXPECT_NE(entry->message.find("\"flight_method\":\"DoPutCommandStatementIngest\""),
+              std::string::npos)
+        << entry->message;
+  }
+  EXPECT_NE(success->message.find("\"rows_ingested\":\"3\""), std::string::npos)
+      << success->message;
+  EXPECT_NE(success->message.find("\"duration_ms\":\""), std::string::npos)
+      << success->message;
 }

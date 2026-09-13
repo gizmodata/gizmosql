@@ -65,7 +65,7 @@ configurable HTTP port/bind address, SQL access, and Prometheus/Grafana setup.
 - ⚙️ **Dual Backends** — Switch between DuckDB and SQLite at runtime
 - 🔐 **Built-in TLS + Auth** — Password-based login + signed JWT tokens
 - 📈 **Super Cheap Analytics** — TPC-H SF 1000 in 161s for ~$0.17 on Azure
-- 🧪 **CLI, Python, JDBC, SQLAlchemy, Ibis, WebSocket** — Pick your interface
+- 🧪 **CLI, Python, JDBC, SQLAlchemy, Ibis, WebSocket, MCP** — Pick your interface
 
 ---
 
@@ -314,6 +314,7 @@ gizmosql_server -B sqlite --database-filename data/foo.sqlite
 ## 🧩 Extensions & Integrations
 
 - 💻 [GizmoSQL UI](https://github.com/gizmodata/gizmosql-ui) 🚀 **NEW!**
+- 🤖 [MCP Server for AI agents (Claude Desktop, Claude Code, any MCP client)](https://github.com/gizmodata/gizmosql-mcp) 🚀 **NEW!**
 - 🔌 [SQLAlchemy dialect](https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect)
 - 💿 [Apache Superset compatible SQLAlchemy driver](https://github.com/gizmodata/superset-sqlalchemy-gizmosql-adbc-dialect)
 - 🔌 [Ibis adapter](https://github.com/gizmodata/ibis-gizmosql)

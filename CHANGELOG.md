@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP endpoint and `gizmosql_metrics()` SQL table function sharing one registry.
   Background collection keeps DuckDB and process measurements off the query path.
 
+- INFO-level query logs for bulk ingest (`DoPutCommandStatementIngest`): attempt,
+  success, and failure records with the caller's session fields, the fully
+  qualified target table, and the ingested row count, gated by the query log
+  level like SQL execution logs.
+- README and docs list the GizmoSQL MCP server among the integrations.
+
 ### Security
 - Core edition rejects external tokens containing catalog access restrictions it
   cannot enforce, matching the existing unlicensed Enterprise behavior.
