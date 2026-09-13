@@ -54,11 +54,12 @@ concurrency:
 # re-drove the Arrow and DuckDB superbuilds (38 + 20 min per Linux job); since
 # an existing key is never re-saved, only a new generation refreshes them.
 #
-# So branch pushes now run the build jobs only when a dependency input
-# changed (see the `changes` job) — exactly when the caches need refreshing
-# — while tags, fork PRs and workflow_dispatch always build. A cache saved by
-# such a main run is what the next tag restores. Keep this and the cache
-# keys below in sync.
+# So branch pushes now run the build jobs only when a build input changed
+# (sources, tests, quality configuration or a dependency input — see the
+# `changes` job), which also covers exactly the pushes on which the caches
+# need refreshing — while tags, fork PRs and workflow_dispatch always build. A
+# cache saved by such a main run is what the next tag restores. Keep this and
+# the cache keys below in sync.
 
 # ---- Special (pinned-DuckDB) releases ------------------------------------
 # A tag whose name contains "-duckdb" (e.g. v1.36.1-duckdb1.5.4) is a
@@ -183,7 +184,10 @@ jobs:
     name: Build Project - MacOS (${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
     needs: [changes, quality]
-    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    # Branch and PR builds wait for the quality gate. Release tags build even
+    # when it fails: a formatting or lint nit must never block (and force a
+    # re-cut of) a release tag; the red quality job still shows on the run.
+    if: always() && needs.changes.outputs.build == 'true' && (needs.quality.result == 'success' || startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-14-xlarge
     strategy:
       fail-fast: false
@@ -492,7 +496,10 @@ jobs:
     name: Build Project - Linux ${{ matrix.platform }} (${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
     needs: [changes, quality]
-    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    # Branch and PR builds wait for the quality gate. Release tags build even
+    # when it fails: a formatting or lint nit must never block (and force a
+    # re-cut of) a release tag; the red quality job still shows on the run.
+    if: always() && needs.changes.outputs.build == 'true' && (needs.quality.result == 'success' || startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     strategy:
       fail-fast: false
       matrix:
@@ -913,7 +920,10 @@ jobs:
     name: Build Project - Windows (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
     needs: [changes, quality]
-    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    # Branch and PR builds wait for the quality gate. Release tags build even
+    # when it fails: a formatting or lint nit must never block (and force a
+    # re-cut of) a release tag; the red quality job still shows on the run.
+    if: always() && needs.changes.outputs.build == 'true' && (needs.quality.result == 'success' || startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

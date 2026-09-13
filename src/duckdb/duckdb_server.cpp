@@ -1058,10 +1058,18 @@ class DuckDBFlightSqlServer::Impl {
         if (it->second->kill_requested) {
           // Release the read lock before taking the write lock
           read_lock.unlock();
-          // Remove the killed session from the map
+          // Remove the killed session from the map under the write lock, but
+          // destroy it (DuckDB connection close, prepared statement release)
+          // after the lock is dropped so other sessions' lookups never wait
+          // on that teardown.
+          std::shared_ptr<ClientSession> killed_session;
           {
             std::unique_lock write_lock(sessions_mutex_);
-            client_sessions_.erase(session_id);
+            if (auto killed = client_sessions_.find(session_id);
+                killed != client_sessions_.end()) {
+              killed_session = std::move(killed->second);
+              client_sessions_.erase(killed);
+            }
             killed_session_ids_.insert(session_id);
           }
           return Status::Invalid(
@@ -1128,7 +1136,9 @@ class DuckDBFlightSqlServer::Impl {
       new_session->bypass_queue = admin_bypass_queue_default_;
     }
 
-    // Slow path: take exclusive lock, admit, then open DuckDB.
+    // Slow path: take exclusive lock, admit, then open DuckDB. A killed session
+    // found here is moved out and destroyed only after the lock is released.
+    std::shared_ptr<ClientSession> killed_session;
     {
       std::unique_lock write_lock(sessions_mutex_);
 
@@ -1141,7 +1151,8 @@ class DuckDBFlightSqlServer::Impl {
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
         // Another thread won the race – but check if it was killed
         if (it->second->kill_requested) {
-          client_sessions_.erase(session_id);
+          killed_session = std::move(it->second);
+          client_sessions_.erase(it);
           killed_session_ids_.insert(session_id);
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
@@ -1309,10 +1320,16 @@ class DuckDBFlightSqlServer::Impl {
 
   void ReleaseAllSessions() {
     StopIdleSessionSweeper();
-    std::unique_lock session_lock(sessions_mutex_);
-    auto session_count = client_sessions_.size();
+    // Detach the whole map under the lock; run the session destructors
+    // (connection close, prepared statement release) after releasing it.
+    decltype(client_sessions_) sessions;
+    {
+      std::unique_lock session_lock(sessions_mutex_);
+      sessions.swap(client_sessions_);
+    }
+    const auto session_count = sessions.size();
 #ifdef GIZMOSQL_ENTERPRISE
-    for (const auto& [id, session] : client_sessions_) {
+    for (const auto& [id, session] : sessions) {
       if (session->metrics)
         session->metrics
             ->At("gizmosql_sessions_reaped_total", {{"reason", "server_shutdown"}})
@@ -1321,7 +1338,7 @@ class DuckDBFlightSqlServer::Impl {
 #endif
     // Session destructors handle active connection counter decrement,
     // prepared statement cleanup, and DuckDB connection counter decrement
-    client_sessions_.clear();
+    sessions.clear();
     if (session_count > 0) {
       GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
     }
@@ -1494,23 +1511,29 @@ class DuckDBFlightSqlServer::Impl {
 
   arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false,
                               const char* reason = "client_close") {
-    std::unique_lock write_lock(sessions_mutex_);
-    auto it = client_sessions_.find(session_id);
-    if (it != client_sessions_.end()) {
-      // Session destructor handles active connection counter decrement,
-      // prepared statement cleanup, and DuckDB connection counter decrement
-#ifdef GIZMOSQL_ENTERPRISE
-      if (auto registry = it->second->metrics)
-        registry->At("gizmosql_sessions_reaped_total", {{"reason", reason}})
-            .value.fetch_add(1);
-#endif
+    // Hold the write lock only for the map update. The session destructor
+    // (query interrupt, prepared statement release, DuckDB connection close)
+    // runs when `removed` goes out of scope, after the lock is released, so
+    // every other session's GetClientSession() fast path is not blocked on it.
+    std::shared_ptr<ClientSession> removed;
+    {
+      std::unique_lock write_lock(sessions_mutex_);
+      auto it = client_sessions_.find(session_id);
+      if (it == client_sessions_.end()) {
+        return arrow::Status::KeyError("Session not found: " + session_id);
+      }
+      removed = std::move(it->second);
       client_sessions_.erase(it);
       if (was_killed) {
         killed_session_ids_.insert(session_id);
       }
-      return arrow::Status::OK();
     }
-    return arrow::Status::KeyError("Session not found: " + session_id);
+#ifdef GIZMOSQL_ENTERPRISE
+    if (auto registry = removed->metrics)
+      registry->At("gizmosql_sessions_reaped_total", {{"reason", reason}})
+          .value.fetch_add(1);
+#endif
+    return arrow::Status::OK();
   }
 
   ~Impl() { StopIdleSessionSweeper(); }
@@ -1793,14 +1816,18 @@ class DuckDBFlightSqlServer::Impl {
     const std::string& prepared_statement_handle = request.prepared_statement_handle;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
 
+    // Erase under the session lock; release the DuckDB prepared statement and
+    // any retained result after the lock, so concurrent lookups on this
+    // session's other statements are not held up by the teardown.
+    std::shared_ptr<DuckDBStatement> closed;
     {
       std::unique_lock write_lock(client_session->statements_mutex);
-      if (auto search = client_session->prepared_statements.find(prepared_statement_handle);
-          search != client_session->prepared_statements.end()) {
-        client_session->prepared_statements.erase(prepared_statement_handle);
-      } else {
+      auto search = client_session->prepared_statements.find(prepared_statement_handle);
+      if (search == client_session->prepared_statements.end()) {
         return Status::Invalid("Prepared statement not found");
       }
+      closed = std::move(search->second);
+      client_session->prepared_statements.erase(search);
     }
 
     return Status::OK();
@@ -1853,9 +1880,16 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
+    // Bind (DoPut) writes bind_parameters and execution reads them, so the
+    // stream keeps the per-statement execution lock until it is destroyed: a
+    // concurrent rebind or re-execute of the same handle is rejected as busy
+    // instead of racing the running execution. Non-blocking, per statement.
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
 
     statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
+    reader->HoldExecutionLock(std::move(execution_lock));
 
     return std::make_unique<flight::RecordBatchStream>(reader);
   }
@@ -2479,10 +2513,13 @@ class DuckDBFlightSqlServer::Impl {
       const sql::ActionBeginTransactionRequest& request) {
     std::string handle = boost::uuids::to_string(boost::uuids::random_generator()());
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::unique_lock write_lock(transactions_mutex_);
-    open_transactions_[handle] = "";
-
+    // Run the DuckDB statement first, unlocked; register the handle only on
+    // success so the server-wide map lock is held for the insert alone.
     ARROW_RETURN_NOT_OK(ExecuteSql(client_session, "BEGIN TRANSACTION"));
+    {
+      std::unique_lock write_lock(transactions_mutex_);
+      open_transactions_[handle] = "";
+    }
 
     return sql::ActionBeginTransactionResult{std::move(handle)};
   }

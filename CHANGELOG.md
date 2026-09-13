@@ -26,7 +26,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core edition rejects external tokens containing catalog access restrictions it
   cannot enforce, matching the existing unlicensed Enterprise behavior.
 
+### Changed
+- DuckDB statements without a user result set execute during GetFlightInfo,
+  enabled by default with no flag. This covers DDL/DML, COPY/EXPORT,
+  ATTACH/DETACH, and side-effecting statements such as transaction control,
+  SET/RESET/USE, LOAD and VACUUM. Fetching the resulting execution ticket
+  replays the cached result instead of repeating the write, and reusing a
+  prepared statement creates a distinct execution each time.
+- Prepared DDL/DML advertises an empty dataset schema, allowing Flight SQL JDBC
+  clients to select the update RPC and report affected-row counts correctly.
+  `executeQuery` on such statements is now refused by JDBC drivers, per the
+  JDBC specification, instead of returning a synthetic count row.
+- A prepared statement handle is serialized by a per-statement execution lock
+  held for the life of a result stream; a concurrent rebind or re-execute of the
+  same handle fails with "Prepared statement is busy" instead of racing.
+- Session removal, prepared statement close, and BEGIN TRANSACTION hold their
+  server- or session-wide mutexes only for the map update; DuckDB connection
+  teardown, prepared statement release, and statement execution happen outside
+  the lock so other sessions are never blocked on them.
+
 ### Fixed
+- The metrics unclean-exit marker is maintained only by a read-write server;
+  read-only instances sharing a database file no longer write it or raise
+  false unclean-exit alerts.
+- Metrics collection sections fail independently and sample server state
+  first, so one throwing probe no longer blanks the session and queue gauges.
 - Metrics floating-point counters work on the older Apple libc++ used by macOS
   CI through atomic compare/exchange, without introducing a shared mutex.
 - Integration CI pulls the pinned MinIO test images from Quay after Docker Hub
@@ -43,11 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SIGTERM no longer invokes unsafe gRPC cleanup from an asynchronous signal handler.
 - Reinitializing the library without a valid license clears previous Enterprise
   entitlements, so a later server cannot inherit an earlier server's license.
-- DuckDB DDL/DML without a result set executes during GetFlightInfo. Fetching
-  the resulting execution ticket replays the cached result instead of repeating
-  the write. Reusing a prepared statement creates a distinct execution each time.
-- Prepared DDL/DML advertises an empty dataset schema, allowing Flight SQL JDBC
-  clients to select the update RPC and report affected-row counts correctly.
 
 ## [1.38.5] - 2026-09-11
 

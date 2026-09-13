@@ -14,11 +14,27 @@ execute repeatedly. Each execution uses its current parameters and gets a new
 ticket; rebinding does not alter old tickets. Normal update RPCs continue to execute
 synchronously and return affected-row counts.
 
-Eligible statements are INSERT, UPDATE, DELETE, MERGE, CREATE (including CTAS),
-DROP, ALTER, COPY, EXPORT, ATTACH and DETACH, when DuckDB classifies their return
-type as changed rows or no result. Statements with RETURNING and result-producing
-SELECT/SHOW/PRAGMA/CALL retain their query behavior. Missing parameters do not
-cause preparation or GetFlightInfo to execute an unbound write.
+Every fully bound prepared statement that produces no user result set is
+eligible, that is, whatever DuckDB classifies as changed rows or no result:
+INSERT, UPDATE, DELETE, MERGE, CREATE (including CTAS), DROP, ALTER, COPY,
+EXPORT, ATTACH and DETACH, and equally side-effecting statements such as
+BEGIN/COMMIT/ROLLBACK sent as SQL, SET/RESET/USE, LOAD, VACUUM and COPY
+DATABASE. All of them take effect even if the client never downloads the
+ticket. Statements with RETURNING and result-producing SELECT/SHOW/PRAGMA/CALL
+retain their query behavior. Statements DuckDB cannot prepare (for example
+PIVOT rewrites) run on the direct-execution fallback and remain lazy. Missing
+parameters do not cause preparation or GetFlightInfo to execute an unbound write.
+
+A prepared handle is serialized by a per-statement execution lock that a result
+stream holds until it is closed or fully read. Binding or executing the same
+handle again while an earlier result is still streaming fails with "Prepared
+statement is busy" rather than racing the running execution; sequential use, the
+normal pattern for every driver, is unaffected.
+
+Prepared DDL/DML advertises an empty dataset schema. Flight SQL JDBC clients use
+that to select the update RPC and report affected-row counts; `executeQuery` on a
+statement without a result set is therefore refused by the driver, as the JDBC
+specification requires, where earlier servers returned a synthetic count row.
 
 Completed results are currently retained for up to five minutes and 1024 entries
 per session. A missing, evicted or foreign-session execution ticket fails; it

@@ -54,6 +54,21 @@ public class EagerJdbc {
         try (ResultSet r = s.executeQuery("INSERT INTO " + table + " VALUES (100, 7) RETURNING n")) {
           check(r.next() && r.getLong(1) == 7 && !r.next(), "INSERT RETURNING");
         }
+        // Plain DML has no result set (the server advertises an empty dataset
+        // schema): execute() reports an update count, and executeQuery() must
+        // not hand back a synthetic count row, per the JDBC specification. The
+        // write itself still happens exactly once either way.
+        check(!s.execute("INSERT INTO " + table + " VALUES (101, 8)") && s.getUpdateCount() == 1,
+              "execute() on DML reports an update count");
+        boolean refused;
+        try {
+          refused = s.executeQuery("INSERT INTO " + table + " VALUES (102, 9)") == null;
+        } catch (SQLException e) {
+          refused = true;
+        }
+        check(refused, "executeQuery() on DML must not return a result set");
+        check(scalar(c, "SELECT count(*) FROM " + table + " WHERE token IN (101, 102)") == 2,
+              "DML through execute()/executeQuery() ran exactly once");
         try (PreparedStatement ps = c.prepareStatement("SELECT n FROM " + table + " WHERE token=?")) {
           for (int n = 1; n <= 20; n++) {
             ps.setLong(1, n);

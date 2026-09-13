@@ -96,7 +96,10 @@ TEST(MetricsLicenseTest, FeatureIsIndependentOfOtherEnterpriseFeatures) {
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
+#include <chrono>
+#include <filesystem>
 #include "duckdb_server.h"
+#include "enterprise/metrics/metrics_service.h"
 #include <gtest/gtest.h>
 
 #include "arrow/api.h"
@@ -193,6 +196,47 @@ std::atomic<bool>
 template <>
 gizmosql::testing::TestServerConfig
     gizmosql::testing::ServerTestFixture<MetricsEndpointFixture>::config_{};
+
+// The unclean-exit marker sits beside the database file, so only the process
+// holding DuckDB's single write lock may own it; a read-only server (several may
+// share one file) must neither write it nor report another instance's runs.
+TEST(MetricsExitMarkerTest, ReadOnlyServersNeverTouchTheMarker) {
+  const auto* license = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  const auto* inline_license = std::getenv("GIZMOSQL_LICENSE_KEY");
+  auto status = EnterpriseFeatures::Instance().Initialize(
+      license ? license : "", inline_license ? inline_license : "");
+  if (!status.ok() || !EnterpriseFeatures::Instance().IsMetricsAvailable()) {
+    GTEST_SKIP() << "A local license with the metrics entitlement is required";
+  }
+  const auto database =
+      std::filesystem::path(::testing::TempDir()) /
+      ("metrics_marker_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+       ".db");
+  const auto marker = database.string() + ".gizmosql-metrics-state";
+  std::filesystem::remove(marker);
+  auto db = std::make_shared<duckdb::DuckDB>(nullptr);
+  auto sampler = [](gizmosql::enterprise::MetricsRegistry&) {};
+  {
+    gizmosql::enterprise::MetricsService read_only(db, database, "", 0, sampler,
+                                                   /*read_only=*/true);
+    ASSERT_ARROW_OK(read_only.Start(0, "127.0.0.1"));
+    EXPECT_FALSE(std::filesystem::exists(marker));
+    EXPECT_TRUE(
+        std::isnan(read_only.Registry()->At("gizmosql_last_exit_unclean").value.load()));
+    read_only.Stop();
+    EXPECT_FALSE(std::filesystem::exists(marker));
+  }
+  {
+    gizmosql::enterprise::MetricsService writer(db, database, "", 0, sampler,
+                                                /*read_only=*/false);
+    ASSERT_ARROW_OK(writer.Start(0, "127.0.0.1"));
+    EXPECT_TRUE(std::filesystem::exists(marker));
+    EXPECT_EQ(writer.Registry()->At("gizmosql_last_exit_unclean").value.load(), 0);
+    writer.Stop();
+  }
+  std::filesystem::remove(marker);
+}
 
 TEST_F(MetricsEndpointFixture, HttpAndSqlExposeTheSameRegistry) {
   httplib::Client http("127.0.0.1", 31602);

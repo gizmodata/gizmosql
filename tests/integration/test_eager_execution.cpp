@@ -319,3 +319,78 @@ TEST_F(EagerExecutionFixture, EagerDdlAndMergeCompleteWithoutFetching) {
   EXPECT_EQ(Scalar("SELECT count(*) FROM duckdb_tables() WHERE table_name='eager_ddl'"),
             "0");
 }
+
+// Every prepared statement without a user result set executes at GetFlightInfo,
+// not only DDL/DML: transaction control, SET/RESET and similar side effects must
+// take effect even when the client never downloads the ticket.
+TEST_F(EagerExecutionFixture, SideEffectStatementsExecuteWithoutTicketDownload) {
+  Exec("CREATE SCHEMA IF NOT EXISTS eager_side_effects");
+  Exec("CREATE OR REPLACE TABLE eager_side_effects.ledger(n INTEGER)");
+
+  // GetFlightInfo only; the ticket is deliberately never fetched.
+  auto fire = [&](const std::string& sql) {
+    ASSERT_ARROW_OK_AND_ASSIGN(auto info, sql_client_->Execute(call_options_, sql));
+    (void)info;
+  };
+
+  fire("SET search_path = 'eager_side_effects'");
+  EXPECT_EQ(Scalar("SELECT current_setting('search_path')"), "eager_side_effects");
+  // Unqualified names now resolve through the eagerly applied search_path.
+  EXPECT_EQ(Scalar("SELECT count(*) FROM ledger"), "0");
+
+  fire("BEGIN TRANSACTION");
+  Exec("INSERT INTO ledger VALUES (1)");
+  fire("ROLLBACK");
+  EXPECT_EQ(Scalar("SELECT count(*) FROM ledger"), "0");
+
+  fire("BEGIN TRANSACTION");
+  Exec("INSERT INTO ledger VALUES (2)");
+  fire("COMMIT");
+  EXPECT_EQ(Scalar("SELECT count(*) FROM ledger"), "1");
+
+  fire("RESET search_path");
+  EXPECT_NE(Scalar("SELECT current_setting('search_path')"), "eager_side_effects");
+}
+
+// A prepared handle is serialized by its execution lock for the whole life of a
+// result stream: rebinding/re-executing it while an earlier DoGet is still
+// streaming is refused as busy rather than racing the running execution.
+TEST_F(EagerExecutionFixture, RebindWhileStreamingIsRejectedAsBusy) {
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto prepared,
+      sql_client_->Prepare(call_options_, "SELECT range AS v FROM range(?::BIGINT)"));
+  auto bind = [](int64_t n) {
+    arrow::Int64Builder builder;
+    EXPECT_TRUE(builder.Append(n).ok());
+    std::shared_ptr<arrow::Array> values;
+    EXPECT_TRUE(builder.Finish(&values).ok());
+    return arrow::RecordBatch::Make(arrow::schema({arrow::field("p", arrow::int64())}), 1,
+                                    {values});
+  };
+
+  // Large enough that the server is still streaming (blocked on flow control)
+  // while the client holds the stream open without draining it.
+  ASSERT_ARROW_OK(prepared->SetParameters(bind(20000000)));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto info, prepared->Execute(call_options_));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto stream, sql_client_->DoGet(call_options_, info->endpoints()[0].ticket));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto first, stream->Next());
+  ASSERT_NE(first.data, nullptr);
+
+  // Execute() sends the new bindings via DoPut: the server must refuse.
+  ASSERT_ARROW_OK(prepared->SetParameters(bind(3)));
+  auto busy = prepared->Execute(call_options_);
+  ASSERT_FALSE(busy.ok());
+  EXPECT_NE(busy.status().ToString().find("busy"), std::string::npos)
+      << busy.status().ToString();
+
+  // Draining the stream releases the lock; the handle is fully usable again.
+  ASSERT_ARROW_OK_AND_ASSIGN(auto rest, stream->ToTable());
+  EXPECT_EQ(rest->num_rows() + first.data->num_rows(), 20000000);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto again, prepared->Execute(call_options_));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto small, sql_client_->DoGet(call_options_, again->endpoints()[0].ticket));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto table, small->ToTable());
+  EXPECT_EQ(table->num_rows(), 3);
+  ASSERT_ARROW_OK(prepared->Close(call_options_));
+}

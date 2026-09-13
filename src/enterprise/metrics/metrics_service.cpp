@@ -75,7 +75,8 @@ double FileSize(const std::filesystem::path& path) {
 MetricsService::MetricsService(std::shared_ptr<duckdb::DuckDB> db,
                                std::filesystem::path database, std::string certificate,
                                int session_limit,
-                               std::function<void(MetricsRegistry&)> sample_server)
+                               std::function<void(MetricsRegistry&)> sample_server,
+                               bool read_only)
     : registry_(std::make_shared<MetricsRegistry>()),
       db_(std::move(db)),
       connection_(std::make_unique<duckdb::Connection>(*db_)),
@@ -164,7 +165,9 @@ MetricsService::MetricsService(std::shared_ptr<duckdb::DuckDB> db,
     X509_free(cert);
     BIO_free(bio);
   }
-  if (!database_.empty() && database_ != ":memory:" &&
+  // The marker lives beside the database, so only the process holding DuckDB's
+  // single write lock may own it; read-only instances sharing the file skip it.
+  if (!read_only && !database_.empty() && database_ != ":memory:" &&
       database_.string().find("://") == std::string::npos) {
     exit_state_ = database_.string() + ".gizmosql-metrics-state";
   }
@@ -266,7 +269,23 @@ void MetricsService::Collect() {
     registry_->At(name).value.store(value, std::memory_order_relaxed);
   };
   bool ok = true;
-  try {
+  // Every section fails on its own: a throwing probe (for example a missing
+  // /proc in a hardened container, or an unparseable memory_limit) must not
+  // blank unrelated gauges for the whole cycle.
+  auto section = [&](auto&& body) {
+    try {
+      body();
+    } catch (...) {
+      ok = false;
+    }
+  };
+  // Server state first: the session, queue, concurrency and health gauges are
+  // the ones alerts depend on most.
+  section([&] {
+    set("gizmosql_draining", gizmosql::IsDraining() ? 1 : 0);
+    sample_server_(*registry_);
+  });
+  section([&] {
     auto memory = connection_->Query(
         "SELECT coalesce(sum(memory_usage_bytes),0)::DOUBLE, "
         "coalesce(sum(temporary_storage_bytes),0)::DOUBLE FROM duckdb_memory()");
@@ -277,6 +296,8 @@ void MetricsService::Collect() {
       set("gizmosql_duckdb_temp_storage_bytes",
           memory->GetValue(1, 0).GetValue<double>());
     }
+  });
+  section([&] {
     auto settings = connection_->Query(
         "SELECT current_setting('memory_limit'), current_setting('threads')::DOUBLE, "
         "current_setting('temp_directory')");
@@ -297,6 +318,8 @@ void MetricsService::Collect() {
               .value.store(space.available);
       }
     }
+  });
+  section([&] {
     auto spill = connection_->Query(
         "SELECT count(*)::DOUBLE, coalesce(sum(size),0)::DOUBLE FROM "
         "duckdb_temporary_files()");
@@ -306,6 +329,8 @@ void MetricsService::Collect() {
       set("gizmosql_duckdb_spill_files", spill->GetValue(0, 0).GetValue<double>());
       set("gizmosql_duckdb_spill_bytes", spill->GetValue(1, 0).GetValue<double>());
     }
+  });
+  section([&] {
     if (!database_.empty() && database_ != ":memory:") {
       set("gizmosql_database_file_bytes", FileSize(database_));
       set("gizmosql_wal_bytes", FileSize(database_.string() + ".wal"));
@@ -316,6 +341,8 @@ void MetricsService::Collect() {
         registry_->At("gizmosql_disk_free_bytes", {{"path", "database"}})
             .value.store(space.available);
     }
+  });
+  section([&] {
 #ifndef _WIN32
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) == 0)
@@ -395,11 +422,7 @@ void MetricsService::Collect() {
       set("process_threads", count);
     }
 #endif
-    set("gizmosql_draining", gizmosql::IsDraining() ? 1 : 0);
-    sample_server_(*registry_);
-  } catch (...) {
-    ok = false;
-  }
+  });
   set("gizmosql_metrics_collection_success", ok ? 1 : 0);
   if (ok) set("gizmosql_metrics_last_collection_success_seconds", Now());
   set("gizmosql_metrics_collection_duration_seconds",

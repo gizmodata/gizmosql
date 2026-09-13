@@ -2216,30 +2216,17 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
 }
 
 bool DuckDBStatement::ShouldExecuteEagerly() const {
-  if (!stmt_ || !stmt_->data || is_internal_ || is_gizmosql_admin_ ||
-      bind_parameters.size() != stmt_->named_param_map.size() ||
-      stmt_->data->properties.return_type == duckdb::StatementReturnType::QUERY_RESULT) {
-    return false;
-  }
-  // modified_databases alone misses COPY TO/EXPORT and catalog operations.
-  // DuckDB's return type keeps DML RETURNING on the query path.
-  using Type = duckdb::StatementType;
-  switch (stmt_->GetStatementType()) {
-    case Type::INSERT_STATEMENT:
-    case Type::UPDATE_STATEMENT:
-    case Type::DELETE_STATEMENT:
-    case Type::MERGE_INTO_STATEMENT:
-    case Type::CREATE_STATEMENT:
-    case Type::DROP_STATEMENT:
-    case Type::ALTER_STATEMENT:
-    case Type::COPY_STATEMENT:
-    case Type::EXPORT_STATEMENT:
-    case Type::ATTACH_STATEMENT:
-    case Type::DETACH_STATEMENT:
-      return true;
-    default:
-      return false;
-  }
+  // Any fully bound prepared statement that produces no user result set
+  // (DuckDB return type CHANGED_ROWS or NOTHING) executes at GetFlightInfo:
+  // DDL/DML, COPY/EXPORT, ATTACH/DETACH, and equally side-effecting statements
+  // such as BEGIN/COMMIT/ROLLBACK, SET/RESET/USE, LOAD, VACUUM and COPY
+  // DATABASE, all of which must take effect even if the client never downloads
+  // the ticket. RETURNING and result-producing SELECT/SHOW/PRAGMA/CALL keep the
+  // query path. Statements on the direct-execution fallback (no prepared
+  // statement) and GizmoSQL admin commands are handled elsewhere and stay lazy.
+  return stmt_ && stmt_->data && !is_internal_ && !is_gizmosql_admin_ &&
+         bind_parameters.size() == stmt_->named_param_map.size() &&
+         stmt_->data->properties.return_type != duckdb::StatementReturnType::QUERY_RESULT;
 }
 
 arrow::Result<int> DuckDBStatement::Execute() {

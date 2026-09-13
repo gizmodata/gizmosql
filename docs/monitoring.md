@@ -153,8 +153,16 @@ operation and is not a statement-counter substitute for ingested-row accounting.
 
 Database/WAL and restart-marker measurements apply to the main local database,
 not the total storage of every attached remote catalog. An in-memory database
-has no persistent unclean-exit history. Restart detection records process
-shutdown behavior; it is not a guarantee of detecting every power-loss scenario.
+has no persistent unclean-exit history. The marker is maintained only by a
+server that opened the database read-write, since DuckDB allows one writer per
+file; read-only instances sharing a file never write it and report no exit
+history. Restart detection records process shutdown behavior; it is not a
+guarantee of detecting every power-loss scenario.
+
+Each collection section (server state, DuckDB memory, settings, spill files,
+database files, process statistics) fails independently. A failing probe leaves
+only its own gauges absent and sets `gizmosql_metrics_collection_success` to
+zero; the session, queue and health gauges are sampled first.
 
 Use `gizmosql_metrics_collection_success`,
 `gizmosql_metrics_last_collection_success_seconds`, and

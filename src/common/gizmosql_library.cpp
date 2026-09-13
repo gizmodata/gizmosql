@@ -1134,7 +1134,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
               if (auto active = weak.lock()) active->SampleMetrics(registry);
               registry.At("gizmosql_health_check_status")
                   .value.store(health->CurrentStatus() ? 1 : 0);
-            });
+            },
+            read_only);
         ARROW_RETURN_NOT_OK(g_metrics_service->Start(metrics_port, metrics_bind_address));
       } else if (enable_metrics) {
         return arrow::Status::Invalid(

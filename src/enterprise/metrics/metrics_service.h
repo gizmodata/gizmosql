@@ -18,9 +18,14 @@ struct ClientSession;
 namespace gizmosql::enterprise {
 class MetricsService {
  public:
+  /// `read_only` servers never maintain the unclean-exit marker: DuckDB allows
+  /// several read-only processes on one database file, so a shared marker
+  /// would report each other's runs as unclean exits. Only the single writer
+  /// owns it.
   MetricsService(std::shared_ptr<duckdb::DuckDB> db, std::filesystem::path database,
                  std::string certificate, int session_limit,
-                 std::function<void(MetricsRegistry&)> sample_server);
+                 std::function<void(MetricsRegistry&)> sample_server,
+                 bool read_only = false);
   ~MetricsService();
   arrow::Status Start(int port, const std::string& address);
   void Stop();
