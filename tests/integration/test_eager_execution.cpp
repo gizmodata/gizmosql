@@ -356,9 +356,10 @@ TEST_F(EagerExecutionFixture, SideEffectStatementsExecuteWithoutTicketDownload) 
 // result stream: rebinding/re-executing it while an earlier DoGet is still
 // streaming is refused as busy rather than racing the running execution.
 TEST_F(EagerExecutionFixture, RebindWhileStreamingIsRejectedAsBusy) {
+  Exec("CREATE OR REPLACE TABLE busy_stream AS SELECT range AS v FROM range(20000000)");
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto prepared,
-      sql_client_->Prepare(call_options_, "SELECT range AS v FROM range(?::BIGINT)"));
+      sql_client_->Prepare(call_options_, "SELECT v FROM busy_stream WHERE v >= ?"));
   auto bind = [](int64_t n) {
     arrow::Int64Builder builder;
     EXPECT_TRUE(builder.Append(n).ok());
@@ -370,7 +371,7 @@ TEST_F(EagerExecutionFixture, RebindWhileStreamingIsRejectedAsBusy) {
 
   // Large enough that the server is still streaming (blocked on flow control)
   // while the client holds the stream open without draining it.
-  ASSERT_ARROW_OK(prepared->SetParameters(bind(20000000)));
+  ASSERT_ARROW_OK(prepared->SetParameters(bind(0)));
   ASSERT_ARROW_OK_AND_ASSIGN(auto info, prepared->Execute(call_options_));
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto stream, sql_client_->DoGet(call_options_, info->endpoints()[0].ticket));
@@ -378,15 +379,18 @@ TEST_F(EagerExecutionFixture, RebindWhileStreamingIsRejectedAsBusy) {
   ASSERT_NE(first.data, nullptr);
 
   // Execute() sends the new bindings via DoPut: the server must refuse.
-  ASSERT_ARROW_OK(prepared->SetParameters(bind(3)));
+  ASSERT_ARROW_OK(prepared->SetParameters(bind(19999997)));
   auto busy = prepared->Execute(call_options_);
   ASSERT_FALSE(busy.ok());
   EXPECT_NE(busy.status().ToString().find("busy"), std::string::npos)
       << busy.status().ToString();
 
   // Draining the stream releases the lock; the handle is fully usable again.
+  // (The C++ client consumes its one-shot parameter reader on the rejected
+  // attempt, so a caller re-supplies the bindings before retrying.)
   ASSERT_ARROW_OK_AND_ASSIGN(auto rest, stream->ToTable());
   EXPECT_EQ(rest->num_rows() + first.data->num_rows(), 20000000);
+  ASSERT_ARROW_OK(prepared->SetParameters(bind(19999997)));
   ASSERT_ARROW_OK_AND_ASSIGN(auto again, prepared->Execute(call_options_));
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto small, sql_client_->DoGet(call_options_, again->endpoints()[0].ticket));
