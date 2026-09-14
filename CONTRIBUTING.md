@@ -3,27 +3,14 @@
 Use the same pinned quality tools as CI, add tests for changed behavior, and
 update the documentation and changelog before opening a pull request.
 
-## Contributor License Agreement
+## Licensing of contributions
 
-All contributors must sign a Contributor License Agreement before their first
-contribution can be merged. Sign the
-[Individual CLA](CLA.md) if you are contributing on your own behalf, or have
-your employer sign the [Corporate CLA](CLA-CORPORATE.md) if you are
-contributing as part of your job. Both are the Apache Software Foundation's
-contributor agreements adapted for GizmoData LLC: you keep ownership of your
-work and grant GizmoData and downstream recipients a copyright and patent
-license to it.
-
-The `CLA` check runs on every pull request and must pass before merge. On your
-first pull request the bot comments with instructions: to sign the Individual
-CLA, read it and reply on the pull request with exactly
-
-> I have read the CLA Document and I hereby sign the CLA
-
-and the check turns green for that and all later pull requests. For the
-Corporate CLA, your employer emails the completed agreement to
-info@gizmodata.com and a maintainer records the designated contributors. Do
-not post private contact details or employer documents in public PR comments.
+GizmoSQL is licensed under the [Apache License 2.0](LICENSE). Per section 5
+of that license, any contribution you intentionally submit for inclusion is
+licensed under Apache-2.0, without any additional terms or conditions, and you
+keep the copyright in your work. By submitting a contribution you confirm that
+you have the right to license it this way, for example that your employer does
+not hold rights in it that would prevent the grant.
 
 ## Set up formatting and linting
 

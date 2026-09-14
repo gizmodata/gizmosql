@@ -54,7 +54,6 @@ exclude_docs: |
   VIEW_DOCS_LOCALLY.md
   websocket-migration-plan.md
   code_quality.md
-  cla_administration.md
   release-validation/
 
 # Redirects legacy Docsify hash URLs (e.g. /#/quickstart) to real page URLs

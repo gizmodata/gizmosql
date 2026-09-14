@@ -83,7 +83,6 @@ jobs:
             ! -name 'VIEW_DOCS_LOCALLY.md' \
             ! -name 'websocket-migration-plan.md' \
             ! -name 'code_quality.md' \
-            ! -name 'cla_administration.md' \
             -exec cp {} site/ \;
           touch site/.nojekyll
 

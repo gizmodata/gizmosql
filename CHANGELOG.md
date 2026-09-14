@@ -10,10 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.39.0] - 2026-09-14
 
 ### Added
-- Contributor guide covering local quality checks, tests, and SQL binding, plus
-  Individual and Corporate Contributor License Agreements (the Apache
-  contributor agreements adapted for GizmoData), a required `CLA` pull request
-  check with comment-to-sign, and the CLA administration guide.
+- Contributor guide covering local quality checks, tests, SQL binding, and the
+  Apache-2.0 terms under which contributions are accepted.
 - CI formatting and script lint gates, pinned local quality tools, and clang-tidy
   checks against both DuckDB channels. Source and test changes trigger builds.
 - Enterprise metrics, licensed through the new `metrics` feature: a Prometheus
