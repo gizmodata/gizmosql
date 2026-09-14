@@ -5,17 +5,25 @@ update the documentation and changelog before opening a pull request.
 
 ## Contributor License Agreement
 
-GizmoData's contribution policy requires a signed CLA covering every human
-contributor represented in a PR before merge, including coauthors and any
-required employer authorization. Signing does not transfer your ownership;
-the agreement grants rights to use contributions in open-source and commercial
-GizmoData products.
+All contributors must sign a Contributor License Agreement before their first
+contribution can be merged. Sign the
+[Individual CLA](CLA.md) if you are contributing on your own behalf, or have
+your employer sign the [Corporate CLA](CLA-CORPORATE.md) if you are
+contributing as part of your job. Both are the Apache Software Foundation's
+contributor agreements adapted for GizmoData LLC: you keep ownership of your
+work and grant GizmoData and downstream recipients a copyright and patent
+license to it.
 
-**Rollout status:** the [proposed CLA](CLA.md) is a draft for legal review and
-is not yet open for signature. The signing service and required GitHub status
-check will be activated after approval. See the
-[administration guide](docs/cla_administration.md) for the activation checklist.
-Do not post private contact details or employer documents in public PR comments.
+The `CLA` check runs on every pull request and must pass before merge. On your
+first pull request the bot comments with instructions: to sign the Individual
+CLA, read it and reply on the pull request with exactly
+
+> I have read the CLA Document and I hereby sign the CLA
+
+and the check turns green for that and all later pull requests. For the
+Corporate CLA, your employer emails the completed agreement to
+info@gizmodata.com and a maintainer records the designated contributors. Do
+not post private contact details or employer documents in public PR comments.
 
 ## Set up formatting and linting
 

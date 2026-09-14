@@ -2,71 +2,75 @@
 
 ## Policy and rollout status
 
-The intended policy is that **every PR requires a signed CLA covering every
-human contributor represented in that PR before merge**. This includes code,
-tests, and documentation. Repository membership is not proof of employer
+The policy is that **every PR requires a signed CLA covering every human
+contributor represented in that PR before merge**. This includes code, tests,
+and documentation. Repository membership is not proof of employer
 authorization. No contributor's signature should be created by a maintainer
 or an automation acting on their behalf.
 
-The [proposed agreement](../CLA.md) is currently a draft for legal review. No
-signatures have been solicited, no signing service has been connected, and no
-GitHub merge rule has been changed as part of drafting it. Complete the steps
-below before announcing that automated enforcement is active.
+There are two agreements, following the model used by many commercial open
+source maintainers:
+
+- the [Individual CLA](../CLA.md), the Apache Software Foundation's Individual
+  Contributor License Agreement (v2.2) adapted for GizmoData LLC, for people
+  contributing on their own behalf; and
+- the [Corporate CLA](../CLA-CORPORATE.md), the Apache Software Grant and
+  Corporate Contributor License Agreement adapted for GizmoData LLC, signed by
+  an employer that designates the employees (Schedule A) who may contribute.
+
+Both keep contributor ownership and grant GizmoData and downstream recipients
+a copyright and patent license, with the Apache patent-retaliation clause.
+Relative to the Apache originals, only the ASF-specific nonprofit clause and
+Apache-id fields were removed and GitHub usernames were added to the signature
+records. Enforcement is automated by the `CLA` workflow and the `main`
+ruleset described below.
 
 ## Review the agreement
 
-Have qualified counsel review the copyright and patent grants, commercial
-relicensing rights, employer authorization, electronic assent, privacy and
-record retention, and application across relevant jurisdictions. Confirm the
-legal entity's name and decide whether a governing-law provision is appropriate.
-The draft deliberately does not invent a jurisdiction or claim that an
-individual can automatically license an employer's work.
+Have qualified counsel confirm the adaptation, the legal entity's name, and
+whether a governing-law provision is appropriate. The agreements deliberately
+do not invent a jurisdiction. Material from earlier PRs is covered only when
+identified in a Corporate CLA's Schedule B or a separate written grant; there
+is no automatic retroactive signature.
 
-The draft preserves contributor ownership and permits commercial use and
-relicensing. It does not require copyright assignment or a broad contributor
-indemnity. Material from earlier PRs requires explicit inclusion; there is no
-automatic retroactive signature.
+## How enforcement works
 
-## Configure signing and require the check
+`.github/workflows/cla.yml` runs on every pull request (`pull_request_target`,
+so fork PRs get a bot comment without executing their code) and whenever a
+comment is posted on one. It:
 
-Use the hosted [CLA Assistant](https://github.com/cla-assistant/cla-assistant),
-which supports GitHub-authenticated signing, agreement versioning, PR statuses,
-and exporting signature records. The separate
-[CLA Assistant GitHub Action](https://github.com/contributor-assistant/github-action)
-is archived and is not the proposed dependency for this setup.
+1. Collects every author of the pull request: the PR author plus the GitHub
+   account linked to each commit. A commit whose author email is not linked to
+   a GitHub account is reported and blocks the check until the contributor
+   links the address or amends the commit; unresolved authors are never
+   treated as signed.
+2. Reads `signatures/cla.json` on the `cla-signatures` branch. Accounts in the
+   workflow's `ALLOWLIST` (GizmoData maintainers and bots) never need to sign.
+3. Records any author who has commented the exact signing sentence on that
+   pull request, appending `{login, date, pull_request, version}` to the file
+   with a commit on the `cla-signatures` branch.
+4. Posts or updates one bot comment with the outcome and instructions, and
+   sets a `CLA` commit status (success or failure) on the PR head commit. The
+   status is what the ruleset requires, so a signature by comment turns the
+   same pull request green without a new push.
 
-1. Approve the final agreement, remove its draft notice, and assign a stable
-   version. Publish that exact version as the Gist required by CLA Assistant.
-   Keep an immutable copy and its revision identifier with the agreement records.
-2. Sign in to CLA Assistant as an authorized GizmoData repository administrator
-   and connect the `gizmodata/gizmosql` repository to that agreement. Review the
-   requested GitHub permissions before authorizing the service.
-3. Configure the signing form to identify the GitHub account, legal signer, and
-   whether they act for an entity. Provide a private route for employer
-   authorization and manually signed agreements. Collect only necessary data.
-4. Open a test PR from a separate contributor account. Confirm that an unsigned
-   author produces a failing CLA status and that signing the exact agreement
-   makes it pass. Test a PR with multiple authors and unlinked commit emails;
-   do not treat unresolved authors as signed. Verify a newly added unsigned
-   author makes a previously passing PR fail again.
-5. In the ruleset or branch protection for every merge target, require the
-   **actual CLA status context produced by the service**. Bind it to the expected
-   integration where GitHub supports that restriction. Require PRs and keep
-   bypass permissions limited to documented administrators. Also verify that
-   the service supports the repository's merge queue configuration, if used.
-6. Confirm an unsigned PR cannot merge through the UI or API. Confirm a signed
-   PR still needs the normal code review and CI checks. A CLA signature is not
-   approval of the code.
-7. Update [CONTRIBUTING.md](../CONTRIBUTING.md) with the active signing link and
-   remove its rollout notice. Record the configured status context, ruleset,
-   agreement revision, activation date, and administrator in the private
-   administration record.
+The `main` ruleset requires the `CLA` status context on every pull request
+into `main`. Repository administrators may bypass it so direct release pushes
+and tag pushes are unaffected; nobody else can merge an unsigned PR through
+the UI or the API. A CLA signature is not approval of the code: review and CI
+still apply.
 
-Use individual, reviewed bot exceptions only if needed for automated dependency
-updates. Do not exempt all organization members or use wildcard bot exemptions.
-Other contributors must sign for themselves. For coauthored or employer-owned
-work that automation cannot establish, obtain and record the missing coverage
-before any manual override.
+Corporate signers do not comment. After the completed Corporate CLA arrives at
+info@gizmodata.com, a maintainer adds each Schedule A GitHub username to
+`signatures/cla.json` on the `cla-signatures` branch (a normal commit to that
+branch) with the corporation name in a `corporation` field, and files the
+signed agreement in the private record store. Remove a username from the file
+when the corporation revokes that employee's designation.
+
+To change the agreement materially, bump the version in `CLA.md` and in the
+`version` field of a fresh `signatures/cla.json`; keep the previous file in the
+branch history. Existing signers are then asked to sign again on their next
+pull request.
 
 ## Retain evidence and handle revisions
 
@@ -80,7 +84,6 @@ service requests new assent for subsequent contributions. Preserve earlier
 agreements and signatures. Do not edit an old record to make it appear that a
 contributor signed newer terms.
 
-Useful background: Apache distinguishes
-[individual and corporate contributor authorization](https://www.apache.org/licenses/contributor-agreements.html).
-Its agreements are written for the ASF; the GizmoData draft is a separate proposal
-and should be reviewed for GizmoData's own business and licensing model.
+Useful background: Apache's
+[contributor agreements page](https://www.apache.org/licenses/contributor-agreements.html)
+explains the individual and corporate split these agreements follow.
