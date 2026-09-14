@@ -107,7 +107,10 @@ Do not disable an entire check simply to make a PR pass.
 
 A changed header causes all project translation units to be analyzed, with
 diagnostics limited to changed lines. `--all` removes that diagnostic filter.
-Logs are written to `build/quality/`. See [Code quality checks](docs/code_quality.md)
+Logs are written to `build/quality/`. A separate ThreadSanitizer workflow builds
+the whole server instrumented and fails on any data race; see
+[Code quality checks](docs/code_quality.md) for running it locally with
+`-DGIZMOSQL_SANITIZER=thread`. See [Code quality checks](docs/code_quality.md)
 for implementation details and the documented check exclusions.
 
 ## Test behavior

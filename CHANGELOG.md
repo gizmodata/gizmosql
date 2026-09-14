@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- ThreadSanitizer CI workflow (`.github/workflows/tsan.yml`): builds the whole
+  server and every third-party superbuild instrumented and runs the
+  integration suite under it, failing on any data race. The new
+  `GIZMOSQL_SANITIZER` CMake option (`thread` or `address`) forwards the
+  sanitizer into Arrow, DuckDB, gflags, replxx, SQLite, and OpenTelemetry and
+  is part of the superbuild input digest.
+
 ## [1.39.0] - 2026-09-14
 
 ### Added
