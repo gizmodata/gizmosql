@@ -1564,18 +1564,18 @@ class DuckDBFlightSqlServer::Impl {
     const auto handle = std::string(kCompletedTicketPrefix) +
                         boost::uuids::to_string(boost::uuids::random_generator()());
     {
+      // Held only for O(1) queue/map updates: this runs on every eager write.
       std::lock_guard lock(session->completed_executions_mutex);
       auto& cache = session->completed_executions;
+      auto& order = session->completed_execution_order;
       const auto cutoff = completed.created - std::chrono::minutes(5);
-      std::erase_if(cache,
-                    [&](const auto& entry) { return entry.second.created < cutoff; });
-      if (cache.size() >= 1024) {
-        auto oldest = std::min_element(cache.begin(), cache.end(),
-                                       [](const auto& a, const auto& b) {
-                                         return a.second.created < b.second.created;
-                                       });
-        cache.erase(oldest);
-      }
+      auto pop_oldest = [&] {
+        cache.erase(order.front());
+        order.pop_front();
+      };
+      while (!order.empty() && cache.at(order.front()).created < cutoff) pop_oldest();
+      if (order.size() >= 1024) pop_oldest();
+      order.push_back(handle);
       cache.emplace(handle, std::move(completed));
     }
     ARROW_ASSIGN_OR_RAISE(auto encoded, sql::CreateStatementQueryTicket(handle));
@@ -2541,14 +2541,14 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Status DoCancelActiveStatement(const std::shared_ptr<ClientSession>& client_session) {
-    if (!client_session->active_sql_handle.has_value() ||
-        client_session->active_sql_handle->empty()) {
+    const auto active = client_session->ActiveSqlHandle();
+    if (!active) {
       return Status::Invalid("No active SQL statement to cancel.");
     }
     client_session->connection->Get().Interrupt();
-    GIZMOSQL_LOGKV_SESSION(INFO, client_session, "SQL Statement was successfully canceled.",
-                   {"kind", "sql"}, {"status", "canceled"},
-                   {"statement_handle", client_session->active_sql_handle.value()});
+    GIZMOSQL_LOGKV_SESSION(INFO, client_session,
+                           "SQL Statement was successfully canceled.", {"kind", "sql"},
+                           {"status", "canceled"}, {"statement_handle", *active});
     return Status::OK();
   }
 

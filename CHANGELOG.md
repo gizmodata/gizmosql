@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the lock so other sessions are never blocked on them.
 
 ### Fixed
+- The session's active-statement handle, written by execution and read by
+  cancellation on other threads, is now an atomically swapped pointer instead
+  of a plain string, removing a data race between cancel and statement start.
+- Completed execution tickets expire and evict in O(1) per write through an
+  insertion-order queue, instead of scanning up to 1024 cached entries under
+  the session lock on every eager DDL/DML execution.
 - The metrics unclean-exit marker is maintained only by a read-write server;
   read-only instances sharing a database file no longer write it or raise
   false unclean-exit alerts.

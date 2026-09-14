@@ -808,7 +808,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
       {"session_id", client_session->session_id}, {"user", client_session->username},
       {"role", client_session->role}, {"statement_id", handle});
 
-  client_session->active_sql_handle = handle;
+  client_session->SetActiveSqlHandle(handle);
 
   if (!is_internal) {
     client_session->TouchSqlActivity();
@@ -2540,14 +2540,14 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
             return 0;  // Success
           }
           if (!bind_parameters.empty()) {
-            session->active_sql_handle = "";
+            session->SetActiveSqlHandle("");
             return arrow::Status::Invalid(
                 "Direct query execution does not support bind parameters");
           }
 
           auto result = session->connection->Get().Query(sql_);
 
-          session->active_sql_handle = "";
+          session->SetActiveSqlHandle("");
 
           if (result->HasError()) {
             if (log_queries_) {
@@ -2585,7 +2585,7 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
 
           query_result_ = stmt_->Execute(bind_parameters);
 
-          session->active_sql_handle = "";
+          session->SetActiveSqlHandle("");
 
           if (query_result_->HasError()) {
             if (log_queries_) {
@@ -2640,7 +2640,7 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
 
     session->connection->Get().Interrupt();
     future.wait();  // let the execution thread unwind cleanly
-    session->active_sql_handle = "";
+    session->SetActiveSqlHandle("");
 
 #ifdef GIZMOSQL_ENTERPRISE
     if (execution_instrumentation_) {
@@ -2669,7 +2669,7 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
     // Now wait for the background thread to finish cleanly
     future.wait();
 
-    session->active_sql_handle = "";
+    session->SetActiveSqlHandle("");
 
     if (log_queries_) {
       GIZMOSQL_LOGKV_SESSION(WARNING, session, "Client SQL command timed out - completed statement interruption",

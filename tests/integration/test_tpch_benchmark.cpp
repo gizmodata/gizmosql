@@ -22,6 +22,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <map>
 #include <thread>
 #include <vector>
 
@@ -1080,6 +1081,7 @@ TEST_F(TPCHServerFixture, TPCHBenchmarkConcurrent) {
 
   const int NUM_CLIENTS = 10;
   const int STAGGER_MS = 1000;  // 1 second stagger
+  std::map<std::string, int64_t> expected_rows;
 
   // First, ensure TPC-H data exists (may have been created by previous test)
   {
@@ -1108,6 +1110,14 @@ TEST_F(TPCHServerFixture, TPCHBenchmarkConcurrent) {
       ASSERT_TRUE(init_result.success) << "Failed to install TPC-H";
       init_result = RunQueryViaFlightSQL(sql_client, call_options, "CALL dbgen(sf=1);");
       ASSERT_TRUE(init_result.success) << "Failed to generate TPC-H data";
+    }
+
+    // Reference row counts from one sequential pass. Every concurrent client
+    // must fetch each result completely, not merely open the stream.
+    for (const auto& [name, query] : TPCH_QUERIES) {
+      auto reference = RunQueryViaFlightSQL(sql_client, call_options, query);
+      ASSERT_TRUE(reference.success) << name << ": " << reference.error_message;
+      expected_rows[name] = reference.row_count;
     }
   }
 
@@ -1179,13 +1189,18 @@ TEST_F(TPCHServerFixture, TPCHBenchmarkConcurrent) {
         // Run all 22 queries once
         for (const auto& [name, query] : TPCH_QUERIES) {
           auto query_result = RunQueryViaFlightSQL(sql_client, call_options, query);
-          if (query_result.success) {
+          if (query_result.success && query_result.row_count == expected_rows.at(name)) {
             result.queries_passed++;
           } else {
             result.queries_failed++;
             std::lock_guard<std::mutex> lock(output_mutex);
             std::cerr << "Client " << client_id << " " << name << " FAILED: "
-                      << query_result.error_message << std::endl;
+                      << (query_result.success
+                              ? "fetched " + std::to_string(query_result.row_count) +
+                                    " rows, expected " +
+                                    std::to_string(expected_rows.at(name))
+                              : query_result.error_message)
+                      << std::endl;
           }
         }
       } catch (const std::exception& e) {

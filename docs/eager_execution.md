@@ -37,7 +37,13 @@ statement without a result set is therefore refused by the driver, as the JDBC
 specification requires, where earlier servers returned a synthetic count row.
 
 Completed results are currently retained for up to five minutes and 1024 entries
-per session. A missing, evicted or foreign-session execution ticket fails; it
+per session. They live on the instance that executed the statement, like the
+session's prepared statements and transactions. With the default strict
+instance validation of bearer tokens this is transparent. Deployments that
+enable cross-instance token acceptance behind a load balancer need session
+affinity for the GetFlightInfo/DoGet pair of a DDL/DML statement, since the
+completed ticket is not executable SQL and another instance cannot serve it;
+the single-RPC update path (DoPut) is unaffected. A missing, evicted or foreign-session execution ticket fails; it
 never falls back to executing SQL. Closing a prepared statement does not discard
 its cached completed execution results. A completed ticket cannot cancel a later
 query on the same session. Cancelling execution while it is running still uses

@@ -5,6 +5,9 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <atomic>
+#include <deque>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <stdexcept>
@@ -81,7 +84,20 @@ struct ClientSession {
   std::string auth_method; // authentication method (e.g. "Basic", "BootstrapToken")
   std::string user_agent;  // user-agent header from client (for client type detection)
   std::string connection_protocol;  // "plaintext", "tls", or "mtls"
-  std::optional<std::string> active_sql_handle;
+  // Handle of the statement currently executing on this session. Written by
+  // the executing request and read by CancelFlightInfo / teardown on other
+  // threads, so it is swapped atomically as a shared_ptr rather than mutated
+  // as a string (no lock, no data race). Empty pointer == nothing active.
+  std::shared_ptr<const std::string> active_sql_handle;
+  void SetActiveSqlHandle(std::string handle) {
+    std::atomic_store(&active_sql_handle,
+                      handle.empty()
+                          ? std::shared_ptr<const std::string>{}
+                          : std::make_shared<const std::string>(std::move(handle)));
+  }
+  std::shared_ptr<const std::string> ActiveSqlHandle() const {
+    return std::atomic_load(&active_sql_handle);
+  }
   std::optional<int32_t> query_timeout = std::nullopt;
   std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;
   // Per-session override for query profile capture (Enterprise). nullopt => use
@@ -135,6 +151,9 @@ struct ClientSession {
     std::chrono::steady_clock::time_point created;
   };
   std::map<std::string, CompletedExecution> completed_executions;
+  // Insertion order == age order (steady_clock is monotonic), so expiry and
+  // capacity eviction pop from the front in O(1) instead of scanning the map.
+  std::deque<std::string> completed_execution_order;
   std::mutex completed_executions_mutex;
 
   // Prepared statements owned by this session
