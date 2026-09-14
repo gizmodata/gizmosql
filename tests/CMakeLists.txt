@@ -97,6 +97,7 @@ endif()
 if(WITH_OPENTELEMETRY)
     set(GIZMOSQL_OTEL_TEST_SRCS
             integration/test_admission_queue_telemetry.cpp
+            integration/test_result_streaming.cpp
     )
 endif()
 
