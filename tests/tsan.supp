@@ -23,3 +23,15 @@ race:duckdb::ColumnSegment::Append
 # outcome is identical regardless of ordering; DuckDB relies on that instead of
 # atomics. Reported under concurrent TPC-H queries.
 race:duckdb::JoinHashTable::ScanStructure
+
+# jemalloc (bundled by DuckDB): its extent metadata is managed with its own
+# atomics and lock-free structures that TSan cannot model, so it reports races
+# inside jemalloc/internal/edata.h on every allocation-heavy run. Standard
+# jemalloc suppression; no GizmoSQL frame is involved.
+race:third_party/jemalloc
+
+# GDAL, inside DuckDB's spatial extension: registering the module takes its
+# global bootstrap mutex and a per-object mutex in both orders
+# (CPLCreateOrAcquireMutexEx vs CPLAcquireMutex) while single-threaded at load
+# time. TSan reports the cycle as a potential deadlock; both stacks are GDAL.
+deadlock:duckdb::RegisterGDALModule

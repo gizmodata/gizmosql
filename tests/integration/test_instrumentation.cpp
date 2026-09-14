@@ -38,6 +38,26 @@
 #include "test_server_fixture.h"
 #include "instrumentation/instrumentation_manager.h"
 
+namespace {
+// A server started as a subprocess is ready when a Flight client can
+// authenticate against it. Poll (bounded at 60 s) instead of sleeping a fixed
+// interval, so slower hosts and instrumented (sanitizer) builds converge.
+void WaitForSubprocessServer(int port, const std::string& username,
+                             const std::string& password) {
+  for (int attempt = 0; attempt < 600; ++attempt) {
+    auto location = arrow::flight::Location::ForGrpcTcp("localhost", port);
+    if (location.ok()) {
+      arrow::flight::FlightClientOptions options;
+      auto client = arrow::flight::FlightClient::Connect(*location, options);
+      if (client.ok() && (*client)->AuthenticateBasicToken({}, username, password).ok()) {
+        return;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+}  // namespace
+
 using arrow::flight::sql::FlightSqlClient;
 
 // Define the test fixture using the shared server infrastructure
@@ -887,7 +907,7 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
   ASSERT_EQ(ret, 0) << "Failed to start server subprocess";
 
   // Wait for server to start and be ready
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  WaitForSubprocessServer(test_port, "tester", "tester");
 
   // Connect to the server and create a session
   {
@@ -1090,7 +1110,7 @@ TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
   ASSERT_EQ(ret, 0) << "Failed to start server subprocess";
 
   // Wait for server to start
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  WaitForSubprocessServer(test_port, "tester", "tester");
 
   // Connect and run a simple query to create session/statement records
   {
