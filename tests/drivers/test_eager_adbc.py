@@ -133,4 +133,3 @@ def test_large_result_streams_in_batches(conn):
     assert ids == list(range(50000))
     labels = table.column("label")
     assert labels[0].as_py() == "row-0" and labels[49999].as_py() == "row-49999"
-
