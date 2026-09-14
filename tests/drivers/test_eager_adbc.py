@@ -117,3 +117,20 @@ def test_transaction_rollback(conn, ledger):
         assert scalar(conn, f"SELECT sum(n) FROM {ledger}") == 14
     finally:
         conn.adbc_connection.set_autocommit(True)
+
+
+def test_large_result_streams_in_batches(conn):
+    # 50,000 rows is many DuckDB vectors (2048 rows each); the driver must
+    # deliver every batch, in order, and the row count must be exact.
+    with conn.cursor() as cur:
+        cur.execute("SELECT range AS i, 'row-' || range AS label FROM range(50000)")
+        reader = cur.fetch_record_batch()
+        batches = list(reader)
+    assert len(batches) > 1, "result was not streamed in batches"
+    table = pa.Table.from_batches(batches)
+    assert table.num_rows == 50000
+    ids = table.column("i").to_pylist()
+    assert ids == list(range(50000))
+    labels = table.column("label")
+    assert labels[0].as_py() == "row-0" and labels[49999].as_py() == "row-49999"
+

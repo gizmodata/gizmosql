@@ -100,7 +100,17 @@ public class EagerJdbc {
           ps.setString(1, dropped);
           try (ResultSet r = ps.executeQuery()) { check(r.next() && r.getLong(1) == 0, "DROP TABLE"); }
         }
-        System.out.println("PASS: reads, DDL, DML, repeated binds, batch writes, RETURNING");
+        // A result of many DuckDB vectors must stream completely and in order.
+        try (ResultSet r = s.executeQuery("SELECT range AS i, 'row-' || range AS label FROM range(50000) ORDER BY i")) {
+          long expected = 0;
+          while (r.next()) {
+            check(r.getLong(1) == expected, "streamed row out of sequence at " + expected);
+            if (expected == 0 || expected == 49999) check(r.getString(2).equals("row-" + expected), "label at " + expected);
+            expected++;
+          }
+          check(expected == 50000, "streamed row count " + expected);
+        }
+        System.out.println("PASS: reads, DDL, DML, repeated binds, batch writes, RETURNING, 50k-row streaming");
         if (transactions) {
         c.setAutoCommit(false);
         s.executeUpdate("INSERT INTO " + table + " (token, n) VALUES (200, 1)");
