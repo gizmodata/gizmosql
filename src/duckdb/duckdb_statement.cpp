@@ -741,8 +741,8 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
 arrow::Result<arrow::util::ArrowLogLevel> GetSessionOrServerLogLevel(
     const std::shared_ptr<ClientSession>& client_session) {
   // Fall-back to the session query log level if the statement log level is not set...
-  if (client_session->query_log_level.has_value()) {
-    return client_session->query_log_level.value();
+  if (const auto level = client_session->query_log_level.load()) {
+    return *level;
   }
   // Fall-back to the server's setting if the session setting is not set...
   if (auto server = GetServer(*client_session)) {
@@ -756,8 +756,8 @@ arrow::Result<arrow::util::ArrowLogLevel> GetSessionOrServerLogLevel(
 // server instance is gone (capture is a best-effort, never-fail feature).
 QueryProfileMode GetSessionOrServerCaptureProfile(
     const std::shared_ptr<ClientSession>& client_session) {
-  if (client_session->capture_query_profile.has_value()) {
-    return client_session->capture_query_profile.value();
+  if (const auto mode = client_session->capture_query_profile.load()) {
+    return *mode;
   }
   if (auto server = GetServer(*client_session)) {
     return server->GetCaptureQueryProfile(*client_session);
@@ -1010,8 +1010,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     // Create statement instrumentation for successful KILL SESSION
     if (instr_mgr) {
       result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-          instr_mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
-          "", client_session->query_tag);
+          instr_mgr, handle, client_session->session_id, logged_sql, flight_method,
+          is_internal, "", client_session->QueryTag());
     }
 
     // Create a synthetic result batch with success message
@@ -1049,8 +1049,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     if (auto server = GetServer(*client_session)) {
       if (auto mgr = server->GetInstrumentationManager()) {
         result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-            mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
-            "", client_session->query_tag);
+            mgr, handle, client_session->session_id, logged_sql, flight_method,
+            is_internal, "", client_session->QueryTag());
       }
     }
 #endif
@@ -1175,8 +1175,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {
           result->instrumentation_ = std::make_unique<StatementInstrumentation>(
-              mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
-              "", client_session->query_tag);
+              mgr, handle, client_session->session_id, logged_sql, flight_method,
+              is_internal, "", client_session->QueryTag());
         }
       }
 #endif
@@ -1225,7 +1225,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     if (auto mgr = server->GetInstrumentationManager()) {
       result->instrumentation_ = std::make_unique<StatementInstrumentation>(
           mgr, handle, client_session->session_id, logged_sql, flight_method, is_internal,
-          "", client_session->query_tag);
+          "", client_session->QueryTag());
     }
   }
 #endif
@@ -1395,8 +1395,8 @@ SettingsRegistry::SettingsRegistry() {
       .default_value = "0",
       .description = "Per-statement timeout in seconds (0 = no timeout).",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
-        return s.query_timeout ? std::optional(std::to_string(*s.query_timeout))
-                               : std::nullopt;
+        const auto v = s.query_timeout.load();
+        return v ? std::optional(std::to_string(*v)) : std::nullopt;
       },
       .get_global = [](DuckDBFlightSqlServer& srv,
                        const ClientSession& s) -> std::optional<std::string> {
@@ -1424,9 +1424,8 @@ SettingsRegistry::SettingsRegistry() {
       .default_value = "INFO",
       .description = "Query-execution log level (DEBUG/INFO/WARNING/ERROR).",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
-        return s.query_log_level ? std::optional(log_level_arrow_log_level_to_string(
-                                       *s.query_log_level))
-                                 : std::nullopt;
+        const auto v = s.query_log_level.load();
+        return v ? std::optional(log_level_arrow_log_level_to_string(*v)) : std::nullopt;
       },
       .get_global = [](DuckDBFlightSqlServer& srv,
                        const ClientSession& s) -> std::optional<std::string> {
@@ -1463,13 +1462,11 @@ SettingsRegistry::SettingsRegistry() {
       .env_var = "GIZMOSQL_CAPTURE_QUERY_PROFILE",
       .cli_flag = "--capture-query-profile",
       .default_value = "off",
-      .description =
-          "Capture DuckDB query profiles into instrumentation "
-          "(off/standard/detailed).",
+      .description = "Capture DuckDB query profiles into instrumentation "
+                     "(off/standard/detailed).",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
-        return s.capture_query_profile
-                   ? std::optional(query_profile_mode_to_string(*s.capture_query_profile))
-                   : std::nullopt;
+        const auto v = s.capture_query_profile.load();
+        return v ? std::optional(query_profile_mode_to_string(*v)) : std::nullopt;
       },
       .get_global = [](DuckDBFlightSqlServer& srv,
                        const ClientSession& s) -> std::optional<std::string> {
@@ -1504,9 +1501,8 @@ SettingsRegistry::SettingsRegistry() {
       .default_value = "false",
       .description = "Skip the statement queue for this session (admin only to enable).",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
-        return s.bypass_queue
-                   ? std::optional(std::string(*s.bypass_queue ? "true" : "false"))
-                   : std::nullopt;
+        const auto v = s.bypass_queue.load();
+        return v ? std::optional(std::string(*v ? "true" : "false")) : std::nullopt;
       },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         ARROW_ASSIGN_OR_RAISE(bool b, ParseSetBool(val, "bypass_queue"));
@@ -1529,13 +1525,14 @@ SettingsRegistry::SettingsRegistry() {
       .input_type = "VARCHAR",
       .description = "JSON session tag recorded in instrumentation.",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
-        return s.session_tag.empty() ? std::nullopt : std::optional(s.session_tag);
+        const auto tag = s.SessionTag();
+        return tag.empty() ? std::nullopt : std::optional(tag);
       },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         if (!val.empty() && !IsValidJSON(val)) {
           return arrow::Status::Invalid("Invalid JSON for session_tag: " + val);
         }
-        s.session_tag = val;
+        s.SetSessionTag(val);
 #ifdef GIZMOSQL_ENTERPRISE
         if (s.instrumentation) {
           s.instrumentation->UpdateSessionTag(val);
@@ -1553,13 +1550,14 @@ SettingsRegistry::SettingsRegistry() {
       .input_type = "VARCHAR",
       .description = "JSON query tag recorded in instrumentation.",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
-        return s.query_tag.empty() ? std::nullopt : std::optional(s.query_tag);
+        const auto tag = s.QueryTag();
+        return tag.empty() ? std::nullopt : std::optional(tag);
       },
       .set_session = [](ClientSession& s, const std::string& val) -> arrow::Status {
         if (!val.empty() && !IsValidJSON(val)) {
           return arrow::Status::Invalid("Invalid JSON for query_tag: " + val);
         }
-        s.query_tag = val;
+        s.SetQueryTag(val);
         return arrow::Status::OK();
       },
   });
@@ -1621,8 +1619,8 @@ SettingsRegistry::SettingsRegistry() {
       .description =
           "Seconds a statement may wait in the queue before rejection (0 = forever).",
       .get_session = [](const ClientSession& s) -> std::optional<std::string> {
-        return s.max_queue_wait ? std::optional(std::to_string(*s.max_queue_wait))
-                                : std::nullopt;
+        const auto v = s.max_queue_wait.load();
+        return v ? std::optional(std::to_string(*v)) : std::nullopt;
       },
       .get_global = [](DuckDBFlightSqlServer& srv,
                        const ClientSession&) -> std::optional<std::string> {
@@ -2399,11 +2397,12 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
   {
     bool enforce_queue = false;
 #ifdef GIZMOSQL_ENTERPRISE
+    const bool bypass_queue = session->bypass_queue.load().value_or(false);
     enforce_queue =
-        !is_internal_ && !session->bypass_queue.value_or(false) &&
+        !is_internal_ && !bypass_queue &&
         gizmosql::enterprise::EnterpriseFeatures::Instance().IsFeatureAvailable(
             gizmosql::enterprise::kFeatureStatementQueue);
-    if (!is_internal_ && session->bypass_queue.value_or(false) && session->metrics) {
+    if (!is_internal_ && bypass_queue && session->metrics) {
       if (auto server = GetServer(*session);
           server && server->GetAdmissionController().Limit() > 0) {
         session->metrics->At("gizmosql_queue_admin_bypass_total")
@@ -2415,8 +2414,8 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
       admission_server = GetServer(*session);
       if (admission_server) {
         auto& controller = admission_server->GetAdmissionController();
-        const int32_t max_queue_wait =
-            session->max_queue_wait.value_or(controller.DefaultMaxQueueWaitSeconds());
+        const int32_t max_queue_wait = session->max_queue_wait.load().value_or(
+            controller.DefaultMaxQueueWaitSeconds());
 #ifdef GIZMOSQL_ENTERPRISE
         // Record the queued phase (status='queued', enqueue_time) so the admin
         // SQL-monitor can show in-flight queued statements and the queue wait.
@@ -3016,8 +3015,8 @@ arrow::Result<int32_t> DuckDBStatement::GetQueryTimeout() const {
   ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
   // First, try getting the value from the user's session
-  if (session->query_timeout.has_value()) {
-    return session->query_timeout.value();
+  if (const auto timeout = session->query_timeout.load()) {
+    return *timeout;
   }
   // Fall-back to the server's setting if the session setting is not set...
   if (auto server = GetServer(*session)) {

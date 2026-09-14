@@ -2284,8 +2284,8 @@ class DuckDBFlightSqlServer::Impl {
     }
 
     arrow::util::ArrowLogLevel log_threshold;
-    if (client_session->query_log_level.has_value()) {
-      log_threshold = client_session->query_log_level.value();
+    if (const auto level = client_session->query_log_level.load()) {
+      log_threshold = *level;
     } else {
       ARROW_ASSIGN_OR_RAISE(log_threshold, GetQueryLogLevel(*client_session));
     }

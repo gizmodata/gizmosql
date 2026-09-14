@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The session's active-statement handle, written by execution and read by
   cancellation on other threads, is now an atomically swapped pointer instead
   of a plain string, removing a data race between cancel and statement start.
+- Per-session settings written by `SET` (`query_timeout`, `query_log_level`,
+  `capture_query_profile`, `bypass_queue`, `max_queue_wait`, `session_tag`,
+  `query_tag`) are stored lock-free as atomics or atomically swapped strings,
+  so a SET racing another request on the same session can no longer produce a
+  torn read.
 - Completed execution tickets expire and evict in O(1) per write through an
   insertion-order queue, instead of scanning up to 1024 cached entries under
   the session lock on every eager DDL/DML execution.
