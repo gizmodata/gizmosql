@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-09-14
+
 ### Added
 - Contributor guide covering local quality checks, tests, and SQL binding, plus
   a proposed contributor agreement and required-CLA rollout instructions.
