@@ -21,6 +21,10 @@ EnterpriseFeatures& EnterpriseFeatures::Instance() {
 arrow::Status EnterpriseFeatures::Initialize(const std::string& license_file_path,
                                              const std::string& license_key) {
   initialized_ = true;
+  // Initialization belongs to server startup, before request threads exist.
+  // A new unlicensed/invalid configuration must not inherit a previous server's
+  // entitlements when the library is used repeatedly in the same process.
+  license_manager_ = LicenseManager::Create();
 
   // An inline license key (--license-key / GIZMOSQL_LICENSE_KEY) takes
   // precedence over the file-based key for backward compatibility.
@@ -75,6 +79,10 @@ bool EnterpriseFeatures::IsExternalAuthAvailable() const {
 
 bool EnterpriseFeatures::IsStatementQueueAvailable() const {
   return IsFeatureAvailable(kFeatureStatementQueue);
+}
+
+bool EnterpriseFeatures::IsMetricsAvailable() const {
+  return IsFeatureAvailable(kFeatureMetrics);
 }
 
 std::string EnterpriseFeatures::GetCopyrightBanner() const {

@@ -202,6 +202,12 @@ int main(int argc, char** argv) {
             ("enable-instrumentation", po::value<bool>()->default_value(false),
               "[Enterprise] Enable session instrumentation (tracking instances, sessions, SQL statements). "
               "Requires a valid enterprise license. If not set, uses env var GIZMOSQL_ENABLE_INSTRUMENTATION (1/true to enable).")
+            ("enable-metrics", po::value<bool>()->default_value(false),
+             "[Enterprise metrics license] Enable metrics collection, HTTP and SQL metrics. Env: GIZMOSQL_ENABLE_METRICS (default: false).")
+            ("metrics-port", po::value<int32_t>(),
+             "[Enterprise metrics license] Prometheus HTTP port (default: 9091; 0 disables HTTP). Env: GIZMOSQL_METRICS_PORT.")
+            ("metrics-bind-address", po::value<std::string>()->default_value(""),
+             "Metrics HTTP bind address (default: 0.0.0.0). Env: GIZMOSQL_METRICS_BIND_ADDRESS. No authentication or TLS.")
             ("instrumentation-db-path", po::value<std::string>()->default_value(""),
               "[Enterprise] Path for the instrumentation database. If not set, uses env var GIZMOSQL_INSTRUMENTATION_DB_PATH. "
               "If that isn't set, defaults to gizmosql_instrumentation.db in the same directory as the main database. "
@@ -590,19 +596,22 @@ int main(int argc, char** argv) {
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands,
       init_sql_commands_file, print_queries, read_only, token_allowed_issuer,
       token_allowed_audience, token_signature_verify_cert_path, token_jwks_uri,
-      token_default_role, token_authorized_emails, log_level, log_format,
-      access_log, log_file, query_timeout, query_log_level, auth_log_level,
-      session_log_level, health_port,
-      health_check_query, enable_instrumentation, instrumentation_db_path,
+      token_default_role, token_authorized_emails, log_level, log_format, access_log,
+      log_file, query_timeout, query_log_level, auth_log_level, session_log_level,
+      health_port, health_check_query, enable_instrumentation, instrumentation_db_path,
       instrumentation_catalog, instrumentation_schema, instance_tag, license_key_file,
-      license_key,
-      allow_cross_instance_tokens, oauth_client_id, oauth_client_secret, oauth_scopes,
-      oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id, oauth_disable_tls, otel_enabled, otel_exporter,
-      otel_endpoint, otel_service_name, otel_headers, max_metadata_size,
-      storage_version, max_concurrent_statements, max_queued_statements,
-      max_queue_wait, admin_bypass_queue_default, memory_limit, capture_query_profile,
-      cluster_id, enable_catalog_logging, log_catalog, log_schema, log_catalog_db_path,
-      graceful_shutdown, shutdown_grace_period_seconds,
+      license_key, allow_cross_instance_tokens, oauth_client_id, oauth_client_secret,
+      oauth_scopes, oauth_port, oauth_base_url, oauth_redirect_uri, oauth_instance_id,
+      oauth_disable_tls, otel_enabled, otel_exporter, otel_endpoint, otel_service_name,
+      otel_headers, max_metadata_size, storage_version, max_concurrent_statements,
+      max_queued_statements, max_queue_wait, admin_bypass_queue_default, memory_limit,
+      capture_query_profile, cluster_id, enable_catalog_logging, log_catalog, log_schema,
+      log_catalog_db_path, graceful_shutdown, shutdown_grace_period_seconds,
       health_check_interval_seconds, health_check_staleness_seconds,
-      allow_unsigned_extensions, max_sessions, session_idle_timeout);
+      allow_unsigned_extensions, max_sessions, session_idle_timeout,
+      vm.count("metrics-port") ? std::optional<int32_t>(vm["metrics-port"].as<int32_t>())
+                               : std::nullopt,
+      vm["metrics-bind-address"].as<std::string>(),
+      vm["enable-metrics"].defaulted() ? std::nullopt
+                                       : std::optional(vm["enable-metrics"].as<bool>()));
 }

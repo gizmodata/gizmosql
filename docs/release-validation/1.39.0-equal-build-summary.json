@@ -1,0 +1,302 @@
+{
+  "method": "v1.38.5 and the candidate built from the same build tree with identical flags (project sources -O3 -DNDEBUG -g, Release third-party libraries, identical third-party artifacts); tests/benchmarks/compare_versions.py, 20 s per workload, then 500-session churn; no metrics license, so only baseline and candidate-disabled modes ran; macOS ARM64, released GizmoSQL ADBC 2.0.13 driver.",
+  "runs": [
+    {
+      "label": "run-1 (candidate at 332d21b6)",
+      "baseline_sha256": "5db030754dc6664aaae23d935a026d090ea3320eef61fe12bb07034922e2b99b",
+      "candidate_sha256": "d7928ad07767d84148f31cdbefc6c66dbcaacacd17854f127ead0a8ec77c14da",
+      "max_sample_gap_seconds": {
+        "baseline": 0.21,
+        "candidate": 0.29
+      },
+      "measurement_valid": {
+        "baseline": true,
+        "candidate": true
+      },
+      "churn_rss_bytes_final": {
+        "baseline": 99434496,
+        "candidate": 101318656
+      },
+      "workloads": {
+        "read": {
+          "baseline": {
+            "ops_per_second": 1288.698,
+            "p50_ms": 0.756,
+            "p95_ms": 0.919,
+            "cpu_seconds": 15.136,
+            "operations": 25774
+          },
+          "candidate": {
+            "ops_per_second": 1284.706,
+            "p50_ms": 0.766,
+            "p95_ms": 0.89,
+            "cpu_seconds": 13.781,
+            "operations": 25695
+          }
+        },
+        "bound_read": {
+          "baseline": {
+            "ops_per_second": 1028.832,
+            "p50_ms": 0.961,
+            "p95_ms": 1.059,
+            "cpu_seconds": 14.936,
+            "operations": 20577
+          },
+          "candidate": {
+            "ops_per_second": 972.795,
+            "p50_ms": 1.013,
+            "p95_ms": 1.157,
+            "cpu_seconds": 13.498,
+            "operations": 19456
+          }
+        },
+        "write": {
+          "baseline": {
+            "ops_per_second": 1583.099,
+            "p50_ms": 0.615,
+            "p95_ms": 0.745,
+            "cpu_seconds": 11.711,
+            "operations": 31662
+          },
+          "candidate": {
+            "ops_per_second": 1492.222,
+            "p50_ms": 0.655,
+            "p95_ms": 0.785,
+            "cpu_seconds": 10.125,
+            "operations": 29845
+          }
+        },
+        "concurrent_2": {
+          "baseline": {
+            "ops_per_second": 718.254,
+            "p50_ms": 2.682,
+            "p95_ms": 3.434,
+            "cpu_seconds": 27.427,
+            "operations": 14370
+          },
+          "candidate": {
+            "ops_per_second": 678.648,
+            "p50_ms": 2.836,
+            "p95_ms": 3.392,
+            "cpu_seconds": 24.769,
+            "operations": 13579
+          }
+        },
+        "concurrent_8": {
+          "baseline": {
+            "ops_per_second": 868.167,
+            "p50_ms": 8.911,
+            "p95_ms": 11.442,
+            "cpu_seconds": 47.944,
+            "operations": 17382
+          },
+          "candidate": {
+            "ops_per_second": 872.911,
+            "p50_ms": 8.945,
+            "p95_ms": 11.455,
+            "cpu_seconds": 47.208,
+            "operations": 17477
+          }
+        }
+      }
+    },
+    {
+      "label": "run-2 (final candidate)",
+      "baseline_sha256": "5db030754dc6664aaae23d935a026d090ea3320eef61fe12bb07034922e2b99b",
+      "candidate_sha256": "a00229318624bc5f76340cd841e6128464a07ad72ecaf83a9822bb395533806b",
+      "max_sample_gap_seconds": {
+        "baseline": 0.82,
+        "candidate": 0.83
+      },
+      "measurement_valid": {
+        "baseline": true,
+        "candidate": true
+      },
+      "churn_rss_bytes_final": {
+        "baseline": 98877440,
+        "candidate": 99270656
+      },
+      "workloads": {
+        "read": {
+          "baseline": {
+            "ops_per_second": 1368.718,
+            "p50_ms": 0.701,
+            "p95_ms": 0.913,
+            "cpu_seconds": 15.128,
+            "operations": 27375
+          },
+          "candidate": {
+            "ops_per_second": 1200.15,
+            "p50_ms": 0.806,
+            "p95_ms": 1.015,
+            "cpu_seconds": 14.571,
+            "operations": 24003
+          }
+        },
+        "bound_read": {
+          "baseline": {
+            "ops_per_second": 951.383,
+            "p50_ms": 0.996,
+            "p95_ms": 1.386,
+            "cpu_seconds": 14.599,
+            "operations": 19028
+          },
+          "candidate": {
+            "ops_per_second": 975.428,
+            "p50_ms": 1.006,
+            "p95_ms": 1.143,
+            "cpu_seconds": 14.633,
+            "operations": 19509
+          }
+        },
+        "write": {
+          "baseline": {
+            "ops_per_second": 1573.31,
+            "p50_ms": 0.6,
+            "p95_ms": 0.844,
+            "cpu_seconds": 11.276,
+            "operations": 31467
+          },
+          "candidate": {
+            "ops_per_second": 1558.278,
+            "p50_ms": 0.638,
+            "p95_ms": 0.702,
+            "cpu_seconds": 11.112,
+            "operations": 31166
+          }
+        },
+        "concurrent_2": {
+          "baseline": {
+            "ops_per_second": 659.686,
+            "p50_ms": 2.813,
+            "p95_ms": 4.521,
+            "cpu_seconds": 26.206,
+            "operations": 13199
+          },
+          "candidate": {
+            "ops_per_second": 705.327,
+            "p50_ms": 2.804,
+            "p95_ms": 3.154,
+            "cpu_seconds": 26.506,
+            "operations": 14112
+          }
+        },
+        "concurrent_8": {
+          "baseline": {
+            "ops_per_second": 806.56,
+            "p50_ms": 9.326,
+            "p95_ms": 11.902,
+            "cpu_seconds": 46.452,
+            "operations": 16148
+          },
+          "candidate": {
+            "ops_per_second": 810.885,
+            "p50_ms": 9.155,
+            "p95_ms": 11.488,
+            "cpu_seconds": 45.102,
+            "operations": 16235
+          }
+        }
+      }
+    },
+    {
+      "label": "run-3 (final candidate)",
+      "baseline_sha256": "5db030754dc6664aaae23d935a026d090ea3320eef61fe12bb07034922e2b99b",
+      "candidate_sha256": "a00229318624bc5f76340cd841e6128464a07ad72ecaf83a9822bb395533806b",
+      "max_sample_gap_seconds": {
+        "baseline": 1.56,
+        "candidate": 0.83
+      },
+      "measurement_valid": {
+        "baseline": true,
+        "candidate": true
+      },
+      "churn_rss_bytes_final": {
+        "baseline": 99008512,
+        "candidate": 98746368
+      },
+      "workloads": {
+        "read": {
+          "baseline": {
+            "ops_per_second": 1474.256,
+            "p50_ms": 0.675,
+            "p95_ms": 0.752,
+            "cpu_seconds": 15.389,
+            "operations": 29486
+          },
+          "candidate": {
+            "ops_per_second": 1320.216,
+            "p50_ms": 0.734,
+            "p95_ms": 0.901,
+            "cpu_seconds": 14.532,
+            "operations": 26405
+          }
+        },
+        "bound_read": {
+          "baseline": {
+            "ops_per_second": 1108.35,
+            "p50_ms": 0.888,
+            "p95_ms": 1.073,
+            "cpu_seconds": 15.621,
+            "operations": 22168
+          },
+          "candidate": {
+            "ops_per_second": 1011.984,
+            "p50_ms": 0.965,
+            "p95_ms": 1.186,
+            "cpu_seconds": 14.611,
+            "operations": 20240
+          }
+        },
+        "write": {
+          "baseline": {
+            "ops_per_second": 1639.772,
+            "p50_ms": 0.576,
+            "p95_ms": 0.814,
+            "cpu_seconds": 11.587,
+            "operations": 32796
+          },
+          "candidate": {
+            "ops_per_second": 1615.146,
+            "p50_ms": 0.602,
+            "p95_ms": 0.739,
+            "cpu_seconds": 11.041,
+            "operations": 32303
+          }
+        },
+        "concurrent_2": {
+          "baseline": {
+            "ops_per_second": 667.783,
+            "p50_ms": 2.601,
+            "p95_ms": 3.607,
+            "cpu_seconds": 24.86,
+            "operations": 13362
+          },
+          "candidate": {
+            "ops_per_second": 650.883,
+            "p50_ms": 2.771,
+            "p95_ms": 3.853,
+            "cpu_seconds": 25.281,
+            "operations": 13022
+          }
+        },
+        "concurrent_8": {
+          "baseline": {
+            "ops_per_second": 769.569,
+            "p50_ms": 9.269,
+            "p95_ms": 11.716,
+            "cpu_seconds": 44.347,
+            "operations": 15408
+          },
+          "candidate": {
+            "ops_per_second": 803.391,
+            "p50_ms": 9.246,
+            "p95_ms": 11.762,
+            "cpu_seconds": 46.117,
+            "operations": 16082
+          }
+        }
+      }
+    }
+  ]
+}

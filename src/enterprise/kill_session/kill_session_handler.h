@@ -25,7 +25,8 @@ namespace gizmosql::enterprise {
 /// @return true if this is a KILL SESSION command
 bool IsKillSessionCommand(const std::string& sql, std::string& target_session_id);
 
-/// Handle a KILL SESSION command
+/// Handle a KILL SESSION command. Failed attempts are recorded here; the caller
+/// records successful preparation through its StatementInstrumentation owner.
 /// @param client_session The session making the request (must be admin)
 /// @param target_session_id The session ID to kill
 /// @param server The DuckDB server instance

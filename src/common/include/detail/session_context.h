@@ -4,6 +4,10 @@
 #include <cctype>
 #include <chrono>
 #include <map>
+#include <limits>
+#include <memory>
+#include <atomic>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -12,6 +16,7 @@
 #include <optional>
 #include <vector>
 #include <duckdb.hpp>
+#include <arrow/record_batch.h>
 #include <arrow/util/logging.h>
 
 #include "request_ctx.h"  // For CatalogAccessRule, CatalogAccessLevel
@@ -26,6 +31,12 @@ class SessionInstrumentation;  // forward declare
 }
 
 namespace gizmosql {
+
+#ifdef GIZMOSQL_ENTERPRISE
+namespace enterprise {
+class MetricsRegistry;
+}
+#endif
 
 // Controls whether DuckDB query profiling is captured into the instrumentation
 // `sql_executions.query_profile` column (Enterprise feature). Settable at the
@@ -62,6 +73,47 @@ inline std::string query_profile_mode_to_string(QueryProfileMode mode) {
   }
 }
 
+// Lock-free std::optional replacement for small trivially convertible values
+// (ints, bools, enums) that SET writes on one request thread while other
+// requests on the same session read them concurrently. A plain std::optional
+// would be a data race; here the value and its presence are one atomic word.
+// load() returns a consistent snapshot; callers must not re-read expecting the
+// same value.
+template <typename T>
+class AtomicOptional {
+ public:
+  AtomicOptional() = default;
+  AtomicOptional(const AtomicOptional& other) : raw_(other.raw_.load()) {}
+  AtomicOptional& operator=(const AtomicOptional& other) {
+    raw_.store(other.raw_.load());
+    return *this;
+  }
+  AtomicOptional& operator=(std::optional<T> value) {
+    store(value);
+    return *this;
+  }
+  AtomicOptional& operator=(T value) {
+    store(value);
+    return *this;
+  }
+  AtomicOptional& operator=(std::nullopt_t) {
+    store(std::nullopt);
+    return *this;
+  }
+  std::optional<T> load() const {
+    const int64_t raw = raw_.load(std::memory_order_relaxed);
+    if (raw == kNull) return std::nullopt;
+    return static_cast<T>(raw);
+  }
+  void store(std::optional<T> value) {
+    raw_.store(value ? static_cast<int64_t>(*value) : kNull, std::memory_order_relaxed);
+  }
+
+ private:
+  static constexpr int64_t kNull = std::numeric_limits<int64_t>::min();
+  std::atomic<int64_t> raw_{kNull};
+};
+
 struct ClientSession {
   std::weak_ptr<gizmosql::ddb::DuckDBFlightSqlServer> server;
   std::shared_ptr<TrackedDuckDBConnection> connection;
@@ -74,19 +126,52 @@ struct ClientSession {
   std::string auth_method; // authentication method (e.g. "Basic", "BootstrapToken")
   std::string user_agent;  // user-agent header from client (for client type detection)
   std::string connection_protocol;  // "plaintext", "tls", or "mtls"
-  std::optional<std::string> active_sql_handle;
-  std::optional<int32_t> query_timeout = std::nullopt;
-  std::optional<arrow::util::ArrowLogLevel> query_log_level = std::nullopt;
+  // Handle of the statement currently executing on this session. Written by
+  // the executing request and read by CancelFlightInfo / teardown on other
+  // threads, so it is swapped atomically as a shared_ptr rather than mutated
+  // as a string (no lock, no data race). Empty pointer == nothing active.
+  std::shared_ptr<const std::string> active_sql_handle;
+  void SetActiveSqlHandle(std::string handle) {
+    std::atomic_store(&active_sql_handle,
+                      handle.empty()
+                          ? std::shared_ptr<const std::string>{}
+                          : std::make_shared<const std::string>(std::move(handle)));
+  }
+  std::shared_ptr<const std::string> ActiveSqlHandle() const {
+    return std::atomic_load(&active_sql_handle);
+  }
+  static void SetTag(std::shared_ptr<const std::string>& slot, std::string value) {
+    std::atomic_store(&slot, value.empty()
+                                 ? std::shared_ptr<const std::string>{}
+                                 : std::make_shared<const std::string>(std::move(value)));
+  }
+  static std::string Tag(const std::shared_ptr<const std::string>& slot) {
+    const auto value = std::atomic_load(&slot);
+    return value ? *value : std::string{};
+  }
+  // Per-session overrides written by SET on one request thread and read by
+  // other requests on the same session, so they are lock-free atomics rather
+  // than std::optional (see AtomicOptional). load() returns a snapshot.
+  AtomicOptional<int32_t> query_timeout;
+  AtomicOptional<arrow::util::ArrowLogLevel> query_log_level;
   // Per-session override for query profile capture (Enterprise). nullopt => use
   // the server default. Set via `SET gizmosql.capture_query_profile`.
-  std::optional<QueryProfileMode> capture_query_profile = std::nullopt;
+  AtomicOptional<QueryProfileMode> capture_query_profile;
   // Statement-queue overrides (Enterprise). bypass_queue: skip the queue for this
   // session (admin-only to enable). max_queue_wait: per-session override of the
   // server's default queue wait. Both nullopt => fall through to server defaults.
-  std::optional<bool> bypass_queue = std::nullopt;
-  std::optional<int32_t> max_queue_wait = std::nullopt;
-  std::string session_tag;  // JSON-formatted session tag (Enterprise feature, set via SET gizmosql.session_tag)
-  std::string query_tag;    // JSON-formatted query tag (Enterprise feature, set via SET gizmosql.query_tag)
+  AtomicOptional<bool> bypass_queue;
+  AtomicOptional<int32_t> max_queue_wait;
+  // JSON-formatted tags (Enterprise feature, set via SET gizmosql.session_tag /
+  // gizmosql.query_tag). Strings written by SET and read by statement creation
+  // and settings queries on other request threads, so they are swapped
+  // atomically as shared_ptrs; the accessors return snapshots (empty == unset).
+  std::shared_ptr<const std::string> session_tag;
+  std::shared_ptr<const std::string> query_tag;
+  void SetSessionTag(std::string value) { SetTag(session_tag, std::move(value)); }
+  void SetQueryTag(std::string value) { SetTag(query_tag, std::move(value)); }
+  std::string SessionTag() const { return Tag(session_tag); }
+  std::string QueryTag() const { return Tag(query_tag); }
 
   // Catalog-level access controls from JWT token claims (Enterprise feature)
   // If empty, full access is granted (backward compatible)
@@ -112,6 +197,26 @@ struct ClientSession {
   // "busy" (never-evictable) state; a count (not a bool) so concurrent
   // statements on one session cannot clear each other's busy state.
   std::atomic<int32_t> sql_in_flight{0};
+#ifdef GIZMOSQL_ENTERPRISE
+  // 0 = autocommit, 1 = transaction, 2 = transaction invalidated by an error.
+  std::atomic<int> metrics_transaction_state{0};
+  // Immutable after session creation: queries need no global registry lock.
+  std::shared_ptr<enterprise::MetricsRegistry> metrics;
+#endif
+
+  // Immutable, session-owned results of eager executions. Tickets identify an
+  // execution, never SQL or a reusable prepared statement. Cache misses fail
+  // closed rather than re-executing. Bounded to avoid retaining abandoned tickets.
+  struct CompletedExecution {
+    std::shared_ptr<arrow::Schema> schema;
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+    std::chrono::steady_clock::time_point created;
+  };
+  std::map<std::string, CompletedExecution> completed_executions;
+  // Insertion order == age order (steady_clock is monotonic), so expiry and
+  // capacity eviction pop from the front in O(1) instead of scanning the map.
+  std::deque<std::string> completed_execution_order;
+  std::mutex completed_executions_mutex;
 
   // Prepared statements owned by this session
   std::map<std::string, std::shared_ptr<gizmosql::ddb::DuckDBStatement>> prepared_statements;

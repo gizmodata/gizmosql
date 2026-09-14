@@ -42,9 +42,9 @@ arrow::Status HandleKillSession(
     const std::string& logged_sql,
     const std::string& flight_method,
     bool is_internal) {
-
-  // Helper to record KILL SESSION attempts (both successful and failed)
-  auto record_kill_session = [&](const std::string& error_msg = "") {
+  // Failed preparation has no statement object to own its instrumentation.
+  // Successful attempts are recorded by DuckDBStatement::Create exactly once.
+  auto record_kill_session = [&](const std::string& error_msg) {
     if (instrumentation_manager) {
       gizmosql::ddb::StatementInstrumentation(instrumentation_manager, statement_id,
                                                client_session->session_id, logged_sql,
@@ -96,7 +96,6 @@ arrow::Status HandleKillSession(
     // "Session not found" that would fail the DoGet phase). A session id that
     // was never killed is still a genuine not-found error.
     if (server->WasSessionKilled(target_session_id)) {
-      record_kill_session();
       return arrow::Status::OK();
     }
     std::string error_msg = "Session not found: " + target_session_id;
@@ -125,9 +124,6 @@ arrow::Status HandleKillSession(
   GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Session killed successfully",
                  {"kind", "sql"}, {"status", "success"},
                  {"target_session_id", target_session_id});
-
-  // Record successful kill
-  record_kill_session();
 
   return arrow::Status::OK();
 }

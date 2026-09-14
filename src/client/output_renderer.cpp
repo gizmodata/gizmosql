@@ -16,6 +16,7 @@
 // under the License.
 
 #include "output_renderer.hpp"
+#include "sql_quoting.hpp"
 
 #include <algorithm>
 #include <iomanip>
@@ -353,15 +354,7 @@ bool IsBooleanType(const std::shared_ptr<arrow::DataType>& type) {
 }
 
 // Escape for SQL string literals
-std::string SqlEscape(const std::string& val) {
-  std::string result = "'";
-  for (char c : val) {
-    if (c == '\'') result += "''";
-    else result += c;
-  }
-  result += "'";
-  return result;
-}
+std::string SqlEscape(const std::string& val) { return QuoteSqlLiteral(val); }
 
 // Escape for HTML
 std::string HtmlEscape(const std::string& val) {

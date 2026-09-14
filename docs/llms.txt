@@ -23,6 +23,9 @@ HTML version lives at the same path without the `.md` extension).
 
 ## Features
 
+- [Prometheus Metrics](https://docs.gizmosql.com/monitoring.md): independently licensed Enterprise HTTP endpoint and SQL metrics, configuration, metric reference, Prometheus/Grafana examples
+- [Eager DDL/DML Execution](https://docs.gizmosql.com/eager_execution.md): no-fetch write semantics, prepared statement reuse, and client compatibility
+
 - [SET Commands](https://docs.gizmosql.com/set_commands.md): runtime server/session settings
 - [Session Instrumentation](https://docs.gizmosql.com/session_instrumentation.md): session and query observability (Enterprise)
 - [Catalog Logging](https://docs.gizmosql.com/catalog_logging.md): fork server logs to an attached catalog (Enterprise)
@@ -34,6 +37,7 @@ HTML version lives at the same path without the `.md` extension).
 ## Integrations
 
 - [Extensions & Tools](https://docs.gizmosql.com/integrations.md): ecosystem integrations
+- [MCP Server](https://github.com/gizmodata/gizmosql-mcp): Model Context Protocol server and Claude Desktop extension so AI agents can explore schemas and run SQL against GizmoSQL
 - [ADBC Scanner extension for DuckDB](https://docs.gizmosql.com/adbc_scanner_duckdb.md): query remote ADBC sources from DuckDB
 - [ADBC extension for DuckDB (Columnar)](https://docs.gizmosql.com/adbc_duckdb_extension.md): profile-based ADBC reads and writes from DuckDB
 

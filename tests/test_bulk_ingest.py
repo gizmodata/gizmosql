@@ -24,8 +24,9 @@ import traceback
 
 def test_bulk_ingest():
     """Test bulk ingestion of TPC-H lineitem data into GizmoSQL."""
-    import duckdb
     from adbc_driver_gizmosql import dbapi as gizmosql
+
+    import duckdb
 
     host = os.getenv("GIZMOSQL_HOST", "localhost")
     port = os.getenv("GIZMOSQL_PORT", "31337")
@@ -61,7 +62,9 @@ def test_bulk_ingest():
     print("\nStep 2: Creating Arrow RecordBatch reader...")
     reader_start = time.perf_counter()
 
-    lineitem_arrow_reader = duckdb_conn.table("lineitem").fetch_arrow_reader(batch_size=10_000)
+    lineitem_arrow_reader = duckdb_conn.table("lineitem").fetch_arrow_reader(
+        batch_size=10_000
+    )
 
     reader_seconds = time.perf_counter() - reader_start
     print(f"  Arrow reader created in {reader_seconds:.4f}s")
@@ -83,12 +86,14 @@ def test_bulk_ingest():
             rows_loaded = cursor.adbc_ingest(
                 table_name="bulk_ingest_lineitem",
                 data=lineitem_arrow_reader,
-                mode="replace"
+                mode="replace",
             )
 
             ingest_seconds = time.perf_counter() - ingest_start
 
-            rows_per_sec = rows_loaded / ingest_seconds if ingest_seconds > 0 else float("inf")
+            rows_per_sec = (
+                rows_loaded / ingest_seconds if ingest_seconds > 0 else float("inf")
+            )
             print(f"  Loaded rows: {rows_loaded:,}")
             print(f"  Ingest time: {ingest_seconds:.4f}s")
             print(f"  Throughput: {rows_per_sec:,.0f} rows/sec")

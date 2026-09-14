@@ -256,6 +256,10 @@ namespace gizmosql::sqlite
             if (column->IsNull(column_index))
             {
                 rc = sqlite3_bind_null(stmt_, c + 1);
+                if (rc != SQLITE_OK) {
+                  return arrow::Status::UnknownError("Failed to bind NULL parameter: ",
+                                                     sqlite3_errmsg(db_));
+                }
                 continue;
             }
             switch (column->type_id())
@@ -309,4 +313,4 @@ namespace gizmosql::sqlite
 
         return arrow::Status::OK();
     }
-} // namespace gizmosql::sqlite
+    }  // namespace gizmosql::sqlite

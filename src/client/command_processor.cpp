@@ -16,6 +16,7 @@
 // under the License.
 
 #include "command_processor.hpp"
+#include "sql_quoting.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -239,26 +240,30 @@ CommandResult CommandProcessor::Process(const std::string& line) {
       std::ostringstream count_sql;
       for (size_t i = 0; i < all_boxes.size(); ++i) {
         if (i > 0) count_sql << " UNION ALL ";
-        // Quote table name to handle special characters
+        // SQL identifiers cannot be bound. Escape each qualified component.
         std::string qualified;
-        if (!all_boxes[i].schema.empty()) {
-          qualified = "\"" + all_boxes[i].schema + "\".";
+        if (!all_boxes[i].catalog.empty()) {
+          qualified = QuoteSqlIdentifier(all_boxes[i].catalog) + ".";
         }
-        qualified += "\"" + all_boxes[i].name + "\"";
-        count_sql << "SELECT '" << all_boxes[i].name
-                  << "' AS t, COUNT(*) AS c FROM " << qualified;
+        if (!all_boxes[i].schema.empty()) {
+          qualified += QuoteSqlIdentifier(all_boxes[i].schema) + ".";
+        }
+        qualified += QuoteSqlIdentifier(all_boxes[i].name);
+        // A generated index avoids embedding a table name as a string literal
+        // and distinguishes identical names in different schemas/catalogs.
+        count_sql << "SELECT " << i << " AS t, COUNT(*) AS c FROM " << qualified;
       }
       auto count_result = conn_.ExecuteQuery(count_sql.str());
       if (count_result.ok() && count_result->table->num_rows() > 0) {
         auto& ct = count_result->table;
         for (int64_t cr = 0; cr < ct->num_rows(); ++cr) {
-          std::string tname = GetCellValue(ct->column(0), cr, "");
+          std::string index = GetCellValue(ct->column(0), cr, "");
           std::string cval = GetCellValue(ct->column(1), cr, "0");
-          for (auto& box : all_boxes) {
-            if (box.name == tname && box.row_count < 0) {
-              try { box.row_count = std::stoll(cval); } catch (...) {}
-              break;
-            }
+          try {
+            auto box_index = std::stoull(index);
+            if (box_index < all_boxes.size())
+              all_boxes[box_index].row_count = std::stoll(cval);
+          } catch (...) {
           }
         }
       }

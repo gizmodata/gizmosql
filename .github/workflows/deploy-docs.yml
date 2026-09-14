@@ -82,6 +82,7 @@ jobs:
           find docs -maxdepth 1 -name '*.md' \
             ! -name 'VIEW_DOCS_LOCALLY.md' \
             ! -name 'websocket-migration-plan.md' \
+            ! -name 'code_quality.md' \
             -exec cp {} site/ \;
           touch site/.nojekyll
 

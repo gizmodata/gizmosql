@@ -70,6 +70,7 @@
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #include "enterprise/enterprise_features.h"
+#include "enterprise/metrics/metrics_service.h"
 #endif
 
 using arrow::Result;
@@ -490,6 +491,38 @@ std::string RowsAsValuesRelation(const std::vector<CatalogEntryRow>& rows,
   return sql.str();
 }
 
+// The effective (catalog, schema) a table reference resolves to on this
+// connection when the client omits either part.
+struct ResolvedTableTarget {
+  std::string catalog;
+  std::string schema;
+};
+
+// Temporary tables live in the implicit `temp.main` catalog/schema in DuckDB,
+// not in CURRENT_DATABASE()/CURRENT_SCHEMA(). When the caller indicates the
+// target is temporary, resolve there explicitly.
+Result<ResolvedTableTarget> ResolveTableTarget(
+    duckdb::Connection& conn, const std::optional<std::string>& catalog_name,
+    const std::optional<std::string>& schema_name, bool is_temp) {
+  if (is_temp) {
+    return ResolvedTableTarget{"temp", "main"};
+  }
+  ResolvedTableTarget target;
+  target.catalog = catalog_name.has_value()
+                       ? catalog_name.value()
+                       : duckdb::DatabaseManager::GetDefaultDatabase(*conn.context);
+  if (schema_name.has_value()) {
+    target.schema = schema_name.value();
+  } else {
+    auto result = conn.Query("SELECT CURRENT_SCHEMA()");
+    if (!result || result->HasError()) {
+      return Status::Invalid("DuckDB metadata query failed: " + result->GetError());
+    }
+    target.schema = result->GetValue(0, 0).ToString();
+  }
+  return target;
+}
+
 // Resolve a table's existence through the catalog API of the ONE catalog it
 // lives in (see "Catalog-scoped metadata scans" above).
 Result<bool> TableExists(duckdb::Connection& conn,
@@ -497,28 +530,10 @@ Result<bool> TableExists(duckdb::Connection& conn,
                          const std::optional<std::string>& schema_name,
                          const std::string& table_name, bool is_temp = false) {
   auto& context = *conn.context;
-  std::string catalog;
-  std::string schema;
-  // Temporary tables live in the implicit `temp.main` catalog/schema in DuckDB,
-  // not in CURRENT_DATABASE()/CURRENT_SCHEMA(). When the caller indicates the
-  // target is temporary, scope the lookup there explicitly.
-  if (is_temp) {
-    catalog = "temp";
-    schema = "main";
-  } else {
-    catalog = catalog_name.has_value()
-                  ? catalog_name.value()
-                  : duckdb::DatabaseManager::GetDefaultDatabase(context);
-    if (schema_name.has_value()) {
-      schema = schema_name.value();
-    } else {
-      auto result = conn.Query("SELECT CURRENT_SCHEMA()");
-      if (!result || result->HasError()) {
-        return Status::Invalid("DuckDB metadata query failed: " + result->GetError());
-      }
-      schema = result->GetValue(0, 0).ToString();
-    }
-  }
+  ARROW_ASSIGN_OR_RAISE(auto target,
+                        ResolveTableTarget(conn, catalog_name, schema_name, is_temp));
+  const std::string& catalog = target.catalog;
+  const std::string& schema = target.schema;
   bool exists = false;
   try {
     context.RunFunctionInTransaction([&]() {
@@ -1043,10 +1058,18 @@ class DuckDBFlightSqlServer::Impl {
         if (it->second->kill_requested) {
           // Release the read lock before taking the write lock
           read_lock.unlock();
-          // Remove the killed session from the map
+          // Remove the killed session from the map under the write lock, but
+          // destroy it (DuckDB connection close, prepared statement release)
+          // after the lock is dropped so other sessions' lookups never wait
+          // on that teardown.
+          std::shared_ptr<ClientSession> killed_session;
           {
             std::unique_lock write_lock(sessions_mutex_);
-            client_sessions_.erase(session_id);
+            if (auto killed = client_sessions_.find(session_id);
+                killed != client_sessions_.end()) {
+              killed_session = std::move(killed->second);
+              client_sessions_.erase(killed);
+            }
             killed_session_ids_.insert(session_id);
           }
           return Status::Invalid(
@@ -1098,7 +1121,6 @@ class DuckDBFlightSqlServer::Impl {
     new_session->user_agent = tl_request_ctx.user_agent.value_or("");
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
-    new_session->connection = std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
     new_session->TouchSqlActivity();
     // Note: query_timeout and query_log_level are intentionally left as nullopt
     // so that sessions fall through to the server's current global values via
@@ -1114,7 +1136,9 @@ class DuckDBFlightSqlServer::Impl {
       new_session->bypass_queue = admin_bypass_queue_default_;
     }
 
-    // Slow path: take exclusive lock, admit, then open DuckDB.
+    // Slow path: take exclusive lock, admit, then open DuckDB. A killed session
+    // found here is moved out and destroyed only after the lock is released.
+    std::shared_ptr<ClientSession> killed_session;
     {
       std::unique_lock write_lock(sessions_mutex_);
 
@@ -1127,7 +1151,8 @@ class DuckDBFlightSqlServer::Impl {
       if (auto it = client_sessions_.find(session_id); it != client_sessions_.end()) {
         // Another thread won the race – but check if it was killed
         if (it->second->kill_requested) {
-          client_sessions_.erase(session_id);
+          killed_session = std::move(it->second);
+          client_sessions_.erase(it);
           killed_session_ids_.insert(session_id);
           return Status::Invalid(
               "Your session has been killed. Please re-connect.");
@@ -1150,6 +1175,7 @@ class DuckDBFlightSqlServer::Impl {
           std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
 
 #ifdef GIZMOSQL_ENTERPRISE
+      gizmosql::enterprise::TrackMetricsSession(new_session);
       // Create session instrumentation if manager is available (Enterprise feature)
       if (instrumentation_manager_ && instrumentation_manager_->IsEnabled()) {
         auto instance_id = GetInstanceId();
@@ -1176,6 +1202,10 @@ class DuckDBFlightSqlServer::Impl {
           new_session, "Client session was successfully created.",
           {"kind", "session_create"}, {"status", "success"},
           {"auth_method", new_session->auth_method});
+#ifdef GIZMOSQL_ENTERPRISE
+      if (auto registry = new_session->metrics)
+        registry->At("gizmosql_sessions_opened_total").value.fetch_add(1);
+#endif
       return new_session;
     }
   }
@@ -1290,11 +1320,25 @@ class DuckDBFlightSqlServer::Impl {
 
   void ReleaseAllSessions() {
     StopIdleSessionSweeper();
-    std::unique_lock session_lock(sessions_mutex_);
-    auto session_count = client_sessions_.size();
+    // Detach the whole map under the lock; run the session destructors
+    // (connection close, prepared statement release) after releasing it.
+    decltype(client_sessions_) sessions;
+    {
+      std::unique_lock session_lock(sessions_mutex_);
+      sessions.swap(client_sessions_);
+    }
+    const auto session_count = sessions.size();
+#ifdef GIZMOSQL_ENTERPRISE
+    for (const auto& [id, session] : sessions) {
+      if (session->metrics)
+        session->metrics
+            ->At("gizmosql_sessions_reaped_total", {{"reason", "server_shutdown"}})
+            .value.fetch_add(1, std::memory_order_relaxed);
+    }
+#endif
     // Session destructors handle active connection counter decrement,
     // prepared statement cleanup, and DuckDB connection counter decrement
-    client_sessions_.clear();
+    sessions.clear();
     if (session_count > 0) {
       GIZMOSQL_LOG(INFO) << "Released " << session_count << " active session(s) during shutdown";
     }
@@ -1359,7 +1403,7 @@ class DuckDBFlightSqlServer::Impl {
         }
       }
 #endif
-      auto st = RemoveSession(session_id, /*was_killed=*/false);
+      auto st = RemoveSession(session_id, /*was_killed=*/false, "idle_timeout");
       if (st.ok()) {
         GIZMOSQL_LOG(INFO) << "Evicted idle client session " << session_id
                            << " after " << session_idle_timeout_seconds_
@@ -1437,22 +1481,131 @@ class DuckDBFlightSqlServer::Impl {
     return killed_session_ids_.count(session_id) > 0;
   }
 
-  arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false) {
-    std::unique_lock write_lock(sessions_mutex_);
-    auto it = client_sessions_.find(session_id);
-    if (it != client_sessions_.end()) {
-      // Session destructor handles active connection counter decrement,
-      // prepared statement cleanup, and DuckDB connection counter decrement
+#ifdef GIZMOSQL_ENTERPRISE
+  void SampleMetrics(gizmosql::enterprise::MetricsRegistry& registry) {
+    std::array<int64_t, 4> counts{};
+    int64_t executing = 0;
+    {
+      std::shared_lock lock(sessions_mutex_);
+      for (const auto& [id, session] : client_sessions_) {
+        auto busy = session->sql_in_flight.load(std::memory_order_relaxed);
+        executing += busy;
+        auto transaction =
+            session->metrics_transaction_state.load(std::memory_order_relaxed);
+        ++counts[busy ? 0 : transaction == 2 ? 3 : transaction == 1 ? 2 : 1];
+      }
+    }
+    const char* states[] = {"active", "idle", "idle_in_transaction",
+                            "idle_in_transaction_aborted"};
+    for (size_t i = 0; i < counts.size(); ++i)
+      registry.At("gizmosql_sessions", {{"state", states[i]}}).value.store(counts[i]);
+    auto& admission = outer_->GetAdmissionController();
+    const auto queued = admission.QueuedCount();
+    registry.At("gizmosql_queue_depth").value.store(queued);
+    registry.At("gizmosql_concurrency_limit").value.store(admission.Limit());
+    registry.At("gizmosql_statements_active", {{"wait", "queue"}}).value.store(queued);
+    registry.At("gizmosql_statements_active", {{"wait", "none"}})
+        .value.store(std::max<int64_t>(0, executing - queued));
+  }
+#endif
+
+  arrow::Status RemoveSession(const std::string& session_id, bool was_killed = false,
+                              const char* reason = "client_close") {
+    // Hold the write lock only for the map update. The session destructor
+    // (query interrupt, prepared statement release, DuckDB connection close)
+    // runs when `removed` goes out of scope, after the lock is released, so
+    // every other session's GetClientSession() fast path is not blocked on it.
+    std::shared_ptr<ClientSession> removed;
+    {
+      std::unique_lock write_lock(sessions_mutex_);
+      auto it = client_sessions_.find(session_id);
+      if (it == client_sessions_.end()) {
+        return arrow::Status::KeyError("Session not found: " + session_id);
+      }
+      removed = std::move(it->second);
       client_sessions_.erase(it);
       if (was_killed) {
         killed_session_ids_.insert(session_id);
       }
-      return arrow::Status::OK();
     }
-    return arrow::Status::KeyError("Session not found: " + session_id);
+#ifdef GIZMOSQL_ENTERPRISE
+    if (auto registry = removed->metrics)
+      registry->At("gizmosql_sessions_reaped_total", {{"reason", reason}})
+          .value.fetch_add(1);
+#endif
+    return arrow::Status::OK();
   }
 
   ~Impl() { StopIdleSessionSweeper(); }
+
+  static constexpr const char* kCompletedTicketPrefix = "gizmosql-completed:";
+
+  Result<std::unique_ptr<flight::FlightInfo>> ExecuteForFlightInfo(
+      const flight::ServerCallContext& context,
+      const std::shared_ptr<ClientSession>& session,
+      const std::shared_ptr<DuckDBStatement>& statement,
+      const flight::FlightDescriptor& descriptor) {
+    gizmosql::InFlightGuard inflight_guard;
+    statement->SetCallContext(&context);
+    // GetFlightInfo preparation is DEBUG to avoid duplicate lazy-query logs.
+    // An eager user write executes here and must retain normal INFO query logs.
+    statement->SetExecutionLogLevel(arrow::util::ArrowLogLevel::ARROW_INFO);
+    ARROW_RETURN_NOT_OK(statement->Execute());
+    ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema());
+    ClientSession::CompletedExecution completed{
+        schema, {}, std::chrono::steady_clock::now()};
+    int64_t rows = 0;
+    while (true) {
+      ARROW_ASSIGN_OR_RAISE(auto batch, statement->FetchResult());
+      if (!batch) break;
+      rows += batch->num_rows();
+      completed.batches.push_back(std::move(batch));
+    }
+    const auto handle = std::string(kCompletedTicketPrefix) +
+                        boost::uuids::to_string(boost::uuids::random_generator()());
+    {
+      // Held only for O(1) queue/map updates: this runs on every eager write.
+      std::lock_guard lock(session->completed_executions_mutex);
+      auto& cache = session->completed_executions;
+      auto& order = session->completed_execution_order;
+      const auto cutoff = completed.created - std::chrono::minutes(5);
+      auto pop_oldest = [&] {
+        cache.erase(order.front());
+        order.pop_front();
+      };
+      while (!order.empty() && cache.at(order.front()).created < cutoff) pop_oldest();
+      if (order.size() >= 1024) pop_oldest();
+      order.push_back(handle);
+      cache.emplace(handle, std::move(completed));
+    }
+    ARROW_ASSIGN_OR_RAISE(auto encoded, sql::CreateStatementQueryTicket(handle));
+    std::vector<flight::FlightEndpoint> endpoints{
+        flight::FlightEndpoint{flight::Ticket{std::move(encoded)}, {}, std::nullopt, ""}};
+    ARROW_ASSIGN_OR_RAISE(
+        auto info, flight::FlightInfo::Make(*schema, descriptor, endpoints, rows, -1));
+    return std::make_unique<flight::FlightInfo>(std::move(info));
+  }
+
+  Result<std::unique_ptr<flight::FlightDataStream>> ReadCompletedExecution(
+      const std::shared_ptr<ClientSession>& session, const std::string& handle) {
+    ClientSession::CompletedExecution completed;
+    {
+      std::lock_guard lock(session->completed_executions_mutex);
+      auto entry = session->completed_executions.find(handle);
+      if (entry == session->completed_executions.end() ||
+          std::chrono::steady_clock::now() - entry->second.created >
+              std::chrono::minutes(5)) {
+        return Status::KeyError(
+            "Execution result expired or does not belong to this session; "
+            "the statement will not be executed again.");
+      }
+      completed = entry->second;
+    }
+    session->TouchSqlActivity();
+    ARROW_ASSIGN_OR_RAISE(
+        auto reader, arrow::RecordBatchReader::Make(completed.batches, completed.schema));
+    return std::make_unique<flight::RecordBatchStream>(reader);
+  }
 
   Result<std::unique_ptr<flight::FlightInfo>> GetFlightInfoStatement(
       const flight::ServerCallContext& context, const sql::StatementQuery& command,
@@ -1465,6 +1618,9 @@ class DuckDBFlightSqlServer::Impl {
         DuckDBStatement::Create(client_session, query,
                                 arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
                                 nullptr, "GetFlightInfoStatement", false))
+    if (statement->ShouldExecuteEagerly()) {
+      return ExecuteForFlightInfo(context, client_session, statement, descriptor);
+    }
     statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     ARROW_ASSIGN_OR_RAISE(auto ticket,
@@ -1479,6 +1635,10 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetStatement(
       const flight::ServerCallContext& context,
       const sql::StatementQueryTicket& command) {
+    if (command.statement_handle.starts_with(kCompletedTicketPrefix)) {
+      ARROW_ASSIGN_OR_RAISE(auto session, GetClientSession(context));
+      return ReadCompletedExecution(session, command.statement_handle);
+    }
     ARROW_ASSIGN_OR_RAISE(auto pair, DecodeTransactionQuery(command.statement_handle))
     const std::string& sql = pair.first;
     const std::string transaction_id = pair.second;
@@ -1600,6 +1760,16 @@ class DuckDBFlightSqlServer::Impl {
         duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data =
             stmt->data;
 
+        // Flight SQL's dataset schema describes a user result set. DuckDB's
+        // Count/Success columns for DDL/DML are execution metadata. JDBC uses
+        // an empty dataset schema to select DoPut/ExecuteUpdate and return the
+        // real affected-row count. GetFlightInfo still supplies the count
+        // schema when a client explicitly chooses the query execution path.
+        if (prepared_statement_data->properties.return_type !=
+            duckdb::StatementReturnType::QUERY_RESULT) {
+          dataset_schema = arrow::schema({});
+        }
+
         // Note: Readonly role check and instrumentation database protection are
         // handled in DuckDBStatement::Create which is called before this point
 
@@ -1646,14 +1816,18 @@ class DuckDBFlightSqlServer::Impl {
     const std::string& prepared_statement_handle = request.prepared_statement_handle;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
 
+    // Erase under the session lock; release the DuckDB prepared statement and
+    // any retained result after the lock, so concurrent lookups on this
+    // session's other statements are not held up by the teardown.
+    std::shared_ptr<DuckDBStatement> closed;
     {
       std::unique_lock write_lock(client_session->statements_mutex);
-      if (auto search = client_session->prepared_statements.find(prepared_statement_handle);
-          search != client_session->prepared_statements.end()) {
-        client_session->prepared_statements.erase(prepared_statement_handle);
-      } else {
+      auto search = client_session->prepared_statements.find(prepared_statement_handle);
+      if (search == client_session->prepared_statements.end()) {
         return Status::Invalid("Prepared statement not found");
       }
+      closed = std::move(search->second);
+      client_session->prepared_statements.erase(search);
     }
 
     return Status::OK();
@@ -1675,6 +1849,11 @@ class DuckDBFlightSqlServer::Impl {
         return Status::KeyError("Prepared statement not found");
       }
       statement = search->second;
+    }
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
+    if (statement->ShouldExecuteEagerly()) {
+      return ExecuteForFlightInfo(context, client_session, statement, descriptor);
     }
     ARROW_ASSIGN_OR_RAISE(auto schema, statement->GetSchema())
     if (statement->HasUnresolvedSchema()) {
@@ -1701,9 +1880,16 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
+    // Bind (DoPut) writes bind_parameters and execution reads them, so the
+    // stream keeps the per-statement execution lock until it is destroyed: a
+    // concurrent rebind or re-execute of the same handle is rejected as busy
+    // instead of racing the running execution. Non-blocking, per statement.
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
 
     statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
+    reader->HoldExecutionLock(std::move(execution_lock));
 
     return std::make_unique<flight::RecordBatchStream>(reader);
   }
@@ -1724,6 +1910,8 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
     ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
     if (rows.size() > 1) {
       return Status::Invalid(
@@ -1754,6 +1942,8 @@ class DuckDBFlightSqlServer::Impl {
       statement = search->second;
     }
 
+    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
+    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
     ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
 
     if (rows.empty()) {
@@ -2081,11 +2271,103 @@ class DuckDBFlightSqlServer::Impl {
     return Status::OK();
   }
 
+  // Bulk ingest bypasses DuckDBStatement, so it mirrors the SQL execution logs
+  // here: the same --print-queries gate, the session/server query log level as
+  // the threshold, INFO as the display severity, and the caller's session
+  // fields (user, role, peer, session_id) on every record.
   Result<int64_t> DoPutCommandStatementIngest(const flight::ServerCallContext& context,
                                               const flight::sql::StatementIngest& command,
                                               flight::FlightMessageReader* reader) {
-    std::string status;
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    if (!print_queries_) {
+      return DoPutCommandStatementIngestImpl(client_session, command, reader);
+    }
+
+    arrow::util::ArrowLogLevel log_threshold;
+    if (const auto level = client_session->query_log_level.load()) {
+      log_threshold = *level;
+    } else {
+      ARROW_ASSIGN_OR_RAISE(log_threshold, GetQueryLogLevel(*client_session));
+    }
+    constexpr auto kDisplay = arrow::util::ArrowLogLevel::ARROW_INFO;
+
+    // Show the effective target even when the client omitted catalog/schema.
+    std::string catalog = command.catalog.value_or("");
+    std::string schema = command.schema.value_or("");
+    if (auto target =
+            ResolveTableTarget(client_session->connection->Get(), command.catalog,
+                               command.schema, command.temporary);
+        target.ok()) {
+      catalog = target->catalog;
+      schema = target->schema;
+    }
+    const std::string target_table =
+        QuoteIdent(catalog) + "." + QuoteIdent(schema) + "." + QuoteIdent(command.table);
+
+    using ExistsOpt = sql::TableDefinitionOptionsTableExistsOption;
+    using NotExistsOpt = sql::TableDefinitionOptionsTableNotExistOption;
+    const char* if_exists = "unspecified";
+    switch (command.table_definition_options.if_exists) {
+      case ExistsOpt::kFail:
+        if_exists = "fail";
+        break;
+      case ExistsOpt::kAppend:
+        if_exists = "append";
+        break;
+      case ExistsOpt::kReplace:
+        if_exists = "replace";
+        break;
+      case ExistsOpt::kUnspecified:
+        break;
+    }
+    const char* if_not_exist = "unspecified";
+    switch (command.table_definition_options.if_not_exist) {
+      case NotExistsOpt::kFail:
+        if_not_exist = "fail";
+        break;
+      case NotExistsOpt::kCreate:
+        if_not_exist = "create";
+        break;
+      case NotExistsOpt::kUnspecified:
+        break;
+    }
+
+    GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+        log_threshold, kDisplay, client_session, "Client is attempting a bulk ingest",
+        {"kind", "ingest"}, {"status", "attempt"}, {"target_table", target_table},
+        {"catalog", catalog}, {"schema", schema}, {"table", command.table},
+        {"temporary", command.temporary ? "true" : "false"}, {"if_exists", if_exists},
+        {"if_not_exist", if_not_exist}, {"flight_method", "DoPutCommandStatementIngest"});
+
+    const auto started = std::chrono::steady_clock::now();
+    auto result = DoPutCommandStatementIngestImpl(client_session, command, reader);
+    const auto duration_ms =
+        std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - started)
+                           .count());
+
+    if (result.ok()) {
+      GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+          log_threshold, kDisplay, client_session, "Bulk ingest succeeded",
+          {"kind", "ingest"}, {"status", "success"}, {"target_table", target_table},
+          {"catalog", catalog}, {"schema", schema}, {"table", command.table},
+          {"rows_ingested", std::to_string(*result)}, {"duration_ms", duration_ms},
+          {"flight_method", "DoPutCommandStatementIngest"});
+    } else {
+      GIZMOSQL_LOGKV_SESSION_DYNAMIC_AT(
+          log_threshold, kDisplay, client_session, "Bulk ingest failed",
+          {"kind", "ingest"}, {"status", "failure"}, {"target_table", target_table},
+          {"catalog", catalog}, {"schema", schema}, {"table", command.table},
+          {"error", result.status().ToString()}, {"duration_ms", duration_ms},
+          {"flight_method", "DoPutCommandStatementIngest"});
+    }
+    return result;
+  }
+
+  Result<int64_t> DoPutCommandStatementIngestImpl(
+      const std::shared_ptr<ClientSession>& client_session,
+      const flight::sql::StatementIngest& command, flight::FlightMessageReader* reader) {
+    std::string status;
 
     GIZMOSQL_LOG_SCOPE_STATUS(
         DEBUG, "DuckDBFlightSqlServer::DoPutCommandStatementIngest", status,
@@ -2231,10 +2513,13 @@ class DuckDBFlightSqlServer::Impl {
       const sql::ActionBeginTransactionRequest& request) {
     std::string handle = boost::uuids::to_string(boost::uuids::random_generator()());
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    std::unique_lock write_lock(transactions_mutex_);
-    open_transactions_[handle] = "";
-
+    // Run the DuckDB statement first, unlocked; register the handle only on
+    // success so the server-wide map lock is held for the insert alone.
     ARROW_RETURN_NOT_OK(ExecuteSql(client_session, "BEGIN TRANSACTION"));
+    {
+      std::unique_lock write_lock(transactions_mutex_);
+      open_transactions_[handle] = "";
+    }
 
     return sql::ActionBeginTransactionResult{std::move(handle)};
   }
@@ -2256,21 +2541,35 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   Status DoCancelActiveStatement(const std::shared_ptr<ClientSession>& client_session) {
-    if (!client_session->active_sql_handle.has_value() ||
-        client_session->active_sql_handle->empty()) {
+    const auto active = client_session->ActiveSqlHandle();
+    if (!active) {
       return Status::Invalid("No active SQL statement to cancel.");
     }
     client_session->connection->Get().Interrupt();
-    GIZMOSQL_LOGKV_SESSION(INFO, client_session, "SQL Statement was successfully canceled.",
-                   {"kind", "sql"}, {"status", "canceled"},
-                   {"statement_handle", client_session->active_sql_handle.value()});
+    GIZMOSQL_LOGKV_SESSION(INFO, client_session,
+                           "SQL Statement was successfully canceled.", {"kind", "sql"},
+                           {"status", "canceled"}, {"statement_handle", *active});
     return Status::OK();
+  }
+
+  static bool IsCompletedFlightInfo(const flight::FlightInfo* info) {
+    if (!info || info->endpoints().empty()) return false;
+    for (const auto& endpoint : info->endpoints()) {
+      auto ticket = sql::StatementQueryTicket::Deserialize(endpoint.ticket.ticket);
+      if (!ticket.ok() || !ticket->statement_handle.starts_with(kCompletedTicketPrefix)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Result<flight::CancelFlightInfoResult> CancelFlightInfo(
       const flight::ServerCallContext& context,
       const flight::CancelFlightInfoRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    // A completed execution can never cancel a later query on this session.
+    if (IsCompletedFlightInfo(request.info.get()))
+      return flight::CancelFlightInfoResult(flight::CancelStatus::kNotCancellable);
     ARROW_RETURN_NOT_OK(DoCancelActiveStatement(client_session));
     return flight::CancelFlightInfoResult(flight::CancelStatus::kCancelled);
   }
@@ -2279,6 +2578,9 @@ class DuckDBFlightSqlServer::Impl {
       const flight::ServerCallContext& context,
       const flight::sql::ActionCancelQueryRequest& request) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
+    // A completed execution can never cancel a later query on this session.
+    if (IsCompletedFlightInfo(request.info.get()))
+      return flight::sql::CancelResult::kNotCancellable;
     ARROW_RETURN_NOT_OK(DoCancelActiveStatement(client_session));
     return flight::sql::CancelResult(flight::sql::CancelResult::kCancelled);
   }
@@ -2607,6 +2909,13 @@ Result<std::vector<std::string>> DuckDBFlightSqlServer::ExecuteSqlAndGetStringVe
     const std::string& sql) const {
   return impl_->ExecuteSqlAndGetStringVector(sql);
 }
+
+#ifdef GIZMOSQL_ENTERPRISE
+void DuckDBFlightSqlServer::SampleMetrics(
+    gizmosql::enterprise::MetricsRegistry& registry) {
+  impl_->SampleMetrics(registry);
+}
+#endif
 
 Result<std::unique_ptr<flight::FlightInfo>> DuckDBFlightSqlServer::GetFlightInfoStatement(
     const flight::ServerCallContext& context, const sql::StatementQuery& command,

@@ -51,45 +51,30 @@ CreateFlightSQLServer(
     const bool& print_queries, const bool& read_only, std::string token_allowed_issuer,
     std::string token_allowed_audience, fs::path token_signature_verify_cert_path,
     std::string token_jwks_uri, std::string token_default_role,
-    std::string token_authorized_emails,
-    const bool& access_logging_enabled, const int32_t& query_timeout,
-    const arrow::util::ArrowLogLevel& query_log_level,
+    std::string token_authorized_emails, const bool& access_logging_enabled,
+    const int32_t& query_timeout, const arrow::util::ArrowLogLevel& query_log_level,
     const arrow::util::ArrowLogLevel& auth_log_level,
     const arrow::util::ArrowLogLevel& session_log_level, const int& health_port,
-    std::string health_check_query,
-    const bool& enable_instrumentation,
-    std::string instrumentation_db_path = "",
-    std::string instrumentation_catalog = "",
-    std::string instrumentation_schema = "",
-    std::string instance_tag = "",
-    const bool& allow_cross_instance_tokens = false,
-    std::string oauth_client_id = "",
-    std::string oauth_client_secret = "",
-    std::string oauth_scopes = "",
-    int oauth_port = 0,
-    std::string oauth_base_url = "",
-    std::string oauth_redirect_uri = "",
-    std::string oauth_instance_id = "",
-    const bool& oauth_disable_tls = false,
-    const bool& telemetry_enabled = false,
-    int32_t max_metadata_size = 0,
-    std::string storage_version = "",
-    int32_t max_concurrent_statements = 0,
-    int32_t max_queued_statements = -1,
-    int32_t max_queue_wait_seconds = -1,
-    bool admin_bypass_queue_default = true,
+    std::string health_check_query, const bool& enable_instrumentation,
+    std::string instrumentation_db_path = "", std::string instrumentation_catalog = "",
+    std::string instrumentation_schema = "", std::string instance_tag = "",
+    const bool& allow_cross_instance_tokens = false, std::string oauth_client_id = "",
+    std::string oauth_client_secret = "", std::string oauth_scopes = "",
+    int oauth_port = 0, std::string oauth_base_url = "",
+    std::string oauth_redirect_uri = "", std::string oauth_instance_id = "",
+    const bool& oauth_disable_tls = false, const bool& telemetry_enabled = false,
+    int32_t max_metadata_size = 0, std::string storage_version = "",
+    int32_t max_concurrent_statements = 0, int32_t max_queued_statements = -1,
+    int32_t max_queue_wait_seconds = -1, bool admin_bypass_queue_default = true,
     std::string memory_limit = "",
     gizmosql::QueryProfileMode capture_query_profile = gizmosql::QueryProfileMode::kOff,
-    std::string cluster_id = "",
-    bool enable_catalog_logging = false,
-    std::string log_catalog = "",
-    std::string log_schema = "",
-    std::string log_catalog_db_path = "",
-    int32_t health_check_interval_seconds = 0,
-    int32_t health_check_staleness_seconds = 0,
-    bool allow_unsigned_extensions = false,
-    int32_t max_sessions = 0,
-    int32_t session_idle_timeout_seconds = 0);
+    std::string cluster_id = "", bool enable_catalog_logging = false,
+    std::string log_catalog = "", std::string log_schema = "",
+    std::string log_catalog_db_path = "", int32_t health_check_interval_seconds = 0,
+    int32_t health_check_staleness_seconds = 0, bool allow_unsigned_extensions = false,
+    int32_t max_sessions = 0, int32_t session_idle_timeout_seconds = 0,
+    int32_t metrics_port = 0, std::string metrics_bind_address = "127.0.0.1",
+    bool enable_metrics = false);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -151,6 +136,9 @@ struct TestServerConfig {
   bool allow_unsigned_extensions = false;        // [DuckDB] allow loading unsigned extensions (GLOBAL_ONLY, set at open)
   int32_t max_sessions = 0;                      // max concurrent client sessions (0 = unlimited)
   int32_t session_idle_timeout_seconds = 0;      // idle eviction seconds (0 = off)
+  bool enable_metrics = false;
+  int32_t metrics_port = 0;
+  std::string metrics_bind_address = "127.0.0.1";
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -214,6 +202,22 @@ class ServerTestFixture : public ::testing::Test {
     // Remove any existing database files
     CleanupDatabaseFiles();
 
+    // Persistent secrets from a developer's DuckDB installation must not leak
+    // into integration tests or conflict with temporary test secrets.
+    std::string init_sql_commands = config_.init_sql_commands;
+    if (config_.backend == BackendType::duckdb) {
+      auto secrets = fs::temp_directory_path() /
+                     ("gizmosql_test_secrets_" + std::to_string(config_.port));
+      fs::create_directories(secrets);
+      auto path = secrets.generic_string();
+      size_t pos = 0;
+      while ((pos = path.find('\'', pos)) != std::string::npos) {
+        path.insert(pos, 1, '\'');
+        pos += 2;
+      }
+      init_sql_commands = "SET secret_directory = '" + path + "';" + init_sql_commands;
+    }
+
     fs::path db_path(config_.database_filename);
     auto result = gizmosql::CreateFlightSQLServer(
         config_.backend, db_path, "localhost", config_.port, config_.username,
@@ -222,13 +226,14 @@ class ServerTestFixture : public ::testing::Test {
         /*tls_cert_path=*/fs::path(),
         /*tls_key_path=*/fs::path(),
         /*mtls_ca_cert_path=*/fs::path(),
-        /*init_sql_commands=*/config_.init_sql_commands,
+        /*init_sql_commands=*/init_sql_commands,
         /*init_sql_commands_file=*/fs::path(),
         /*print_queries=*/config_.print_queries,
         /*read_only=*/config_.read_only,
         /*token_allowed_issuer=*/config_.token_allowed_issuer,
         /*token_allowed_audience=*/config_.token_allowed_audience,
-        /*token_signature_verify_cert_path=*/fs::path(config_.token_signature_verify_cert_path),
+        /*token_signature_verify_cert_path=*/
+        fs::path(config_.token_signature_verify_cert_path),
         /*token_jwks_uri=*/config_.token_jwks_uri,
         /*token_default_role=*/config_.token_default_role,
         /*token_authorized_emails=*/config_.token_authorized_emails,
@@ -271,7 +276,8 @@ class ServerTestFixture : public ::testing::Test {
         /*health_check_staleness_seconds=*/config_.health_check_staleness_seconds,
         /*allow_unsigned_extensions=*/config_.allow_unsigned_extensions,
         /*max_sessions=*/config_.max_sessions,
-        /*session_idle_timeout_seconds=*/config_.session_idle_timeout_seconds);
+        /*session_idle_timeout_seconds=*/config_.session_idle_timeout_seconds,
+        config_.metrics_port, config_.metrics_bind_address, config_.enable_metrics);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;
@@ -319,12 +325,20 @@ class ServerTestFixture : public ::testing::Test {
   }
 
   static void CleanupDatabaseFiles() {
+    {
+      std::error_code ec;
+      fs::remove_all(fs::temp_directory_path() /
+                         ("gizmosql_test_secrets_" + std::to_string(config_.port)),
+                     ec);
+    }
     // Remove main database file
     if (!config_.database_filename.empty()) {
       std::error_code ec;
       fs::remove(config_.database_filename, ec);
       // Also remove WAL file if it exists
       fs::remove(config_.database_filename + ".wal", ec);
+      fs::remove(config_.database_filename + ".gizmosql-metrics-state", ec);
+      fs::remove(config_.database_filename + ".gizmosql-metrics-state.tmp", ec);
     }
 
     // Remove instrumentation database file

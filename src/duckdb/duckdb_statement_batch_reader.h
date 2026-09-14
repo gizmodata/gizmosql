@@ -19,6 +19,7 @@
 
 #include <duckdb.hpp>
 #include <memory>
+#include <mutex>
 #include <arrow/record_batch.h>
 #include "duckdb_statement.h"
 #include "flight_sql_fwd.h"
@@ -42,15 +43,29 @@ public:
       const std::shared_ptr<arrow::Schema>& schema);
 
   std::shared_ptr<arrow::Schema> schema() const override;
+  ~DuckDBStatementBatchReader() override;
 
   arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* out) override;
 
+  /// Keeps the statement's execution lock until this reader is destroyed, so a
+  /// concurrent rebind/execute of the same prepared handle is rejected as busy
+  /// rather than racing the running execution. Released before statement_.
+  void HoldExecutionLock(std::unique_lock<std::mutex> lock) {
+    execution_lock_ = std::move(lock);
+  }
+
 private:
   std::shared_ptr<DuckDBStatement> statement_;
+  // Declared after statement_ so it is destroyed (unlocked) first.
+  std::unique_lock<std::mutex> execution_lock_;
   std::shared_ptr<arrow::Schema> schema_;
   int rc_;
   bool already_executed_;
   bool results_read_;
+#ifdef GIZMOSQL_ENTERPRISE
+  std::shared_ptr<gizmosql::enterprise::MetricsRegistry> metrics_;
+  bool metrics_sending_ = false;
+#endif
   // Counts this query's execution + result streaming as in-flight work for the
   // whole lifetime of the reader, so a graceful drain waits for it to finish.
   gizmosql::InFlightGuard inflight_guard_;
@@ -58,4 +73,4 @@ private:
   DuckDBStatementBatchReader(std::shared_ptr<DuckDBStatement> statement,
                              std::shared_ptr<arrow::Schema> schema);
 };
-} // namespace gizmosql::ddb
+}  // namespace gizmosql::ddb

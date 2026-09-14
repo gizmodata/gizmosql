@@ -29,6 +29,11 @@
 #include "session_context.h"
 #include "admission_controller.h"
 
+#ifdef GIZMOSQL_ENTERPRISE
+namespace gizmosql::enterprise {
+class MetricsRegistry;
+}
+#endif
 namespace gizmosql::ddb {
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -50,6 +55,9 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   friend class DuckDBStatement;
 
   ~DuckDBFlightSqlServer() override;
+#ifdef GIZMOSQL_ENTERPRISE
+  void SampleMetrics(gizmosql::enterprise::MetricsRegistry& registry);
+#endif
 
   static arrow::Result<std::shared_ptr<DuckDBFlightSqlServer>> Create(
       const std::string& path, const bool& read_only, const bool& print_queries,
@@ -306,6 +314,7 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
     std::string session_log_level;
     std::string instance_tag;
     bool enable_instrumentation = false;
+    bool enable_metrics = false;
     std::string instrumentation_catalog;
     std::string instrumentation_schema;
     bool enable_catalog_logging = false;

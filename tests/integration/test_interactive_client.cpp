@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include "arrow/api.h"
 #include "arrow/flight/sql/client.h"
@@ -34,8 +35,27 @@
 #include "client/shell_completer.hpp"
 #include "client/shell_loop.hpp"
 #include "client/sql_processor.hpp"
+#include "client/signal_watcher.hpp"
+#include "client/sql_quoting.hpp"
 
 using namespace gizmosql::client;
+
+#ifndef _WIN32
+TEST(ClientSignalWatcherTest, RepeatedShutdownJoinsTheWaiterAndRestoresTheMask) {
+  sigset_t before{};
+  ASSERT_EQ(pthread_sigmask(SIG_BLOCK, nullptr, &before), 0);
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    std::atomic<int> calls{0};
+    {
+      SignalWatcher watcher([&calls] { calls.fetch_add(1); });
+    }
+    EXPECT_EQ(calls.load(), 0) << "Shutdown's wake signal must not cancel a query";
+  }
+  sigset_t after{};
+  ASSERT_EQ(pthread_sigmask(SIG_BLOCK, nullptr, &after), 0);
+  EXPECT_EQ(sigismember(&before, SIGINT), sigismember(&after, SIGINT));
+}
+#endif
 
 // ============================================================================
 // Test Fixture - Starts a GizmoSQL server for client integration tests
@@ -103,6 +123,73 @@ TEST_F(InteractiveClientFixture, ConnectWithValidCredentials) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
   auto conn = ConnectClient();
   ASSERT_TRUE(conn.IsConnected());
+}
+
+TEST_F(InteractiveClientFixture, LiteralQuotingPreservesSqlLookingText) {
+  auto conn = ConnectClient();
+  for (const std::string value : {"O'Reilly", "'; DROP TABLE test_data; --",
+                                  "/* comment */ ; café 東京", "back\\slash'quote"}) {
+    SCOPED_TRACE(value);
+    auto result = conn.ExecuteQuery("SELECT " + QuoteSqlLiteral(value));
+    ASSERT_TRUE(result.ok()) << result.status().ToString();
+    ASSERT_EQ(result->table->num_rows(), 1);
+    auto scalar = result->table->column(0)->GetScalar(0);
+    ASSERT_TRUE(scalar.ok());
+    EXPECT_EQ((*scalar)->ToString(), value);
+  }
+  auto intact = conn.ExecuteQuery("SELECT count(*) FROM test_data");
+  ASSERT_TRUE(intact.ok()) << intact.status().ToString();
+  auto count = intact->table->column(0)->GetScalar(0);
+  ASSERT_TRUE(count.ok());
+  EXPECT_EQ((*count)->ToString(), "3");
+}
+
+TEST_F(InteractiveClientFixture, TableMetadataQuotesIdentifiersAndKeepsTablesIntact) {
+  auto conn = ConnectClient();
+  const std::string table_name = "quoted\"'; DROP TABLE test_data; --é";
+  const auto identifier = QuoteSqlIdentifier(table_name);
+  auto created =
+      conn.ExecuteUpdate("CREATE TEMP TABLE " + identifier + " AS SELECT 42 AS id");
+  ASSERT_TRUE(created.ok()) << created.status().ToString();
+  auto read = conn.ExecuteQuery("SELECT * FROM " + identifier);
+  ASSERT_TRUE(read.ok()) << read.status().ToString();
+  const auto uploaded = conn.UploadLastResult(read->table, table_name);
+  ASSERT_TRUE(uploaded.ok()) << uploaded.ToString();
+  auto config = MakeConfig();
+  std::ostringstream output;
+  config.output_stream = &output;
+  CommandProcessor processor(conn, config);
+  EXPECT_EQ(processor.Process(".tables"), CommandResult::OK);
+  auto intact = conn.ExecuteQuery("SELECT count(*) FROM test_data");
+  ASSERT_TRUE(intact.ok()) << intact.status().ToString();
+  auto count = intact->table->column(0)->GetScalar(0);
+  ASSERT_TRUE(count.ok());
+  EXPECT_EQ((*count)->ToString(), "3");
+  auto round_trip = conn.ExecuteQuery("SELECT id FROM " + identifier);
+  ASSERT_TRUE(round_trip.ok()) << round_trip.status().ToString();
+  EXPECT_EQ(round_trip->table->num_rows(), 1);
+}
+
+TEST_F(InteractiveClientFixture, CancellationCanRaceWithDisconnectAndReconnect) {
+  ASSERT_TRUE(IsServerReady());
+  auto conn = ConnectClient();
+  std::atomic<bool> stop{false};
+  std::thread canceller([&] {
+    while (!stop.load()) {
+      conn.SendCancelToServer();
+      std::this_thread::yield();
+    }
+  });
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    conn.Disconnect();
+    const auto status = conn.Connect(MakeConfig());
+    EXPECT_TRUE(status.ok()) << status.ToString();
+    if (!status.ok()) break;
+  }
+  stop.store(true);
+  canceller.join();
+  conn.Disconnect();
+  EXPECT_FALSE(conn.IsConnected());
 }
 
 // --tls-skip-verify is incompatible with mTLS: Arrow Flight's gRPC transport
@@ -1711,6 +1798,7 @@ TEST_F(InteractiveClientFixture, BoxRendererFooterWrapsOnNarrowTable) {
   std::string output = out.str();
 
   // Footer should show row count and "(N shown)" on separate lines
+  EXPECT_TRUE(render_result.footer_rendered);
   // because column "x" is narrow (1 char + type "int64" = 5 chars)
   EXPECT_NE(output.find("100 rows"), std::string::npos)
       << "Should show total row count in footer";
@@ -1861,7 +1949,8 @@ TEST_F(InteractiveClientFixture, CompleterCacheInvalidation) {
 
   // Populate cache
   int ctx_len = 0;
-  completer.Complete("select * from ", ctx_len);
+  const auto cached = completer.Complete("select * from test_", ctx_len);
+  ASSERT_FALSE(cached.empty()) << "Populate the metadata cache before creating a table";
 
   // Create a new table
   auto create_result = conn.ExecuteUpdate(
@@ -1874,6 +1963,7 @@ TEST_F(InteractiveClientFixture, CompleterCacheInvalidation) {
   for (const auto& c : before) {
     if (c.text() == "completer_test_xyz") found_before = true;
   }
+  EXPECT_FALSE(found_before) << "The existing cache should not include the new table";
 
   // Invalidate and retry
   completer.InvalidateCache();
@@ -1885,7 +1975,7 @@ TEST_F(InteractiveClientFixture, CompleterCacheInvalidation) {
   EXPECT_TRUE(found_after) << "After invalidation, new table should appear";
 
   // Cleanup
-  conn.ExecuteUpdate("DROP TABLE completer_test_xyz");
+  EXPECT_TRUE(conn.ExecuteUpdate("DROP TABLE completer_test_xyz").ok());
 }
 
 TEST_F(InteractiveClientFixture, CompleterDisconnectedGraceful) {

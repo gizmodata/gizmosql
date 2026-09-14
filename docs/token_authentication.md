@@ -307,6 +307,11 @@ The DuckDB internal catalogs `system` and `temp` are **always visible** regardle
 
 Tokens without `catalog_access` rules are unaffected — all catalogs remain visible (backward compatible).
 
+External tokens containing a `catalog_access` claim require a valid Enterprise
+license with `catalog_permissions`. Core edition and unlicensed Enterprise reject
+these tokens during authentication; they do not silently discard the restrictions.
+
+
 ## Generating Keys
 
 To generate an RSA key pair for token signing:

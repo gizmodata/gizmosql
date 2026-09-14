@@ -1,0 +1,21 @@
+---
+# Correctness checks first; avoid enforcing a new naming/style policy on this codebase.
+Checks: >-
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-optin.performance.Padding,
+  bugprone-use-after-move,
+  bugprone-dangling-handle,
+  bugprone-infinite-loop,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-memory-comparison,
+  bugprone-undefined-memory-manipulation,
+  bugprone-unused-raii,
+  bugprone-signal-handler,
+  concurrency-*,
+  -concurrency-mt-unsafe
+# mt-unsafe flags every getenv(), including single-threaded startup resolution.
+# Environment configuration is intentionally read before workers start.
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(^|/)(src|tests/integration)/'
+FormatStyle: file

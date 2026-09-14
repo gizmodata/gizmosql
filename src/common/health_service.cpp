@@ -16,6 +16,9 @@
 // under the License.
 
 #include "health_service.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/metrics/metrics_registry.h"
+#endif
 
 #include <grpcpp/grpcpp.h>
 
@@ -81,6 +84,11 @@ void GizmoSQLHealthServiceImpl::HealthCheckLoop(std::shared_ptr<SharedState> sta
     const auto check_end = std::chrono::steady_clock::now();
     state->check_in_flight.store(false);
 
+#ifdef GIZMOSQL_ENTERPRISE
+    if (auto registry = gizmosql::enterprise::MetricsRegistry::Current())
+      registry->At("gizmosql_health_check_duration_seconds")
+          .value.store(std::chrono::duration<double>(check_end - check_start).count());
+#endif
     const auto duration_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(check_end - check_start)
             .count();

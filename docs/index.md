@@ -36,6 +36,11 @@ It was forked from [`sqlflite`](https://github.com/voltrondata/sqlflite) and has
 
 ## Description
 
+Enterprise deployments can enable the independently licensed
+[Prometheus metrics endpoint and SQL metrics](monitoring.md) to monitor process
+resources, sessions, query execution, queueing, and server health. The feature is
+disabled by default and requires a license containing `metrics`.
+
 This is the GizmoSQL core repo - used to build an Apache Arrow Flight SQL server implementation using DuckDB or SQLite as a backend database.
 
 It enables authentication via middleware and allows for encrypted connections to the database via TLS.

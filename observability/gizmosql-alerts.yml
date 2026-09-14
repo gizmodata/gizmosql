@@ -1,0 +1,40 @@
+groups:
+  - name: gizmosql
+    rules:
+      - alert: GizmoSQLMetricsUnreachable
+        expr: up{job="gizmosql"} == 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'GizmoSQL metrics cannot be scraped'}
+      - alert: GizmoSQLMemoryNearLimit
+        expr: gizmosql_duckdb_memory_used_bytes / gizmosql_duckdb_memory_limit_bytes > 0.9
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'DuckDB memory usage exceeds 90% of its limit'}
+      - alert: GizmoSQLQueueWaitHigh
+        expr: histogram_quantile(0.95, sum by (instance, job, le) (rate(gizmosql_queue_wait_seconds_bucket[5m]))) > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'GizmoSQL admission wait p95 exceeds five seconds'}
+      - alert: GizmoSQLHealthCheckFailed
+        expr: gizmosql_health_check_status == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: 'GizmoSQL internal health check is not serving'}
+      - alert: GizmoSQLMetricsCollectorStale
+        expr: time() - gizmosql_metrics_last_collection_success_seconds > 30
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'GizmoSQL local metrics collection is stale'}
+      - alert: GizmoSQLLicenseExpiring
+        expr: gizmosql_license_expiry_seconds - time() < 14 * 86400
+        labels: {severity: warning}
+        annotations: {summary: 'GizmoSQL license expires in less than 14 days'}
+      - alert: GizmoSQLCertificateExpiring
+        expr: gizmosql_tls_certificate_expiry_seconds - time() < 14 * 86400
+        labels: {severity: warning}
+        annotations: {summary: 'GizmoSQL TLS certificate expires in less than 14 days'}
+      - alert: GizmoSQLPreviousExitUnclean
+        expr: gizmosql_last_exit_unclean == 1
+        labels: {severity: warning}
+        annotations: {summary: 'The previous metrics-enabled GizmoSQL run did not stop cleanly'}

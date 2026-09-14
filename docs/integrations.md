@@ -9,6 +9,7 @@ GizmoSQL integrates with a rich ecosystem of data tools and platforms.
 GizmoSQL provides seamless integration with:
 
 - 💻 [GizmoSQL UI](https://github.com/gizmodata/gizmosql-ui) 🚀 **NEW!**
+- 🤖 [MCP Server for AI agents (Claude Desktop, Claude Code, any MCP client)](https://github.com/gizmodata/gizmosql-mcp) 🚀 **NEW!**
 - 🔌 [SQLAlchemy dialect](https://github.com/gizmodata/sqlalchemy-gizmosql-adbc-dialect)
 - 💿 [Apache Superset compatible SQLAlchemy driver](https://github.com/gizmodata/superset-sqlalchemy-gizmosql-adbc-dialect)
 - 🔌 [Ibis adapter](https://github.com/gizmodata/ibis-gizmosql)

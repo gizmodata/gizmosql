@@ -27,6 +27,7 @@
 #include "duckdb_statement.h"
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/instrumentation/instrumentation_records.h"
+#include "enterprise/metrics/metrics_registry.h"
 #endif
 
 namespace gizmosql::ddb {
@@ -44,6 +45,17 @@ DuckDBStatementBatchReader::DuckDBStatementBatchReader(
     rc_(DuckDBSuccess),
     already_executed_(false),
     results_read_(false) {
+#ifdef GIZMOSQL_ENTERPRISE
+  metrics_ = statement_->GetMetricsRegistry();
+#endif
+}
+
+DuckDBStatementBatchReader::~DuckDBStatementBatchReader() {
+#ifdef GIZMOSQL_ENTERPRISE
+  if (metrics_sending_)
+    metrics_->At("gizmosql_statements_active", {{"wait", "client_send"}})
+        .value.fetch_sub(1, std::memory_order_relaxed);
+#endif
 }
 
 arrow::Result<std::shared_ptr<DuckDBStatementBatchReader>>
@@ -86,6 +98,16 @@ arrow::Status DuckDBStatementBatchReader::ReadNext(
   ARROW_ASSIGN_OR_RAISE(*out, statement_->FetchResult());
 
 #ifdef GIZMOSQL_ENTERPRISE
+  // Retained materialized results awaiting further client downloads. Count the
+  // stream until EOF or destruction, including cancellation/abandonment.
+  if (metrics_) {
+    const bool sending = static_cast<bool>(*out);
+    if (sending != metrics_sending_) {
+      metrics_->At("gizmosql_statements_active", {{"wait", "client_send"}})
+          .value.fetch_add(sending ? 1 : -1, std::memory_order_relaxed);
+      metrics_sending_ = sending;
+    }
+  }
   // Track rows fetched for instrumentation
   if (*out && statement_->GetExecutionInstrumentation()) {
     statement_->GetExecutionInstrumentation()->IncrementRowsFetched((*out)->num_rows());
@@ -94,4 +116,4 @@ arrow::Status DuckDBStatementBatchReader::ReadNext(
 
   return arrow::Status::OK();
 }
-} // namespace gizmosql::ddb
+}  // namespace gizmosql::ddb

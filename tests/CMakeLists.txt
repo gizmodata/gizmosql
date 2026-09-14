@@ -27,6 +27,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_authentication.cpp
         integration/test_bulk_ingest.cpp
         integration/test_prepared_statement_params.cpp
+        integration/test_eager_execution.cpp
         integration/test_catalog_access.cpp
         integration/test_catalog_permissions_enterprise.cpp
         integration/test_cross_instance_tokens.cpp
@@ -77,6 +78,7 @@ set(GIZMOSQL_CLIENT_LIB_SRCS
 # Enterprise integration tests (only built when GIZMOSQL_ENTERPRISE is ON)
 if(GIZMOSQL_ENTERPRISE)
     set(GIZMOSQL_ENTERPRISE_TEST_SRCS
+            integration/test_metrics.cpp
             integration/test_catalog_wildcards.cpp
             integration/test_statement_queue.cpp
             integration/test_instrumentation.cpp

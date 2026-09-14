@@ -13,7 +13,7 @@ on:
           - Debug
           - RelWithDebInfo
       force_build:
-        description: "Run the build jobs even if no dependency inputs changed (also warms the caches on this ref)"
+        description: "Run the build jobs even if no build inputs changed (also warms the caches on this ref)"
         type: boolean
         required: false
         default: true
@@ -54,11 +54,12 @@ concurrency:
 # re-drove the Arrow and DuckDB superbuilds (38 + 20 min per Linux job); since
 # an existing key is never re-saved, only a new generation refreshes them.
 #
-# So branch pushes now run the build jobs only when a dependency input
-# changed (see the `changes` job) — exactly when the caches need refreshing
-# — while tags, fork PRs and workflow_dispatch always build. A cache saved by
-# such a main run is what the next tag restores. Keep this and the cache
-# keys below in sync.
+# So branch pushes now run the build jobs only when a build input changed
+# (sources, tests, quality configuration or a dependency input — see the
+# `changes` job), which also covers exactly the pushes on which the caches
+# need refreshing — while tags, fork PRs and workflow_dispatch always build. A
+# cache saved by such a main run is what the next tag restores. Keep this and
+# the cache keys below in sync.
 
 # ---- Special (pinned-DuckDB) releases ------------------------------------
 # A tag whose name contains "-duckdb" (e.g. v1.36.1-duckdb1.5.4) is a
@@ -81,8 +82,40 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  quality:
+    name: Formatting and script lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install pinned quality tools
+        run: |
+          python -m pip install -r scripts/quality-requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+      - name: Select comparison commit
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="${PR_BASE:-$BEFORE}"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base=$(git merge-base origin/main HEAD)
+            if [[ "$base" == "$(git rev-parse HEAD)" ]]; then base=$(git rev-parse HEAD^); fi
+          fi
+          echo "QUALITY_BASE=$base" >> "$GITHUB_ENV"
+      - run: python scripts/check_quality.py format
+      - run: python scripts/check_quality.py lint
+      - run: python -m unittest discover -s tests/quality
+
   changes:
-    name: Detect dependency changes
+    name: Detect build input changes
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.decide.outputs.build }}
@@ -121,18 +154,16 @@ jobs:
             if [[ -z "$base" ]]; then
               build=true; reason="no base commit to compare against"
             else
-              # Inputs that feed the third-party caches (see the cache keys in
-              # the build jobs). A change here must be built so main saves a
-              # fresh cache for the next tag to restore. CMakeLists.txt only
-              # counts when the DuckDB version pins change.
+              # Build source, tests, quality configuration, and dependency inputs.
+              # Dependency changes also refresh caches for the next release tag.
               changed=$(git diff --name-only "$base" "$AFTER")
-              pattern='^(third_party/|scripts/build_portable_linux\.sh$|\.github/workflows/ci\.yml$|ios/scripts/|ios/cmake/|ios/CMakeLists\.txt$)'
+              pattern='^(src/|tests/|CMakeLists\.txt$|\.clang-tidy$|scripts/check_quality\.py$|scripts/quality-requirements\.txt$|third_party/|scripts/build_portable_linux\.sh$|\.github/workflows/ci\.yml$|ios/scripts/|ios/cmake/|ios/CMakeLists\.txt$)'
               hits=$(printf '%s\n' "$changed" | grep -E "$pattern" || true)
               pins=$(git diff -U0 "$base" "$AFTER" -- CMakeLists.txt | grep -E '^[+-]set\(DUCKDB_(STABLE|LTS)_VERSION' || true)
               if [[ -n "$hits" || -n "$pins" ]]; then
-                build=true; reason="dependency inputs changed since $base:"$'\n'"$hits"$'\n'"$pins"
+                build=true; reason="build inputs changed since $base:"$'\n'"$hits"$'\n'"$pins"
               else
-                reason="no dependency inputs changed between $base and $AFTER"
+                reason="no build inputs changed between $base and $AFTER"
               fi
             fi
           fi
@@ -152,8 +183,11 @@ jobs:
   build-project-macos:
     name: Build Project - MacOS (${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
-    needs: changes
-    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    needs: [changes, quality]
+    # Branch and PR builds wait for the quality gate. Release tags build even
+    # when it fails: a formatting or lint nit must never block (and force a
+    # re-cut of) a release tag; the red quality job still shows on the run.
+    if: always() && needs.changes.outputs.build == 'true' && (needs.quality.result == 'success' || startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-14-xlarge
     strategy:
       fail-fast: false
@@ -167,6 +201,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Normalize checkout mtimes for cached build trees
         # git does not preserve mtimes, so every checkout makes third_party/*
@@ -267,6 +303,7 @@ jobs:
             GIZMOSQL_ENTERPRISE=ON
             WITH_OPENTELEMETRY=ON
             GIZMOSQL_DUCKDB_CHANNEL=${{ matrix.duckdb_channel }}
+            CMAKE_EXPORT_COMPILE_COMMANDS=ON
             CMAKE_C_COMPILER_LAUNCHER=sccache
             CMAKE_CXX_COMPILER_LAUNCHER=sccache
             OPENSSL_ROOT_DIR=${{ env.OPENSSL_ROOT_DIR }}
@@ -274,6 +311,29 @@ jobs:
             OPENSSL_INCLUDE_DIR=${{ env.OPENSSL_INCLUDE_DIR }}
             OPENSSL_CRYPTO_LIBRARY=${{ env.OPENSSL_CRYPTO_LIBRARY }}
             OPENSSL_SSL_LIBRARY=${{ env.OPENSSL_SSL_LIBRARY }}
+
+      - name: Clang-tidy (project sources, stable and LTS)
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 -m venv /tmp/gizmosql-quality
+          /tmp/gizmosql-quality/bin/python -m pip install -r scripts/quality-requirements.txt
+          export PATH="/tmp/gizmosql-quality/bin:$PATH"
+          base="${PR_BASE:-$BEFORE}"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base=$(git merge-base origin/main HEAD)
+            if [[ "$base" == "$(git rev-parse HEAD)" ]]; then base=$(git rev-parse HEAD^); fi
+          fi
+          python scripts/check_quality.py tidy --base "$base" --jobs 3
+
+      - name: Save clang-tidy diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: clang-tidy-macos-${{ matrix.duckdb_channel }}
+          path: build/quality/
+          if-no-files-found: ignore
 
       - name: Save third-party cache (Arrow & friends)
         # Tag-scoped caches can never be restored by another ref and only
@@ -313,13 +373,13 @@ jobs:
             build/cpp-httplib/third_party/*
           key: otel-httplib-v1-macos-arm64-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
-      - name: Run Tests (Core Edition - No License)
+      - name: Run Tests (Unlicensed Enterprise Build)
         run: |
           ./build/tests/gizmosql_integration_tests
 
       - name: Setup Enterprise License
         env:
-          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_METRICS_TEST_LICENSE || secrets.GIZMOSQL_LICENSE_KEY }}
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           echo "$GIZMOSQL_LICENSE_KEY" > /tmp/gizmosql_license.jwt
@@ -327,7 +387,7 @@ jobs:
 
       - name: Run Tests (Enterprise Edition - With License)
         env:
-          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_METRICS_TEST_LICENSE || secrets.GIZMOSQL_LICENSE_KEY }}
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests
@@ -340,6 +400,27 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+
+      - name: Set up Java for released-driver checks
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Test released ADBC and JDBC compatibility
+        run: |
+          python3 -m venv /tmp/driver_matrix_venv
+          /tmp/driver_matrix_venv/bin/pip install -r tests/drivers/requirements.txt
+          /tmp/driver_matrix_venv/bin/python tests/drivers/run_compatibility.py \
+            --server ./build/gizmosql_server${{ env.bin_suffix }} \
+            --output build/driver-matrix
+
+      - name: Upload released-driver validation logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: driver-matrix-macos-${{ matrix.duckdb_channel }}
+          path: build/driver-matrix/*.log
 
       - name: Run Python Tests (macOS)
         run: |
@@ -414,8 +495,11 @@ jobs:
   build-project-linux:
     name: Build Project - Linux ${{ matrix.platform }} (${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
-    needs: changes
-    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    needs: [changes, quality]
+    # Branch and PR builds wait for the quality gate. Release tags build even
+    # when it fails: a formatting or lint nit must never block (and force a
+    # re-cut of) a release tag; the red quality job still shows on the run.
+    if: always() && needs.changes.outputs.build == 'true' && (needs.quality.result == 'success' || startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     strategy:
       fail-fast: false
       matrix:
@@ -649,7 +733,7 @@ jobs:
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
 
           # Wait for MinIO to be ready
           for i in {1..30}; do
@@ -660,16 +744,16 @@ jobs:
 
           # Create the bucket with the mc image (no host install)
           docker run --rm --network host --entrypoint /bin/sh \
-            minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
+            quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
             "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb --ignore-existing myminio/instrumentation"
 
-      - name: Run Tests (Core Edition - No License)
+      - name: Run Tests (Unlicensed Enterprise Build)
         run: |
           ./build/tests/gizmosql_integration_tests
 
       - name: Setup Enterprise License
         env:
-          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_METRICS_TEST_LICENSE || secrets.GIZMOSQL_LICENSE_KEY }}
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           echo "$GIZMOSQL_LICENSE_KEY" > /tmp/gizmosql_license.jwt
@@ -677,7 +761,7 @@ jobs:
 
       - name: Run Tests (Enterprise Edition - With License)
         env:
-          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_METRICS_TEST_LICENSE || secrets.GIZMOSQL_LICENSE_KEY }}
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests
@@ -835,8 +919,11 @@ jobs:
   build-project-windows:
     name: Build Project - Windows (${{ matrix.platform }}, ${{ matrix.duckdb_channel }})
     # On pull_request, run only for fork PRs (same-repo PRs are covered by push)
-    needs: changes
-    if: needs.changes.outputs.build == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    needs: [changes, quality]
+    # Branch and PR builds wait for the quality gate. Release tags build even
+    # when it fails: a formatting or lint nit must never block (and force a
+    # re-cut of) a release tag; the red quality job still shows on the run.
+    if: always() && needs.changes.outputs.build == 'true' && (needs.quality.result == 'success' || startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

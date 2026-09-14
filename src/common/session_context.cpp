@@ -28,7 +28,7 @@ namespace gizmosql {
 
 ClientSession::~ClientSession() {
   // 1. Interrupt any in-flight query on the DuckDB connection
-  if (connection && active_sql_handle.has_value() && !active_sql_handle->empty()) {
+  if (connection && ActiveSqlHandle()) {
     try {
       connection->Get().Interrupt();
     } catch (...) {

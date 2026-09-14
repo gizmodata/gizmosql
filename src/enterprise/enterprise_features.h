@@ -20,6 +20,7 @@ constexpr const char* kFeatureKillSession = "kill_session";
 constexpr const char* kFeatureCatalogPermissions = "catalog_permissions";
 constexpr const char* kFeatureExternalAuth = "external_auth";
 constexpr const char* kFeatureStatementQueue = "statement_queue";
+constexpr const char* kFeatureMetrics = "metrics";
 
 /// Singleton class for managing enterprise feature availability
 class EnterpriseFeatures {
@@ -57,6 +58,9 @@ class EnterpriseFeatures {
 
   /// Check if statement queuing (admission control) feature is available
   bool IsStatementQueueAvailable() const;
+
+  /// Check if Prometheus metrics and gizmosql_metrics() are licensed.
+  bool IsMetricsAvailable() const;
 
   /// Get the license manager (for advanced usage)
   LicenseManager* GetLicenseManager() const { return license_manager_.get(); }

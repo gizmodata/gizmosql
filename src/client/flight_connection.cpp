@@ -17,6 +17,7 @@
 
 #include "flight_connection.hpp"
 #include "oauth_flow.hpp"
+#include "sql_quoting.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -95,10 +96,14 @@ static std::string LoadSystemCACerts() {
 }
 
 void FlightConnection::Disconnect() {
+  // Serialize with the signal watcher before releasing its client/options.
+  std::lock_guard cancel_lock(cancel_mutex_);
   if (client_) {
     // Notify the server to close the session
     arrow::flight::CloseSessionRequest request;
-    auto result = client_->CloseSession(call_options_, request);
+    auto close_options = call_options_;
+    close_options.timeout = std::chrono::seconds(2);
+    auto result = client_->CloseSession(close_options, request);
     (void)result;  // Best-effort; ignore errors on disconnect
     (void)client_->Close();
   }
@@ -112,6 +117,7 @@ void FlightConnection::Disconnect() {
 }
 
 void FlightConnection::SendCancelToServer() {
+  std::lock_guard cancel_lock(cancel_mutex_);
   // Called from the sigwait thread (NOT from a signal handler).
   // Uses cancel_client_ (a separate gRPC connection) to avoid thread-safety
   // issues with the main client_ that's currently streaming results.
@@ -268,9 +274,14 @@ arrow::Status FlightConnection::Connect(const ClientConfig& config) {
       std::move(flight_client));
 
   // Create a separate FlightClient for cancellation (thread-safe: own gRPC channel)
-  ARROW_ASSIGN_OR_RAISE(cancel_client_,
-                         arrow::flight::FlightClient::Connect(location, options));
-  cancel_call_options_ = call_options_;  // Same bearer token / headers
+  {
+    std::lock_guard cancel_lock(cancel_mutex_);
+    ARROW_ASSIGN_OR_RAISE(cancel_client_,
+                          arrow::flight::FlightClient::Connect(location, options));
+    cancel_call_options_ = call_options_;  // Same bearer token / headers
+    // Joining the signal watcher must not wait forever for an unavailable server.
+    cancel_call_options_.timeout = std::chrono::seconds(2);
+  }
 
   // Verify the connection is actually usable by making a lightweight Flight SQL
   // call. This catches cases where the gRPC channel opened successfully but
@@ -529,7 +540,7 @@ arrow::Status FlightConnection::UploadLastResult(
   // include temp tables, so the server's TableExists check misses them and
   // the CREATE_OR_REPLACE path in DoPutCommandStatementIngest never fires.
   auto drop_result = client_->ExecuteUpdate(
-      call_options_, "DROP TABLE IF EXISTS \"" + table_name + "\"");
+      call_options_, "DROP TABLE IF EXISTS " + QuoteSqlIdentifier(table_name));
   // Ignore errors — table might not exist
 
   auto reader = std::make_shared<arrow::TableBatchReader>(*table);

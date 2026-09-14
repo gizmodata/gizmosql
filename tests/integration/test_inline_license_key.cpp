@@ -123,6 +123,29 @@ TEST(InlineLicenseKey, InlineKeyWinsOverBogusFile) {
   RestoreSingletonFromEnv();
 }
 
+TEST(InlineLicenseKey, ReinitializingWithoutLicenseClearsPreviousEntitlements) {
+  const std::string jwt = ReadLicenseFromEnvFile();
+  SKIP_IF_NO_LICENSE(jwt);
+  auto& ent = gizmosql::enterprise::EnterpriseFeatures::Instance();
+  ASSERT_TRUE(ent.Initialize("", jwt).ok());
+  EXPECT_TRUE(ent.IsEnterpriseEdition());
+  EXPECT_TRUE(ent.Initialize("", "").ok());
+  EXPECT_FALSE(ent.IsEnterpriseEdition());
+  EXPECT_FALSE(ent.IsMetricsAvailable());
+  RestoreSingletonFromEnv();
+}
+
+TEST(InlineLicenseKey, InvalidReinitializationClearsPreviousEntitlements) {
+  const std::string jwt = ReadLicenseFromEnvFile();
+  SKIP_IF_NO_LICENSE(jwt);
+  auto& ent = gizmosql::enterprise::EnterpriseFeatures::Instance();
+  ASSERT_TRUE(ent.Initialize("", jwt).ok());
+  EXPECT_FALSE(ent.Initialize("", "not.a.valid.license").ok());
+  EXPECT_FALSE(ent.IsEnterpriseEdition());
+  EXPECT_FALSE(ent.IsMetricsAvailable());
+  RestoreSingletonFromEnv();
+}
+
 TEST(InlineLicenseKey, InlineKeyTakesPrecedenceEvenWhenInvalid) {
   const std::string jwt = ReadLicenseFromEnvFile();
   SKIP_IF_NO_LICENSE(jwt);
@@ -131,6 +154,9 @@ TEST(InlineLicenseKey, InlineKeyTakesPrecedenceEvenWhenInvalid) {
   // the inline key wins, initialization must FAIL rather than silently fall back
   // to the file — that's the contract operators rely on.
   const char* valid_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
+  if (!valid_file) {
+    GTEST_SKIP() << "GIZMOSQL_LICENSE_KEY_FILE is no longer set";
+  }
   auto& ent = gizmosql::enterprise::EnterpriseFeatures::Instance();
   auto status = ent.Initialize(valid_file, /*license_key=*/"not.a.valid.jwt");
   EXPECT_FALSE(status.ok());

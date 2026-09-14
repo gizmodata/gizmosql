@@ -1,0 +1,4 @@
+clang-format==22.1.5
+clang-tidy==22.1.8
+ruff==0.15.7
+PyYAML==6.0.3

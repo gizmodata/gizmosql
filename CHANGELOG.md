@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-09-14
+
+### Added
+- Contributor guide covering local quality checks, tests, SQL binding, and the
+  Apache-2.0 terms under which contributions are accepted.
+- CI formatting and script lint gates, pinned local quality tools, and clang-tidy
+  checks against both DuckDB channels. Source and test changes trigger builds.
+- Enterprise metrics, licensed through the new `metrics` feature: a Prometheus
+  HTTP endpoint and `gizmosql_metrics()` SQL table function sharing one registry.
+  Background collection keeps DuckDB and process measurements off the query path.
+
+- INFO-level query logs for bulk ingest (`DoPutCommandStatementIngest`): attempt,
+  success, and failure records with the caller's session fields, the fully
+  qualified target table, and the ingested row count, gated by the query log
+  level like SQL execution logs.
+- README and docs list the GizmoSQL MCP server among the integrations.
+
+### Security
+- Core edition rejects external tokens containing catalog access restrictions it
+  cannot enforce, matching the existing unlicensed Enterprise behavior.
+
+### Changed
+- DuckDB statements without a user result set execute during GetFlightInfo,
+  enabled by default with no flag. This covers DDL/DML, COPY/EXPORT,
+  ATTACH/DETACH, and side-effecting statements such as transaction control,
+  SET/RESET/USE, LOAD and VACUUM. Fetching the resulting execution ticket
+  replays the cached result instead of repeating the write, and reusing a
+  prepared statement creates a distinct execution each time.
+- Prepared DDL/DML advertises an empty dataset schema, allowing Flight SQL JDBC
+  clients to select the update RPC and report affected-row counts correctly.
+  `executeQuery` on such statements is now refused by JDBC drivers, per the
+  JDBC specification, instead of returning a synthetic count row.
+- A prepared statement handle is serialized by a per-statement execution lock
+  held for the life of a result stream; a concurrent rebind or re-execute of the
+  same handle fails with "Prepared statement is busy" instead of racing.
+- Session removal, prepared statement close, and BEGIN TRANSACTION hold their
+  server- or session-wide mutexes only for the map update; DuckDB connection
+  teardown, prepared statement release, and statement execution happen outside
+  the lock so other sessions are never blocked on them.
+
+### Fixed
+- The session's active-statement handle, written by execution and read by
+  cancellation on other threads, is now an atomically swapped pointer instead
+  of a plain string, removing a data race between cancel and statement start.
+- Per-session settings written by `SET` (`query_timeout`, `query_log_level`,
+  `capture_query_profile`, `bypass_queue`, `max_queue_wait`, `session_tag`,
+  `query_tag`) are stored lock-free as atomics or atomically swapped strings,
+  so a SET racing another request on the same session can no longer produce a
+  torn read.
+- Completed execution tickets expire and evict in O(1) per write through an
+  insertion-order queue, instead of scanning up to 1024 cached entries under
+  the session lock on every eager DDL/DML execution.
+- The metrics unclean-exit marker is maintained only by a read-write server;
+  read-only instances sharing a database file no longer write it or raise
+  false unclean-exit alerts.
+- Metrics collection sections fail independently and sample server state
+  first, so one throwing probe no longer blanks the session and queue gauges.
+- Metrics floating-point counters work on the older Apple libc++ used by macOS
+  CI through atomic compare/exchange, without introducing a shared mutex.
+- Integration CI pulls the pinned MinIO test images from Quay after Docker Hub
+  stopped serving the existing image references.
+- Queued statements honor client cancellation and deadlines before acquiring a
+  slot, preventing an abandoned eager write from starting later.
+- Successful `KILL SESSION` commands no longer enqueue duplicate instrumentation
+  statement records.
+- SQLite reports NULL parameter binding failures instead of ignoring them.
+- CLI tags and table metadata correctly quote embedded quotes. Table row counts
+  use fully qualified identifiers and distinguish names shared across catalogs.
+- The CLI joins its signal watcher before destroying the connection, synchronizes
+  cancellation with disconnect, and bounds cancellation/session-close RPCs.
+  SIGTERM no longer invokes unsafe gRPC cleanup from an asynchronous signal handler.
+- Reinitializing the library without a valid license clears previous Enterprise
+  entitlements, so a later server cannot inherit an earlier server's license.
+
 ## [1.38.5] - 2026-09-11
 
 ### Changed

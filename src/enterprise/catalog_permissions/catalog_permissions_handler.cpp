@@ -174,6 +174,8 @@ arrow::Status CheckCatalogWriteAccess(
           "Access denied: The system-managed catalog '" + catalog_name + "' is read-only.";
 
       // Record the rejected modification attempt
+      // Intentionally record immediately; no statement lifetime to track on rejection.
+      // NOLINTNEXTLINE(bugprone-unused-raii)
       gizmosql::ddb::StatementInstrumentation(
           instrumentation_manager, statement_id, client_session->session_id,
           logged_sql, flight_method, is_internal, error_msg);
@@ -231,6 +233,8 @@ arrow::Status CheckCatalogReadAccess(
             "Access denied: Only administrators can read the system-managed catalog '" + catalog_name + "'.";
 
         // Record the rejected read attempt
+        // Intentionally record immediately; no statement lifetime to track on rejection.
+        // NOLINTNEXTLINE(bugprone-unused-raii)
         gizmosql::ddb::StatementInstrumentation(
             instrumentation_manager, statement_id, client_session->session_id,
             logged_sql, flight_method, is_internal, error_msg);

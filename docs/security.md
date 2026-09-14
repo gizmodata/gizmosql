@@ -321,6 +321,12 @@ gizmosql_server --query-log-level info --database mydata.db
 
 Each query is logged with: user, session ID, SQL statement, duration, and row count.
 
+Bulk ingest (Flight SQL `DoPut` with `CommandStatementIngest`, e.g. ADBC
+`adbc_ingest()`) is logged the same way at INFO, gated by the same query log
+level: `kind=ingest` records carry the caller's user, role, peer, and session ID,
+the fully qualified target table (`catalog`, `schema`, `table`), the table
+creation options, and on success the ingested row count and duration.
+
 ### Session Instrumentation *(Enterprise)*
 
 For persistent audit trails, enable session instrumentation to record all connections and queries to a DuckDB database:
