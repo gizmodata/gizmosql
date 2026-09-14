@@ -47,3 +47,43 @@ header, and test changes now trigger builds as well as dependency changes.
 Both macOS DuckDB channels run clang-tidy after building and upload diagnostic
 logs. These gates supplement integration and driver tests; static analysis
 does not establish race freedom or replace sanitizer and runtime testing.
+
+## ThreadSanitizer
+
+Static analysis cannot prove the absence of data races, so a separate GitHub
+Actions workflow (`.github/workflows/tsan.yml`) builds the entire server with
+ThreadSanitizer and runs the integration suite under it. TSan instruments every
+memory access; when two threads touch the same location without a lock or
+atomic ordering them, it prints both stack traces the first time the accesses
+merely happen close together, without needing the race to cause a failure.
+Unsuppressed reports fail the job even when every test assertion passes.
+
+The whole program must be instrumented (Arrow with its bundled gRPC and
+protobuf, DuckDB and its extensions, gflags, replxx, SQLite, OpenTelemetry),
+otherwise TSan cannot see locks taken inside library code and reports false
+positives. The `GIZMOSQL_SANITIZER` CMake option forwards the flags into every
+third-party superbuild and turns on Arrow's and DuckDB's own sanitizer
+switches. Use a separate build directory; the superbuild input digest includes
+the sanitizer, so a switch re-drives the third-party builds:
+
+```sh
+cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DGIZMOSQL_SANITIZER=thread -DGIZMOSQL_ENTERPRISE=ON -DWITH_OPENTELEMETRY=OFF \
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build-tsan --target gizmosql_integration_tests
+TSAN_OPTIONS="suppressions=$PWD/tests/tsan.supp halt_on_error=0 abort_on_error=0 exitcode=66" \
+  ./build-tsan/tests/gizmosql_integration_tests --gtest_filter='-TPCH*:*Benchmark*'
+```
+
+Instrumented code runs roughly five to fifteen times slower and uses several
+times the memory, so the job is slow by nature, runs only on Linux amd64 with
+the stable DuckDB channel, keeps its own caches keyed on the sanitizer, and
+skips the TPC-H and benchmark suites, which assert wall-clock limits. On
+recent Linux kernels TSan needs `vm.mmap_rnd_bits` at 28 or lower. `abort_on_error=0`
+matters on macOS, where TSan otherwise aborts (exit 134) instead of using `exitcode`.
+`GIZMOSQL_SANITIZER=address` builds with AddressSanitizer the same way.
+
+`tests/tsan.supp` holds suppressions. Keep it short and justified: every entry
+hides a report, so each must name a known-benign pattern in third-party code
+with the reason, never a GizmoSQL symbol. A race in `src/` is a bug to fix.
+

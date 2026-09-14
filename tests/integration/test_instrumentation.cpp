@@ -38,6 +38,26 @@
 #include "test_server_fixture.h"
 #include "instrumentation/instrumentation_manager.h"
 
+namespace {
+// A server started as a subprocess is ready when a Flight client can
+// authenticate against it. Poll (bounded at 60 s) instead of sleeping a fixed
+// interval, so slower hosts and instrumented (sanitizer) builds converge.
+void WaitForSubprocessServer(int port, const std::string& username,
+                             const std::string& password) {
+  for (int attempt = 0; attempt < 600; ++attempt) {
+    auto location = arrow::flight::Location::ForGrpcTcp("localhost", port);
+    if (location.ok()) {
+      arrow::flight::FlightClientOptions options;
+      auto client = arrow::flight::FlightClient::Connect(*location, options);
+      if (client.ok() && (*client)->AuthenticateBasicToken({}, username, password).ok()) {
+        return;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+}  // namespace
+
 using arrow::flight::sql::FlightSqlClient;
 
 // Define the test fixture using the shared server infrastructure
@@ -210,8 +230,10 @@ TEST_F(InstrumentationServerFixture, ExecutionTimelineConsistent) {
       "WHERE sql_text LIKE '%timeline_probe%' "
       "  AND sql_text NOT LIKE '%execution_details%' "
       "  AND cursor_close_time IS NOT NULL";
+  // Bounded at 30 s so instrumented (sanitizer) builds, where the writer thread
+  // runs many times slower, still converge; normal builds exit in a few polls.
   bool finalized = false;
-  for (int i = 0; i < 50 && !finalized; ++i) {
+  for (int i = 0; i < 300 && !finalized; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     finalized =
         QueryScalar(sql_client, call_options, "SELECT COUNT(*) " + probe_filter) != "0";
@@ -423,32 +445,31 @@ TEST_F(InstrumentationServerFixture, CurrentSessionFunction) {
     ASSERT_ARROW_OK(reader->ToTable().status());
   }
 
-  // Allow async write queue to flush instrumentation records
-  // Use a longer wait for CI environments which may be slower
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
   // Use GIZMOSQL_CURRENT_SESSION() to get current session ID and verify it exists
-  // in the sessions table
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto info,
-      sql_client.Execute(call_options,
-                         "SELECT session_id FROM _gizmosql_instr.sessions "
-                         "WHERE session_id = GIZMOSQL_CURRENT_SESSION()"));
-
+  // in the sessions table. The async write queue flushes the session record
+  // shortly after creation; poll (bounded at 30 s) instead of a fixed sleep so
+  // slower instrumented builds converge and normal builds return immediately.
   bool found_session = false;
   std::string session_id;
-  for (const auto& endpoint : info->endpoints()) {
-    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
-                               sql_client.DoGet(call_options, endpoint.ticket));
-    std::shared_ptr<arrow::Table> table;
-    ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
-    if (table->num_rows() > 0) {
-      found_session = true;
-      // Extract the session ID to verify it's a valid UUID
-      auto column = table->column(0);
-      auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
-      session_id = array->GetString(0);
+  for (int attempt = 0; attempt < 300 && !found_session; ++attempt) {
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto info, sql_client.Execute(call_options,
+                                      "SELECT session_id FROM _gizmosql_instr.sessions "
+                                      "WHERE session_id = GIZMOSQL_CURRENT_SESSION()"));
+    for (const auto& endpoint : info->endpoints()) {
+      ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                                 sql_client.DoGet(call_options, endpoint.ticket));
+      std::shared_ptr<arrow::Table> table;
+      ASSERT_ARROW_OK_AND_ASSIGN(table, reader->ToTable());
+      if (table->num_rows() > 0) {
+        found_session = true;
+        // Extract the session ID to verify it's a valid UUID
+        auto column = table->column(0);
+        auto array = std::static_pointer_cast<arrow::StringArray>(column->chunk(0));
+        session_id = array->GetString(0);
+      }
     }
+    if (!found_session) std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   ASSERT_TRUE(found_session)
       << "GIZMOSQL_CURRENT_SESSION() should return current session ID";
@@ -886,7 +907,7 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
   ASSERT_EQ(ret, 0) << "Failed to start server subprocess";
 
   // Wait for server to start and be ready
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  WaitForSubprocessServer(test_port, "tester", "tester");
 
   // Connect to the server and create a session
   {
@@ -1089,7 +1110,7 @@ TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
   ASSERT_EQ(ret, 0) << "Failed to start server subprocess";
 
   // Wait for server to start
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  WaitForSubprocessServer(test_port, "tester", "tester");
 
   // Connect and run a simple query to create session/statement records
   {

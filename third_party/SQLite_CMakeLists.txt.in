@@ -17,6 +17,7 @@ if(WIN32)
             "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install"
             "-DSQLITE_SOURCE_DIR=<SOURCE_DIR>"
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}"
+            "-DCMAKE_C_FLAGS=${GIZMOSQL_SANITIZER_FLAGS}"
             -S "${CMAKE_SOURCE_DIR}/third_party/sqlite_cmake"
             -B <BINARY_DIR>
         BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --config ${CMAKE_BUILD_TYPE}
@@ -29,7 +30,7 @@ else()
         URL "https://sqlite.org/2026/sqlite-autoconf-3530400.tar.gz"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         PREFIX "${CMAKE_BINARY_DIR}/third_party/sqlite"
-        CONFIGURE_COMMAND ../sqlite_project/configure "CFLAGS=-DSQLITE_ENABLE_COLUMN_METADATA=1" --prefix=${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install
+        CONFIGURE_COMMAND ../sqlite_project/configure "CFLAGS=-DSQLITE_ENABLE_COLUMN_METADATA=1 ${GIZMOSQL_SANITIZER_FLAGS}" "LDFLAGS=${GIZMOSQL_SANITIZER_LINK_FLAGS}" --prefix=${CMAKE_BINARY_DIR}/third_party/sqlite/sqlite_project-install
         BUILD_COMMAND make
         INSTALL_COMMAND make install
     )

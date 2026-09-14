@@ -82,6 +82,24 @@ static arrow::Result<std::shared_ptr<arrow::Table>> ExecuteAndFetch(
   return reader->ToTable();
 }
 
+// Instrumentation records are written by an asynchronous writer thread, so a
+// query issued right after the statement that produced them can legitimately
+// see nothing yet. Poll (bounded at 30 s) until the query returns at least one
+// row; normal builds converge in one or two polls, instrumented builds later.
+// The last table is returned either way so the caller's assertion still
+// reports the real outcome on timeout.
+static arrow::Result<std::shared_ptr<arrow::Table>> FetchNonEmpty(
+    FlightSqlClient& sql_client, arrow::flight::FlightCallOptions& call_options,
+    const std::string& query) {
+  std::shared_ptr<arrow::Table> table;
+  for (int attempt = 0; attempt < 300; ++attempt) {
+    ARROW_ASSIGN_OR_RAISE(table, ExecuteAndFetch(sql_client, call_options, query));
+    if (table->num_rows() > 0) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  return table;
+}
+
 // ============================================================================
 // Instance Tag Tests
 // ============================================================================
@@ -103,14 +121,13 @@ TEST_F(TagServerFixture, InstanceTagRecordedInInstrumentationTable) {
   FlightSqlClient sql_client(std::move(client));
 
   // Allow async write queue to flush
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Query the instances table for the instance_tag
   ASSERT_ARROW_OK_AND_ASSIGN(
-      auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT instance_tag FROM _gizmosql_instr.instances "
-                      "WHERE status = 'running' LIMIT 1"));
+      auto table, FetchNonEmpty(sql_client, call_options,
+                                "SELECT instance_tag FROM _gizmosql_instr.instances "
+                                "WHERE status = 'running' LIMIT 1"));
   ASSERT_GT(table->num_rows(), 0) << "No running instance found";
 
   auto tag_col = table->column(0);
@@ -155,15 +172,18 @@ TEST_F(TagServerFixture, SetSessionTagUpdatesSessionsTable) {
   }
 
   // Allow async write queue to flush
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Query the sessions table for the session_tag
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT session_tag FROM _gizmosql_instr.sessions "
-                      "WHERE status = 'active' ORDER BY start_time DESC LIMIT 1"));
-  ASSERT_GT(table->num_rows(), 0) << "No active session found";
+      // The session row exists before its tag is written (the tag is an
+      // asynchronous update), so wait for the tag itself, not just the row.
+      FetchNonEmpty(sql_client, call_options,
+                    "SELECT session_tag FROM _gizmosql_instr.sessions "
+                    "WHERE status = 'active' AND session_tag LIKE '%data-eng%' "
+                    "ORDER BY start_time DESC LIMIT 1"));
+  ASSERT_GT(table->num_rows(), 0) << "No active session with the session_tag found";
 
   auto tag_col = table->column(0);
   auto tag_val = std::static_pointer_cast<arrow::StringArray>(tag_col->chunk(0))->GetString(0);
@@ -256,15 +276,16 @@ TEST_F(TagServerFixture, SetQueryTagRecordedInStatementsTable) {
   }
 
   // Allow async write queue to flush
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Query the sql_statements table for the query_tag
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT query_tag FROM _gizmosql_instr.sql_statements "
-                      "WHERE sql_text LIKE '%tagged_query%' AND sql_text NOT LIKE '%sql_statements%' "
-                      "ORDER BY created_time DESC LIMIT 1"));
+      FetchNonEmpty(
+          sql_client, call_options,
+          "SELECT query_tag FROM _gizmosql_instr.sql_statements "
+          "WHERE sql_text LIKE '%tagged_query%' AND sql_text NOT LIKE '%sql_statements%' "
+          "ORDER BY created_time DESC LIMIT 1"));
   ASSERT_GT(table->num_rows(), 0) << "No tagged statement found";
 
   auto tag_col = table->column(0);
@@ -318,15 +339,15 @@ TEST_F(TagServerFixture, QueryTagPersistsAcrossQueries) {
   }
 
   // Allow async write queue to flush
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Both queries should have the same query_tag
   ASSERT_ARROW_OK_AND_ASSIGN(
-      auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT query_tag FROM _gizmosql_instr.sql_statements "
-                      "WHERE sql_text LIKE '%persist_query_%' AND sql_text NOT LIKE '%sql_statements%' "
-                      "ORDER BY created_time DESC LIMIT 2"));
+      auto table, FetchNonEmpty(sql_client, call_options,
+                                "SELECT query_tag FROM _gizmosql_instr.sql_statements "
+                                "WHERE sql_text LIKE '%persist_query_%' AND sql_text NOT "
+                                "LIKE '%sql_statements%' "
+                                "ORDER BY created_time DESC LIMIT 2"));
   ASSERT_EQ(table->num_rows(), 2) << "Expected 2 tagged statements";
 
   auto tag_col = std::static_pointer_cast<arrow::StringArray>(table->column(0)->chunk(0));
@@ -383,15 +404,15 @@ TEST_F(TagServerFixture, ClearQueryTagWithEmptyString) {
   }
 
   // Allow async write queue to flush
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // The query after clearing should have NULL query_tag
   ASSERT_ARROW_OK_AND_ASSIGN(
-      auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT query_tag FROM _gizmosql_instr.sql_statements "
-                      "WHERE sql_text LIKE '%cleared_tag_query%' AND sql_text NOT LIKE '%sql_statements%' "
-                      "ORDER BY created_time DESC LIMIT 1"));
+      auto table, FetchNonEmpty(sql_client, call_options,
+                                "SELECT query_tag FROM _gizmosql_instr.sql_statements "
+                                "WHERE sql_text LIKE '%cleared_tag_query%' AND sql_text "
+                                "NOT LIKE '%sql_statements%' "
+                                "ORDER BY created_time DESC LIMIT 1"));
   ASSERT_GT(table->num_rows(), 0) << "No statement found for cleared_tag_query";
 
   auto tag_col = table->column(0);
@@ -473,15 +494,14 @@ TEST_F(TagServerFixture, DocExampleFilterSessionsByTag) {
     ASSERT_ARROW_OK_AND_ASSIGN(auto t, reader->ToTable());
   }
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Doc example: "Find all sessions for a specific team"
   ASSERT_ARROW_OK_AND_ASSIGN(
-      auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT session_id, session_tag->>'team' AS team "
-                      "FROM _gizmosql_instr.sessions "
-                      "WHERE session_tag->>'team' = 'data-eng' LIMIT 5"));
+      auto table, FetchNonEmpty(sql_client, call_options,
+                                "SELECT session_id, session_tag->>'team' AS team "
+                                "FROM _gizmosql_instr.sessions "
+                                "WHERE session_tag->>'team' = 'data-eng' LIMIT 5"));
   ASSERT_GT(table->num_rows(), 0) << "Should find sessions with team='data-eng'";
 
   // Verify the team column value
@@ -525,16 +545,17 @@ TEST_F(TagServerFixture, DocExampleFilterQueriesByRequestId) {
     ASSERT_ARROW_OK_AND_ASSIGN(auto t, reader->ToTable());
   }
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Doc example: "Find queries by request ID"
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT sql_text, query_tag->>'request_id' AS request_id, created_time "
-                      "FROM _gizmosql_instr.sql_statements "
-                      "WHERE query_tag->>'request_id' = 'req-doc-test' "
-                      "AND sql_text NOT LIKE '%sql_statements%' LIMIT 5"));
+      FetchNonEmpty(
+          sql_client, call_options,
+          "SELECT sql_text, query_tag->>'request_id' AS request_id, created_time "
+          "FROM _gizmosql_instr.sql_statements "
+          "WHERE query_tag->>'request_id' = 'req-doc-test' "
+          "AND sql_text NOT LIKE '%sql_statements%' LIMIT 5"));
   ASSERT_GT(table->num_rows(), 0) << "Should find queries with request_id='req-doc-test'";
 
   auto request_id_col = std::static_pointer_cast<arrow::StringArray>(table->column(1)->chunk(0));
@@ -566,17 +587,17 @@ TEST_F(TagServerFixture, DocExampleAggregateByInstanceTag) {
     ASSERT_ARROW_OK_AND_ASSIGN(auto t, reader->ToTable());
   }
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Doc example: "Aggregate execution stats by instance environment"
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT i.instance_tag->>'env' AS environment, "
-                      "       COUNT(*) AS total_executions "
-                      "FROM _gizmosql_instr.execution_details e "
-                      "JOIN _gizmosql_instr.instances i ON e.instance_id = i.instance_id "
-                      "GROUP BY 1"));
+      FetchNonEmpty(sql_client, call_options,
+                    "SELECT i.instance_tag->>'env' AS environment, "
+                    "       COUNT(*) AS total_executions "
+                    "FROM _gizmosql_instr.execution_details e "
+                    "JOIN _gizmosql_instr.instances i ON e.instance_id = i.instance_id "
+                    "GROUP BY 1"));
   ASSERT_GT(table->num_rows(), 0) << "Should have execution stats grouped by env";
 
   // The instance_tag has env="test" so we should find that
@@ -627,31 +648,29 @@ TEST_F(TagServerFixture, TagsVisibleInInstrumentationViews) {
     ASSERT_ARROW_OK_AND_ASSIGN(auto t, r->ToTable());
   }
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  // (record visibility is awaited by FetchNonEmpty below)
 
   // Verify instance_tag in active_sessions view
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto active_table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT instance_tag, session_tag FROM _gizmosql_instr.active_sessions LIMIT 1"));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto active_table,
+                             FetchNonEmpty(sql_client, call_options,
+                                           "SELECT instance_tag, session_tag FROM "
+                                           "_gizmosql_instr.active_sessions LIMIT 1"));
   ASSERT_GT(active_table->num_rows(), 0);
 
   // Verify tags in session_activity view
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto activity_table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT instance_tag, session_tag, query_tag "
-                      "FROM _gizmosql_instr.session_activity "
-                      "WHERE query_tag IS NOT NULL LIMIT 1"));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto activity_table,
+                             FetchNonEmpty(sql_client, call_options,
+                                           "SELECT instance_tag, session_tag, query_tag "
+                                           "FROM _gizmosql_instr.session_activity "
+                                           "WHERE query_tag IS NOT NULL LIMIT 1"));
   ASSERT_GT(activity_table->num_rows(), 0);
 
   // Verify tags in execution_details view
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto exec_table,
-      ExecuteAndFetch(sql_client, call_options,
-                      "SELECT query_tag, session_tag "
-                      "FROM _gizmosql_instr.execution_details "
-                      "WHERE query_tag IS NOT NULL LIMIT 1"));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto exec_table,
+                             FetchNonEmpty(sql_client, call_options,
+                                           "SELECT query_tag, session_tag "
+                                           "FROM _gizmosql_instr.execution_details "
+                                           "WHERE query_tag IS NOT NULL LIMIT 1"));
   ASSERT_GT(exec_table->num_rows(), 0);
 }
 
@@ -713,6 +732,23 @@ CliResult RunClientCmd(const std::string& args, const std::string& env_prefix = 
   return result;
 }
 
+// Re-runs an instrumentation lookup until its stdout contains `needle`
+// (bounded at 30 s): the instrumentation writer is asynchronous, so a lookup
+// issued right after the client that produced the record can be early. The
+// last result is returned either way so the caller's assertions report it.
+CliResult RunClientUntil(const std::string& args, const std::string& env_prefix,
+                         const std::string& needle) {
+  CliResult result;
+  for (int attempt = 0; attempt < 60; ++attempt) {
+    result = RunClientCmd(args, env_prefix);
+    if (result.exit_code == 0 && result.stdout_output.find(needle) != std::string::npos) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
+  return result;
+}
+
 }  // namespace
 
 TEST_F(TagServerFixture, ClientSessionTagFlag) {
@@ -736,10 +772,10 @@ TEST_F(TagServerFixture, ClientSessionTagFlag) {
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
   // Query instrumentation from a separate session to verify the tag was recorded
-  auto run2 = RunClientCmd(
+  auto run2 = RunClientUntil(
       conn_args +
-      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
-      env);
+          R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
+      env, "client_flag");
   ASSERT_EQ(run2.exit_code, 0)
       << "Lookup failed. stderr: " << run2.stderr_output;
   ASSERT_NE(run2.stdout_output.find("client_flag"), std::string::npos)
@@ -775,10 +811,10 @@ TEST_F(TagServerFixture, ClientQueryTagFlag) {
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
   // Second: query the instrumentation table (no tag needed for the lookup)
-  auto run2 = RunClientCmd(
+  auto run2 = RunClientUntil(
       conn_args +
-      R"( -c "SELECT query_tag FROM _gizmosql_instr.sql_statements WHERE sql_text LIKE '%client_tag_probe%' AND sql_text NOT LIKE '%sql_statements%' ORDER BY created_time DESC LIMIT 1")",
-      env);
+          R"( -c "SELECT query_tag FROM _gizmosql_instr.sql_statements WHERE sql_text LIKE '%client_tag_probe%' AND sql_text NOT LIKE '%sql_statements%' ORDER BY created_time DESC LIMIT 1")",
+      env, "client-test");
   ASSERT_EQ(run2.exit_code, 0)
       << "Second client run failed. stderr: " << run2.stderr_output;
   ASSERT_NE(run2.stdout_output.find("client-test"), std::string::npos)
@@ -806,10 +842,10 @@ TEST_F(TagServerFixture, ClientSessionTagEnvVar) {
 
   // Lookup from a clean session
   std::string lookup_env = "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
-  auto run2 = RunClientCmd(
+  auto run2 = RunClientUntil(
       conn_args +
-      R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
-      lookup_env);
+          R"( -c "SELECT session_tag FROM _gizmosql_instr.sessions WHERE session_tag IS NOT NULL ORDER BY start_time DESC LIMIT 1")",
+      lookup_env, "env_var");
   ASSERT_EQ(run2.exit_code, 0)
       << "Lookup failed. stderr: " << run2.stderr_output;
   ASSERT_NE(run2.stdout_output.find("env_var"), std::string::npos)
@@ -838,10 +874,10 @@ TEST_F(TagServerFixture, ClientQueryTagEnvVar) {
 
   // Check the instrumentation table
   std::string lookup_env = "GIZMOSQL_PASSWORD=" + GetPassword() + " ";
-  auto run2 = RunClientCmd(
+  auto run2 = RunClientUntil(
       conn_args +
-      R"( -c "SELECT query_tag FROM _gizmosql_instr.sql_statements WHERE sql_text LIKE '%env_query_tag_probe%' AND sql_text NOT LIKE '%sql_statements%' ORDER BY created_time DESC LIMIT 1")",
-      lookup_env);
+          R"( -c "SELECT query_tag FROM _gizmosql_instr.sql_statements WHERE sql_text LIKE '%env_query_tag_probe%' AND sql_text NOT LIKE '%sql_statements%' ORDER BY created_time DESC LIMIT 1")",
+      lookup_env, "query_test");
   ASSERT_EQ(run2.exit_code, 0)
       << "Second client run failed. stderr: " << run2.stderr_output;
   ASSERT_NE(run2.stdout_output.find("query_test"), std::string::npos)

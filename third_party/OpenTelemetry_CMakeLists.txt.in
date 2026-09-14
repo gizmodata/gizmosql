@@ -45,7 +45,10 @@ ExternalProject_Add(
       -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew$<SEMICOLON>/usr/local
       # Arrow 25's protobuf headers include absl (and reference utf8_range)
       # headers, which live in Arrow's FetchContent source trees
-      "-DCMAKE_CXX_FLAGS=-I${ABSL_INCLUDE_DIR} -I${UTF8_RANGE_INCLUDE_DIR}"
+      "-DCMAKE_CXX_FLAGS=-I${ABSL_INCLUDE_DIR} -I${UTF8_RANGE_INCLUDE_DIR} @GIZMOSQL_SANITIZER_FLAGS@"
+      "-DCMAKE_C_FLAGS=@GIZMOSQL_SANITIZER_FLAGS@"
+      "-DCMAKE_EXE_LINKER_FLAGS=@GIZMOSQL_SANITIZER_LINK_FLAGS@"
+      "-DCMAKE_SHARED_LINKER_FLAGS=@GIZMOSQL_SANITIZER_LINK_FLAGS@"
       -DProtobuf_INCLUDE_DIR=${PROTOBUF_INCLUDE_DIR}
       -DProtobuf_LIBRARY=${PROTOBUF_LIB}
       -DProtobuf_LITE_LIBRARY=${PROTOBUF_LITE_LIB}

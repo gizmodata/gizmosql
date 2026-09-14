@@ -1,0 +1,37 @@
+# ThreadSanitizer suppressions for the GizmoSQL integration suite
+# (.github/workflows/tsan.yml, TSAN_OPTIONS=suppressions=tests/tsan.supp).
+#
+# Keep this list short and justified. Every entry hides a report, so each must
+# name a known-benign pattern in third-party code, with the reason, and never a
+# GizmoSQL symbol: a race in src/ is a bug to fix, not to suppress. Syntax:
+#   race:<symbol or file substring>   thread_leak:<...>   deadlock:<...>
+# See https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+
+# DuckDB storage engine: a transaction commit appends rows into a transient
+# column segment (ColumnSegment::Append) while another pipeline thread scans the
+# same segment. DuckDB's MVCC design publishes the committed row count under the
+# row group lock and readers never look past it, so the overlapping bytes are
+# never observed; TSan cannot see that invariant. Reported at
+# validity_uncompressed.cpp (ValidityAppend vs ValidityScan) in the integration
+# suite; the same pattern exists for every compression function's Append.
+race:duckdb::ColumnSegment::Append
+
+
+# DuckDB hash join: parallel probe threads set one-byte "found match" markers in
+# the shared hash table (ScanStructure::NextInnerJoin, NextRightSemiOrAntiJoin)
+# for right/outer/semi/anti joins. Every writer stores the same value, so the
+# outcome is identical regardless of ordering; DuckDB relies on that instead of
+# atomics. Reported under concurrent TPC-H queries.
+race:duckdb::JoinHashTable::ScanStructure
+
+# jemalloc (bundled by DuckDB): its extent metadata is managed with its own
+# atomics and lock-free structures that TSan cannot model, so it reports races
+# inside jemalloc/internal/edata.h on every allocation-heavy run. Standard
+# jemalloc suppression; no GizmoSQL frame is involved.
+race:third_party/jemalloc
+
+# GDAL, inside DuckDB's spatial extension: registering the module takes its
+# global bootstrap mutex and a per-object mutex in both orders
+# (CPLCreateOrAcquireMutexEx vs CPLAcquireMutex) while single-threaded at load
+# time. TSan reports the cycle as a potential deadlock; both stacks are GDAL.
+deadlock:duckdb::RegisterGDALModule

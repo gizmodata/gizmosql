@@ -183,9 +183,55 @@ endif()
 # cache. -DGIZMOSQL_FORCE_SUPERBUILDS=ON bypasses the guard.
 option(GIZMOSQL_FORCE_SUPERBUILDS "Always re-drive the third-party superbuilds" OFF)
 
+# --------------------- Sanitizers ---------------------
+# GIZMOSQL_SANITIZER=thread builds the project AND every third-party superbuild
+# (Arrow with its bundled gRPC/protobuf, DuckDB and its extensions, gflags,
+# replxx, SQLite, OpenTelemetry) with ThreadSanitizer, so data races in the
+# server are reported with both stack traces instead of surfacing as rare
+# crashes. `address` does the same with AddressSanitizer. The whole program
+# must be instrumented or TSan cannot see locks taken inside library code and
+# reports false positives, which is why the flags are forwarded everywhere and
+# the superbuild input digest includes the sanitizer. Use a separate build
+# directory; CI keys its caches on it. Header-only projects (jwt-cpp,
+# cpp-httplib) need nothing.
+set(GIZMOSQL_SANITIZER "" CACHE STRING "Instrument the whole build: '' (none), thread, or address")
+set_property(CACHE GIZMOSQL_SANITIZER PROPERTY STRINGS "" thread address)
+set(GIZMOSQL_SANITIZER_FLAGS "")
+set(GIZMOSQL_SANITIZER_LINK_FLAGS "")
+set(GIZMOSQL_EP_SANITIZER_ARGS "")
+set(GIZMOSQL_EP_ARROW_SANITIZER_ARGS "")
+set(GIZMOSQL_EP_DUCKDB_SANITIZER_ARGS "")
+if(GIZMOSQL_SANITIZER STREQUAL "thread" OR GIZMOSQL_SANITIZER STREQUAL "address")
+    if(MSVC)
+        message(FATAL_ERROR "GIZMOSQL_SANITIZER requires clang or gcc")
+    endif()
+    set(GIZMOSQL_SANITIZER_FLAGS "-fsanitize=${GIZMOSQL_SANITIZER} -fno-omit-frame-pointer -g")
+    set(GIZMOSQL_SANITIZER_LINK_FLAGS "-fsanitize=${GIZMOSQL_SANITIZER}")
+    add_compile_options(-fsanitize=${GIZMOSQL_SANITIZER} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${GIZMOSQL_SANITIZER})
+    # Pasted verbatim into each superbuild template's CMAKE_ARGS by
+    # configure_file(), so the value is CMake source text: pre-quoted
+    # arguments, each of which reaches the sub-project as one -D.
+    set(GIZMOSQL_EP_SANITIZER_ARGS
+        "\"-DCMAKE_C_FLAGS=${GIZMOSQL_SANITIZER_FLAGS}\" \"-DCMAKE_CXX_FLAGS=${GIZMOSQL_SANITIZER_FLAGS}\" \"-DCMAKE_EXE_LINKER_FLAGS=${GIZMOSQL_SANITIZER_LINK_FLAGS}\" \"-DCMAKE_SHARED_LINKER_FLAGS=${GIZMOSQL_SANITIZER_LINK_FLAGS}\"")
+    if(GIZMOSQL_SANITIZER STREQUAL "thread")
+        # Arrow's own switch also enables its dynamic annotations and TSan
+        # atomics; DuckDB's turns its default ASan/UBSan off (they cannot be
+        # combined with TSan).
+        set(GIZMOSQL_EP_ARROW_SANITIZER_ARGS "-DARROW_USE_TSAN=ON")
+        set(GIZMOSQL_EP_DUCKDB_SANITIZER_ARGS "-DENABLE_THREAD_SANITIZER=ON -DENABLE_SANITIZER=OFF -DENABLE_UBSAN=OFF")
+    else()
+        set(GIZMOSQL_EP_ARROW_SANITIZER_ARGS "-DARROW_USE_ASAN=ON")
+        set(GIZMOSQL_EP_DUCKDB_SANITIZER_ARGS "-DENABLE_SANITIZER=ON -DRELEASE_SANITIZER=ON -DENABLE_UBSAN=OFF")
+    endif()
+    message(STATUS "Sanitizer: ${GIZMOSQL_SANITIZER} (project and all superbuilds)")
+elseif(NOT GIZMOSQL_SANITIZER STREQUAL "")
+    message(FATAL_ERROR "GIZMOSQL_SANITIZER must be '', thread, or address (got '${GIZMOSQL_SANITIZER}')")
+endif()
+
 function(gizmosql_superbuild_check project_name stamp_dir superbuild_dir out_skip out_hash)
     set(inputs "${superbuild_dir}/CMakeLists.txt" ${ARGN})
-    set(digest "generator=${CMAKE_GENERATOR}\nbuild_type=${CMAKE_BUILD_TYPE}\n")
+    set(digest "generator=${CMAKE_GENERATOR}\nbuild_type=${CMAKE_BUILD_TYPE}\nsanitizer=${GIZMOSQL_SANITIZER}\n")
     foreach(input IN LISTS inputs)
         if(EXISTS "${input}")
             file(SHA256 "${input}" input_hash)
@@ -919,9 +965,12 @@ endif()
 
 set(REPLXX_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/replxx")
 set(REPLXX_INCLUDE_DIR "${REPLXX_INSTALL_DIR}/include")
-# replxx appends -d suffix in Debug builds; on Windows the target is "replxx-static"
+# replxx appends a per-config suffix: -d in Debug, -rd in RelWithDebInfo,
+# none in Release; on Windows the target is "replxx-static"
 if(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
     set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-d${LIB_SUFFIX}")
+elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-rd${LIB_SUFFIX}")
+    set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx-rd${LIB_SUFFIX}")
 elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
     set(REPLXX_LIBRARY_PATH "${REPLXX_INSTALL_DIR}/lib/${LIB_PREFIX}replxx${LIB_SUFFIX}")
 elseif(EXISTS "${REPLXX_INSTALL_DIR}/lib/replxx-static.lib")

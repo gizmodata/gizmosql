@@ -1,0 +1,183 @@
+# ThreadSanitizer build of the whole server (project + every third-party
+# superbuild) followed by the integration suite. A data race anywhere in the
+# request path fails this job with both stack traces, instead of surfacing as
+# a rare crash in production. Slow by nature (instrumented code runs 5-15x
+# slower), so it is a separate workflow with its own caches, keyed on the
+# sanitizer, and it skips the timing benchmarks.
+#
+# Run the same build locally with:
+#   cmake -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+#     -DGIZMOSQL_SANITIZER=thread -DGIZMOSQL_ENTERPRISE=ON -DWITH_OPENTELEMETRY=OFF \
+#     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+name: tsan
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - 'third_party/**'
+      - '.github/workflows/tsan.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - 'third_party/**'
+      - '.github/workflows/tsan.yml'
+
+concurrency:
+  group: tsan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SCCACHE_GHA_ENABLED: "true"
+
+jobs:
+  tsan:
+    name: ThreadSanitizer (Linux amd64, stable)
+    # Same-repo PRs are covered by the push trigger; run on PR events only for forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Normalize checkout mtimes for cached build trees
+        # git does not preserve mtimes; without this the restored superbuild
+        # trees look older than third_party/* and DuckDB rebuilds from scratch.
+        run: git ls-files -z third_party scripts | xargs -0 touch -t 200001010000
+
+      - name: Install build requirements
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang ninja-build libboost-program-options-dev \
+            libboost-dev libssl-dev libcurl4-openssl-dev automake libtool pkg-config flex bison
+          clang --version | head -1
+
+      - name: Resolve DuckDB version for the cache key
+        id: duckdb-tag
+        run: |
+          tag=$(sed -nE 's/^set\(DUCKDB_STABLE_VERSION "([^"]+)".*/\1/p' CMakeLists.txt | head -1)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Instrumented builds are not interchangeable with the release ones, so
+      # these keys are prefixed `tsan-` and hash the templates plus the
+      # sanitizer plumbing in CMakeLists.txt. Children are globbed individually
+      # for the same reason as in ci.yml (actions/cache ignores negations of a
+      # matched directory's children).
+      - name: Restore third-party cache (Arrow & friends, TSan)
+        id: arrow-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            build/third_party/*
+            !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
+            !build/third_party/src/duckdb_project*
+          key: tsan-deps-v1-linux-amd64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'CMakeLists.txt') }}
+
+      - name: Restore DuckDB cache (TSan)
+        id: duckdb-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: tsan-duckdb-v1-linux-amd64-stable-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'CMakeLists.txt') }}
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Configure and build (ThreadSanitizer)
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DGIZMOSQL_SANITIZER=thread \
+            -DGIZMOSQL_ENTERPRISE=ON \
+            -DWITH_OPENTELEMETRY=OFF \
+            -DGIZMOSQL_DUCKDB_CHANNEL=stable \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          ninja -C build gizmosql_server gizmosql_integration_tests
+
+      # Saved from main only (a key is never re-saved), like ci.yml.
+      - name: Save third-party cache (Arrow & friends, TSan)
+        if: github.ref == 'refs/heads/main' && steps.arrow-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/third_party/*
+            !build/third_party/duckdb
+            !build/third_party/src
+            build/third_party/src/*
+            !build/third_party/src/duckdb_project*
+          key: ${{ steps.arrow-cache.outputs.cache-primary-key }}
+
+      - name: Save DuckDB cache (TSan)
+        if: github.ref == 'refs/heads/main' && steps.duckdb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/third_party/duckdb
+            build/third_party/src/duckdb_project*
+          key: ${{ steps.duckdb-cache.outputs.cache-primary-key }}
+
+      - name: Lower ASLR entropy for TSan
+        # Recent kernels randomize mmap with 32 bits; TSan's shadow layout needs
+        # at most 28 or it aborts at startup with "unexpected memory mapping".
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Setup Enterprise License
+        env:
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_METRICS_TEST_LICENSE || secrets.GIZMOSQL_LICENSE_KEY }}
+        if: env.GIZMOSQL_LICENSE_KEY != ''
+        run: |
+          echo "$GIZMOSQL_LICENSE_KEY" > /tmp/gizmosql_license.jwt
+          echo "GIZMOSQL_LICENSE_KEY_FILE=/tmp/gizmosql_license.jwt" >> "$GITHUB_ENV"
+
+      - name: Run integration tests under ThreadSanitizer
+        env:
+          # exitcode=66 makes the process fail when any unsuppressed report was
+          # printed, even if every gtest assertion passed. halt_on_error=0 keeps
+          # going so one run collects every race. Reports also go to files for
+          # the artifact below.
+          TSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/tsan.supp halt_on_error=0 abort_on_error=0 exitcode=66 second_deadlock_stack=1 log_path=${{ github.workspace }}/build/tsan-reports/tsan
+        run: |
+          mkdir -p build/tsan-reports
+          # TPC-H and benchmark suites assert wall-clock limits that instrumented
+          # code cannot meet; they are covered by the regular CI matrix.
+          ./build/tests/gizmosql_integration_tests --gtest_filter='-TPCH*:*Benchmark*'
+
+      - name: Summarize ThreadSanitizer reports
+        if: always()
+        run: |
+          shopt -s nullglob
+          files=(build/tsan-reports/tsan.*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No ThreadSanitizer reports." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "## ThreadSanitizer reports"
+            echo
+            grep -h "^SUMMARY: ThreadSanitizer" "${files[@]}" | sort | uniq -c | sort -rn | sed 's/^/    /'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ThreadSanitizer reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tsan-reports
+          path: build/tsan-reports/
+          if-no-files-found: ignore
