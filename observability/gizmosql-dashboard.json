@@ -14,6 +14,36 @@
   "templating": {
     "list": [
       {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(gizmosql_build_info, namespace)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "sort": 1
+      },
+      {
+        "name": "pod",
+        "label": "Pod",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(gizmosql_build_info{namespace=~\"$namespace\"}, pod)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "sort": 1
+      },
+      {
         "name": "instance",
         "label": "Instance",
         "type": "query",
@@ -47,18 +77,18 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "gizmosql_duckdb_memory_used_bytes{instance=~\"$instance\"}",
-          "legendFormat": "Used"
+          "expr": "gizmosql_duckdb_memory_used_bytes{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Used"
         },
         {
           "refId": "B",
-          "expr": "gizmosql_duckdb_memory_limit_bytes{instance=~\"$instance\"}",
-          "legendFormat": "DuckDB limit"
+          "expr": "gizmosql_duckdb_memory_limit_bytes{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} DuckDB limit"
         },
         {
           "refId": "C",
-          "expr": "gizmosql_cgroup_memory_limit_bytes{instance=~\"$instance\"}",
-          "legendFormat": "Container limit"
+          "expr": "gizmosql_cgroup_memory_limit_bytes{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Container limit"
         }
       ],
       "fieldConfig": {
@@ -91,8 +121,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "process_resident_memory_bytes{instance=~\"$instance\"}",
-          "legendFormat": "RSS"
+          "expr": "process_resident_memory_bytes{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} RSS"
         }
       ],
       "fieldConfig": {
@@ -125,8 +155,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(process_cpu_seconds_total{instance=~\"$instance\"}[5m])",
-          "legendFormat": "CPU cores"
+          "expr": "rate(process_cpu_seconds_total{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{pod}} CPU cores"
         }
       ],
       "fieldConfig": {
@@ -159,8 +189,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "gizmosql_sessions{instance=~\"$instance\"}",
-          "legendFormat": "{{state}}"
+          "expr": "gizmosql_sessions{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} {{state}}"
         }
       ],
       "fieldConfig": {
@@ -193,8 +223,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(gizmosql_statements_total{instance=~\"$instance\"}[5m])",
-          "legendFormat": "{{status}}"
+          "expr": "rate(gizmosql_statements_total{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{pod}} {{status}}"
         }
       ],
       "fieldConfig": {
@@ -227,8 +257,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (instance, kind, le) (rate(gizmosql_statement_duration_seconds_bucket{instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{kind}}"
+          "expr": "histogram_quantile(0.95, sum by (instance, pod, kind, le) (rate(gizmosql_statement_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}[5m])))",
+          "legendFormat": "{{pod}} {{kind}}"
         }
       ],
       "fieldConfig": {
@@ -261,13 +291,13 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "gizmosql_queue_depth{instance=~\"$instance\"}",
-          "legendFormat": "Queued"
+          "expr": "gizmosql_queue_depth{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Queued"
         },
         {
           "refId": "B",
-          "expr": "gizmosql_concurrency_limit{instance=~\"$instance\"}",
-          "legendFormat": "Concurrency limit"
+          "expr": "gizmosql_concurrency_limit{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Concurrency limit"
         }
       ],
       "fieldConfig": {
@@ -300,8 +330,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "gizmosql_statements_active{instance=~\"$instance\"}",
-          "legendFormat": "{{wait}}"
+          "expr": "gizmosql_statements_active{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} {{wait}}"
         }
       ],
       "fieldConfig": {
@@ -334,13 +364,13 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "gizmosql_health_check_status{instance=~\"$instance\"}",
-          "legendFormat": "Health"
+          "expr": "gizmosql_health_check_status{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Health"
         },
         {
           "refId": "B",
-          "expr": "gizmosql_metrics_collection_success{instance=~\"$instance\"}",
-          "legendFormat": "Local collector"
+          "expr": "gizmosql_metrics_collection_success{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Local collector"
         }
       ],
       "fieldConfig": {
@@ -373,13 +403,13 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "gizmosql_duckdb_spill_bytes{instance=~\"$instance\"}",
-          "legendFormat": "Spill"
+          "expr": "gizmosql_duckdb_spill_bytes{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Spill"
         },
         {
           "refId": "B",
-          "expr": "gizmosql_wal_bytes{instance=~\"$instance\"}",
-          "legendFormat": "WAL"
+          "expr": "gizmosql_wal_bytes{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} WAL"
         }
       ],
       "fieldConfig": {
@@ -412,18 +442,18 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "process_threads{instance=~\"$instance\"}",
-          "legendFormat": "Threads"
+          "expr": "process_threads{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Threads"
         },
         {
           "refId": "B",
-          "expr": "process_open_fds{instance=~\"$instance\"}",
-          "legendFormat": "File descriptors"
+          "expr": "process_open_fds{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} File descriptors"
         },
         {
           "refId": "C",
-          "expr": "process_open_handles{instance=~\"$instance\"}",
-          "legendFormat": "Windows handles"
+          "expr": "process_open_handles{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
+          "legendFormat": "{{pod}} Windows handles"
         }
       ],
       "fieldConfig": {
@@ -439,5 +469,6 @@
         }
       }
     }
-  ]
+  ],
+  "description": "Namespace/Pod variables filter Kubernetes scrapes (PodMonitor labels); they match everything on non-Kubernetes deployments."
 }
