@@ -190,7 +190,7 @@
         {
           "refId": "A",
           "expr": "gizmosql_sessions{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
-          "legendFormat": "{{state}}"
+          "legendFormat": "{{pod}} {{state}}"
         }
       ],
       "fieldConfig": {
@@ -224,7 +224,7 @@
         {
           "refId": "A",
           "expr": "rate(gizmosql_statements_total{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}[5m])",
-          "legendFormat": "{{status}}"
+          "legendFormat": "{{pod}} {{status}}"
         }
       ],
       "fieldConfig": {
@@ -258,7 +258,7 @@
         {
           "refId": "A",
           "expr": "histogram_quantile(0.95, sum by (instance, pod, kind, le) (rate(gizmosql_statement_duration_seconds_bucket{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}[5m])))",
-          "legendFormat": "{{kind}}"
+          "legendFormat": "{{pod}} {{kind}}"
         }
       ],
       "fieldConfig": {
@@ -331,7 +331,7 @@
         {
           "refId": "A",
           "expr": "gizmosql_statements_active{namespace=~\"$namespace\",pod=~\"$pod\",instance=~\"$instance\"}",
-          "legendFormat": "{{wait}}"
+          "legendFormat": "{{pod}} {{wait}}"
         }
       ],
       "fieldConfig": {
