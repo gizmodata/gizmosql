@@ -388,6 +388,33 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     return std::nullopt;
 }
 
+bool ExpressionIsTrue(const dd::unique_ptr<dd::ParsedExpression>& value) {
+  if (!value) return false;
+  if (value->GetExpressionClass() == dd::ExpressionClass::CONSTANT) {
+    const auto& ce = value->Cast<dd::ConstantExpression>();
+    if (!ce.value.IsNull() && ce.value.type().id() == dd::LogicalTypeId::BOOLEAN) {
+      return ce.value.GetValue<bool>();
+    }
+  }
+  const std::string text = ToLower(value->ToString());
+  return text == "true";
+}
+
+std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& stmt) {
+  if (stmt.type == dd::StatementType::PREPARE_STATEMENT) {
+    auto& ps = stmt.Cast<dd::PrepareStatement>();
+    if (ps.statement) return ClassifyUnredactedSecretsStatement(*ps.statement);
+    return std::nullopt;
+  }
+  if (stmt.type != dd::StatementType::SET_STATEMENT) return std::nullopt;
+  auto& ss = stmt.Cast<dd::SetStatement>();
+  if (ss.set_type == dd::SetType::RESET) return std::nullopt;
+  if (ToLower(ss.name) != "allow_unredacted_secrets") return std::nullopt;
+  auto& set_value = stmt.Cast<dd::SetVariableStatement>();
+  if (!ExpressionIsTrue(set_value.value)) return std::nullopt;
+  return "SET allow_unredacted_secrets = true";
+}
+
 }  // namespace
 
 std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
@@ -404,6 +431,20 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
   for (auto& stmt_ptr : parser.statements) {
     if (!stmt_ptr) continue;
     if (auto v = ClassifyStatement(*stmt_ptr)) return v;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) {
+  dd::Parser parser;
+  try {
+    parser.ParseQuery(sql);
+  } catch (...) {
+    return std::nullopt;
+  }
+  for (auto& stmt_ptr : parser.statements) {
+    if (!stmt_ptr) continue;
+    if (auto v = ClassifyUnredactedSecretsStatement(*stmt_ptr)) return v;
   }
   return std::nullopt;
 }

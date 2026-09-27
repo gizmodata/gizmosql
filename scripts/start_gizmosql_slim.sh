@@ -71,6 +71,7 @@
 #   GIZMOSQL_MEMORY_LIMIT                --memory-limit (DuckDB only)
 #   GIZMOSQL_SESSION_IDLE_TIMEOUT        --session-idle-timeout (DuckDB only)
 #   GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS   --allow-unsigned-extensions (DuckDB only; security-sensitive)
+#   GIZMOSQL_BLOCK_UNREDACTED_SECRETS    --block-unredacted-secrets (DuckDB only; default true)
 #   GIZMOSQL_GRACEFUL_SHUTDOWN           --graceful-shutdown (drain on SIGINT/SIGTERM)
 #   GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS  --shutdown-grace-period-seconds
 #

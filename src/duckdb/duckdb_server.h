@@ -236,6 +236,11 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
 
   arrow::Result<int32_t> GetQueryTimeout(const ClientSession& client_session);
 
+  /// When true (the default), client `SET allow_unredacted_secrets = true` is
+  /// rejected before DuckDB sees it.
+  void SetBlockUnredactedSecrets(bool block);
+  bool BlockUnredactedSecrets() const;
+
   arrow::Status SetPrintQueries(const ClientSession& client_session,
                                 const bool& enabled);
 

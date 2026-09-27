@@ -74,6 +74,10 @@ namespace gizmosql::ddb {
 /// parse error during preparation).
 std::optional<std::string> ClassifyGatedCommand(const std::string& sql);
 
+/// `SET allow_unredacted_secrets = true` for any role, or std::nullopt.
+/// RESET and `= false` are not a match. A parse failure returns std::nullopt.
+std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql);
+
 /// Convenience wrapper: arrow::Status::OK() if permitted for a non-admin
 /// session, otherwise a Flight PermissionDenied (Unauthorized) error naming the
 /// gated category.

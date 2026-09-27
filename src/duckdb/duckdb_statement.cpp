@@ -1066,6 +1066,23 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     return result;
   }
 
+  bool block_unredacted_secrets = true;
+  if (auto server = GetServer(*client_session)) {
+    block_unredacted_secrets = server->BlockUnredactedSecrets();
+  }
+  if (!is_internal && block_unredacted_secrets) {
+    if (auto blocked = gizmosql::ddb::ClassifyUnredactedSecretsSet(sql)) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                             "Client attempted to enable unredacted secrets",
+                             {"kind", "sql"}, {"status", "rejected"},
+                             {"gated", *blocked}, {"statement_id", handle},
+                             {"sql", logged_sql});
+      return arrow::flight::MakeFlightError(
+          arrow::flight::FlightStatusCode::Unauthorized,
+          "SET allow_unredacted_secrets = true is disabled on this server.");
+    }
+  }
+
   std::shared_ptr<duckdb::PreparedStatement> stmt =
       client_session->connection->Get().Prepare(effective_sql);
 

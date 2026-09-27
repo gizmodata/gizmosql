@@ -931,6 +931,7 @@ class DuckDBFlightSqlServer::Impl {
   bool admin_bypass_queue_default_ = true;    // admin sessions bypass the queue by default
   int32_t max_sessions_ = 0;                  // 0 = unlimited; reject new sessions when at cap
   int32_t session_idle_timeout_seconds_ = 0;  // 0 = idle eviction off
+  bool block_unredacted_secrets_ = true;
 
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -1272,6 +1273,9 @@ class DuckDBFlightSqlServer::Impl {
     ::gizmosql::metrics::RegisterAdmissionQueueGauges(admission_controller_);
   }
 
+  void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
+  bool BlockUnredactedSecrets() const { return block_unredacted_secrets_; }
+
   std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const {
     return instrumentation_manager_;
   }
@@ -1316,6 +1320,9 @@ class DuckDBFlightSqlServer::Impl {
     StartIdleSessionSweeper();
     ::gizmosql::metrics::RegisterAdmissionQueueGauges(admission_controller_);
   }
+
+  void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
+  bool BlockUnredactedSecrets() const { return block_unredacted_secrets_; }
 #endif
 
   void ReleaseAllSessions() {
@@ -2900,6 +2907,14 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 }
 
 DuckDBFlightSqlServer::~DuckDBFlightSqlServer() = default;
+
+void DuckDBFlightSqlServer::SetBlockUnredactedSecrets(bool block) {
+  impl_->SetBlockUnredactedSecrets(block);
+}
+
+bool DuckDBFlightSqlServer::BlockUnredactedSecrets() const {
+  return impl_->BlockUnredactedSecrets();
+}
 
 Status DuckDBFlightSqlServer::ExecuteSql(const std::string& sql) const {
   return impl_->ExecuteSql(sql);
