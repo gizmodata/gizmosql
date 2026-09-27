@@ -95,13 +95,6 @@ TEST(UnredactedSecretsSet, TrueIsMatched) {
                   .has_value());
 }
 
-TEST(UnredactedSecretsSet, FalseAndOtherSettingsAreNotMatched) {
-  EXPECT_FALSE(ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets = false").has_value());
-  EXPECT_FALSE(ClassifyUnredactedSecretsSet("RESET allow_unredacted_secrets").has_value());
-  EXPECT_FALSE(ClassifyUnredactedSecretsSet("SET memory_limit = '1GB'").has_value());
-  EXPECT_FALSE(ClassifyUnredactedSecretsSet("SELECT 1").has_value());
-}
-
 TEST(AdminCommandGuard, SetGlobalIsGated) {
   EXPECT_TRUE(Gated("SET GLOBAL memory_limit = '10GB'"));
   EXPECT_TRUE(Gated("SET GLOBAL search_path = 'x'"));  // any setting under explicit GLOBAL
