@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <functional>
 #include <unordered_set>
 
@@ -26,6 +27,7 @@
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/subquery_expression.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
@@ -388,17 +390,39 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     return std::nullopt;
 }
 
-bool ExpressionIsTrue(const dd::unique_ptr<dd::ParsedExpression>& value) {
-  if (!value) return false;
-  if (value->GetExpressionClass() == dd::ExpressionClass::CONSTANT) {
-    const auto& ce = value->Cast<dd::ConstantExpression>();
-    if (!ce.value.IsNull() && ce.value.type().id() == dd::LogicalTypeId::BOOLEAN) {
-      return ce.value.GetValue<bool>();
+bool IsBooleanType(const dd::LogicalType& type) {
+#if !GIZMOSQL_DUCKDB_CHANNEL_LTS
+  // DuckDB 1.5+ leaves parsed type names unbound until binding.
+  if (type.id() == dd::LogicalTypeId::UNBOUND) {
+    try {
+      return dd::UnboundType::TryDefaultBind(type).id() == dd::LogicalTypeId::BOOLEAN;
+    } catch (...) {
+      return false;
     }
   }
-  const std::string text = ToLower(value->ToString());
-  // DuckDB parses the keyword true as CAST('t' AS BOOLEAN), not a boolean constant.
-  return text == "true" || text == "cast('t' as boolean)";
+#endif
+  return type.id() == dd::LogicalTypeId::BOOLEAN;
+}
+
+// True only when a SET value is provably false. DuckDB evaluates the value and
+// casts it to BOOLEAN, so true, 1, 'yes', 't', NOT false, (true) all enable the
+// setting; anything that is not a false constant is treated as an attempt to
+// enable it (fail closed).
+bool ExpressionIsFalse(const dd::ParsedExpression* value) {
+  if (!value) return false;
+  if (value->GetExpressionClass() == dd::ExpressionClass::CAST) {
+    // DuckDB parses the keyword false as CAST('f' AS BOOLEAN).
+    const auto& cast = value->Cast<dd::CastExpression>();
+    if (!IsBooleanType(cast.cast_type)) return false;
+    return ExpressionIsFalse(cast.child.get());
+  }
+  if (value->GetExpressionClass() != dd::ExpressionClass::CONSTANT) return false;
+  const auto& ce = value->Cast<dd::ConstantExpression>();
+  if (ce.value.IsNull()) return false;
+  dd::Value as_bool;
+  std::string error;
+  if (!ce.value.DefaultTryCastAs(dd::LogicalType::BOOLEAN, as_bool, &error)) return false;
+  return !as_bool.IsNull() && !as_bool.GetValue<bool>();
 }
 
 std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& stmt) {
@@ -412,7 +436,7 @@ std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& 
   if (ss.set_type == dd::SetType::RESET) return std::nullopt;
   if (ToLower(ss.name) != "allow_unredacted_secrets") return std::nullopt;
   auto& set_value = stmt.Cast<dd::SetVariableStatement>();
-  if (!ExpressionIsTrue(set_value.value)) return std::nullopt;
+  if (ExpressionIsFalse(set_value.value.get())) return std::nullopt;
   return "SET allow_unredacted_secrets = true";
 }
 
@@ -437,6 +461,15 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
 }
 
 std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) {
+  // Every client statement comes through here, so skip the parse unless the
+  // setting name appears. DuckDB's parser rejects U&"..." identifier escapes,
+  // so the name cannot be spelled any other way.
+  static const std::string kName = "allow_unredacted_secrets";
+  auto it =
+      std::search(sql.begin(), sql.end(), kName.begin(), kName.end(),
+                  [](unsigned char a, unsigned char b) { return std::tolower(a) == b; });
+  if (it == sql.end()) return std::nullopt;
+
   dd::Parser parser;
   try {
     parser.ParseQuery(sql);

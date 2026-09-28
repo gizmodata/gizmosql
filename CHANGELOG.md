@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `--block-unredacted-secrets` / `GIZMOSQL_BLOCK_UNREDACTED_SECRETS` (default
+  **on**): GizmoSQL rejects a client's `SET allow_unredacted_secrets` to any
+  value other than false (`true`, `1`, `'yes'`, `NOT false`, the `PRAGMA`
+  form, ...) before DuckDB sees it, for every role including admin. DuckDB
+  already refuses to enable the setting once the database is open; this
+  returns a clear GizmoSQL error and keeps the block in place should that
+  DuckDB behavior change. Also a new trailing `block_unredacted_secrets`
+  parameter on the `RunFlightSQLServer()` C API. DuckDB backend only
+  ([#193](https://github.com/gizmodata/gizmosql/pull/193), thanks @EmmS21).
 - ThreadSanitizer CI workflow (`.github/workflows/tsan.yml`): builds the whole
   server and every third-party superbuild instrumented and runs the
   integration suite under it, failing on any data race. The new

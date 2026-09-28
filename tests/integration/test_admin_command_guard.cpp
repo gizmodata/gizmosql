@@ -94,6 +94,43 @@ TEST(UnredactedSecretsSet, TrueIsMatched) {
                   .has_value());
 }
 
+// DuckDB casts the SET value to BOOLEAN, so every one of these enables the
+// setting and must be matched, not just the literal `true`.
+TEST(UnredactedSecretsSet, TrueEquivalentsAreMatched) {
+  for (const char* sql : {
+           "SET allow_unredacted_secrets = 1",
+           "SET allow_unredacted_secrets = 'true'",
+           "SET allow_unredacted_secrets = 't'",
+           "SET allow_unredacted_secrets = 'yes'",
+           "SET allow_unredacted_secrets = true::BOOLEAN",
+           "SET allow_unredacted_secrets = (true)",
+           "SET allow_unredacted_secrets = NOT false",
+           "SET allow_unredacted_secrets = (SELECT true)",
+           "SET allow_unredacted_secrets TO true",
+           "SET GLOBAL allow_unredacted_secrets = true",
+           "SET \"allow_unredacted_secrets\" = true",
+           "PRAGMA allow_unredacted_secrets = true",
+           "SELECT 1; SET allow_unredacted_secrets = true",
+       }) {
+    EXPECT_TRUE(ClassifyUnredactedSecretsSet(sql).has_value()) << sql;
+  }
+}
+
+TEST(UnredactedSecretsSet, FalseAndOtherSqlAreNotMatched) {
+  for (const char* sql : {
+           "SET allow_unredacted_secrets = false",
+           "SET allow_unredacted_secrets = 0",
+           "SET allow_unredacted_secrets = 'false'",
+           "PRAGMA allow_unredacted_secrets = false",
+           "RESET allow_unredacted_secrets",
+           "SELECT current_setting('allow_unredacted_secrets')",
+           "SET threads = 4",
+           "SELECT 1",
+       }) {
+    EXPECT_FALSE(ClassifyUnredactedSecretsSet(sql).has_value()) << sql;
+  }
+}
+
 TEST(AdminCommandGuard, SetGlobalIsGated) {
   EXPECT_TRUE(Gated("SET GLOBAL memory_limit = '10GB'"));
   EXPECT_TRUE(Gated("SET GLOBAL search_path = 'x'"));  // any setting under explicit GLOBAL

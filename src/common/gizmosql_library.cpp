@@ -1939,14 +1939,15 @@ int RunFlightSQLServer(
 
   // ---- Boolean env var fallbacks (library-owned) -----------
   // std::optional<bool>: nullopt = "not set, check env var"; true/false = "explicit, skip env var"
-  auto resolve_bool_env = [&](std::optional<bool>& val, const char* env_name) {
+  auto resolve_bool_env = [&](std::optional<bool>& val, const char* env_name,
+                              bool default_value = false) {
     if (!val.has_value()) {
       auto ev = gizmosql::SafeGetEnvVarValue(env_name);
       if (!ev.empty()) {
         bool parsed = false;
         if (parse_bool(ev, parsed)) val = parsed;
       }
-      if (!val.has_value()) val = false;  // default to false if env var not set or invalid
+      if (!val.has_value()) val = default_value;  // env var not set or invalid
     }
   };
   // PRINT_QUERIES is the documented name (docs/index.md, the Docker start
@@ -1961,14 +1962,8 @@ int RunFlightSQLServer(
   resolve_bool_env(admin_bypass_queue_default, "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT");
   resolve_bool_env(graceful_shutdown, "GIZMOSQL_GRACEFUL_SHUTDOWN");
   resolve_bool_env(allow_unsigned_extensions, "GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS");
-  if (!block_unredacted_secrets.has_value()) {
-    auto ev = gizmosql::SafeGetEnvVarValue("GIZMOSQL_BLOCK_UNREDACTED_SECRETS");
-    if (!ev.empty()) {
-      bool parsed = false;
-      if (parse_bool(ev, parsed)) block_unredacted_secrets = parsed;
-    }
-    if (!block_unredacted_secrets.has_value()) block_unredacted_secrets = true;
-  }
+  resolve_bool_env(block_unredacted_secrets, "GIZMOSQL_BLOCK_UNREDACTED_SECRETS",
+                   /*default_value=*/true);
 
   // Integer env var fallback for session_idle_timeout_seconds: only consult env
   // when left at the sentinel default (0 = off).

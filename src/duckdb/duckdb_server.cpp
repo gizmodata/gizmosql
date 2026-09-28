@@ -1273,9 +1273,6 @@ class DuckDBFlightSqlServer::Impl {
     ::gizmosql::metrics::RegisterAdmissionQueueGauges(admission_controller_);
   }
 
-  void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
-  bool BlockUnredactedSecrets() const { return block_unredacted_secrets_; }
-
   std::shared_ptr<InstrumentationManager> GetInstrumentationManager() const {
     return instrumentation_manager_;
   }
@@ -1320,10 +1317,10 @@ class DuckDBFlightSqlServer::Impl {
     StartIdleSessionSweeper();
     ::gizmosql::metrics::RegisterAdmissionQueueGauges(admission_controller_);
   }
+#endif
 
   void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
   bool BlockUnredactedSecrets() const { return block_unredacted_secrets_; }
-#endif
 
   void ReleaseAllSessions() {
     StopIdleSessionSweeper();
