@@ -397,7 +397,8 @@ bool ExpressionIsTrue(const dd::unique_ptr<dd::ParsedExpression>& value) {
     }
   }
   const std::string text = ToLower(value->ToString());
-  return text == "true";
+  // DuckDB parses the keyword true as CAST('t' AS BOOLEAN), not a boolean constant.
+  return text == "true" || text == "cast('t' as boolean)";
 }
 
 std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& stmt) {
