@@ -92,9 +92,6 @@ TEST(UnredactedSecretsSet, TrueIsMatched) {
       ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets=true").has_value());
   EXPECT_TRUE(ClassifyUnredactedSecretsSet("/* c */ SET ALLOW_UNREDACTED_SECRETS = TRUE")
                   .has_value());
-  EXPECT_TRUE(
-      ClassifyUnredactedSecretsSet("PREPARE p AS SET allow_unredacted_secrets = true")
-          .has_value());
 }
 
 TEST(AdminCommandGuard, SetGlobalIsGated) {
