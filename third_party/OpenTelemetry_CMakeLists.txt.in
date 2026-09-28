@@ -18,26 +18,34 @@ set(PROTOBUF_PROTOC "@ARROW_PROTOC_EXECUTABLE@")
 set(ABSL_INCLUDE_DIR "@ARROW_ABSL_INCLUDE_DIR@")
 set(UTF8_RANGE_INCLUDE_DIR "@ARROW_UTF8_RANGE_INCLUDE_DIR@")
 
+# The ETW exporter only exists on Windows, where it defaults to ON. Since
+# v1.29.0 opentelemetry-cpp fails configuration if OTELCPP_WITH_ETW is set at
+# all on other platforms, so only pass it on Windows.
+set(OTEL_ETW_ARGS "")
+if(WIN32)
+  set(OTEL_ETW_ARGS -DOTELCPP_WITH_ETW=OFF)
+endif()
+
 # Build OpenTelemetry with HTTP exporter only (no gRPC dependency)
 ExternalProject_Add(
     opentelemetry_project
     PREFIX ${CMAKE_BINARY_DIR}/third_party
     GIT_REPOSITORY https://github.com/open-telemetry/opentelemetry-cpp.git
-    GIT_TAG v1.28.0
+    GIT_TAG v1.29.0
     UPDATE_DISCONNECTED TRUE
     CMAKE_ARGS
       -DCMAKE_INSTALL_PREFIX=${PARENT_BINARY_DIR}/third_party/opentelemetry
       -DCMAKE_INSTALL_LIBDIR=lib
       -DCMAKE_CXX_STANDARD=17
       -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-      -DBUILD_TESTING=OFF
-      -DWITH_EXAMPLES=OFF
-      -DWITH_BENCHMARK=OFF
-      -DWITH_FUNC_TESTS=OFF
+      -DOTELCPP_BUILD_TESTING=OFF
+      -DOTELCPP_WITH_EXAMPLES=OFF
+      -DOTELCPP_WITH_BENCHMARK=OFF
+      -DOTELCPP_WITH_FUNC_TESTS=OFF
       # Disable gRPC exporter entirely
-      -DWITH_OTLP_GRPC=OFF
+      -DOTELCPP_WITH_OTLP_GRPC=OFF
       # Enable HTTP exporter with curl
-      -DWITH_OTLP_HTTP=ON
+      -DOTELCPP_WITH_OTLP_HTTP=ON
       # Use Arrow's bundled protobuf (via FetchContent).
       # Block any system protobuf (e.g. Homebrew) so that the cache variables
       # below are authoritative.  CMAKE_IGNORE_PREFIX_PATH prevents config-mode
@@ -57,13 +65,9 @@ ExternalProject_Add(
       # Build static libraries
       -DBUILD_SHARED_LIBS=OFF
       # Disable unnecessary components
-      -DWITH_PROMETHEUS=OFF
-      -DWITH_ZIPKIN=OFF
-      -DWITH_JAEGER=OFF
-      -DWITH_ELASTICSEARCH=OFF
-      -DWITH_ETW=OFF
-      -DWITH_ZPAGES=OFF
-      -DWITH_API_ONLY=OFF
-      -DWITH_SDK=ON
-      -DWITH_LOGS_PREVIEW=OFF
+      -DOTELCPP_WITH_PROMETHEUS=OFF
+      -DOTELCPP_WITH_ZIPKIN=OFF
+      -DOTELCPP_WITH_ELASTICSEARCH=OFF
+      ${OTEL_ETW_ARGS}
+      -DOTELCPP_WITH_API_ONLY=OFF
 )

@@ -121,15 +121,19 @@ class AdmissionQueueTelemetryTest : public ::testing::Test {
   // Telemetry is process-global state (see gizmosql_telemetry.cpp); always leave it
   // shut down so other test binaries in this suite aren't affected.
   void TearDown() override { gizmosql::ShutdownTelemetry(); }
+
+  // Members outlive TearDown(): ShutdownTelemetry() runs a final collection
+  // (OpenTelemetry C++ >= 1.29) that calls the gauge callback, which reads the
+  // registered controller, and exports to the collector.
+  FakeOtlpCollector collector_;
+  AdmissionController controller_;
 };
 
 TEST_F(AdmissionQueueTelemetryTest, ReportsActiveAndQueuedCounts) {
-  FakeOtlpCollector collector;
-
   TelemetryConfig config;
   config.enabled = true;
   config.exporter_type = gizmosql::OtlpExporterType::kHttp;
-  config.endpoint = "http://127.0.0.1:" + std::to_string(collector.port());
+  config.endpoint = "http://127.0.0.1:" + std::to_string(collector_.port());
   config.service_name = "gizmosql-test";
   // The SDK's periodic reader requires timeout < interval (otherwise it logs a
   // warning and falls back to its own defaults); ForceFlush() below is what
@@ -142,24 +146,23 @@ TEST_F(AdmissionQueueTelemetryTest, ReportsActiveAndQueuedCounts) {
   gizmosql::InitTelemetry(config);
   ASSERT_TRUE(gizmosql::IsTelemetryEnabled());
 
-  AdmissionController controller;
-  controller.SetLimit(1);
-  controller.SetMaxQueued(10);
+  controller_.SetLimit(1);
+  controller_.SetMaxQueued(10);
 
-  gizmosql::metrics::RegisterAdmissionQueueGauges(controller);
+  gizmosql::metrics::RegisterAdmissionQueueGauges(controller_);
 
   // Hold the single slot, then queue a second statement behind it on another
   // thread so both `state=active` and `state=queued` are non-zero.
-  AdmissionSlot active_slot = AcquireOk(controller);
-  ASSERT_EQ(controller.ActiveCount(), 1);
+  AdmissionSlot active_slot = AcquireOk(controller_);
+  ASSERT_EQ(controller_.ActiveCount(), 1);
 
   std::atomic<bool> waiter_acquired{false};
   std::thread waiter([&] {
-    AdmissionSlot slot = AcquireOk(controller);
+    AdmissionSlot slot = AcquireOk(controller_);
     waiter_acquired.store(true);
   });
 
-  ASSERT_TRUE(WaitFor([&] { return controller.QueuedCount() == 1; }));
+  ASSERT_TRUE(WaitFor([&] { return controller_.QueuedCount() == 1; }));
   EXPECT_FALSE(waiter_acquired.load());
 
   // Force an immediate collection so the observable-gauge callback runs without
@@ -171,8 +174,8 @@ TEST_F(AdmissionQueueTelemetryTest, ReportsActiveAndQueuedCounts) {
     }
   }
 
-  ASSERT_TRUE(WaitFor([&] { return collector.RequestCount() > 0; }));
-  const std::string body = collector.LastMetricsBody();
+  ASSERT_TRUE(WaitFor([&] { return collector_.RequestCount() > 0; }));
+  const std::string body = collector_.LastMetricsBody();
   EXPECT_NE(body.find("gizmosql.statement_queue.depth"), std::string::npos);
   EXPECT_NE(body.find("active"), std::string::npos);
   EXPECT_NE(body.find("queued"), std::string::npos);

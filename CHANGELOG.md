@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is part of the superbuild input digest.
 
 ### Changed
+- **Upgraded DuckDB (stable channel) from v1.5.5 to
+  [v1.5.6](https://github.com/duckdb/duckdb/releases/tag/v1.5.6).** The iOS
+  out-of-tree extension pins for `ducklake` and `httpfs` were re-synced to
+  DuckDB v1.5.6's own pins; the iOS `postgres_scanner` pin remains
+  intentionally decoupled. The LTS channel stays on DuckDB v1.4.5.
+- Upgraded OpenTelemetry C++ from v1.28.0 to v1.29.0 (the build now passes
+  its renamed `OTELCPP_*` CMake options and drops options it no longer reads)
+  and cpp-httplib from v0.53.1 to v0.58.0.
 - CI and `docker-compose.test.yml` run the S3-compatible test storage on the
   [Versity S3 Gateway](https://github.com/versity/versitygw) (Apache-2.0)
   instead of MinIO, whose container images are no longer pullable. The bucket

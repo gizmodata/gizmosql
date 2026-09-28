@@ -73,11 +73,11 @@ configurable HTTP port/bind address, SQL access, and Prometheus/Grafana setup.
 
 | Component                                                                        | Version |
 |----------------------------------------------------------------------------------|---------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.5  |
+| [DuckDB](https://duckdb.org)                                                     | v1.5.6  |
 | [SQLite](https://sqlite.org)                                                     | 3.53.4  |
 | [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1  |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2  |
-| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.28.0 |
+| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.29.0 |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |
 
 ## 📚 Documentation
