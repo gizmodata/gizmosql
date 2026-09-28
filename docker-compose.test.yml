@@ -4,7 +4,9 @@
 # This starts:
 # - PostgreSQL (port 5432) for general DuckLake metadata storage
 # - PostgreSQL (port 5433) for instrumentation-specific DuckLake metadata (isolated)
-# - MinIO for S3-compatible object storage (for instrumentation data)
+# - Versity S3 Gateway (port 9000) for S3-compatible object storage (for
+#   instrumentation data). It replaced MinIO, whose images are no longer
+#   published; the tests still use the minioadmin/minioadmin credentials.
 #
 # The GizmoSQL tests connect to these services to test DuckLake functionality.
 # Instrumentation tests use a separate PostgreSQL instance to avoid conflicts
@@ -47,39 +49,35 @@ services:
     volumes:
       - postgres_instrumentation_data:/var/lib/postgresql/data
 
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: gizmosql-test-minio
+  s3:
+    image: versity/versitygw:v1.8.0
+    container_name: gizmosql-test-s3
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      ROOT_ACCESS_KEY: minioadmin
+      ROOT_SECRET_KEY: minioadmin
     ports:
       - "9000:9000"
-      - "9001:9001"
-    command: server /data --console-address ":9001"
+    command: --port :9000 --health /health posix /data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9000/health"]
       interval: 5s
       timeout: 5s
       retries: 5
     volumes:
-      - minio_data:/data
+      - s3_data:/data
 
-  # Create the instrumentation bucket on startup
-  minio-setup:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    container_name: gizmosql-test-minio-setup
+  # Create the instrumentation bucket on startup (SigV4-signed CreateBucket)
+  s3-setup:
+    image: curlimages/curl:8.16.0
+    container_name: gizmosql-test-s3-setup
     depends_on:
-      minio:
+      s3:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      mc mb --ignore-existing myminio/instrumentation;
-      exit 0;
-      "
+    command: >
+      -sS --aws-sigv4 aws:amz:us-east-1:s3 --user minioadmin:minioadmin
+      -X PUT http://s3:9000/instrumentation
 
 volumes:
   postgres_data:
   postgres_instrumentation_data:
-  minio_data:
+  s3_data:

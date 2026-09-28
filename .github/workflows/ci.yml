@@ -723,29 +723,29 @@ jobs:
             build/cpp-httplib/third_party/*
           key: otel-httplib-v1-linux-portable228-${{ matrix.platform }}-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
-      - name: Start MinIO and setup bucket
+      - name: Start S3-compatible server and setup bucket
         run: |
-          # Start MinIO server using docker (matching docker-compose.test.yml).
-          # MinIO archived its open-source projects in 2025: dl.min.io answers
-          # 410 for the mc binary, so pin the last published images and run the
-          # client from its image instead of downloading it.
-          docker run -d --name minio \
-            -p 9000:9000 -p 9001:9001 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --console-address ":9001"
+          # S3-compatible object storage for the DuckLake/instrumentation tests
+          # (matching docker-compose.test.yml). MinIO archived its open-source
+          # projects in 2025 and its images are no longer pullable, so this is
+          # the Versity S3 Gateway (Apache-2.0) with a POSIX backend. The tests
+          # still use the minioadmin/minioadmin credentials on port 9000.
+          docker run -d --name s3 \
+            -p 9000:9000 \
+            -e ROOT_ACCESS_KEY=minioadmin \
+            -e ROOT_SECRET_KEY=minioadmin \
+            versity/versitygw:v1.8.0 --port :9000 --health /health posix /tmp
 
-          # Wait for MinIO to be ready
+          # Wait for the gateway to be ready
           for i in {1..30}; do
-            curl -sf http://localhost:9000/minio/health/live && break
-            echo "Waiting for MinIO to be ready... (attempt $i)"
+            curl -sf http://localhost:9000/health && break
+            echo "Waiting for the S3 gateway to be ready... (attempt $i)"
             sleep 2
           done
 
-          # Create the bucket with the mc image (no host install)
-          docker run --rm --network host --entrypoint /bin/sh \
-            quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z -c \
-            "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc mb --ignore-existing myminio/instrumentation"
+          # Create the bucket with a SigV4-signed CreateBucket (no client install)
+          curl -sSf --aws-sigv4 "aws:amz:us-east-1:s3" --user minioadmin:minioadmin \
+            -X PUT http://localhost:9000/instrumentation
 
       - name: Run Tests (Unlicensed Enterprise Build)
         run: |

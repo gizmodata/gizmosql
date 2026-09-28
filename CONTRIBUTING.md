@@ -130,7 +130,8 @@ cd build
 ./tests/gizmosql_integration_tests
 ```
 
-Some integration tests require PostgreSQL, MinIO, or an Enterprise test license.
+Some integration tests require PostgreSQL, an S3-compatible server (both started
+by `docker compose -f docker-compose.test.yml up -d`), or an Enterprise test license.
 Check test output for skips and state which dependencies and licensed cases you
 actually exercised. Never commit license files, signing keys, credentials, or
 local `.env` files. Changes to Flight SQL execution should also exercise the

@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sanitizer into Arrow, DuckDB, gflags, replxx, SQLite, and OpenTelemetry and
   is part of the superbuild input digest.
 
+### Changed
+- CI and `docker-compose.test.yml` run the S3-compatible test storage on the
+  [Versity S3 Gateway](https://github.com/versity/versitygw) (Apache-2.0)
+  instead of MinIO, whose container images are no longer pullable. The bucket
+  is created with a SigV4-signed `curl` request, so no `mc` client is needed.
+
 ## [1.39.0] - 2026-09-14
 
 ### Added
