@@ -139,7 +139,7 @@ struct TestServerConfig {
   bool enable_metrics = false;
   int32_t metrics_port = 0;
   std::string metrics_bind_address = "127.0.0.1";
-  bool block_unredacted_secrets = true;          // reject SET allow_unredacted_secrets = true
+  bool block_unredacted_secrets = true;  // reject SET allow_unredacted_secrets = true
 };
 
 /// CRTP-based test fixture template for integration tests.

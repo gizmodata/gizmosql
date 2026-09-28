@@ -86,13 +86,15 @@ TEST(AdminCommandGuard, AttachDetachEvasionStillCaught) {
 // =============================================================================
 
 TEST(UnredactedSecretsSet, TrueIsMatched) {
-  EXPECT_TRUE(ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets = true").has_value());
-  EXPECT_TRUE(ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets=true").has_value());
   EXPECT_TRUE(
-      ClassifyUnredactedSecretsSet("/* c */ SET ALLOW_UNREDACTED_SECRETS = TRUE").has_value());
-  EXPECT_TRUE(ClassifyUnredactedSecretsSet(
-                  "PREPARE p AS SET allow_unredacted_secrets = true")
+      ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets = true").has_value());
+  EXPECT_TRUE(
+      ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets=true").has_value());
+  EXPECT_TRUE(ClassifyUnredactedSecretsSet("/* c */ SET ALLOW_UNREDACTED_SECRETS = TRUE")
                   .has_value());
+  EXPECT_TRUE(
+      ClassifyUnredactedSecretsSet("PREPARE p AS SET allow_unredacted_secrets = true")
+          .has_value());
 }
 
 TEST(AdminCommandGuard, SetGlobalIsGated) {
@@ -467,8 +469,8 @@ TEST_F(AdminGateServerFixture, AdminBasicAuthUnaffected) {
 TEST_F(AdminGateServerFixture, AdminSetUnredactedSecretsTrueIsRejected) {
   ASSERT_TRUE(IsServerReady());
   arrow::flight::FlightClientOptions options;
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto loc, arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
   ASSERT_ARROW_OK_AND_ASSIGN(auto client,
                              arrow::flight::FlightClient::Connect(loc, options));
   ASSERT_ARROW_OK_AND_ASSIGN(
@@ -501,8 +503,8 @@ template <>
 std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
     gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture>::server_{};
 template <>
-std::thread
-    gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture>::server_thread_{};
+std::thread gizmosql::testing::ServerTestFixture<
+    UnredactedSecretsAllowedFixture>::server_thread_{};
 template <>
 std::atomic<bool>
     gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture>::server_ready_{
@@ -514,8 +516,8 @@ gizmosql::testing::TestServerConfig
 TEST_F(UnredactedSecretsAllowedFixture, SetTrueReachesDuckDB) {
   ASSERT_TRUE(IsServerReady());
   arrow::flight::FlightClientOptions options;
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto loc, arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
   ASSERT_ARROW_OK_AND_ASSIGN(auto client,
                              arrow::flight::FlightClient::Connect(loc, options));
   ASSERT_ARROW_OK_AND_ASSIGN(

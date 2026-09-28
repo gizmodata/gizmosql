@@ -785,17 +785,15 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
     // Create DuckDB server first (without instrumentation manager)
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
-    ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
-                                             database_filename.string(), read_only, print_queries,
-                                             query_timeout, query_log_level, session_log_level,
-                                             storage_version, max_concurrent_statements,
-                                             max_queued_statements, max_queue_wait_seconds,
-                                             admin_bypass_queue_default, memory_limit,
-                                             capture_query_profile,
-                                             allow_unsigned_extensions,
-                                             max_sessions,
-                                             session_idle_timeout_seconds,
-                                             nullptr));  // No instrumentation manager yet
+    ARROW_ASSIGN_OR_RAISE(
+        duckdb_server,
+        gizmosql::ddb::DuckDBFlightSqlServer::Create(
+            database_filename.string(), read_only, print_queries, query_timeout,
+            query_log_level, session_log_level, storage_version,
+            max_concurrent_statements, max_queued_statements, max_queue_wait_seconds,
+            admin_bypass_queue_default, memory_limit, capture_query_profile,
+            allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds,
+            nullptr));  // No instrumentation manager yet
     duckdb_server->SetBlockUnredactedSecrets(block_unredacted_secrets);
     if (!block_unredacted_secrets) {
       GIZMOSQL_LOG(WARNING)

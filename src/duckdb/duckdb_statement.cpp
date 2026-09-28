@@ -1074,9 +1074,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     if (auto blocked = gizmosql::ddb::ClassifyUnredactedSecretsSet(sql)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Client attempted to enable unredacted secrets",
-                             {"kind", "sql"}, {"status", "rejected"},
-                             {"gated", *blocked}, {"statement_id", handle},
-                             {"sql", logged_sql});
+                             {"kind", "sql"}, {"status", "rejected"}, {"gated", *blocked},
+                             {"statement_id", handle}, {"sql", logged_sql});
       return arrow::flight::MakeFlightError(
           arrow::flight::FlightStatusCode::Unauthorized,
           "SET allow_unredacted_secrets = true is disabled on this server.");
