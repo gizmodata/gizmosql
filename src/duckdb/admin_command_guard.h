@@ -80,6 +80,11 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql);
 /// failure returns std::nullopt.
 std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql);
 
+/// True for `SET secret_directory = ...` (or the PRAGMA form), also inside
+/// PREPARE / EXPLAIN. With the sensitive-path guard on, clients may not move
+/// DuckDB's persistent-secret directory somewhere unprotected.
+bool IsSecretDirectorySet(const std::string& sql);
+
 /// Client-facing error text for a gated command, e.g. category "ATTACH".
 std::string GatedCommandDeniedMessage(const std::string& category);
 

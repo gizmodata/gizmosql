@@ -1078,8 +1078,22 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   }
 
   bool block_unredacted_secrets = true;
+  bool block_sensitive_paths = false;
   if (auto server = GetServer(*client_session)) {
     block_unredacted_secrets = server->BlockUnredactedSecrets();
+    block_sensitive_paths = server->GetSensitivePathPolicy() != nullptr;
+  }
+  if (!is_internal && block_sensitive_paths && gizmosql::ddb::IsSecretDirectorySet(sql)) {
+    GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                           "Client attempted to change secret_directory", {"kind", "sql"},
+                           {"status", "rejected"}, {"statement_id", handle},
+                           {"sql", logged_sql});
+    return arrow::flight::MakeFlightError(
+        arrow::flight::FlightStatusCode::Unauthorized,
+        "Permission denied: GizmoSQL blocked changing secret_directory. GizmoSQL keeps "
+        "DuckDB's persistent secrets in a protected location that no client, including "
+        "admins, can read or move. (Server operators: set it in init SQL; see "
+        "--block-sensitive-paths)");
   }
   if (!is_internal && block_unredacted_secrets) {
     if (auto blocked = gizmosql::ddb::ClassifyUnredactedSecretsSet(sql)) {
@@ -1092,9 +1106,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
           "Permission denied: GizmoSQL blocked enabling allow_unredacted_secrets, which "
           "is "
           "disabled on this server. GizmoSQL keeps stored secrets redacted for every "
-          "client, "
-          "including admins, so the credentials this server holds never leave it. "
-          "(Server operators: see --block-unredacted-secrets)");
+          "client, including admins, so the credentials this server holds never leave "
+          "it. (Server operators: see --block-unredacted-secrets)");
     }
   }
 
@@ -1239,6 +1252,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     }
 #endif
 
+    if (auto refusal = gizmosql::ddb::SensitivePathRefusal(error_message))
+      return *refusal;
     return Status::Invalid(err_msg);
   }
 
@@ -2601,6 +2616,7 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
                   {"statement_id", statement_id_}, {"error", result->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
             }
+            if (auto refusal = SensitivePathRefusal(result->GetError())) return *refusal;
             return arrow::Status::ExecutionError("Direct query execution error: ",
                                                  result->GetError());
           }
@@ -2638,6 +2654,9 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
                   {"kind", "sql"}, {"status", "failure"},
                   {"statement_id", statement_id_}, {"error", query_result_->GetError()},
                   {"sql", logged_sql_}, {"query_timeout", std::to_string(query_timeout)});
+            }
+            if (auto refusal = SensitivePathRefusal(query_result_->GetError())) {
+              return *refusal;
             }
             return arrow::Status::ExecutionError("An execution error has occurred: ",
                                                  query_result_->GetError());
@@ -2860,6 +2879,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   duckdb::ErrorData fetch_error;
   auto fetch_success = query_result_->TryFetch(data_chunk, fetch_error);
   if (!fetch_success) {
+    if (auto refusal = SensitivePathRefusal(fetch_error.Message())) return *refusal;
     return arrow::Status::ExecutionError(fetch_error.Message());
   }
 

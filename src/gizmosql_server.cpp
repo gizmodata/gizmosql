@@ -171,6 +171,17 @@ int main(int argc, char** argv) {
              "the statement through (DuckDB still refuses it once the database is open). "
              "If not set, uses env var GIZMOSQL_BLOCK_UNREDACTED_SECRETS "
              "(0/false to let the statement through). DuckDB backend only.")
+            ("block-sensitive-paths", po::value<bool>()->default_value(true),
+             "Refuse, for every client including admins, file access to credential and "
+             "system paths on this host: DuckDB persistent secrets, ~/.ssh, ~/.aws, "
+             "~/.config/gcloud, ~/.azure, ~/.kube, ~/.docker/config.json, ~/.netrc, "
+             "~/.pgpass, ~/.git-credentials, ~/.gnupg, /etc/passwd, /etc/shadow, "
+             "/etc/sudoers, /proc, /dev/fd, /var/run/secrets, /run/secrets, and this "
+             "server's TLS key, license key and init-SQL files. Default is true. If not "
+             "set, uses env var GIZMOSQL_BLOCK_SENSITIVE_PATHS. DuckDB backend only.")
+            ("sensitive-paths", po::value<std::string>()->default_value(""),
+             "Comma-separated extra files or directories to protect the same way. If "
+             "not set, uses env var GIZMOSQL_SENSITIVE_PATHS.")
             ("allow-unsigned-extensions", po::value<bool>()->default_value(false),
              "Allow loading unsigned DuckDB extensions (DuckDB's allow_unsigned_extensions "
              "setting). This setting is GLOBAL_ONLY in DuckDB - it cannot be changed via SET or "
@@ -496,6 +507,11 @@ int main(int argc, char** argv) {
           ? std::nullopt
           : std::optional(vm["allow-unsigned-extensions"].as<bool>());
 
+  std::optional<bool> block_sensitive_paths =
+      vm["block-sensitive-paths"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["block-sensitive-paths"].as<bool>());
+
   std::optional<bool> block_unredacted_secrets =
       vm["block-unredacted-secrets"].defaulted()
           ? std::nullopt
@@ -625,5 +641,6 @@ int main(int argc, char** argv) {
       vm["metrics-bind-address"].as<std::string>(),
       vm["enable-metrics"].defaulted() ? std::nullopt
                                        : std::optional(vm["enable-metrics"].as<bool>()),
-      block_unredacted_secrets);
+      block_unredacted_secrets, block_sensitive_paths,
+      vm["sensitive-paths"].as<std::string>());
 }

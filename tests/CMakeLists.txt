@@ -42,6 +42,7 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_graceful_shutdown.cpp
         integration/test_graceful_shutdown_settings.cpp
         integration/test_admin_command_guard.cpp
+        integration/test_sensitive_path_guard.cpp
         integration/test_system_ca_certs.cpp
         integration/test_server_cli.cpp
         integration/test_session_options_probe.cpp

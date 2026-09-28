@@ -932,6 +932,7 @@ class DuckDBFlightSqlServer::Impl {
   int32_t max_sessions_ = 0;                  // 0 = unlimited; reject new sessions when at cap
   int32_t session_idle_timeout_seconds_ = 0;  // 0 = idle eviction off
   bool block_unredacted_secrets_ = true;
+  std::shared_ptr<SensitivePathPolicy> sensitive_path_policy_;  // nullptr = guard off
 
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
   std::unordered_map<std::string, std::string> open_transactions_;
@@ -1318,6 +1319,13 @@ class DuckDBFlightSqlServer::Impl {
     ::gizmosql::metrics::RegisterAdmissionQueueGauges(admission_controller_);
   }
 #endif
+
+  void SetSensitivePathPolicy(std::shared_ptr<SensitivePathPolicy> policy) {
+    sensitive_path_policy_ = std::move(policy);
+  }
+  std::shared_ptr<SensitivePathPolicy> GetSensitivePathPolicy() const {
+    return sensitive_path_policy_;
+  }
 
   void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
   bool BlockUnredactedSecrets() const { return block_unredacted_secrets_; }
@@ -2802,6 +2810,7 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const gizmosql::QueryProfileMode& capture_query_profile,
     const bool& allow_unsigned_extensions, const int32_t& max_sessions,
     const int32_t& session_idle_timeout_seconds,
+    std::shared_ptr<SensitivePathPolicy> sensitive_path_policy,
 #ifdef GIZMOSQL_ENTERPRISE
     std::shared_ptr<InstrumentationManager> instrumentation_manager) {
 #else
@@ -2841,6 +2850,16 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
       return arrow::Status::Invalid(
           "Invalid DuckDB storage version '" + storage_version + "': " + e.what());
     }
+  }
+
+  // Every file a query touches goes through config.file_system, so the guard
+  // installed here sees read_*/glob/COPY/ATTACH/replacement-scan paths for every
+  // role. DuckDB's secret manager uses its own local file system and is unaffected.
+  if (sensitive_path_policy) {
+    config.file_system = duckdb::make_uniq<SensitivePathGuardFileSystem>(
+        sensitive_path_policy, duckdb::FileSystem::CreateLocal());
+    GIZMOSQL_LOG(INFO) << "Sensitive-path guard enabled: credential and system files "
+                          "on this host are blocked for every client";
   }
 
   auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
@@ -2884,6 +2903,8 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
       max_sessions, session_idle_timeout_seconds);
 #endif
 
+  result->impl_->SetSensitivePathPolicy(sensitive_path_policy);
+
   if (max_sessions > 0) {
     GIZMOSQL_LOG(INFO) << "Max client sessions set to: " << max_sessions;
   }
@@ -2901,6 +2922,11 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 }
 
 DuckDBFlightSqlServer::~DuckDBFlightSqlServer() = default;
+
+std::shared_ptr<SensitivePathPolicy> DuckDBFlightSqlServer::GetSensitivePathPolicy()
+    const {
+  return impl_->GetSensitivePathPolicy();
+}
 
 void DuckDBFlightSqlServer::SetBlockUnredactedSecrets(bool block) {
   impl_->SetBlockUnredactedSecrets(block);

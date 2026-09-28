@@ -14,6 +14,13 @@ server settings.
     `GRANT`/`REVOKE` DDL, multi-tenant policies) is the GizmoSQL 2.0 cornerstone.
     The known limitations below are addressed properly there.
 
+!!! tip "Admins are protected from reading host secrets too"
+    This gate only applies to non-admin roles. Independently of it, the
+    [sensitive-path guard](security.md#sensitive-path-guard) keeps credential and
+    system files on the server host (DuckDB secrets, `~/.ssh`, `~/.aws`,
+    `/etc/shadow`, the server's TLS key, ...) out of reach of **every** session,
+    including admins, and stored secrets stay redacted for everyone.
+
 ## Who is affected
 
 The gate keys off the session **role**:

@@ -279,5 +279,13 @@ int RunFlightSQLServer(
     /// Reject client `SET allow_unredacted_secrets = true` before DuckDB sees it
     /// (--block-unredacted-secrets / GIZMOSQL_BLOCK_UNREDACTED_SECRETS).
     /// nullopt = consult env var, then default true.
-    std::optional<bool> block_unredacted_secrets = std::nullopt);
+    std::optional<bool> block_unredacted_secrets = std::nullopt,
+    /// Refuse, for every client, file access to credential and system paths on
+    /// the host: DuckDB secret dirs, ~/.ssh, ~/.aws, /etc/shadow, /proc, the TLS
+    /// key, license and init-SQL files, ... (--block-sensitive-paths /
+    /// GIZMOSQL_BLOCK_SENSITIVE_PATHS). nullopt = consult env var, then true.
+    std::optional<bool> block_sensitive_paths = std::nullopt,
+    /// Extra comma-separated paths to protect (--sensitive-paths /
+    /// GIZMOSQL_SENSITIVE_PATHS). Empty = consult env var.
+    std::string sensitive_paths = "");
 }

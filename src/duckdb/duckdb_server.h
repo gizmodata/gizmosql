@@ -28,6 +28,7 @@
 #include "flight_sql_fwd.h"
 #include "session_context.h"
 #include "admission_controller.h"
+#include "sensitive_path_guard.h"
 
 #ifdef GIZMOSQL_ENTERPRISE
 namespace gizmosql::enterprise {
@@ -69,6 +70,7 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
       const gizmosql::QueryProfileMode& capture_query_profile,
       const bool& allow_unsigned_extensions, const int32_t& max_sessions,
       const int32_t& session_idle_timeout_seconds,
+      std::shared_ptr<SensitivePathPolicy> sensitive_path_policy = nullptr,
 #ifdef GIZMOSQL_ENTERPRISE
       std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr);
 #else
@@ -235,6 +237,10 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
                                 const int& seconds);
 
   arrow::Result<int32_t> GetQueryTimeout(const ClientSession& client_session);
+
+  /// The sensitive-path guard installed on this database's file system, or
+  /// nullptr when --block-sensitive-paths is off (or the backend has none).
+  std::shared_ptr<SensitivePathPolicy> GetSensitivePathPolicy() const;
 
   /// When true (the default), client `SET allow_unredacted_secrets = true` is
   /// rejected before DuckDB sees it.
