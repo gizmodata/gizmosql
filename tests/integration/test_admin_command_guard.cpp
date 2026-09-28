@@ -72,6 +72,20 @@ TEST(AdminCommandGuard, DetachIsGated) {
   EXPECT_EQ(Category("DETACH lake"), "DETACH");
 }
 
+// EXPLAIN ANALYZE executes the wrapped statement, so wrapping a gated statement
+// in EXPLAIN [ANALYZE] must not get it past the gate.
+TEST(AdminCommandGuard, ExplainWrappedStatementsAreGated) {
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE COPY (SELECT 42) TO '/tmp/x.csv'"));
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE SET GLOBAL threads = 3"));
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE CHECKPOINT"));
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE SELECT * FROM read_text('/etc/passwd')"));
+  EXPECT_TRUE(
+      Gated("EXPLAIN ANALYZE COPY (SELECT * FROM read_text('/etc/passwd')) "
+            "TO 's3://bucket/x.csv'"));
+  EXPECT_TRUE(Gated("EXPLAIN SELECT * FROM duckdb_secrets()"));
+  EXPECT_FALSE(Gated("EXPLAIN ANALYZE SELECT 42"));
+}
+
 TEST(AdminCommandGuard, AttachDetachEvasionStillCaught) {
   EXPECT_TRUE(Gated("  \n\t ATTACH 'x.db' AS x"));
   EXPECT_TRUE(Gated("aTtAcH 'x.db' AS x"));
@@ -114,6 +128,14 @@ TEST(UnredactedSecretsSet, TrueEquivalentsAreMatched) {
        }) {
     EXPECT_TRUE(ClassifyUnredactedSecretsSet(sql).has_value()) << sql;
   }
+}
+
+TEST(UnredactedSecretsSet, ExplainWrappedSetIsMatched) {
+  EXPECT_TRUE(
+      ClassifyUnredactedSecretsSet("EXPLAIN ANALYZE SET allow_unredacted_secrets = true")
+          .has_value());
+  EXPECT_TRUE(ClassifyUnredactedSecretsSet("EXPLAIN SET allow_unredacted_secrets = true")
+                  .has_value());
 }
 
 TEST(UnredactedSecretsSet, FalseAndOtherSqlAreNotMatched) {

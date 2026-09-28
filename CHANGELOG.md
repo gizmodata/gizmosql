@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sanitizer into Arrow, DuckDB, gflags, replxx, SQLite, and OpenTelemetry and
   is part of the superbuild input digest.
 
+### Security
+- The non-admin command gate now inspects statements wrapped in `EXPLAIN` /
+  `EXPLAIN ANALYZE`. `EXPLAIN ANALYZE` executes the wrapped statement, so a
+  non-admin token session could previously run gated commands through it
+  (e.g. `EXPLAIN ANALYZE COPY ... TO '<local path>'`, `EXPLAIN ANALYZE SET
+  GLOBAL ...`, `EXPLAIN ANALYZE CHECKPOINT`, or a local `read_text()` inside a
+  remote `COPY`). The unredacted-secrets check recurses into `EXPLAIN` too.
+
 ### Changed
 - **Upgraded DuckDB (stable channel) from v1.5.5 to
   [v1.5.6](https://github.com/duckdb/duckdb/releases/tag/v1.5.6).** The iOS

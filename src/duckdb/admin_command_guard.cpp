@@ -37,6 +37,7 @@
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/parser/statement/explain_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/copy_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
@@ -280,13 +281,22 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
 // Classify a single statement. Recurses into PREPARE so that
 // `PREPARE p AS SELECT * FROM read_csv('/etc/passwd')` is gated at prepare time
 // — a non-admin therefore cannot stage a gated statement and EXECUTE it later
-// (prepared statements are per-session/connection).
+// (prepared statements are per-session/connection). Recurses into EXPLAIN too:
+// EXPLAIN ANALYZE executes the wrapped statement (COPY TO writes its file,
+// SET GLOBAL changes the setting, ...).
 std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     switch (stmt.type) {
       case dd::StatementType::PREPARE_STATEMENT: {
         auto& ps = stmt.Cast<dd::PrepareStatement>();
         if (ps.statement) {
           if (auto v = ClassifyStatement(*ps.statement)) return v;
+        }
+        break;
+      }
+      case dd::StatementType::EXPLAIN_STATEMENT: {
+        auto& es = stmt.Cast<dd::ExplainStatement>();
+        if (es.stmt) {
+          if (auto v = ClassifyStatement(*es.stmt)) return v;
         }
         break;
       }
@@ -429,6 +439,12 @@ std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& 
   if (stmt.type == dd::StatementType::PREPARE_STATEMENT) {
     auto& ps = stmt.Cast<dd::PrepareStatement>();
     if (ps.statement) return ClassifyUnredactedSecretsStatement(*ps.statement);
+    return std::nullopt;
+  }
+  if (stmt.type == dd::StatementType::EXPLAIN_STATEMENT) {
+    // EXPLAIN ANALYZE executes the wrapped statement.
+    auto& es = stmt.Cast<dd::ExplainStatement>();
+    if (es.stmt) return ClassifyUnredactedSecretsStatement(*es.stmt);
     return std::nullopt;
   }
   if (stmt.type != dd::StatementType::SET_STATEMENT) return std::nullopt;

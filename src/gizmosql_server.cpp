@@ -166,8 +166,9 @@ int main(int argc, char** argv) {
              "not found / evicted). DuckDB backend only. If 0, uses env var "
              "GIZMOSQL_SESSION_IDLE_TIMEOUT.")
             ("block-unredacted-secrets", po::value<bool>()->default_value(true),
-             "Reject SET allow_unredacted_secrets = true from every client, before DuckDB "
-             "sees the statement. Default is true. Set to false to let the statement through. "
+             "Reject SET allow_unredacted_secrets to any value other than false from every "
+             "client, before DuckDB sees the statement. Default is true. Set to false to let "
+             "the statement through (DuckDB still refuses it once the database is open). "
              "If not set, uses env var GIZMOSQL_BLOCK_UNREDACTED_SECRETS "
              "(0/false to let the statement through). DuckDB backend only.")
             ("allow-unsigned-extensions", po::value<bool>()->default_value(false),
