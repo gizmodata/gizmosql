@@ -540,6 +540,23 @@ TEST_F(AdminGateServerFixture, AdminSetUnredactedSecretsTrueIsRejected) {
   EXPECT_TRUE(ExecAs(GetPort(), bearer, "SET allow_unredacted_secrets = false").ok());
 }
 
+TEST_F(AdminGateServerFixture, SqlWithNulByteIsRejected) {
+  ASSERT_TRUE(IsServerReady());
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(loc, options));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+
+  static constexpr char kSql[] = "SELECT 1\0; SET allow_unredacted_secrets = true";
+  const std::string sql(kSql, sizeof(kSql) - 1);  // keep the embedded NUL
+  auto st = ExecAs(GetPort(), bearer, sql);
+  EXPECT_FALSE(st.ok());
+  EXPECT_NE(st.ToString().find("NUL byte"), std::string::npos) << st.ToString();
+}
+
 class UnredactedSecretsAllowedFixture
     : public gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture> {
  public:

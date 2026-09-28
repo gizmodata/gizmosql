@@ -31,8 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (e.g. `EXPLAIN ANALYZE COPY ... TO '<local path>'`, `EXPLAIN ANALYZE SET
   GLOBAL ...`, `EXPLAIN ANALYZE CHECKPOINT`, or a local `read_text()` inside a
   remote `COPY`). The unredacted-secrets check recurses into `EXPLAIN` too.
+- Client SQL containing a NUL byte is rejected before any check runs, so
+  GizmoSQL's security checks and DuckDB can never read different statement
+  text.
 
 ### Changed
+- Security rejections now say what GizmoSQL blocked and why, e.g.
+  `Permission denied: GizmoSQL blocked COPY TO (local filesystem), which
+  requires the 'admin' role. …`, and the unredacted-secrets rejection is now
+  counted as a permission error in metrics.
+
 - **Upgraded DuckDB (stable channel) from v1.5.5 to
   [v1.5.6](https://github.com/duckdb/duckdb/releases/tag/v1.5.6).** The iOS
   out-of-tree extension pins for `ducklake` and `httpfs` were re-synced to

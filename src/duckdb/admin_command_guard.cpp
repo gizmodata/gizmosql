@@ -499,14 +499,19 @@ std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) 
   return std::nullopt;
 }
 
+std::string GatedCommandDeniedMessage(const std::string& category) {
+  return "Permission denied: GizmoSQL blocked " + category +
+         ", which requires the 'admin' role. GizmoSQL confines filesystem- and "
+         "instance-level commands to admins, so users sharing this server cannot read, "
+         "write or reconfigure the host. (Server operators: roles come from the token's "
+         "'role' claim)";
+}
+
 arrow::Status CheckNonAdminCommandAllowed(const std::string& sql) {
   auto category = ClassifyGatedCommand(sql);
   if (!category) return arrow::Status::OK();
-  return flight::MakeFlightError(
-      flight::FlightStatusCode::Unauthorized,
-      "Permission denied: " + *category +
-          " requires the 'admin' role. This GizmoSQL instance restricts "
-          "filesystem- and instance-level commands to admin users.");
+  return flight::MakeFlightError(flight::FlightStatusCode::Unauthorized,
+                                 GatedCommandDeniedMessage(*category));
 }
 
 }  // namespace gizmosql::ddb

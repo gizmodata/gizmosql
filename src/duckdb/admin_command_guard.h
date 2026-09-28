@@ -80,6 +80,9 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql);
 /// failure returns std::nullopt.
 std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql);
 
+/// Client-facing error text for a gated command, e.g. category "ATTACH".
+std::string GatedCommandDeniedMessage(const std::string& category);
+
 /// Convenience wrapper: arrow::Status::OK() if permitted for a non-admin
 /// session, otherwise a Flight PermissionDenied (Unauthorized) error naming the
 /// gated category.

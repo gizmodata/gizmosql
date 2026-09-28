@@ -37,8 +37,10 @@ role for IdP tokens that lack the claim).
 ## What is gated
 
 For **non-admin** sessions, the following are rejected with a Flight
-`UNAVAILABLE`/permission error (`"Permission denied: <command> requires the
-'admin' role …"`):
+`UNAVAILABLE`/permission error (`"Permission denied: GizmoSQL blocked
+<command>, which requires the 'admin' role …"`). The same applies when the
+command is wrapped in `EXPLAIN` or `EXPLAIN ANALYZE` (which executes it) or
+staged with `PREPARE`:
 
 | Category | Examples |
 |----------|----------|
