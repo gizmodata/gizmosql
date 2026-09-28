@@ -78,6 +78,11 @@ const int POSTGRES_PORT = 5432;
 const int POSTGRES_INSTR_PORT = 5433;
 
 // MinIO (S3-compatible) connection settings (matching docker-compose.test.yml)
+// The S3 secrets set REGION: DuckDB signs with an empty region otherwise, which
+// real S3 and strict gateways (the Versity gateway CI uses) reject. The DuckLake
+// attaches set DATA_INLINING_ROW_LIMIT 0 so instrumentation rows are written as
+// Parquet files on S3 on both DuckDB channels; DuckLake for DuckDB 1.5 inlines
+// small inserts into the metadata catalog by default and would skip S3 entirely.
 const int MINIO_PORT = 9000;
 const char* MINIO_ACCESS_KEY = "minioadmin";
 const char* MINIO_SECRET_KEY = "minioadmin";
@@ -202,17 +207,22 @@ std::string GetDuckLakeInitSQLWithS3(const std::string& catalog_name,
 
     CREATE OR REPLACE SECRET s3_secret (
       TYPE s3,
-      KEY_ID ')SQL" + std::string(MINIO_ACCESS_KEY) + R"SQL(',
-      SECRET ')SQL" + std::string(MINIO_SECRET_KEY) + R"SQL(',
-      ENDPOINT 'localhost:)SQL" + std::to_string(MINIO_PORT) + R"SQL(',
+      KEY_ID ')SQL" +
+         std::string(MINIO_ACCESS_KEY) + R"SQL(',
+      SECRET ')SQL" +
+         std::string(MINIO_SECRET_KEY) + R"SQL(',
+      ENDPOINT 'localhost:)SQL" +
+         std::to_string(MINIO_PORT) + R"SQL(',
       USE_SSL false,
-      URL_STYLE 'path'
+      URL_STYLE 'path',
+      REGION 'us-east-1'
     );
 
     CREATE OR REPLACE SECRET pg_instr_secret (
       TYPE postgres,
       HOST 'localhost',
-      PORT )SQL" + std::to_string(POSTGRES_INSTR_PORT) + R"SQL(,
+      PORT )SQL" +
+         std::to_string(POSTGRES_INSTR_PORT) + R"SQL(,
       DATABASE 'instrumentation_catalog',
       USER 'postgres',
       PASSWORD 'testpassword'
@@ -221,11 +231,13 @@ std::string GetDuckLakeInitSQLWithS3(const std::string& catalog_name,
     CREATE OR REPLACE SECRET ducklake_instr_secret (
       TYPE DUCKLAKE,
       METADATA_PATH '',
-      DATA_PATH ')SQL" + s3_data_path + R"SQL(',
+      DATA_PATH ')SQL" +
+         s3_data_path + R"SQL(',
       METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_instr_secret'}
     );
 
-    ATTACH 'ducklake:ducklake_instr_secret' AS )SQL" + catalog_name + ";";
+    ATTACH 'ducklake:ducklake_instr_secret' AS )SQL" +
+         catalog_name + R"SQL( (DATA_INLINING_ROW_LIMIT 0);)SQL";
 }
 
 }  // namespace
@@ -462,16 +474,19 @@ TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
     duckdb::Connection conn(db);
     // Set up the DuckLake connection (using dedicated instrumentation postgres)
     conn.Query("INSTALL ducklake; INSTALL postgres; INSTALL httpfs; LOAD ducklake; LOAD postgres; LOAD httpfs");
-    conn.Query("CREATE OR REPLACE SECRET s3_secret (TYPE s3, KEY_ID '" + std::string(MINIO_ACCESS_KEY) +
-               "', SECRET '" + std::string(MINIO_SECRET_KEY) +
-               "', ENDPOINT 'localhost:" + std::to_string(MINIO_PORT) + "', USE_SSL false, URL_STYLE 'path')");
+    conn.Query("CREATE OR REPLACE SECRET s3_secret (TYPE s3, KEY_ID '" +
+               std::string(MINIO_ACCESS_KEY) + "', SECRET '" +
+               std::string(MINIO_SECRET_KEY) +
+               "', ENDPOINT 'localhost:" + std::to_string(MINIO_PORT) +
+               "', USE_SSL false, URL_STYLE 'path', REGION 'us-east-1')");
     conn.Query("CREATE OR REPLACE SECRET pg_instr_secret (TYPE postgres, HOST 'localhost', PORT " +
                std::to_string(POSTGRES_INSTR_PORT) + ", DATABASE 'instrumentation_catalog', "
                "USER 'postgres', PASSWORD 'testpassword')");
     conn.Query("CREATE OR REPLACE SECRET ducklake_instr_secret (TYPE DUCKLAKE, METADATA_PATH '', "
                "DATA_PATH 's3://" + std::string(MINIO_BUCKET) + "/instrumentation_data/', "
                "METADATA_PARAMETERS MAP {'TYPE': 'postgres', 'SECRET': 'pg_instr_secret'})");
-    conn.Query("ATTACH 'ducklake:ducklake_instr_secret' AS " + catalog_name);
+    conn.Query("ATTACH 'ducklake:ducklake_instr_secret' AS " + catalog_name +
+               " (DATA_INLINING_ROW_LIMIT 0)");
 
     // Mark all running instances as stopped (cleanup from previous test runs)
     auto cleanup_result = conn.Query("UPDATE " + catalog_name + "." + schema_name +

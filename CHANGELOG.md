@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Versity S3 Gateway](https://github.com/versity/versitygw) (Apache-2.0)
   instead of MinIO, whose container images are no longer pullable. The bucket
   is created with a SigV4-signed `curl` request, so no `mc` client is needed.
+  The DuckLake instrumentation tests now give their S3 secret a `REGION`
+  (DuckDB otherwise signs with an empty region, which MinIO accepted but real
+  S3 and the gateway reject) and attach with `DATA_INLINING_ROW_LIMIT 0`, so
+  they write Parquet to S3 on both DuckDB channels instead of inlining small
+  inserts into the metadata catalog on the stable channel.
 
 ## [1.39.0] - 2026-09-14
 
