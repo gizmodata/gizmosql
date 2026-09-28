@@ -74,7 +74,7 @@ CreateFlightSQLServer(
     int32_t health_check_staleness_seconds = 0, bool allow_unsigned_extensions = false,
     int32_t max_sessions = 0, int32_t session_idle_timeout_seconds = 0,
     int32_t metrics_port = 0, std::string metrics_bind_address = "127.0.0.1",
-    bool enable_metrics = false);
+    bool enable_metrics = false, bool block_unredacted_secrets = true);
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -139,6 +139,7 @@ struct TestServerConfig {
   bool enable_metrics = false;
   int32_t metrics_port = 0;
   std::string metrics_bind_address = "127.0.0.1";
+  bool block_unredacted_secrets = true;  // reject SET allow_unredacted_secrets = true
 };
 
 /// CRTP-based test fixture template for integration tests.
@@ -277,7 +278,8 @@ class ServerTestFixture : public ::testing::Test {
         /*allow_unsigned_extensions=*/config_.allow_unsigned_extensions,
         /*max_sessions=*/config_.max_sessions,
         /*session_idle_timeout_seconds=*/config_.session_idle_timeout_seconds,
-        config_.metrics_port, config_.metrics_bind_address, config_.enable_metrics);
+        config_.metrics_port, config_.metrics_bind_address, config_.enable_metrics,
+        /*block_unredacted_secrets=*/config_.block_unredacted_secrets);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

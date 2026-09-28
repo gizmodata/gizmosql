@@ -37,6 +37,7 @@
 using arrow::flight::sql::FlightSqlClient;
 using gizmosql::ddb::CheckNonAdminCommandAllowed;
 using gizmosql::ddb::ClassifyGatedCommand;
+using gizmosql::ddb::ClassifyUnredactedSecretsSet;
 
 namespace {
 
@@ -71,6 +72,20 @@ TEST(AdminCommandGuard, DetachIsGated) {
   EXPECT_EQ(Category("DETACH lake"), "DETACH");
 }
 
+// EXPLAIN ANALYZE executes the wrapped statement, so wrapping a gated statement
+// in EXPLAIN [ANALYZE] must not get it past the gate.
+TEST(AdminCommandGuard, ExplainWrappedStatementsAreGated) {
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE COPY (SELECT 42) TO '/tmp/x.csv'"));
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE SET GLOBAL threads = 3"));
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE CHECKPOINT"));
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE SELECT * FROM read_text('/etc/passwd')"));
+  EXPECT_TRUE(
+      Gated("EXPLAIN ANALYZE COPY (SELECT * FROM read_text('/etc/passwd')) "
+            "TO 's3://bucket/x.csv'"));
+  EXPECT_TRUE(Gated("EXPLAIN SELECT * FROM duckdb_secrets()"));
+  EXPECT_FALSE(Gated("EXPLAIN ANALYZE SELECT 42"));
+}
+
 TEST(AdminCommandGuard, AttachDetachEvasionStillCaught) {
   EXPECT_TRUE(Gated("  \n\t ATTACH 'x.db' AS x"));
   EXPECT_TRUE(Gated("aTtAcH 'x.db' AS x"));
@@ -83,6 +98,60 @@ TEST(AdminCommandGuard, AttachDetachEvasionStillCaught) {
 // =============================================================================
 // SET GLOBAL / RESET GLOBAL, and dangerous bare SET.
 // =============================================================================
+
+TEST(UnredactedSecretsSet, TrueIsMatched) {
+  EXPECT_TRUE(
+      ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets = true").has_value());
+  EXPECT_TRUE(
+      ClassifyUnredactedSecretsSet("SET allow_unredacted_secrets=true").has_value());
+  EXPECT_TRUE(ClassifyUnredactedSecretsSet("/* c */ SET ALLOW_UNREDACTED_SECRETS = TRUE")
+                  .has_value());
+}
+
+// DuckDB casts the SET value to BOOLEAN, so every one of these enables the
+// setting and must be matched, not just the literal `true`.
+TEST(UnredactedSecretsSet, TrueEquivalentsAreMatched) {
+  for (const char* sql : {
+           "SET allow_unredacted_secrets = 1",
+           "SET allow_unredacted_secrets = 'true'",
+           "SET allow_unredacted_secrets = 't'",
+           "SET allow_unredacted_secrets = 'yes'",
+           "SET allow_unredacted_secrets = true::BOOLEAN",
+           "SET allow_unredacted_secrets = (true)",
+           "SET allow_unredacted_secrets = NOT false",
+           "SET allow_unredacted_secrets = (SELECT true)",
+           "SET allow_unredacted_secrets TO true",
+           "SET GLOBAL allow_unredacted_secrets = true",
+           "SET \"allow_unredacted_secrets\" = true",
+           "PRAGMA allow_unredacted_secrets = true",
+           "SELECT 1; SET allow_unredacted_secrets = true",
+       }) {
+    EXPECT_TRUE(ClassifyUnredactedSecretsSet(sql).has_value()) << sql;
+  }
+}
+
+TEST(UnredactedSecretsSet, ExplainWrappedSetIsMatched) {
+  EXPECT_TRUE(
+      ClassifyUnredactedSecretsSet("EXPLAIN ANALYZE SET allow_unredacted_secrets = true")
+          .has_value());
+  EXPECT_TRUE(ClassifyUnredactedSecretsSet("EXPLAIN SET allow_unredacted_secrets = true")
+                  .has_value());
+}
+
+TEST(UnredactedSecretsSet, FalseAndOtherSqlAreNotMatched) {
+  for (const char* sql : {
+           "SET allow_unredacted_secrets = false",
+           "SET allow_unredacted_secrets = 0",
+           "SET allow_unredacted_secrets = 'false'",
+           "PRAGMA allow_unredacted_secrets = false",
+           "RESET allow_unredacted_secrets",
+           "SELECT current_setting('allow_unredacted_secrets')",
+           "SET threads = 4",
+           "SELECT 1",
+       }) {
+    EXPECT_FALSE(ClassifyUnredactedSecretsSet(sql).has_value()) << sql;
+  }
+}
 
 TEST(AdminCommandGuard, SetGlobalIsGated) {
   EXPECT_TRUE(Gated("SET GLOBAL memory_limit = '10GB'"));
@@ -451,6 +520,89 @@ TEST_F(AdminGateServerFixture, AdminBasicAuthUnaffected) {
   // SET GLOBAL is gated for non-admins but must succeed for an admin.
   EXPECT_TRUE(ExecAs(GetPort(), bearer, "SET GLOBAL memory_limit = '512MB'").ok());
   EXPECT_TRUE(ExecAs(GetPort(), bearer, "CHECKPOINT").ok());
+}
+
+TEST_F(AdminGateServerFixture, AdminSetUnredactedSecretsTrueIsRejected) {
+  ASSERT_TRUE(IsServerReady());
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(loc, options));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+
+  auto rejected = ExecAs(GetPort(), bearer, "SET allow_unredacted_secrets = true");
+  EXPECT_FALSE(rejected.ok());
+  EXPECT_NE(rejected.ToString().find("disabled on this server"), std::string::npos)
+      << rejected.ToString();
+
+  EXPECT_TRUE(ExecAs(GetPort(), bearer, "SET allow_unredacted_secrets = false").ok());
+}
+
+TEST_F(AdminGateServerFixture, SqlWithNulByteIsRejected) {
+  ASSERT_TRUE(IsServerReady());
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(loc, options));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+
+  static constexpr char kSql[] = "SELECT 1\0; SET allow_unredacted_secrets = true";
+  const std::string sql(kSql, sizeof(kSql) - 1);  // keep the embedded NUL
+  auto st = ExecAs(GetPort(), bearer, sql);
+  EXPECT_FALSE(st.ok());
+  EXPECT_NE(st.ToString().find("NUL byte"), std::string::npos) << st.ToString();
+}
+
+class UnredactedSecretsAllowedFixture
+    : public gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture> {
+ public:
+  static gizmosql::testing::TestServerConfig GetConfig() {
+    return {
+        .database_filename = "unredacted_secrets_allowed_test.db",
+        .port = 31422,
+        .health_port = 31423,
+        .username = "admin_user",
+        .password = "admin_pass",
+        .block_unredacted_secrets = false,
+    };
+  }
+};
+
+template <>
+std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
+    gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture>::server_{};
+template <>
+std::thread gizmosql::testing::ServerTestFixture<
+    UnredactedSecretsAllowedFixture>::server_thread_{};
+template <>
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture>::server_ready_{
+        false};
+template <>
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<UnredactedSecretsAllowedFixture>::config_{};
+
+TEST_F(UnredactedSecretsAllowedFixture, SetTrueReachesDuckDB) {
+  ASSERT_TRUE(IsServerReady());
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(loc, options));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+
+  auto st = ExecAs(GetPort(), bearer, "SET allow_unredacted_secrets = true");
+  EXPECT_FALSE(st.ok());
+  EXPECT_EQ(st.ToString().find("disabled on this server"), std::string::npos)
+      << st.ToString();
+  EXPECT_NE(st.ToString().find("Cannot change allow_unredacted_secrets"),
+            std::string::npos)
+      << st.ToString();
 }
 
 #endif  // !_WIN32

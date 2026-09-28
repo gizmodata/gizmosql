@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <functional>
 #include <unordered_set>
 
@@ -26,6 +27,7 @@
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/subquery_expression.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
@@ -35,6 +37,7 @@
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/parser/statement/explain_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/copy_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
@@ -278,13 +281,22 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
 // Classify a single statement. Recurses into PREPARE so that
 // `PREPARE p AS SELECT * FROM read_csv('/etc/passwd')` is gated at prepare time
 // — a non-admin therefore cannot stage a gated statement and EXECUTE it later
-// (prepared statements are per-session/connection).
+// (prepared statements are per-session/connection). Recurses into EXPLAIN too:
+// EXPLAIN ANALYZE executes the wrapped statement (COPY TO writes its file,
+// SET GLOBAL changes the setting, ...).
 std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     switch (stmt.type) {
       case dd::StatementType::PREPARE_STATEMENT: {
         auto& ps = stmt.Cast<dd::PrepareStatement>();
         if (ps.statement) {
           if (auto v = ClassifyStatement(*ps.statement)) return v;
+        }
+        break;
+      }
+      case dd::StatementType::EXPLAIN_STATEMENT: {
+        auto& es = stmt.Cast<dd::ExplainStatement>();
+        if (es.stmt) {
+          if (auto v = ClassifyStatement(*es.stmt)) return v;
         }
         break;
       }
@@ -388,6 +400,62 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     return std::nullopt;
 }
 
+bool IsBooleanType(const dd::LogicalType& type) {
+#if !GIZMOSQL_DUCKDB_CHANNEL_LTS
+  // DuckDB 1.5+ leaves parsed type names unbound until binding.
+  if (type.id() == dd::LogicalTypeId::UNBOUND) {
+    try {
+      return dd::UnboundType::TryDefaultBind(type).id() == dd::LogicalTypeId::BOOLEAN;
+    } catch (...) {
+      return false;
+    }
+  }
+#endif
+  return type.id() == dd::LogicalTypeId::BOOLEAN;
+}
+
+// True only when a SET value is provably false. DuckDB evaluates the value and
+// casts it to BOOLEAN, so true, 1, 'yes', 't', NOT false, (true) all enable the
+// setting; anything that is not a false constant is treated as an attempt to
+// enable it (fail closed).
+bool ExpressionIsFalse(const dd::ParsedExpression* value) {
+  if (!value) return false;
+  if (value->GetExpressionClass() == dd::ExpressionClass::CAST) {
+    // DuckDB parses the keyword false as CAST('f' AS BOOLEAN).
+    const auto& cast = value->Cast<dd::CastExpression>();
+    if (!IsBooleanType(cast.cast_type)) return false;
+    return ExpressionIsFalse(cast.child.get());
+  }
+  if (value->GetExpressionClass() != dd::ExpressionClass::CONSTANT) return false;
+  const auto& ce = value->Cast<dd::ConstantExpression>();
+  if (ce.value.IsNull()) return false;
+  dd::Value as_bool;
+  std::string error;
+  if (!ce.value.DefaultTryCastAs(dd::LogicalType::BOOLEAN, as_bool, &error)) return false;
+  return !as_bool.IsNull() && !as_bool.GetValue<bool>();
+}
+
+std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& stmt) {
+  if (stmt.type == dd::StatementType::PREPARE_STATEMENT) {
+    auto& ps = stmt.Cast<dd::PrepareStatement>();
+    if (ps.statement) return ClassifyUnredactedSecretsStatement(*ps.statement);
+    return std::nullopt;
+  }
+  if (stmt.type == dd::StatementType::EXPLAIN_STATEMENT) {
+    // EXPLAIN ANALYZE executes the wrapped statement.
+    auto& es = stmt.Cast<dd::ExplainStatement>();
+    if (es.stmt) return ClassifyUnredactedSecretsStatement(*es.stmt);
+    return std::nullopt;
+  }
+  if (stmt.type != dd::StatementType::SET_STATEMENT) return std::nullopt;
+  auto& ss = stmt.Cast<dd::SetStatement>();
+  if (ss.set_type == dd::SetType::RESET) return std::nullopt;
+  if (ToLower(ss.name) != "allow_unredacted_secrets") return std::nullopt;
+  auto& set_value = stmt.Cast<dd::SetVariableStatement>();
+  if (ExpressionIsFalse(set_value.value.get())) return std::nullopt;
+  return "SET allow_unredacted_secrets = true";
+}
+
 }  // namespace
 
 std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
@@ -408,14 +476,42 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
   return std::nullopt;
 }
 
+std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) {
+  // Every client statement comes through here, so skip the parse unless the
+  // setting name appears. DuckDB's parser rejects U&"..." identifier escapes,
+  // so the name cannot be spelled any other way.
+  static const std::string kName = "allow_unredacted_secrets";
+  auto it =
+      std::search(sql.begin(), sql.end(), kName.begin(), kName.end(),
+                  [](unsigned char a, unsigned char b) { return std::tolower(a) == b; });
+  if (it == sql.end()) return std::nullopt;
+
+  dd::Parser parser;
+  try {
+    parser.ParseQuery(sql);
+  } catch (...) {
+    return std::nullopt;
+  }
+  for (auto& stmt_ptr : parser.statements) {
+    if (!stmt_ptr) continue;
+    if (auto v = ClassifyUnredactedSecretsStatement(*stmt_ptr)) return v;
+  }
+  return std::nullopt;
+}
+
+std::string GatedCommandDeniedMessage(const std::string& category) {
+  return "Permission denied: GizmoSQL blocked " + category +
+         ", which requires the 'admin' role. GizmoSQL confines filesystem- and "
+         "instance-level commands to admins, so users sharing this server cannot read, "
+         "write or reconfigure the host. (Server operators: roles come from the token's "
+         "'role' claim)";
+}
+
 arrow::Status CheckNonAdminCommandAllowed(const std::string& sql) {
   auto category = ClassifyGatedCommand(sql);
   if (!category) return arrow::Status::OK();
-  return flight::MakeFlightError(
-      flight::FlightStatusCode::Unauthorized,
-      "Permission denied: " + *category +
-          " requires the 'admin' role. This GizmoSQL instance restricts "
-          "filesystem- and instance-level commands to admin users.");
+  return flight::MakeFlightError(flight::FlightStatusCode::Unauthorized,
+                                 GatedCommandDeniedMessage(*category));
 }
 
 }  // namespace gizmosql::ddb

@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `--block-unredacted-secrets` / `GIZMOSQL_BLOCK_UNREDACTED_SECRETS` (default
+  **on**): GizmoSQL rejects a client's `SET allow_unredacted_secrets` to any
+  value other than false (`true`, `1`, `'yes'`, `NOT false`, the `PRAGMA`
+  form, ...) before DuckDB sees it, for every role including admin. DuckDB
+  already refuses to enable the setting once the database is open; this
+  returns a clear GizmoSQL error and keeps the block in place should that
+  DuckDB behavior change. Also a new trailing `block_unredacted_secrets`
+  parameter on the `RunFlightSQLServer()` C API. DuckDB backend only
+  ([#193](https://github.com/gizmodata/gizmosql/pull/193), thanks @EmmS21).
 - ThreadSanitizer CI workflow (`.github/workflows/tsan.yml`): builds the whole
   server and every third-party superbuild instrumented and runs the
   integration suite under it, failing on any data race. The new
@@ -15,7 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sanitizer into Arrow, DuckDB, gflags, replxx, SQLite, and OpenTelemetry and
   is part of the superbuild input digest.
 
+### Security
+- The non-admin command gate now inspects statements wrapped in `EXPLAIN` /
+  `EXPLAIN ANALYZE`. `EXPLAIN ANALYZE` executes the wrapped statement, so a
+  non-admin token session could previously run gated commands through it
+  (e.g. `EXPLAIN ANALYZE COPY ... TO '<local path>'`, `EXPLAIN ANALYZE SET
+  GLOBAL ...`, `EXPLAIN ANALYZE CHECKPOINT`, or a local `read_text()` inside a
+  remote `COPY`). The unredacted-secrets check recurses into `EXPLAIN` too.
+- Client SQL containing a NUL byte is rejected before any check runs, so
+  GizmoSQL's security checks and DuckDB can never read different statement
+  text.
+
 ### Changed
+- Security rejections now say what GizmoSQL blocked and why, e.g.
+  `Permission denied: GizmoSQL blocked COPY TO (local filesystem), which
+  requires the 'admin' role. …`, and the unredacted-secrets rejection is now
+  counted as a permission error in metrics.
+
 - **Upgraded DuckDB (stable channel) from v1.5.5 to
   [v1.5.6](https://github.com/duckdb/duckdb/releases/tag/v1.5.6).** The iOS
   out-of-tree extension pins for `ducklake` and `httpfs` were re-synced to

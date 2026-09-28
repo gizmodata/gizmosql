@@ -165,6 +165,12 @@ int main(int argc, char** argv) {
              "0 = off. Reuses the existing session-removal path (client sees session "
              "not found / evicted). DuckDB backend only. If 0, uses env var "
              "GIZMOSQL_SESSION_IDLE_TIMEOUT.")
+            ("block-unredacted-secrets", po::value<bool>()->default_value(true),
+             "Reject SET allow_unredacted_secrets to any value other than false from every "
+             "client, before DuckDB sees the statement. Default is true. Set to false to let "
+             "the statement through (DuckDB still refuses it once the database is open). "
+             "If not set, uses env var GIZMOSQL_BLOCK_UNREDACTED_SECRETS "
+             "(0/false to let the statement through). DuckDB backend only.")
             ("allow-unsigned-extensions", po::value<bool>()->default_value(false),
              "Allow loading unsigned DuckDB extensions (DuckDB's allow_unsigned_extensions "
              "setting). This setting is GLOBAL_ONLY in DuckDB - it cannot be changed via SET or "
@@ -490,6 +496,11 @@ int main(int argc, char** argv) {
           ? std::nullopt
           : std::optional(vm["allow-unsigned-extensions"].as<bool>());
 
+  std::optional<bool> block_unredacted_secrets =
+      vm["block-unredacted-secrets"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["block-unredacted-secrets"].as<bool>());
+
   int32_t session_idle_timeout = vm["session-idle-timeout"].as<int32_t>();
 
   std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
@@ -613,5 +624,6 @@ int main(int argc, char** argv) {
                                : std::nullopt,
       vm["metrics-bind-address"].as<std::string>(),
       vm["enable-metrics"].defaulted() ? std::nullopt
-                                       : std::optional(vm["enable-metrics"].as<bool>()));
+                                       : std::optional(vm["enable-metrics"].as<bool>()),
+      block_unredacted_secrets);
 }

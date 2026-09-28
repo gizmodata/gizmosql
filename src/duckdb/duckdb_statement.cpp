@@ -814,6 +814,18 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     client_session->TouchSqlActivity();
   }
 
+  // DuckDB reads SQL up to the first NUL byte. Reject client SQL containing one,
+  // so the security checks below and the engine can never see different text.
+  if (!is_internal && sql.find('\0') != std::string::npos) {
+    GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                           "Client sent SQL containing a NUL byte", {"kind", "sql"},
+                           {"status", "rejected"}, {"statement_id", handle});
+    return arrow::Status::Invalid(
+        "GizmoSQL rejected a statement containing a NUL byte. GizmoSQL only runs SQL "
+        "text "
+        "that its security checks and the engine read identically");
+  }
+
   // Rudimentary admin-command gate (Core): block dangerous filesystem- and
   // instance-level commands (ATTACH/DETACH, SET GLOBAL, INSTALL/LOAD, CHECKPOINT,
   // COPY/EXPORT to local files, read_* of local files, duckdb_secrets()) for
@@ -828,11 +840,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
                              {"kind", "sql"}, {"status", "rejected"},
                              {"gated", *gated_category}, {"statement_id", handle},
                              {"sql", logged_sql});
+      const std::string gate_error_msg =
+          gizmosql::ddb::GatedCommandDeniedMessage(*gated_category);
 #ifdef GIZMOSQL_ENTERPRISE
-      std::string gate_error_msg =
-          "Permission denied: " + *gated_category +
-          " requires the 'admin' role. This GizmoSQL instance restricts "
-          "filesystem- and instance-level commands to admin users.";
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {
           StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
@@ -840,7 +850,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
         }
       }
 #endif
-      return gizmosql::ddb::CheckNonAdminCommandAllowed(sql);
+      return arrow::flight::MakeFlightError(arrow::flight::FlightStatusCode::Unauthorized,
+                                            gate_error_msg);
     }
   }
 
@@ -1064,6 +1075,27 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
           {"flight_method", flight_method});
     }
     return result;
+  }
+
+  bool block_unredacted_secrets = true;
+  if (auto server = GetServer(*client_session)) {
+    block_unredacted_secrets = server->BlockUnredactedSecrets();
+  }
+  if (!is_internal && block_unredacted_secrets) {
+    if (auto blocked = gizmosql::ddb::ClassifyUnredactedSecretsSet(sql)) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                             "Client attempted to enable unredacted secrets",
+                             {"kind", "sql"}, {"status", "rejected"}, {"gated", *blocked},
+                             {"statement_id", handle}, {"sql", logged_sql});
+      return arrow::flight::MakeFlightError(
+          arrow::flight::FlightStatusCode::Unauthorized,
+          "Permission denied: GizmoSQL blocked enabling allow_unredacted_secrets, which "
+          "is "
+          "disabled on this server. GizmoSQL keeps stored secrets redacted for every "
+          "client, "
+          "including admins, so the credentials this server holds never leave it. "
+          "(Server operators: see --block-unredacted-secrets)");
+    }
   }
 
   std::shared_ptr<duckdb::PreparedStatement> stmt =

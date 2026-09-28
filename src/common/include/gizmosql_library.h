@@ -275,5 +275,9 @@ int RunFlightSQLServer(
     /// [Enterprise metrics license] Enable the metrics registry, background
     /// collection, HTTP listener and SQL function. nullopt consults
     /// GIZMOSQL_ENABLE_METRICS, then defaults to false. Explicit false wins.
-    std::optional<bool> enable_metrics = std::nullopt);
+    std::optional<bool> enable_metrics = std::nullopt,
+    /// Reject client `SET allow_unredacted_secrets = true` before DuckDB sees it
+    /// (--block-unredacted-secrets / GIZMOSQL_BLOCK_UNREDACTED_SECRETS).
+    /// nullopt = consult env var, then default true.
+    std::optional<bool> block_unredacted_secrets = std::nullopt);
 }

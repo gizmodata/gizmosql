@@ -544,7 +544,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const std::string& log_catalog_db_path, const int32_t& health_check_interval_seconds,
     const int32_t& health_check_staleness_seconds, const bool& allow_unsigned_extensions,
     const int32_t& max_sessions, const int32_t& session_idle_timeout_seconds,
-    int32_t metrics_port, const std::string& metrics_bind_address, bool enable_metrics) {
+    int32_t metrics_port, const std::string& metrics_bind_address, bool enable_metrics,
+    const bool& block_unredacted_secrets) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -773,6 +774,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
   if (backend == BackendType::sqlite) {
     db_type = "SQLite";
     (void)session_idle_timeout_seconds;
+    (void)block_unredacted_secrets;
     std::shared_ptr<gizmosql::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(sqlite_server, gizmosql::sqlite::SQLiteFlightSqlServer::Create(
                                              database_filename.string(), read_only));
@@ -783,17 +785,20 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
     // Create DuckDB server first (without instrumentation manager)
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
-    ARROW_ASSIGN_OR_RAISE(duckdb_server, gizmosql::ddb::DuckDBFlightSqlServer::Create(
-                                             database_filename.string(), read_only, print_queries,
-                                             query_timeout, query_log_level, session_log_level,
-                                             storage_version, max_concurrent_statements,
-                                             max_queued_statements, max_queue_wait_seconds,
-                                             admin_bypass_queue_default, memory_limit,
-                                             capture_query_profile,
-                                             allow_unsigned_extensions,
-                                             max_sessions,
-                                             session_idle_timeout_seconds,
-                                             nullptr))  // No instrumentation manager yet
+    ARROW_ASSIGN_OR_RAISE(
+        duckdb_server,
+        gizmosql::ddb::DuckDBFlightSqlServer::Create(
+            database_filename.string(), read_only, print_queries, query_timeout,
+            query_log_level, session_log_level, storage_version,
+            max_concurrent_statements, max_queued_statements, max_queue_wait_seconds,
+            admin_bypass_queue_default, memory_limit, capture_query_profile,
+            allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds,
+            nullptr));  // No instrumentation manager yet
+    duckdb_server->SetBlockUnredactedSecrets(block_unredacted_secrets);
+    if (!block_unredacted_secrets) {
+      GIZMOSQL_LOG(WARNING)
+          << "SET allow_unredacted_secrets = true is not rejected by GizmoSQL";
+    }
 
     // Set instance_id for all future log entries (enables log correlation)
     auto instance_id = duckdb_server->GetInstanceId();
@@ -1279,7 +1284,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     int32_t health_check_interval_seconds, int32_t health_check_staleness_seconds,
     bool allow_unsigned_extensions, int32_t max_sessions,
     int32_t session_idle_timeout_seconds, int32_t metrics_port,
-    std::string metrics_bind_address, bool enable_metrics) {
+    std::string metrics_bind_address, bool enable_metrics,
+    bool block_unredacted_secrets) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
   // state (e.g. a previous server in the same process, as in the test binary)
@@ -1607,7 +1613,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       capture_query_profile, cluster_id, enable_catalog_logging, log_catalog, log_schema,
       log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
       allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds, metrics_port,
-      metrics_bind_address, enable_metrics);
+      metrics_bind_address, enable_metrics, block_unredacted_secrets);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1858,7 +1864,8 @@ int RunFlightSQLServer(
     int32_t health_check_interval_seconds, int32_t health_check_staleness_seconds,
     std::optional<bool> allow_unsigned_extensions, int32_t max_sessions,
     int32_t session_idle_timeout_seconds, std::optional<int32_t> metrics_port,
-    std::string metrics_bind_address, std::optional<bool> enable_metrics) {
+    std::string metrics_bind_address, std::optional<bool> enable_metrics,
+    std::optional<bool> block_unredacted_secrets) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1932,14 +1939,15 @@ int RunFlightSQLServer(
 
   // ---- Boolean env var fallbacks (library-owned) -----------
   // std::optional<bool>: nullopt = "not set, check env var"; true/false = "explicit, skip env var"
-  auto resolve_bool_env = [&](std::optional<bool>& val, const char* env_name) {
+  auto resolve_bool_env = [&](std::optional<bool>& val, const char* env_name,
+                              bool default_value = false) {
     if (!val.has_value()) {
       auto ev = gizmosql::SafeGetEnvVarValue(env_name);
       if (!ev.empty()) {
         bool parsed = false;
         if (parse_bool(ev, parsed)) val = parsed;
       }
-      if (!val.has_value()) val = false;  // default to false if env var not set or invalid
+      if (!val.has_value()) val = default_value;  // env var not set or invalid
     }
   };
   // PRINT_QUERIES is the documented name (docs/index.md, the Docker start
@@ -1954,6 +1962,8 @@ int RunFlightSQLServer(
   resolve_bool_env(admin_bypass_queue_default, "GIZMOSQL_ADMIN_BYPASS_QUEUE_DEFAULT");
   resolve_bool_env(graceful_shutdown, "GIZMOSQL_GRACEFUL_SHUTDOWN");
   resolve_bool_env(allow_unsigned_extensions, "GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS");
+  resolve_bool_env(block_unredacted_secrets, "GIZMOSQL_BLOCK_UNREDACTED_SECRETS",
+                   /*default_value=*/true);
 
   // Integer env var fallback for session_idle_timeout_seconds: only consult env
   // when left at the sentinel default (0 = off).
@@ -2316,7 +2326,8 @@ int RunFlightSQLServer(
       cluster_id, enable_catalog_logging.value(), log_catalog, log_schema,
       log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
       allow_unsigned_extensions.value(), max_sessions, session_idle_timeout_seconds,
-      *metrics_port, metrics_bind_address, enable_metrics.value());
+      *metrics_port, metrics_bind_address, enable_metrics.value(),
+      block_unredacted_secrets.value());
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();
