@@ -1854,8 +1854,7 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
-    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
-    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
+    ARROW_ASSIGN_OR_RAISE(auto execution_lock, statement->AcquireExecutionLock());
     if (statement->ShouldExecuteEagerly()) {
       return ExecuteForFlightInfo(context, client_session, statement, descriptor);
     }
@@ -1885,11 +1884,11 @@ class DuckDBFlightSqlServer::Impl {
       statement = search->second;
     }
     // Bind (DoPut) writes bind_parameters and execution reads them, so the
-    // stream keeps the per-statement execution lock until it is destroyed: a
-    // concurrent rebind or re-execute of the same handle is rejected as busy
-    // instead of racing the running execution. Non-blocking, per statement.
-    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
-    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
+    // stream keeps the per-statement execution lock until it has sent its last
+    // batch (or is destroyed, if abandoned first): a concurrent rebind or
+    // re-execute of the same handle waits briefly, then is rejected as busy,
+    // instead of racing the running execution.
+    ARROW_ASSIGN_OR_RAISE(auto execution_lock, statement->AcquireExecutionLock());
 
     statement->SetCallContext(&context);
     ARROW_ASSIGN_OR_RAISE(auto reader, DuckDBStatementBatchReader::Create(statement))
@@ -1914,8 +1913,7 @@ class DuckDBFlightSqlServer::Impl {
       }
       statement = search->second;
     }
-    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
-    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
+    ARROW_ASSIGN_OR_RAISE(auto execution_lock, statement->AcquireExecutionLock());
     ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
     if (rows.size() > 1) {
       return Status::Invalid(
@@ -1946,8 +1944,7 @@ class DuckDBFlightSqlServer::Impl {
       statement = search->second;
     }
 
-    std::unique_lock execution_lock(statement->execution_mutex, std::try_to_lock);
-    if (!execution_lock.owns_lock()) return Status::Invalid("Prepared statement is busy");
+    ARROW_ASSIGN_OR_RAISE(auto execution_lock, statement->AcquireExecutionLock());
     ARROW_ASSIGN_OR_RAISE(auto rows, ReadBindParameterRows(reader));
 
     if (rows.empty()) {

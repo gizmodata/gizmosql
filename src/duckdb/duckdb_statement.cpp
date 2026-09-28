@@ -2245,6 +2245,19 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
 #endif
 }
 
+arrow::Result<std::unique_lock<std::timed_mutex>>
+DuckDBStatement::AcquireExecutionLock() {
+  std::unique_lock<std::timed_mutex> lock(execution_mutex, std::defer_lock);
+  if (!lock.try_lock_for(kExecutionLockWait)) {
+    return arrow::Status::Invalid(
+        "Prepared statement is busy: a previous execution of this prepared statement "
+        "is still streaming its results. Finish reading or close that result before "
+        "binding or executing the statement again, or prepare a separate statement for "
+        "concurrent use.");
+  }
+  return lock;
+}
+
 bool DuckDBStatement::ShouldExecuteEagerly() const {
   // Any fully bound prepared statement that produces no user result set
   // (DuckDB return type CHANGED_ROWS or NOTHING) executes at GetFlightInfo:

@@ -398,3 +398,65 @@ TEST_F(EagerExecutionFixture, RebindWhileStreamingIsRejectedAsBusy) {
   EXPECT_EQ(table->num_rows(), 3);
   ASSERT_ARROW_OK(prepared->Close(call_options_));
 }
+
+namespace {
+std::shared_ptr<arrow::RecordBatch> Int64Params(const std::vector<int64_t>& values) {
+  arrow::FieldVector fields;
+  arrow::ArrayVector arrays;
+  for (size_t i = 0; i < values.size(); ++i) {
+    arrow::Int64Builder builder;
+    EXPECT_TRUE(builder.Append(values[i]).ok());
+    std::shared_ptr<arrow::Array> array;
+    EXPECT_TRUE(builder.Finish(&array).ok());
+    fields.push_back(arrow::field("p" + std::to_string(i), arrow::int64()));
+    arrays.push_back(array);
+  }
+  return arrow::RecordBatch::Make(arrow::schema(fields), 1, arrays);
+}
+}  // namespace
+
+// v1.39.0 regression: a strictly sequential client that re-executes the same
+// prepared handle right after abandoning the previous result stream (the ADBC
+// driver cancels an unexhausted reader when the cursor moves on) was refused as
+// "Prepared statement is busy" whenever its next bind reached the server before
+// the server had finished tearing the cancelled stream down. The next call must
+// wait for that teardown instead of failing.
+TEST_F(EagerExecutionFixture, SequentialReexecuteAfterCancelledStreamSucceeds) {
+  Exec("CREATE OR REPLACE TABLE busy_cancel AS SELECT range AS v FROM range(5000000)");
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto prepared,
+      sql_client_->Prepare(call_options_, "SELECT v FROM busy_cancel WHERE v >= ?"));
+
+  for (int i = 0; i < 50; ++i) {
+    ASSERT_ARROW_OK(prepared->SetParameters(Int64Params({i})));
+    auto info = prepared->Execute(call_options_);
+    ASSERT_TRUE(info.ok()) << "iteration " << i << ": " << info.status().ToString();
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto stream, sql_client_->DoGet(call_options_, (*info)->endpoints()[0].ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto first, stream->Next());
+    ASSERT_NE(first.data, nullptr);
+    // Take what we need and abandon the rest, as a cursor does after fetchone().
+    stream->Cancel();
+  }
+  ASSERT_ARROW_OK(prepared->Close(call_options_));
+}
+
+// The loader's pattern from the v1.39.0 report: bind, execute, read the one-row
+// result, and immediately go again on the same handle, with no pause.
+TEST_F(EagerExecutionFixture, TightSequentialLoopNeverBusy) {
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto prepared,
+      sql_client_->Prepare(call_options_,
+                           "SELECT 'TABLE' AS kind FROM duckdb_tables() WHERE ? < 0 "
+                           "UNION ALL SELECT 'ROW' WHERE ? >= 0"));
+  for (int i = 0; i < 300; ++i) {
+    ASSERT_ARROW_OK(prepared->SetParameters(Int64Params({i, i})));
+    auto info = prepared->Execute(call_options_);
+    ASSERT_TRUE(info.ok()) << "iteration " << i << ": " << info.status().ToString();
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto stream, sql_client_->DoGet(call_options_, (*info)->endpoints()[0].ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, stream->ToTable());
+    ASSERT_EQ(table->num_rows(), 1) << "iteration " << i;
+  }
+  ASSERT_ARROW_OK(prepared->Close(call_options_));
+}

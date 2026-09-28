@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **"Prepared statement is busy" for sequential clients (v1.39.0 regression).**
+  A client that re-executes the same prepared statement right after moving on
+  from the previous result (e.g. `cursor.fetchone()` then the next
+  `cursor.execute()` with new parameters; the ADBC driver cancels the
+  unexhausted result) could be refused when its next bind reached the server
+  before the server had finished tearing down the previous result stream.
+  The per-statement execution lock now waits up to 5 seconds for the previous
+  execution to let go before reporting busy, and a result stream releases it as
+  soon as it has sent its last batch. A second execution of the same handle
+  while a result stream is genuinely still open is still refused as busy.
+
 ### Added
 - `--block-unredacted-secrets` / `GIZMOSQL_BLOCK_UNREDACTED_SECRETS` (default
   **on**): GizmoSQL rejects a client's `SET allow_unredacted_secrets` to any
