@@ -90,6 +90,10 @@ DuckDBStatementBatchReader::Create(const std::shared_ptr<DuckDBStatement>& state
 
 arrow::Status DuckDBStatementBatchReader::ReadNext(
     std::shared_ptr<arrow::RecordBatch>* out) {
+  if (end_of_stream_) {
+    out->reset();
+    return arrow::Status::OK();
+  }
   if (!already_executed_) {
     ARROW_RETURN_NOT_OK(statement_->Execute());
     already_executed_ = true;
@@ -114,6 +118,14 @@ arrow::Status DuckDBStatementBatchReader::ReadNext(
   }
 #endif
 
+  if (!*out) {
+    // End of stream. Flight gets this null batch before it ends the RPC, so
+    // releasing here frees the handle before the client can see the stream
+    // finish; the next bind/execute of the same handle no longer depends on
+    // when Flight gets around to destroying this reader.
+    end_of_stream_ = true;
+    if (execution_lock_.owns_lock()) execution_lock_.unlock();
+  }
   return arrow::Status::OK();
 }
 }  // namespace gizmosql::ddb

@@ -107,8 +107,19 @@ class DuckDBStatement {
   /// True only for fully bound DDL/DML with no user result set.
   bool ShouldExecuteEagerly() const;
 
-  // Serializes prepared bind/update/GetFlightInfo operations.
-  std::mutex execution_mutex;
+  // Serializes prepared bind/update/GetFlightInfo/DoGet operations on one
+  // handle. Take it with AcquireExecutionLock(), never directly.
+  std::timed_mutex execution_mutex;
+
+  /// Takes execution_mutex, waiting up to kExecutionLockWait for the previous
+  /// execution on this handle to let go of it. A sequential client can send its
+  /// next bind or execute while the server is still finishing the previous
+  /// result stream (it has already read what it needed); waiting briefly lets
+  /// that call succeed. If the lock is still held after the wait (a result
+  /// stream that is genuinely still open), fails with "Prepared statement is
+  /// busy" rather than racing that execution.
+  arrow::Result<std::unique_lock<std::timed_mutex>> AcquireExecutionLock();
+  static constexpr std::chrono::seconds kExecutionLockWait{5};
 
   arrow::Result<int> Execute();
   arrow::Result<std::shared_ptr<arrow::RecordBatch>> FetchResult();

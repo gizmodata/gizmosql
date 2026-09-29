@@ -47,17 +47,22 @@ public:
 
   arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* out) override;
 
-  /// Keeps the statement's execution lock until this reader is destroyed, so a
-  /// concurrent rebind/execute of the same prepared handle is rejected as busy
-  /// rather than racing the running execution. Released before statement_.
-  void HoldExecutionLock(std::unique_lock<std::mutex> lock) {
+  /// Keeps the statement's execution lock while results are being produced, so
+  /// a concurrent rebind/execute of the same prepared handle does not race the
+  /// running execution. Released as soon as ReadNext reaches end of stream
+  /// (before Flight ends the RPC), or when the reader is destroyed if the
+  /// stream is abandoned first. Released before statement_.
+  void HoldExecutionLock(std::unique_lock<std::timed_mutex> lock) {
     execution_lock_ = std::move(lock);
   }
 
 private:
   std::shared_ptr<DuckDBStatement> statement_;
   // Declared after statement_ so it is destroyed (unlocked) first.
-  std::unique_lock<std::mutex> execution_lock_;
+  std::unique_lock<std::timed_mutex> execution_lock_;
+  // Set once ReadNext has returned end of stream; the statement is not touched
+  // again after that, because the execution lock has been released.
+  bool end_of_stream_ = false;
   std::shared_ptr<arrow::Schema> schema_;
   int rc_;
   bool already_executed_;
