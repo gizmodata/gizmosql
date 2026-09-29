@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-09-28
+
 ### Fixed
 - **"Prepared statement is busy" for sequential clients (v1.39.0 regression).**
   A client that re-executes the same prepared statement right after moving on
