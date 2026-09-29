@@ -84,6 +84,16 @@ TEST_F(SensitivePathPolicyTest, DefaultCategories) {
 #endif
 }
 
+#ifndef _WIN32
+// DuckDB reads /proc/self/cgroup at start-up to size its memory limit (Linux);
+// only that exact file is readable, not the rest of /proc.
+TEST_F(SensitivePathPolicyTest, OnlyOwnCgroupFileIsReadableInProc) {
+  EXPECT_FALSE(Check("/proc/self/cgroup").has_value());
+  EXPECT_EQ(Check("/proc/self/environ"), "process information (/proc)");
+  EXPECT_EQ(Check("/proc/1/cgroup"), "process information (/proc)");
+}
+#endif
+
 TEST_F(SensitivePathPolicyTest, OrdinaryPathsAreAllowed) {
   EXPECT_FALSE(Check(root_ / "data" / "ok.csv").has_value());
   EXPECT_FALSE(Check(home() / "notes.txt").has_value());

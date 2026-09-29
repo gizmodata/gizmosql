@@ -142,6 +142,10 @@ SensitivePathPolicy::SensitivePathPolicy(const SensitivePathOptions& options) {
     AddProtectedPath(path, kSystemAccounts);
   }
   AddProtectedPath("/proc", kProcFs);
+  // DuckDB reads this at start-up (through the guarded file system) to size its
+  // default memory limit from the container's cgroup. It holds only cgroup
+  // membership; the rest of /proc stays protected, including other processes'.
+  allowed_keys_ = Keys("/proc/self/cgroup");
   // Re-opens the server's own open file descriptors (a device on macOS, a
   // link through /proc/self/fd on Linux).
   AddProtectedPath("/dev/fd", kProcFs);
@@ -191,6 +195,12 @@ std::optional<std::string> SensitivePathPolicy::Check(const std::string& path) c
   if (path.empty() || IsRemote(path)) return std::nullopt;
   const auto candidates = Keys(StripFileScheme(path));
   std::shared_lock lock(mutex_);
+  for (const auto& candidate : candidates) {
+    if (std::find(allowed_keys_.begin(), allowed_keys_.end(), candidate) !=
+        allowed_keys_.end()) {
+      return std::nullopt;
+    }
+  }
   for (const auto& candidate : candidates) {
     for (const auto& entry : entries_) {
       if (KeyCovers(entry.key, candidate)) return entry.category;

@@ -92,6 +92,9 @@ class SensitivePathPolicy {
   };
   mutable std::shared_mutex mutex_;
   std::vector<Entry> entries_;
+  // Exact paths inside protected locations that stay readable (DuckDB reads
+  // /proc/self/cgroup at start-up to find the container's memory limit).
+  std::vector<std::string> allowed_keys_;
 };
 
 /// If `duckdb_error` is a sensitive-path refusal raised by the guard, the Flight
