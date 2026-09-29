@@ -545,7 +545,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const int32_t& health_check_staleness_seconds, const bool& allow_unsigned_extensions,
     const int32_t& max_sessions, const int32_t& session_idle_timeout_seconds,
     int32_t metrics_port, const std::string& metrics_bind_address, bool enable_metrics,
-    const bool& block_unredacted_secrets) {
+    const bool& block_unredacted_secrets,
+    std::shared_ptr<gizmosql::ddb::SensitivePathPolicy> sensitive_path_policy) {
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -775,6 +776,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     db_type = "SQLite";
     (void)session_idle_timeout_seconds;
     (void)block_unredacted_secrets;
+    (void)sensitive_path_policy;
     std::shared_ptr<gizmosql::sqlite::SQLiteFlightSqlServer> sqlite_server = nullptr;
     ARROW_ASSIGN_OR_RAISE(sqlite_server, gizmosql::sqlite::SQLiteFlightSqlServer::Create(
                                              database_filename.string(), read_only));
@@ -782,6 +784,10 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     server = sqlite_server;
   } else if (backend == BackendType::duckdb) {
     db_type = "DuckDB";
+
+    if (sensitive_path_policy && !tls_key_path.empty()) {
+      sensitive_path_policy->AddServerCredentialFile(tls_key_path.string());
+    }
 
     // Create DuckDB server first (without instrumentation manager)
     std::shared_ptr<gizmosql::ddb::DuckDBFlightSqlServer> duckdb_server = nullptr;
@@ -793,6 +799,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             max_concurrent_statements, max_queued_statements, max_queue_wait_seconds,
             admin_bypass_queue_default, memory_limit, capture_query_profile,
             allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds,
+            sensitive_path_policy,
             nullptr));  // No instrumentation manager yet
     duckdb_server->SetBlockUnredactedSecrets(block_unredacted_secrets);
     if (!block_unredacted_secrets) {
@@ -948,6 +955,16 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 
     duckdb_init_sql_commands += init_sql_commands;
     RUN_INIT_COMMANDS(duckdb_server, duckdb_init_sql_commands);
+
+    // The operator's init SQL may have moved DuckDB's secret_directory; protect
+    // the one actually in use (the default location is protected already).
+    if (sensitive_path_policy) {
+      if (auto dirs = duckdb_server->ExecuteSqlAndGetStringVector(
+              "SELECT current_setting('secret_directory')");
+          dirs.ok()) {
+        for (const auto& dir : *dirs) sensitive_path_policy->AddSecretDirectory(dir);
+      }
+    }
 
 #ifdef GIZMOSQL_ENTERPRISE
     // Now initialize instrumentation manager using the server's DuckDB instance (if enabled)
@@ -1284,8 +1301,9 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     int32_t health_check_interval_seconds, int32_t health_check_staleness_seconds,
     bool allow_unsigned_extensions, int32_t max_sessions,
     int32_t session_idle_timeout_seconds, int32_t metrics_port,
-    std::string metrics_bind_address, bool enable_metrics,
-    bool block_unredacted_secrets) {
+    std::string metrics_bind_address, bool enable_metrics, bool block_unredacted_secrets,
+    bool block_sensitive_paths, std::vector<std::string> sensitive_paths,
+    std::vector<std::string> server_credential_files) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
   // state (e.g. a previous server in the same process, as in the test binary)
@@ -1597,6 +1615,21 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
                        << oauth_port;
   }
 
+  std::shared_ptr<gizmosql::ddb::SensitivePathPolicy> sensitive_path_policy;
+  if (backend == BackendType::duckdb && block_sensitive_paths) {
+    gizmosql::ddb::SensitivePathOptions options;
+    options.extra_paths = std::move(sensitive_paths);
+    options.server_files = std::move(server_credential_files);
+    if (!init_sql_commands_file.empty()) {
+      options.server_files.push_back(init_sql_commands_file.string());
+    }
+    sensitive_path_policy = std::make_shared<gizmosql::ddb::SensitivePathPolicy>(options);
+  } else if (backend == BackendType::duckdb) {
+    GIZMOSQL_LOG(WARNING)
+        << "Sensitive-path guard is OFF: clients (including admins) can "
+           "read any file the server process can read";
+  }
+
   return FlightSQLServerBuilder(
       backend, database_filename, hostname, port, username, password, secret_key,
       tls_cert_path, tls_key_path, mtls_ca_cert_path, init_sql_commands, read_only,
@@ -1613,7 +1646,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       capture_query_profile, cluster_id, enable_catalog_logging, log_catalog, log_schema,
       log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
       allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds, metrics_port,
-      metrics_bind_address, enable_metrics, block_unredacted_secrets);
+      metrics_bind_address, enable_metrics, block_unredacted_secrets,
+      sensitive_path_policy);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1865,7 +1899,8 @@ int RunFlightSQLServer(
     std::optional<bool> allow_unsigned_extensions, int32_t max_sessions,
     int32_t session_idle_timeout_seconds, std::optional<int32_t> metrics_port,
     std::string metrics_bind_address, std::optional<bool> enable_metrics,
-    std::optional<bool> block_unredacted_secrets) {
+    std::optional<bool> block_unredacted_secrets,
+    std::optional<bool> block_sensitive_paths, std::string sensitive_paths) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1964,6 +1999,21 @@ int RunFlightSQLServer(
   resolve_bool_env(allow_unsigned_extensions, "GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS");
   resolve_bool_env(block_unredacted_secrets, "GIZMOSQL_BLOCK_UNREDACTED_SECRETS",
                    /*default_value=*/true);
+  resolve_bool_env(block_sensitive_paths, "GIZMOSQL_BLOCK_SENSITIVE_PATHS",
+                   /*default_value=*/true);
+  if (sensitive_paths.empty()) {
+    sensitive_paths = gizmosql::SafeGetEnvVarValue("GIZMOSQL_SENSITIVE_PATHS");
+  }
+  std::vector<std::string> extra_sensitive_paths;
+  {
+    std::stringstream paths_stream(sensitive_paths);
+    std::string item;
+    while (std::getline(paths_stream, item, ',')) {
+      item.erase(0, item.find_first_not_of(" \t"));
+      item.erase(item.find_last_not_of(" \t") + 1);
+      if (!item.empty()) extra_sensitive_paths.push_back(item);
+    }
+  }
 
   // Integer env var fallback for session_idle_timeout_seconds: only consult env
   // when left at the sentinel default (0 = off).
@@ -2327,7 +2377,10 @@ int RunFlightSQLServer(
       log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
       allow_unsigned_extensions.value(), max_sessions, session_idle_timeout_seconds,
       *metrics_port, metrics_bind_address, enable_metrics.value(),
-      block_unredacted_secrets.value());
+      block_unredacted_secrets.value(), block_sensitive_paths.value(),
+      extra_sensitive_paths,
+      license_key_file.empty() ? std::vector<std::string>{}
+                               : std::vector<std::string>{license_key_file});
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

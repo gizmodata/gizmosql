@@ -37,6 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is part of the superbuild input digest.
 
 ### Security
+- **Sensitive-path guard (`--block-sensitive-paths`, default on).** GizmoSQL
+  refuses SQL access to credential and system files on the server host for
+  every client, including admins: DuckDB persistent secrets (the default
+  location and the server's `secret_directory`), user credential stores
+  (`~/.ssh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.gnupg`,
+  `~/.docker/config.json`, `~/.netrc`, `~/.pgpass`, `~/.git-credentials`),
+  `/etc/passwd`, `/etc/shadow`, `/etc/sudoers` and related, `/proc`, `/dev/fd`,
+  container/Kubernetes secrets, and the server's own TLS key, license key and
+  init-SQL files. It is enforced in DuckDB's file system, so it covers every
+  way SQL reaches a file; `~`, relative paths and symlinks are resolved first,
+  and protected entries are hidden from listings. Clients can no longer change
+  `secret_directory`. Refusals are `UNAUTHORIZED` with a clear message. Add
+  locations with `--sensitive-paths` / `GIZMOSQL_SENSITIVE_PATHS`; turning the
+  guard off (`GIZMOSQL_BLOCK_SENSITIVE_PATHS=false`) logs a startup warning.
+  Also new trailing `block_sensitive_paths` / `sensitive_paths` parameters on
+  the `RunFlightSQLServer()` C API. DuckDB backend only.
 - The non-admin command gate now inspects statements wrapped in `EXPLAIN` /
   `EXPLAIN ANALYZE`. `EXPLAIN ANALYZE` executes the wrapped statement, so a
   non-admin token session could previously run gated commands through it

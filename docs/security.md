@@ -299,7 +299,72 @@ Users whose email doesn't match any pattern receive: `"User 'eve@attacker.com' i
 
 ---
 
-## Layer 5: Audit & Monitoring
+## Layer 5: Host & Secret Protection
+
+A GizmoSQL server is shared: one server process runs every client's SQL, and
+that process holds credentials (DuckDB secrets) and can see files on its host.
+Because every username/password user has the `admin` role, GizmoSQL protects
+these for **every client, including admins**. Both protections below are
+**on by default** (DuckDB backend).
+
+### Sensitive-path guard
+
+GizmoSQL refuses SQL access to credential and system files on the server host:
+
+| Category | Protected locations |
+|----------|---------------------|
+| DuckDB persistent secrets | `~/.duckdb/stored_secrets` and the server's configured `secret_directory` |
+| User credential stores | `~/.ssh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.gnupg`, `~/.docker/config.json`, `~/.netrc`, `~/.pgpass`, `~/.git-credentials` |
+| System account files | `/etc/passwd`, `/etc/shadow`, `/etc/sudoers` (and related) |
+| Process information | `/proc`, `/dev/fd` |
+| Container / Kubernetes secrets | `/var/run/secrets`, `/run/secrets` |
+| GizmoSQL server credentials | the TLS private key, license key file, and init-SQL file the server was started with |
+
+The check applies to every way SQL can reach a file, and it resolves `~`,
+relative paths, and symlinks first, so a protected file cannot be reached under
+another name. Protected entries are also left out of directory listings. Clients
+cannot change `secret_directory`. A refused request returns a clear error, the
+same whether or not the file exists:
+
+```
+Permission denied: GizmoSQL blocked access to '/etc/passwd' (system account files). GizmoSQL keeps credential and system files on the server host out of reach of every client, including admins, so a shared server cannot be used to read the host's secrets. (Server operators: see --block-sensitive-paths)
+```
+
+Protect additional files or directories with `--sensitive-paths`
+(comma-separated):
+
+```bash
+gizmosql_server --username admin --password secretpass \
+  --sensitive-paths '/srv/app/.env,/srv/app/keys'
+```
+
+| Setting | Env Var | Default |
+|---------|---------|---------|
+| `--block-sensitive-paths` | `GIZMOSQL_BLOCK_SENSITIVE_PATHS` | `true` |
+| `--sensitive-paths` | `GIZMOSQL_SENSITIVE_PATHS` | *(none)* |
+
+Turning the guard off (`--block-sensitive-paths false`) logs a startup warning;
+only do so when every client is fully trusted with the host's files.
+
+### Stored secrets stay redacted
+
+DuckDB can print a stored secret's credentials when `allow_unredacted_secrets`
+is enabled. GizmoSQL refuses any client attempt to enable it:
+
+```
+Permission denied: GizmoSQL blocked enabling allow_unredacted_secrets, which is disabled on this server. GizmoSQL keeps stored secrets redacted for every client, including admins, so the credentials this server holds never leave it. (Server operators: see --block-unredacted-secrets)
+```
+
+| Setting | Env Var | Default |
+|---------|---------|---------|
+| `--block-unredacted-secrets` | `GIZMOSQL_BLOCK_UNREDACTED_SECRETS` | `true` |
+
+For per-role limits on filesystem- and instance-level commands (for non-admin
+token roles), see [Admin Command Gating](admin_command_gating.md).
+
+---
+
+## Layer 6: Audit & Monitoring
 
 ### Authentication Logging
 

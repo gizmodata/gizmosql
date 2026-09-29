@@ -456,6 +456,30 @@ std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& 
   return "SET allow_unredacted_secrets = true";
 }
 
+// A SET (or PRAGMA x = ...) of `name`, also inside PREPARE / EXPLAIN. RESET
+// is not a match.
+bool IsSetOf(dd::SQLStatement& stmt, const std::string& name) {
+  if (stmt.type == dd::StatementType::PREPARE_STATEMENT) {
+    auto& ps = stmt.Cast<dd::PrepareStatement>();
+    return ps.statement && IsSetOf(*ps.statement, name);
+  }
+  if (stmt.type == dd::StatementType::EXPLAIN_STATEMENT) {
+    auto& es = stmt.Cast<dd::ExplainStatement>();
+    return es.stmt && IsSetOf(*es.stmt, name);
+  }
+  if (stmt.type != dd::StatementType::SET_STATEMENT) return false;
+  auto& ss = stmt.Cast<dd::SetStatement>();
+  return ss.set_type != dd::SetType::RESET && ToLower(ss.name) == name;
+}
+
+bool ContainsCaseInsensitive(const std::string& haystack,
+                             const std::string& lower_needle) {
+  return std::search(haystack.begin(), haystack.end(), lower_needle.begin(),
+                     lower_needle.end(), [](unsigned char a, unsigned char b) {
+                       return std::tolower(a) == b;
+                     }) != haystack.end();
+}
+
 }  // namespace
 
 std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
@@ -497,6 +521,21 @@ std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) 
     if (auto v = ClassifyUnredactedSecretsStatement(*stmt_ptr)) return v;
   }
   return std::nullopt;
+}
+
+bool IsSecretDirectorySet(const std::string& sql) {
+  static const std::string kName = "secret_directory";
+  if (!ContainsCaseInsensitive(sql, kName)) return false;
+  dd::Parser parser;
+  try {
+    parser.ParseQuery(sql);
+  } catch (...) {
+    return false;
+  }
+  for (auto& stmt_ptr : parser.statements) {
+    if (stmt_ptr && IsSetOf(*stmt_ptr, kName)) return true;
+  }
+  return false;
 }
 
 std::string GatedCommandDeniedMessage(const std::string& category) {
