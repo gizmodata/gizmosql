@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `-adbc` Docker image tags now bundle `gizmosql-adbc` v2.0.14 (was v2.0.13),
+  a maintenance release with current Go dependencies (arrow-go 18.8.0,
+  grpc 1.84.0) built with Go 1.26.8. The driver-compatibility test matrix
+  now installs `adbc-driver-gizmosql` 2.0.14.
+
 ## [1.40.0] - 2026-09-28
 
 ### Fixed
