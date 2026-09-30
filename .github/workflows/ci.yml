@@ -939,15 +939,17 @@ jobs:
             vc_arch: x64
           - platform: arm64
             # Native ARM64 hosted runner (free for public repos). The image
-            # ships VS 2022 Enterprise + vcpkg at C:\vcpkg like windows-2022.
+            # ships Visual Studio (VS 18 as of Sept 2026) + vcpkg at C:\vcpkg
+            # like windows-2022.
             runner: windows-11-arm
             vc_arch: arm64
     env:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.vc_arch }}-windows-static
       # Bump when the `vcpkg install` package list below changes.
       VCPKG_PACKAGES_KEY: boost-program-options-boost-algorithm-boost-uuid-zlib-openssl
-      # VS 2022 sets VCPKG_ROOT to its own vcpkg copy, conflicting with the
-      # runner's vcpkg at C:\vcpkg. Override to suppress the mismatch warning.
+      # vcvarsall sets VCPKG_ROOT to Visual Studio's own vcpkg copy,
+      # conflicting with the runner's vcpkg at C:\vcpkg. Override to suppress
+      # the mismatch warning.
       VCPKG_ROOT: C:\vcpkg
       bin_suffix: ${{ matrix.duckdb_channel == 'lts' && '_lts' || '' }}
       unsigned_artifact: gizmosql-windows-${{ matrix.platform }}-unsigned${{ matrix.duckdb_channel == 'lts' && '-lts' || '' }}
@@ -983,29 +985,6 @@ jobs:
           }
           Get-PSDrive C | Select-Object Name, @{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}}
 
-      - name: Restore vcpkg cache
-        id: vcpkg-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.VCPKG_ROOT }}/installed
-          # Keyed on the package list, not the workflow file, so unrelated
-          # workflow edits do not rebuild OpenSSL/Boost from source.
-          key: vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ env.VCPKG_PACKAGES_KEY }}
-          restore-keys: |
-            vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-
-
-      - name: Install vcpkg dependencies
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet $env:VCPKG_DEFAULT_TRIPLET --clean-after-build --x-install-root="$env:VCPKG_ROOT\installed"
-
-      - name: Save vcpkg cache
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.VCPKG_ROOT }}/installed
-          key: vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ env.VCPKG_PACKAGES_KEY }}
-
       # ilammy passes the arch through to vcvarsall.bat verbatim. On the
       # windows-11-arm runner `arm64` selects the native ARM64-hosted
       # toolchain (host arch is auto-detected from PROCESSOR_ARCHITECTURE).
@@ -1019,6 +998,43 @@ jobs:
       - name: Restore VCPKG_ROOT after MSVC setup
         shell: pwsh
         run: echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
+      # Every Windows cache below is keyed on the exact MSVC toolset. The
+      # cached CMake build trees record the absolute cl.exe path, so a runner
+      # image that ships a different toolset (windows-11-arm moved from VS
+      # 2022 / 14.44 to VS 18 / 14.51 in Sept 2026) made every restored cache
+      # fail at configure with "not a full path to an existing compiler tool".
+      # With the version in the key, a toolset change is a cold build instead.
+      - name: Resolve MSVC toolset version for cache keys
+        id: msvc
+        shell: pwsh
+        run: |
+          if (-not $env:VCToolsVersion) { throw "VCToolsVersion is not set; did msvc-dev-cmd run?" }
+          "version=$env:VCToolsVersion" >> $env:GITHUB_OUTPUT
+          Write-Host "MSVC toolset: $env:VCToolsVersion ($env:VCToolsInstallDir)"
+
+      - name: Restore vcpkg cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.VCPKG_ROOT }}/installed
+          # Keyed on the package list, not the workflow file, so unrelated
+          # workflow edits do not rebuild OpenSSL/Boost from source.
+          key: vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-msvc${{ steps.msvc.outputs.version }}-${{ env.VCPKG_PACKAGES_KEY }}
+          restore-keys: |
+            vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-msvc${{ steps.msvc.outputs.version }}-
+
+      - name: Install vcpkg dependencies
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install boost-program-options boost-algorithm boost-uuid zlib openssl --triplet $env:VCPKG_DEFAULT_TRIPLET --clean-after-build --x-install-root="$env:VCPKG_ROOT\installed"
+
+      - name: Save vcpkg cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.VCPKG_ROOT }}/installed
+          key: vcpkg-v2-${{ env.VCPKG_DEFAULT_TRIPLET }}-msvc${{ steps.msvc.outputs.version }}-${{ env.VCPKG_PACKAGES_KEY }}
 
       - name: Resolve DuckDB version for the cache key
         id: duckdb-tag
@@ -1047,9 +1063,9 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            deps-v5-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-
+            deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-25.0.1-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -1058,7 +1074,7 @@ jobs:
           path: |
             build/third_party/duckdb
             build/third_party/src/duckdb_project*
-          key: duckdb-v2-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
+          key: duckdb-v2-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -1094,7 +1110,7 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-windows-${{ matrix.vc_arch }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
 
       - name: Save DuckDB cache
         # Tag-scoped caches can never be restored by another ref and only
@@ -1105,11 +1121,18 @@ jobs:
           path: |
             build/third_party/duckdb
             build/third_party/src/duckdb_project*
-          key: duckdb-v2-windows-${{ matrix.vc_arch }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
+          key: duckdb-v2-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Copy VC++ runtime DLLs for DuckDB extension compatibility
+        shell: pwsh
         run: |
-          $crtDir = Join-Path $env:VCToolsRedistDir "${{ matrix.vc_arch }}\Microsoft.VC143.CRT"
+          # The folder is named for the toolset (Microsoft.VC143.CRT on VS 2022,
+          # a newer VC14x on VS 18), so resolve it rather than hardcode it.
+          $archDir = Join-Path $env:VCToolsRedistDir "${{ matrix.vc_arch }}"
+          $crtDir = Get-ChildItem -Path $archDir -Directory -Filter "Microsoft.VC*.CRT" |
+            Sort-Object Name | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $crtDir) { throw "No Microsoft.VC*.CRT folder under $archDir" }
+          Write-Host "VC++ runtime from $crtDir"
           Copy-Item "$crtDir\vcruntime140.dll" build\
           Copy-Item "$crtDir\vcruntime140_1.dll" build\
           Copy-Item "$crtDir\msvcp140.dll" build\

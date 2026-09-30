@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grpc 1.84.0) built with Go 1.26.8. The driver-compatibility test matrix
   now installs `adbc-driver-gizmosql` 2.0.14.
 
+### Fixed
+- CI: the Windows arm64 build failed at configure ("CMAKE_C_COMPILER ... is
+  not a full path to an existing compiler tool") after the `windows-11-arm`
+  runner image moved from Visual Studio 2022 (MSVC 14.44) to Visual Studio 18
+  (MSVC 14.51). The restored third-party caches held CMake build trees
+  pointing at the old `cl.exe`. Every Windows cache key (vcpkg, Arrow and
+  friends, DuckDB) now includes the exact MSVC toolset version, so a toolset
+  change triggers a cold build instead of a broken one, and the VC++ runtime
+  DLLs are copied from whichever `Microsoft.VC*.CRT` redist folder the
+  toolset ships instead of a hardcoded `VC143`.
+
 ## [1.40.0] - 2026-09-28
 
 ### Fixed
