@@ -69,9 +69,11 @@ ExternalProject_Add(
 # common/operator/add.hpp -> common/types/cast_helpers.hpp — but DuckDB does
 # not install it. Without this the compiler finds a system fmt (Homebrew's
 # /opt/homebrew/include) instead and fails on duckdb_fmt::. Harmless on 1.x.
+# (Quoted: configure_file pastes these paths in literally, and on Windows
+# CMAKE_COMMAND is "C:/Program Files/CMake/bin/cmake.exe".)
 ExternalProject_Add_Step(duckdb_project install_vendored_fmt_headers
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            <SOURCE_DIR>/third_party/fmt/include/fmt
-            ${CMAKE_BINARY_DIR}/third_party/duckdb/include/fmt
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "<SOURCE_DIR>/third_party/fmt/include/fmt"
+            "${CMAKE_BINARY_DIR}/third_party/duckdb/include/fmt"
     DEPENDEES install
 )

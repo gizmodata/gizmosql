@@ -954,6 +954,12 @@ jobs:
             # like windows-2022.
             runner: windows-11-arm
             vc_arch: arm64
+            # Pin the side-by-side v143 toolset (component
+            # VC.14.44.17.14.ARM64 on the image): MSVC 14.51 rejects Arrow's
+            # bundled gRPC 1.76 (C3539 "a template-argument cannot be a type
+            # that contains 'auto'" in call_filters.h). Drop the pin once the
+            # image ships MSVC 14.52+, which fixes it.
+            vc_toolset: "14.44"
     env:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.vc_arch }}-windows-static
       # Bump when the `vcpkg install` package list below changes.
@@ -1003,6 +1009,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.vc_arch }}
+          toolset: ${{ matrix.vc_toolset }}
 
       # vcvarsall.bat (run by ilammy/msvc-dev-cmd) exports VCPKG_ROOT pointing
       # to VS's own vcpkg copy, overriding our job-level env. Re-set it.
