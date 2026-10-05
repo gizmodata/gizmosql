@@ -7,13 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Edge release channel (experimental — not for production workloads).** A
+  third channel next to stable and LTS, built on the next DuckDB major ahead
+  of its release: today DuckDB `v2.0.0-alpha43763` (commit `96063b9e39`; there
+  is no v2.0.0 tag yet). It exists to evaluate DuckDB 2.0 early. Build it with
+  `-DGIZMOSQL_DUCKDB_CHANNEL=edge`; releases ship `gizmosql_cli_<os>_<arch>_edge.zip`,
+  `GizmoSQL-<arch>-edge.msi`, a `gizmosql-edge` Homebrew formula and
+  `gizmodata/gizmosql-edge` / `ghcr.io/gizmodata/gizmosql-edge` images (no iOS
+  app). Edge builds report a `-EDGE` version and
+  log a warning at startup that they are not for production use. Databases an
+  edge server creates use DuckDB 2.0's storage format, which the stable and
+  LTS channels cannot open (`--storage-version v1.5.0` keeps them readable).
+  On edge, `sql_executions.query_profile` follows DuckDB 2.0's nested layout
+  (total time at `$.query.total_time` instead of `$.latency`) and is captured
+  once the result has been fully fetched. See `docs/edge_channel.md`. Stable
+  stays on DuckDB v1.5.6, LTS on v1.4.5.
+- **VARIANT over Arrow Flight SQL** (edge channel). VARIANT columns export as
+  Arrow's canonical `arrow.parquet.variant` extension type (a struct of
+  Variant-encoded `metadata`/`value` binaries); `arrow.parquet.variant`
+  columns ingest (`ExecuteIngest`/`DoPut`) into VARIANT columns, also when
+  nested in structs or lists; and such values bind as prepared-statement
+  parameters, whose schema advertises the extension type.
+
+- **`--reject-unknown-sessions` / `GIZMOSQL_REJECT_UNKNOWN_SESSIONS`** (DuckDB,
+  default `false`). A bearer token names its session; when that session has
+  ended on the instance (closed or idle-evicted), or another instance created
+  it (multi-replica setups that accept each other's tokens), the server has
+  always started a new, empty session for the token without a word — so a
+  JDBC/DBeaver client's open transaction, temp tables, `USE` and `SET` were
+  silently gone. With the flag on, such a request fails with
+  `Unauthenticated` and the client re-authenticates. Off by default: the
+  historical behavior is unchanged.
+
 ### Changed
+- **The Windows MSIs of the three channels are separate products** and install
+  side by side: stable stays "GizmoSQL" in `C:\Program Files\GizmoSQL`, LTS
+  is now "GizmoSQL LTS" in `C:\Program Files\GizmoSQL LTS` with
+  `gizmosql_server_lts.exe` / `gizmosql_client_lts.exe`, and edge is "GizmoSQL
+  Edge (experimental)". Previously the LTS MSI shared the stable product's
+  upgrade code, so installing one replaced the other. **Upgrading an LTS MSI
+  install from v1.40.0 or earlier:** that install is registered as the stable
+  product, so uninstall "GizmoSQL" first, or the new LTS MSI installs next to
+  it (and the next stable MSI would turn the old one into stable).
 - `-adbc` Docker image tags now bundle `gizmosql-adbc` v2.0.14 (was v2.0.13),
   a maintenance release with current Go dependencies (arrow-go 18.8.0,
   grpc 1.84.0) built with Go 1.26.8. The driver-compatibility test matrix
   now installs `adbc-driver-gizmosql` 2.0.14.
 
+### Security
+- **Read-only access could be bypassed with multi-statement SQL.** SQL that
+  DuckDB cannot prepare as a single statement (e.g. `SELECT 1; INSERT INTO t
+  ...`) fell back to direct execution, which skipped the per-statement access
+  checks: a token with read-only catalog access, or a `readonly`-role session,
+  could write, and writes to the GizmoSQL system catalog were not blocked. Each
+  statement of such SQL is now checked as DuckDB binds it, with the same
+  checks and errors as a single statement.
+- The admin command gate also blocks, for non-admin sessions, DuckDB's Quack
+  remote-protocol functions — `quack_serve()` would open a network server
+  inside GizmoSQL; also `quack_query()`, `quack_cancel()`, ... DuckDB 1.5
+  autoloads the extension on first use, so this applies to the stable channel
+  too.
+- Edge channel (DuckDB 2.0) additions are gated for non-admins: `CONNECT`/`DISCONNECT`
+  (`CONNECT` attaches its target and forwards raw SQL to it), `EXTERNAL
+  RESOURCE`, passthrough SQL, `COPY ... TO` used as a CTE body (`WITH c AS
+  (COPY t TO '/tmp/x') SELECT ...`), the `read_single_csv_file` /
+  `read_single_json_file` readers, and local-file reads in `UPDATE ... FROM`,
+  `DELETE ... USING` and `MERGE ... USING` sources.
+- The sensitive-path guard also covers DuckDB 2.0's (edge channel) new
+  file-system entry points (memory-mapped `ATTACH`, recursive directory create/remove, and
+  file-stats lookups).
+
 ### Fixed
+- **A password containing `:` could not log in.** The Basic-auth parser cut
+  the decoded `username:password` at every `:`, so a password such as
+  `pa:ss` was truncated to `pa` and always rejected — and, conversely,
+  `<password>:<anything>` was accepted as `<password>`. The username now ends
+  at the first `:` and everything after it is the password (RFC 7617). A
+  username containing `:` cannot be expressed in Basic authentication, so the
+  server now refuses to start with one.
+- **The server crashed when it could not open its database file** — e.g. a
+  file written by a newer DuckDB (such as an edge-channel database opened by a
+  stable or LTS server), one locked by another process, or an unreadable one.
+  The DuckDB exception escaped and aborted the process
+  (`libc++abi: terminating`). Startup now fails with a clear error, which for
+  a newer storage format names the DuckDB version and channel of this build.
+- **Init SQL was split at every `;`.** `--init-sql-commands` /
+  `--init-sql-commands-file` only understood single-quoted strings, so a `;`
+  inside a `--` or `/* */` comment, a `"double;quoted"` identifier or a
+  `$$...$$` string cut a statement in two and the server failed to start. The
+  splitter now follows DuckDB's lexical rules (including `E'...'` strings and
+  nested block comments); comment-only fragments are skipped.
+- **Listing tables with their schemas queried every attached catalog per
+  table.** Flight SQL `GetTables` with `include_schema` (JDBC/DBeaver table
+  browsing) read each table's column details (NOT NULL, comments, defaults,
+  type names) with `duckdb_columns()`, which enumerates every attached catalog
+  — one metadata-store round trip per table per DuckLake or PostgreSQL
+  catalog. The details now come from that one table's (or view's) catalog
+  entry, with the same values as before.
+- **Multi-statement SQL ran twice when sent as a query** (Flight SQL
+  `CommandStatementQuery`, e.g. `SELECT 1; INSERT INTO t VALUES (1)` from
+  JDBC/ADBC `execute`): once while computing the result schema at
+  GetFlightInfo and again on DoGet, so its side effects happened twice. It now
+  runs once, at GetFlightInfo, and DoGet returns that result.
+- Edge channel / DuckDB 2.0 compatibility: `SET [GLOBAL] gizmosql.<name> = ...` (DuckDB
+  2.0's grammar no longer accepts a dotted setting name unquoted); bulk
+  ingest (DuckDB 2.0's `arrow_scan` takes an `ArrowScanFactory`); results
+  stream instead of being fully materialized (`PreparedStatement::Execute`
+  now runs to completion), with execution still interruptible by client
+  cancellation and the query timeout; and statically linked extensions
+  (`core_functions`, `parquet`, `icu`, `tpch`) are registered explicitly, as
+  DuckDB 2.0 no longer does it for the embedding program.
 - CI: the Windows arm64 build failed at configure ("CMAKE_C_COMPILER ... is
   not a full path to an existing compiler tool") after the `windows-11-arm`
   runner image moved from Visual Studio 2022 (MSVC 14.44) to Visual Studio 18

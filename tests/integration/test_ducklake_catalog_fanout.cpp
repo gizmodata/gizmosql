@@ -337,6 +337,25 @@ void RunFanoutTest(FlightSqlClient& client, arrow::flight::FlightCallOptions& op
   EXPECT_LE(tab_delta, kMaxSessionsPerUse)
       << "GetTables fanned out across attached DuckLake catalogs";
 
+  // --- GetTables(catalog, include_schema): column metadata from ONE catalog ---
+  // The per-table column details (NOT NULL, comments, defaults) once came from
+  // duckdb_columns(), which enumerates every attached catalog.
+  ASSERT_NO_FATAL_FAILURE(DrainPools(client, opts));
+  const int64_t before_tsch = PgSessionsEstablished(client, opts);
+  {
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto info, client.GetTables(opts, &target, nullptr, nullptr, true, nullptr));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto reader,
+                               client.DoGet(opts, info->endpoints()[0].ticket));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto table, reader->ToTable());
+    ASSERT_EQ(table->num_rows(), 1);
+  }
+  const int64_t tsch_delta = PgSessionsEstablished(client, opts) - before_tsch;
+  std::cerr << "GetTables(" << target << ", include_schema) opened " << tsch_delta
+            << " PostgreSQL session(s)" << std::endl;
+  EXPECT_LE(tsch_delta, kMaxSessionsPerUse)
+      << "GetTables with schemas fanned out across attached DuckLake catalogs";
+
   // --- Qualified read of one catalog: same bound -----------------------------
   ASSERT_NO_FATAL_FAILURE(DrainPools(client, opts));
   const int64_t before_sel = PgSessionsEstablished(client, opts);

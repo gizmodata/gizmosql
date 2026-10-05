@@ -16,6 +16,7 @@
 // under the License.
 
 #include "gizmosql_library.h"
+#include "detail/sql_splitter.h"
 #include "system_catalog.h"
 #include "detail/cgroup_limits.h"
 
@@ -119,50 +120,10 @@ static std::unique_ptr<gizmosql::enterprise::OAuthHttpServer> g_oauth_http_serve
 static std::unique_ptr<gizmosql::enterprise::MetricsService> g_metrics_service;
 #endif
 
-// Split SQL string on semicolons, respecting single-quoted strings.
-// Uses simple character scanning instead of std::regex to avoid MSVC
-// regex stack overflow issues (regex_error(error_stack)).
-inline std::vector<std::string> SplitInitSqlCommands(const std::string& sql) {
-  std::vector<std::string> commands;
-  std::string current;
-  bool in_single_quote = false;
-  for (size_t i = 0; i < sql.size(); ++i) {
-    char c = sql[i];
-    if (c == '\'' && !in_single_quote) {
-      in_single_quote = true;
-      current += c;
-    } else if (c == '\'' && in_single_quote) {
-      // Check for escaped quote ('')
-      if (i + 1 < sql.size() && sql[i + 1] == '\'') {
-        current += c;
-        current += sql[++i];
-      } else {
-        in_single_quote = false;
-        current += c;
-      }
-    } else if (c == ';' && !in_single_quote) {
-      // Trim whitespace
-      auto start = current.find_first_not_of(" \t\n\r");
-      if (start != std::string::npos) {
-        commands.push_back(current.substr(start));
-      }
-      current.clear();
-    } else {
-      current += c;
-    }
-  }
-  // Handle trailing command without semicolon
-  auto start = current.find_first_not_of(" \t\n\r");
-  if (start != std::string::npos) {
-    commands.push_back(current.substr(start));
-  }
-  return commands;
-}
-
 #define RUN_INIT_COMMANDS(serverType, init_sql_commands)                           \
   do {                                                                             \
     if (init_sql_commands != "") {                                                 \
-      auto init_commands = SplitInitSqlCommands(init_sql_commands);                \
+      auto init_commands = gizmosql::SplitSqlStatements(init_sql_commands);        \
       for (const auto& init_sql_command : init_commands) {                         \
         auto logged_init_sql_command = redact_sql_for_logs(init_sql_command);      \
         GIZMOSQL_LOG(INFO) << "Running Init SQL command: \n"                       \
@@ -546,7 +507,17 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     const int32_t& max_sessions, const int32_t& session_idle_timeout_seconds,
     int32_t metrics_port, const std::string& metrics_bind_address, bool enable_metrics,
     const bool& block_unredacted_secrets,
-    std::shared_ptr<gizmosql::ddb::SensitivePathPolicy> sensitive_path_policy) {
+    std::shared_ptr<gizmosql::ddb::SensitivePathPolicy> sensitive_path_policy,
+    bool reject_unknown_sessions) {
+  // HTTP Basic authentication (RFC 7617) sends "username:password" and splits it
+  // at the first ':', so a username containing ':' could never log in. (The
+  // password may contain ':'.)
+  if (username.find(':') != std::string::npos) {
+    return arrow::Status::Invalid(
+        "The GizmoSQL Server username must not contain a ':' character (HTTP Basic "
+        "authentication separates the username from the password with ':').");
+  }
+
   ARROW_ASSIGN_OR_RAISE(auto location,
                         (!tls_cert_path.empty())
                             ? flight::Location::ForGrpcTls(hostname, port)
@@ -802,6 +773,11 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             sensitive_path_policy,
             nullptr));  // No instrumentation manager yet
     duckdb_server->SetBlockUnredactedSecrets(block_unredacted_secrets);
+    duckdb_server->SetRejectUnknownSessions(reject_unknown_sessions);
+    if (reject_unknown_sessions) {
+      GIZMOSQL_LOG(INFO) << "Rejecting requests for closed, idle-evicted or other "
+                            "instances' sessions (--reject-unknown-sessions)";
+    }
     if (!block_unredacted_secrets) {
       GIZMOSQL_LOG(WARNING)
           << "SET allow_unredacted_secrets = true is not rejected by GizmoSQL";
@@ -1253,9 +1229,19 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                        << " - with engine: " << db_type
 #if GIZMOSQL_DUCKDB_CHANNEL_LTS
                        << " (LTS channel — DuckDB " << GIZMOSQL_DUCKDB_VERSION_TAG << ")"
+#elif GIZMOSQL_DUCKDB_CHANNEL_EDGE
+                       << " (edge channel — DuckDB " << GIZMOSQL_DUCKDB_VERSION_TAG << ")"
 #endif
                        << " - will listen on "
                        << server->location().ToString();
+#if GIZMOSQL_DUCKDB_CHANNEL_EDGE
+    GIZMOSQL_LOG(WARNING)
+        << "This is an EDGE channel build of GizmoSQL, on a pre-release DuckDB ("
+        << GIZMOSQL_DUCKDB_VERSION_TAG
+        << "). It is EXPERIMENTAL and NOT meant for production workloads: behavior, "
+           "storage format and extensions can change or break between builds. Use the "
+           "stable or LTS channel for production.";
+#endif
 
     return server;
   } else {
@@ -1303,7 +1289,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     int32_t session_idle_timeout_seconds, int32_t metrics_port,
     std::string metrics_bind_address, bool enable_metrics, bool block_unredacted_secrets,
     bool block_sensitive_paths, std::vector<std::string> sensitive_paths,
-    std::vector<std::string> server_credential_files) {
+    std::vector<std::string> server_credential_files, bool reject_unknown_sessions) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
   // state (e.g. a previous server in the same process, as in the test binary)
@@ -1647,7 +1633,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
       allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds, metrics_port,
       metrics_bind_address, enable_metrics, block_unredacted_secrets,
-      sensitive_path_policy);
+      sensitive_path_policy, reject_unknown_sessions);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1900,7 +1886,8 @@ int RunFlightSQLServer(
     int32_t session_idle_timeout_seconds, std::optional<int32_t> metrics_port,
     std::string metrics_bind_address, std::optional<bool> enable_metrics,
     std::optional<bool> block_unredacted_secrets,
-    std::optional<bool> block_sensitive_paths, std::string sensitive_paths) {
+    std::optional<bool> block_sensitive_paths, std::string sensitive_paths,
+    std::optional<bool> reject_unknown_sessions) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -2001,6 +1988,7 @@ int RunFlightSQLServer(
                    /*default_value=*/true);
   resolve_bool_env(block_sensitive_paths, "GIZMOSQL_BLOCK_SENSITIVE_PATHS",
                    /*default_value=*/true);
+  resolve_bool_env(reject_unknown_sessions, "GIZMOSQL_REJECT_UNKNOWN_SESSIONS");
   if (sensitive_paths.empty()) {
     sensitive_paths = gizmosql::SafeGetEnvVarValue("GIZMOSQL_SENSITIVE_PATHS");
   }
@@ -2380,7 +2368,8 @@ int RunFlightSQLServer(
       block_unredacted_secrets.value(), block_sensitive_paths.value(),
       extra_sensitive_paths,
       license_key_file.empty() ? std::vector<std::string>{}
-                               : std::vector<std::string>{license_key_file});
+                               : std::vector<std::string>{license_key_file},
+      reject_unknown_sessions.value());
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

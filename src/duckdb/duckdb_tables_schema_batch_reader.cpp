@@ -19,6 +19,7 @@
 
 #include <duckdb.h>
 
+#include <set>
 #include <sstream>
 #include <unordered_map>
 
@@ -28,12 +29,131 @@
 #include <arrow/ipc/writer.h>
 #include <arrow/record_batch.h>
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+
+#include "duckdb_compat.h"
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 
 using arrow::Status;
 
 namespace gizmosql::ddb {
+
+namespace {
+
+// What DatabaseMetaData.getColumns() needs that `SELECT * ... LIMIT 0` lacks.
+struct ColumnInfo {
+  bool is_nullable = true;     // Default to nullable when unknown.
+  std::string comment;         // Empty = no comment.
+  std::string column_default;  // Empty = no default.
+  bool has_default = false;
+  std::string type_name;       // Base DuckDB type name (e.g. "DECIMAL", "DOUBLE").
+};
+
+// DuckDB's type string includes parameters / decorations ("DECIMAL(18,3)",
+// "INTEGER[]", "STRUCT(a INTEGER)"). Strip it to the base type name so
+// consumers (Power BI's ADBC connector matches on literals like "DECIMAL",
+// "DOUBLE", "INTEGER", "VARCHAR") see the canonical name.
+std::string BaseTypeName(std::string type) {
+  size_t end = type.find_first_of("([");
+  if (end == std::string::npos) end = type.find(' ');
+  if (end != std::string::npos) type.resize(end);
+  return type;
+}
+
+// Column metadata of ONE table or view, read from its own catalog entry with
+// the same rules duckdb_columns() applies (its TableColumnHelper /
+// ViewColumnHelper). duckdb_columns() itself enumerates every attached
+// catalog before filtering, so with DuckLake / PostgreSQL catalogs attached a
+// table browse cost one metadata-store round trip per table per catalog.
+// Best-effort: on any error the schema simply goes out without the extras.
+std::unordered_map<std::string, ColumnInfo> CollectColumnInfo(
+    duckdb::ClientContext& context, const std::string& catalog_name,
+    const std::string& schema_name, const std::string& table_name) {
+  std::unordered_map<std::string, ColumnInfo> info_by_column;
+  try {
+    context.RunFunctionInTransaction([&]() {
+      auto catalog = duckdb::Catalog::GetCatalogEntry(context, compat::Name(catalog_name));
+      if (!catalog) return;
+      auto entry = catalog->GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+                                     compat::Name(schema_name), compat::Name(table_name),
+                                     duckdb::OnEntryNotFound::RETURN_NULL);
+      if (!entry) {
+        entry = catalog->GetEntry(context, duckdb::CatalogType::VIEW_ENTRY,
+                                  compat::Name(schema_name), compat::Name(table_name),
+                                  duckdb::OnEntryNotFound::RETURN_NULL);
+      }
+      if (!entry) return;
+
+      if (entry->type == duckdb::CatalogType::TABLE_ENTRY) {
+        auto& table = entry->Cast<duckdb::TableCatalogEntry>();
+        std::set<duckdb::idx_t> not_null_columns;
+        for (auto& constraint : table.GetConstraints()) {
+          if (constraint->type == duckdb::ConstraintType::NOT_NULL) {
+            not_null_columns.insert(
+                constraint->Cast<duckdb::NotNullConstraint>().index.index);
+          }
+        }
+        for (auto& column : table.GetColumns().Logical()) {
+          ColumnInfo info;
+          info.is_nullable = not_null_columns.count(column.Logical().index) == 0;
+          if (!column.Comment().IsNull()) info.comment = column.Comment().ToString();
+          if (column.Generated()) {
+            info.column_default = column.GeneratedExpression().ToString();
+            info.has_default = true;
+          } else if (column.HasDefaultValue()) {
+            info.column_default = column.DefaultValue().ToString();
+            info.has_default = true;
+          }
+          info.type_name = BaseTypeName(column.Type().ToString());
+          info_by_column.emplace(compat::Str(column.Name()), std::move(info));
+        }
+      } else if (entry->type == duckdb::CatalogType::VIEW_ENTRY) {
+        auto& view = entry->Cast<duckdb::ViewCatalogEntry>();
+        duckdb::vector<std::string> names;
+        duckdb::vector<duckdb::LogicalType> types;
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+        names = view.names;
+        types = view.types;
+#else
+        try {
+          view.BindView(context);
+        } catch (std::exception&) {
+        }
+        auto columns = view.GetColumnInfo();
+        if (!columns) return;  // unbound view: duckdb_columns() reports no columns either
+        names = compat::Strs(columns->names);
+        types = columns->types;
+        duckdb::QueryResult::DeduplicateColumns(names);
+#endif
+        for (duckdb::idx_t col = 0; col < types.size(); ++col) {
+          ColumnInfo info;  // views: nullable, no default
+#if GIZMOSQL_DUCKDB_CHANNEL_LTS
+          if (col < view.column_comments.size() && !view.column_comments[col].IsNull()) {
+            info.comment = view.column_comments[col].ToString();
+          }
+#else
+          const auto comment = view.GetColumnComment(col);
+          if (!comment.IsNull()) info.comment = comment.ToString();
+#endif
+          info.type_name = BaseTypeName(types[col].ToString());
+          const std::string name =
+              col < view.aliases.size() ? compat::Str(view.aliases[col]) : names[col];
+          info_by_column.emplace(name, std::move(info));
+        }
+      }
+    });
+  } catch (std::exception&) {
+    info_by_column.clear();
+  }
+  return info_by_column;
+}
+
+}  // namespace
 std::shared_ptr<arrow::Schema> DuckDBTablesWithSchemaBatchReader::schema() const {
   return flight::sql::SqlSchema::GetTablesSchemaWithIncludedSchema();
 }
@@ -96,76 +216,9 @@ Status DuckDBTablesWithSchemaBatchReader::ReadNext(
       // ARROW:FLIGHT:SQL:* metadata keys for REMARKS and IS_AUTO_INCREMENT. For
       // COLUMN_DEF we use a GizmoSQL-prefixed key that the GizmoSQL JDBC driver reads.
       {
-        std::shared_ptr<DuckDBStatement> columns_stmt;
-        ARROW_ASSIGN_OR_RAISE(
-            columns_stmt,
-            DuckDBStatement::Create(
-                client_session_,
-                "SELECT column_name, is_nullable, comment, column_default, data_type "
-                "FROM duckdb_columns() "
-                "WHERE database_name = ? AND schema_name = ? AND table_name = ?",
-                arrow::util::ArrowLogLevel::ARROW_DEBUG, false, nullptr,
-                "DoGetTables:column_metadata", true));
-        columns_stmt->bind_parameters.emplace_back(catalog_name);
-        columns_stmt->bind_parameters.emplace_back(schema_name);
-        columns_stmt->bind_parameters.emplace_back(table_name);
-
-        struct ColumnInfo {
-          bool is_nullable = true;  // Default to nullable when DuckDB reports unknown.
-          std::string comment;       // Empty = no comment.
-          std::string column_default;  // Empty = no default.
-          bool has_default = false;
-          std::string type_name;     // DuckDB SQL type name (base form, e.g. "DOUBLE").
-        };
-        std::unordered_map<std::string, ColumnInfo> info_by_column;
-
-        auto exec_status = columns_stmt->Execute();
-        if (exec_status.ok()) {
-          while (true) {
-            auto fetch_result = columns_stmt->FetchResult();
-            if (!fetch_result.ok()) break;
-            auto batch = *fetch_result;
-            if (!batch) break;
-            auto name_arr = std::static_pointer_cast<arrow::StringArray>(
-                batch->GetColumnByName("column_name"));
-            auto nullable_arr = std::static_pointer_cast<arrow::BooleanArray>(
-                batch->GetColumnByName("is_nullable"));
-            auto comment_arr = std::static_pointer_cast<arrow::StringArray>(
-                batch->GetColumnByName("comment"));
-            auto default_arr = std::static_pointer_cast<arrow::StringArray>(
-                batch->GetColumnByName("column_default"));
-            auto type_arr = std::static_pointer_cast<arrow::StringArray>(
-                batch->GetColumnByName("data_type"));
-            if (!name_arr) break;
-            for (int64_t r = 0; r < batch->num_rows(); ++r) {
-              if (name_arr->IsNull(r)) continue;
-              ColumnInfo info;
-              if (nullable_arr && !nullable_arr->IsNull(r)) {
-                info.is_nullable = nullable_arr->Value(r);
-              }
-              if (comment_arr && !comment_arr->IsNull(r)) {
-                info.comment = std::string(comment_arr->GetView(r));
-              }
-              if (default_arr && !default_arr->IsNull(r)) {
-                info.column_default = std::string(default_arr->GetView(r));
-                info.has_default = true;
-              }
-              if (type_arr && !type_arr->IsNull(r)) {
-                // DuckDB's `data_type` includes parameters / decorations
-                // (e.g. "DECIMAL(18,3)", "INTEGER[]", "STRUCT(a INTEGER)").
-                // Strip to the base type name so consumers (Power BI's ADBC
-                // connector matches on literals like "DECIMAL", "DOUBLE",
-                // "INTEGER", "VARCHAR") see the canonical name.
-                std::string type = std::string(type_arr->GetView(r));
-                size_t end = type.find_first_of("([");
-                if (end == std::string::npos) end = type.find(' ');
-                if (end != std::string::npos) type.resize(end);
-                info.type_name = std::move(type);
-              }
-              info_by_column.emplace(std::string(name_arr->GetView(r)), std::move(info));
-            }
-          }
-        }
+        const auto info_by_column =
+            CollectColumnInfo(*client_session_->connection->Get().context, catalog_name,
+                              schema_name, table_name);
 
         if (!info_by_column.empty()) {
           arrow::FieldVector corrected_fields;

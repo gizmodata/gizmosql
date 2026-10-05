@@ -3,6 +3,7 @@
 // See LICENSE file in the enterprise directory for details.
 
 #include "instrumentation_records.h"
+#include "duckdb_compat.h"
 
 #include "instrumentation_manager.h"
 
@@ -22,7 +23,7 @@ std::string GenerateUUID() {
 }
 
 // Execute one instrumentation write. The result is materialized
-// (allow_stream_result=false) so a DML error is observed here, rather than
+// (ExecuteMaterialized) so a DML error is observed here, rather than
 // deferred to an unfetched streaming result and then lost when it is destroyed.
 // On any error this THROWS: the writer thread runs each write inside an explicit
 // transaction (WriterTxnGuard), so the throw unwinds through the guard's
@@ -40,7 +41,7 @@ void ExecuteInstrumentationWrite(duckdb::Connection& conn, const char* operation
     throw std::runtime_error(std::string("instrumentation write [") + operation +
                              "] failed to prepare: " + stmt->GetError());
   }
-  auto result = stmt->Execute(params, /*allow_stream_result=*/false);
+  auto result = ddb::compat::ExecuteMaterialized(*stmt, params);
   if (result->HasError()) {
     throw std::runtime_error(std::string("instrumentation write [") + operation +
                              "] failed: " + result->GetError());

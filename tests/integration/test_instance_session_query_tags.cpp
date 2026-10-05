@@ -88,13 +88,33 @@ static arrow::Result<std::shared_ptr<arrow::Table>> ExecuteAndFetch(
 // row; normal builds converge in one or two polls, instrumented builds later.
 // The last table is returned either way so the caller's assertion still
 // reports the real outcome on timeout.
+//
+// The instrumentation writer is asynchronous and a row can become visible
+// before a later update to it (e.g. a session or query tag) has landed. When
+// `expect_substring` is given, also wait until the first column of each of the
+// first `min_rows` rows contains it — otherwise the caller's assertion races
+// the writer.
 static arrow::Result<std::shared_ptr<arrow::Table>> FetchNonEmpty(
     FlightSqlClient& sql_client, arrow::flight::FlightCallOptions& call_options,
-    const std::string& query) {
+    const std::string& query, const std::string& expect_substring = "",
+    int64_t min_rows = 1) {
+  auto converged = [&](const std::shared_ptr<arrow::Table>& table) {
+    if (table->num_rows() < min_rows) return false;
+    if (expect_substring.empty()) return true;
+    auto column = table->column(0);
+    for (int64_t row = 0; row < min_rows; ++row) {
+      auto value = column->GetScalar(row);
+      if (!value.ok() || !(*value)->is_valid ||
+          (*value)->ToString().find(expect_substring) == std::string::npos) {
+        return false;
+      }
+    }
+    return true;
+  };
   std::shared_ptr<arrow::Table> table;
   for (int attempt = 0; attempt < 300; ++attempt) {
     ARROW_ASSIGN_OR_RAISE(table, ExecuteAndFetch(sql_client, call_options, query));
-    if (table->num_rows() > 0) break;
+    if (converged(table)) break;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   return table;
@@ -127,7 +147,8 @@ TEST_F(TagServerFixture, InstanceTagRecordedInInstrumentationTable) {
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto table, FetchNonEmpty(sql_client, call_options,
                                 "SELECT instance_tag FROM _gizmosql_instr.instances "
-                                "WHERE status = 'running' LIMIT 1"));
+                                "WHERE status = 'running' LIMIT 1",
+                                /*expect_substring=*/"us-east-1"));
   ASSERT_GT(table->num_rows(), 0) << "No running instance found";
 
   auto tag_col = table->column(0);
@@ -182,7 +203,8 @@ TEST_F(TagServerFixture, SetSessionTagUpdatesSessionsTable) {
       FetchNonEmpty(sql_client, call_options,
                     "SELECT session_tag FROM _gizmosql_instr.sessions "
                     "WHERE status = 'active' AND session_tag LIKE '%data-eng%' "
-                    "ORDER BY start_time DESC LIMIT 1"));
+                    "ORDER BY start_time DESC LIMIT 1",
+                    /*expect_substring=*/"data-eng"));
   ASSERT_GT(table->num_rows(), 0) << "No active session with the session_tag found";
 
   auto tag_col = table->column(0);
@@ -285,7 +307,8 @@ TEST_F(TagServerFixture, SetQueryTagRecordedInStatementsTable) {
           sql_client, call_options,
           "SELECT query_tag FROM _gizmosql_instr.sql_statements "
           "WHERE sql_text LIKE '%tagged_query%' AND sql_text NOT LIKE '%sql_statements%' "
-          "ORDER BY created_time DESC LIMIT 1"));
+          "ORDER BY created_time DESC LIMIT 1",
+          /*expect_substring=*/"abc-123"));
   ASSERT_GT(table->num_rows(), 0) << "No tagged statement found";
 
   auto tag_col = table->column(0);
@@ -347,7 +370,8 @@ TEST_F(TagServerFixture, QueryTagPersistsAcrossQueries) {
                                 "SELECT query_tag FROM _gizmosql_instr.sql_statements "
                                 "WHERE sql_text LIKE '%persist_query_%' AND sql_text NOT "
                                 "LIKE '%sql_statements%' "
-                                "ORDER BY created_time DESC LIMIT 2"));
+                                "ORDER BY created_time DESC LIMIT 2",
+                                /*expect_substring=*/"batch-42", /*min_rows=*/2));
   ASSERT_EQ(table->num_rows(), 2) << "Expected 2 tagged statements";
 
   auto tag_col = std::static_pointer_cast<arrow::StringArray>(table->column(0)->chunk(0));

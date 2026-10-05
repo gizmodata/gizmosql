@@ -16,6 +16,8 @@
 // under the License.
 
 #include "duckdb_server.h"
+#include "duckdb_static_extensions.h"
+#include "duckdb_compat.h"
 
 #include <duckdb.hpp>
 
@@ -235,7 +237,7 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
       for (int i = 0; i < struct_type->num_fields(); i++) {
         auto field = struct_type->field(i);
         children.push_back(
-            std::make_pair(field->name(), GetDuckDBTypeFromArrowType(field->type())));
+            std::make_pair(compat::Name(field->name()), GetDuckDBTypeFromArrowType(field->type())));
       }
       return duckdb::LogicalType::STRUCT(std::move(children));
     }
@@ -249,6 +251,34 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
 
     default:
       return duckdb::LogicalType::VARCHAR;  // safe fallback
+  }
+}
+
+// GetDuckDBTypeFromArrowType, but aware of extension tags carried on the field
+// (and its nested fields): arrow.parquet.variant becomes VARIANT.
+duckdb::LogicalType GetDuckDBTypeFromArrowField(const arrow::Field& field) {
+  if (IsArrowVariantField(field)) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    return duckdb::LogicalType::VARIANT();
+#endif
+  }
+  const auto& type = field.type();
+  switch (type->id()) {
+    case arrow::Type::LIST:
+    case arrow::Type::LARGE_LIST: {
+      const auto& list_type = static_cast<const arrow::BaseListType&>(*type);
+      return duckdb::LogicalType::LIST(GetDuckDBTypeFromArrowField(*list_type.value_field()));
+    }
+    case arrow::Type::STRUCT: {
+      duckdb::child_list_t<duckdb::LogicalType> children;
+      for (const auto& child : type->fields()) {
+        children.push_back(
+            std::make_pair(compat::Name(child->name()), GetDuckDBTypeFromArrowField(*child)));
+      }
+      return duckdb::LogicalType::STRUCT(children);
+    }
+    default:
+      return GetDuckDBTypeFromArrowType(type);
   }
 }
 
@@ -303,13 +333,13 @@ Result<std::vector<std::string>> ResolveCatalogNames(
     duckdb::Connection& conn, const std::optional<std::string>& like_pattern) {
   std::vector<std::string> names;
   if (!like_pattern.has_value()) {
-    names.push_back(duckdb::DatabaseManager::GetDefaultDatabase(*conn.context));
+    names.push_back(compat::Str(duckdb::DatabaseManager::GetDefaultDatabase(*conn.context)));
     return names;
   }
   auto stmt = conn.Prepare(
       "SELECT database_name FROM duckdb_databases() WHERE database_name LIKE ? "
       "ORDER BY database_name");
-  if (!stmt || !stmt->success) {
+  if (!stmt || stmt->HasError()) {
     return Status::Invalid("DuckDB metadata query failed: " + stmt->GetError());
   }
   duckdb::vector<duckdb::Value> binds;
@@ -342,7 +372,7 @@ Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
   try {
     context.RunFunctionInTransaction([&]() {
       for (const auto& catalog_name : catalog_names) {
-        auto catalog = duckdb::Catalog::GetCatalogEntry(context, catalog_name);
+        auto catalog = duckdb::Catalog::GetCatalogEntry(context, compat::Name(catalog_name));
         if (!catalog) continue;
 
         // Phase 1: schemas.
@@ -352,7 +382,7 @@ Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
         });
         if (!include_tables) {
           for (auto& schema_ref : schemas) {
-            rows.push_back({catalog_name, schema_ref.get().name, "", ""});
+            rows.push_back({catalog_name, compat::Str(schema_ref.get().name), "", ""});
           }
           continue;
         }
@@ -367,7 +397,7 @@ Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
             // information_schema.tables hides DuckDB-internal entries (the
             // pg_catalog / information_schema views in `system`); match it.
             if (entry.internal) return;
-            if (!seen.insert(entry.name).second) return;
+            if (!seen.insert(compat::Str(entry.name)).second) return;
             std::string type;
             if (entry.type == duckdb::CatalogType::VIEW_ENTRY) {
               type = "VIEW";
@@ -376,7 +406,8 @@ Result<std::vector<CatalogEntryRow>> ScanCatalogEntries(
             } else {
               return;
             }
-            rows.push_back({catalog_name, schema.name, entry.name, std::move(type)});
+            rows.push_back({catalog_name, compat::Str(schema.name), compat::Str(entry.name),
+                            std::move(type)});
           };
           schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, visit);
           schema.Scan(context, duckdb::CatalogType::VIEW_ENTRY, visit);
@@ -510,7 +541,7 @@ Result<ResolvedTableTarget> ResolveTableTarget(
   ResolvedTableTarget target;
   target.catalog = catalog_name.has_value()
                        ? catalog_name.value()
-                       : duckdb::DatabaseManager::GetDefaultDatabase(*conn.context);
+                       : compat::Str(duckdb::DatabaseManager::GetDefaultDatabase(*conn.context));
   if (schema_name.has_value()) {
     target.schema = schema_name.value();
   } else {
@@ -518,7 +549,7 @@ Result<ResolvedTableTarget> ResolveTableTarget(
     if (!result || result->HasError()) {
       return Status::Invalid("DuckDB metadata query failed: " + result->GetError());
     }
-    target.schema = result->GetValue(0, 0).ToString();
+    target.schema = compat::ResultValue(*result, 0, 0).ToString();
   }
   return target;
 }
@@ -537,10 +568,10 @@ Result<bool> TableExists(duckdb::Connection& conn,
   bool exists = false;
   try {
     context.RunFunctionInTransaction([&]() {
-      auto catalog_entry = duckdb::Catalog::GetCatalogEntry(context, catalog);
+      auto catalog_entry = duckdb::Catalog::GetCatalogEntry(context, compat::Name(catalog));
       if (!catalog_entry) return;
       auto entry = catalog_entry->GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
-                                           schema, table_name,
+                                           compat::Name(schema), compat::Name(table_name),
                                            duckdb::OnEntryNotFound::RETURN_NULL);
       exists = entry != nullptr;
     });
@@ -569,13 +600,14 @@ Result<std::string> GenerateCreateTableSQLFromArrowSchema(
     // geoarrow.* extension columns (what GizmoSQL itself emits for GEOMETRY)
     // become GEOMETRY, not BLOB; DuckDB's arrow_scan materializes them as
     // GEOMETRY directly when the spatial extension is loaded.
-    const duckdb::LogicalType duckdb_type = GetDuckDBTypeFromArrowType(field->type());
+    const duckdb::LogicalType duckdb_type = GetDuckDBTypeFromArrowField(*field);
     if (duckdb_type.id() == duckdb::LogicalTypeId::STRUCT &&
         duckdb::StructType::GetChildCount(duckdb_type) == 0) {
       return Status::Invalid("Cannot create column ", QuoteIdent(field->name()),
                              ": DuckDB cannot store an empty struct (Arrow type ",
                              field->type()->ToString(), ")");
     }
+    // arrow.parquet.variant columns become VARIANT (via GetDuckDBTypeFromArrowField).
     const std::string col_type =
         IsGeoArrowField(*field) ? std::string("GEOMETRY") : duckdb_type.ToString();
 
@@ -817,6 +849,12 @@ arrow::Result<std::vector<duckdb::vector<duckdb::Value>>> ReadBindParameterRows(
         const std::shared_ptr<arrow::Array>& column = record_batch->column(column_index);
         ARROW_ASSIGN_OR_RAISE(const std::shared_ptr<arrow::Scalar> scalar,
                               column->GetScalar(row_index))
+        // A VARIANT parameter's extension tag lives on the field, not the scalar.
+        if (IsArrowVariantField(*record_batch->schema()->field(column_index))) {
+          ARROW_ASSIGN_OR_RAISE(auto value, ArrowVariantScalarToDuckDBValue(*scalar));
+          row.push_back(std::move(value));
+          continue;
+        }
         ARROW_ASSIGN_OR_RAISE(auto value, ArrowScalarToDuckDBValue(*scalar));
         row.push_back(std::move(value));
       }
@@ -971,6 +1009,13 @@ class DuckDBFlightSqlServer::Impl {
   // Set of killed session IDs - prevents reconnection with a killed session
   std::unordered_set<std::string> killed_session_ids_;
 
+  // --reject-unknown-sessions: sessions that ended on this instance (closed or
+  // idle-evicted), with when. Kept for the bearer-token lifetime, after which a
+  // token naming them has expired anyway. Guarded by sessions_mutex_.
+  static constexpr std::chrono::hours kEndedSessionRetention{24};
+  bool reject_unknown_sessions_ = false;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point> ended_session_ids_;
+
   static std::optional<std::string> SessionValueToString(
       const flight::SessionOptionValue& v) {
     if (auto p = std::get_if<std::string>(&v)) return *p;
@@ -1079,6 +1124,10 @@ class DuckDBFlightSqlServer::Impl {
         }
         return it->second;
       }
+    }
+
+    if (reject_unknown_sessions_) {
+      ARROW_RETURN_NOT_OK(RejectUnknownSession(session_id));
     }
 
     // Reject brand-new sessions during a graceful drain. Existing sessions were
@@ -1328,6 +1377,37 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
+  void SetRejectUnknownSessions(bool reject) { reject_unknown_sessions_ = reject; }
+
+  // With --reject-unknown-sessions, a bearer token whose session is not live
+  // here may only start a session on its first use on the instance that issued
+  // it. A session that ended here (closed, idle-evicted), or one that another
+  // instance issued, would otherwise be silently replaced by a new, empty one:
+  // the client's open transaction, temp tables, USE and SET would be gone with
+  // no error. Refuse it so the client re-authenticates knowingly.
+  arrow::Status RejectUnknownSession(const std::string& session_id) {
+    {
+      std::shared_lock read_lock(sessions_mutex_);
+      if (ended_session_ids_.count(session_id) > 0) {
+        return flight::MakeFlightError(
+            flight::FlightStatusCode::Unauthenticated,
+            "Session " + session_id +
+                " has ended on this GizmoSQL instance (closed or idle-evicted); its "
+                "open transaction, temporary objects and session settings are gone. "
+                "Re-authenticate to start a new session.");
+      }
+    }
+    const auto& token_instance_id = tl_request_ctx.token_instance_id;
+    if (token_instance_id && *token_instance_id != instance_id_) {
+      return flight::MakeFlightError(
+          flight::FlightStatusCode::Unauthenticated,
+          "Session " + session_id + " belongs to GizmoSQL instance " + *token_instance_id +
+              ", not this one (" + instance_id_ +
+              "); its open transaction, temporary objects and session settings are not "
+              "available here. Re-authenticate to start a new session on this instance.");
+    }
+    return arrow::Status::OK();
+  }
   bool BlockUnredactedSecrets() const { return block_unredacted_secrets_; }
 
   void ReleaseAllSessions() {
@@ -1538,6 +1618,12 @@ class DuckDBFlightSqlServer::Impl {
       client_sessions_.erase(it);
       if (was_killed) {
         killed_session_ids_.insert(session_id);
+      } else if (reject_unknown_sessions_) {
+        const auto now = std::chrono::steady_clock::now();
+        std::erase_if(ended_session_ids_, [&](const auto& entry) {
+          return now - entry.second > kEndedSessionRetention;
+        });
+        ended_session_ids_[session_id] = now;
       }
     }
 #ifdef GIZMOSQL_ENTERPRISE
@@ -1630,7 +1716,10 @@ class DuckDBFlightSqlServer::Impl {
         DuckDBStatement::Create(client_session, query,
                                 arrow::util::ArrowLogLevel::ARROW_DEBUG, print_queries_,
                                 nullptr, "GetFlightInfoStatement", false))
-    if (statement->ShouldExecuteEagerly()) {
+    // Direct-execution SQL runs when its schema is computed, so keep that one
+    // result for the ticket instead of re-running the SQL (and its side
+    // effects) on DoGet.
+    if (statement->ShouldExecuteEagerly() || statement->IsDirectExecution()) {
       return ExecuteForFlightInfo(context, client_session, statement, descriptor);
     }
     statement->SetCallContext(&context);
@@ -1766,26 +1855,21 @@ class DuckDBFlightSqlServer::Impl {
 
       if (stmt != nullptr) {
         // Traditional prepared statement - extract parameter information
-        parameter_count = stmt->named_param_map.size();
+        parameter_count = compat::NamedParameterCount(*stmt);
         parameter_fields.reserve(parameter_count);
-
-        duckdb::shared_ptr<duckdb::PreparedStatementData> prepared_statement_data =
-            stmt->data;
 
         // Flight SQL's dataset schema describes a user result set. DuckDB's
         // Count/Success columns for DDL/DML are execution metadata. JDBC uses
         // an empty dataset schema to select DoPut/ExecuteUpdate and return the
         // real affected-row count. GetFlightInfo still supplies the count
         // schema when a client explicitly chooses the query execution path.
-        if (prepared_statement_data->properties.return_type !=
+        if (stmt->GetStatementProperties().return_type !=
             duckdb::StatementReturnType::QUERY_RESULT) {
           dataset_schema = arrow::schema({});
         }
 
         // Note: Readonly role check and instrumentation database protection are
         // handled in DuckDBStatement::Create which is called before this point
-
-        auto bind_parameter_map = prepared_statement_data->value_map;
 
         for (size_t i = 0; i < parameter_count; i++) {
           std::string parameter_idx_str = std::to_string(i + 1);
@@ -1795,8 +1879,7 @@ class DuckDBFlightSqlServer::Impl {
           // throw "Could not find parameter") or reports it unresolved. Advertise
           // VARCHAR; DuckDB resolves the real type from the bound value at execution.
           duckdb::LogicalType parameter_duckdb_type;
-          if (!prepared_statement_data->TryGetType(parameter_idx_str,
-                                                   parameter_duckdb_type)) {
+          if (!compat::TryGetParameterType(*stmt, parameter_idx_str, parameter_duckdb_type)) {
             parameter_duckdb_type = duckdb::LogicalType::UNKNOWN;
           }
           auto parameter_arrow_type =
@@ -2255,7 +2338,7 @@ class DuckDBFlightSqlServer::Impl {
                             print_queries_, query_timeout_, "DoGetCrossReference", true);
   }
 
-  Result<std::unique_ptr<duckdb::MaterializedQueryResult>> RunAndLogQueryWithResult(
+  Result<duckdb::unique_ptr<duckdb::QueryResult>> RunAndLogQueryWithResult(
       const std::shared_ptr<ClientSession>& client_session, const std::string& query) {
     std::string status;
 
@@ -2497,7 +2580,7 @@ class DuckDBFlightSqlServer::Impl {
                                      " BY NAME SELECT * FROM " + QuoteIdent(ingest_view);
       ARROW_ASSIGN_OR_RAISE(auto insert_res,
                             RunAndLogQueryWithResult(client_session, insert_sql));
-      total_rows = insert_res->GetValue(0, 0).GetValue<int64_t>();
+      total_rows = compat::ResultValue(*insert_res, 0, 0).GetValue<int64_t>();
       const int64_t streamed_rows = ingest_stream.total_rows();
       if (total_rows != streamed_rows) {
         return Status::Invalid("Row count inserted into: " + target_table + " (" +
@@ -2683,8 +2766,7 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   static Status ExecuteSql(duckdb::Connection& connection, const std::string& sql) {
-    if (std::unique_ptr<duckdb::MaterializedQueryResult> result = connection.Query(sql);
-        result->HasError()) {
+    if (auto result = connection.Query(sql); result->HasError()) {
       return Status::Invalid(result->GetError());
     }
     return Status::OK();
@@ -2703,7 +2785,7 @@ class DuckDBFlightSqlServer::Impl {
 
   Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(
       duckdb::Connection& connection, const std::string& sql) {
-    std::unique_ptr<duckdb::MaterializedQueryResult> result = connection.Query(sql);
+    auto result = connection.Query(sql);
 
     if (result->HasError()) {
       return Status::Invalid("SQL query failed: ", result->GetError());
@@ -2712,8 +2794,8 @@ class DuckDBFlightSqlServer::Impl {
     std::vector<std::string> string_results;
 
     // Extract string values from the first column of all rows
-    for (size_t row_idx = 0; row_idx < result->RowCount(); row_idx++) {
-      auto value = result->GetValue(0, row_idx);  // First column
+    for (size_t row_idx = 0; row_idx < compat::ResultRowCount(*result); row_idx++) {
+      auto value = compat::ResultValue(*result, 0, row_idx);  // First column
       if (!value.IsNull()) {
         string_results.emplace_back(value.ToString());
       }
@@ -2843,8 +2925,13 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
 
   if (!storage_version.empty()) {
     try {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+      config.options.storage_compatibility =
+          duckdb::StorageCompatibility::FromString(storage_version);
+#else
       config.options.serialization_compatibility =
           duckdb::SerializationCompatibility::FromString(storage_version);
+#endif
       GIZMOSQL_LOG(INFO) << "DuckDB storage version set to: " << storage_version;
     } catch (const std::exception& e) {
       return arrow::Status::Invalid(
@@ -2862,7 +2949,26 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
                           "on this host are blocked for every client";
   }
 
-  auto db = std::make_shared<duckdb::DuckDB>(db_location, &config);
+  ARROW_RETURN_NOT_OK(RegisterStaticExtensions());
+  // Opening the database throws on an unreadable file (written by a newer
+  // DuckDB, locked by another process, corrupt, no permission, ...). Turn that
+  // into a startup error instead of letting it escape and abort the process.
+  std::shared_ptr<duckdb::DuckDB> db;
+  try {
+    db = std::make_shared<duckdb::DuckDB>(db_location, &config);
+  } catch (const std::exception& e) {
+    const std::string message = duckdb::ErrorData(e).Message();
+    std::string hint;
+    if (message.find("newer version of DuckDB") != std::string::npos) {
+      hint = std::string("\nThis GizmoSQL build uses DuckDB ") + GIZMOSQL_DUCKDB_VERSION_TAG +
+             " (" + GIZMOSQL_DUCKDB_CHANNEL_NAME +
+             " channel); the file was written by a newer DuckDB — for example by "
+             "the edge channel, whose new databases use DuckDB 2.0's storage format. "
+             "Open it with a GizmoSQL build on that DuckDB version.";
+    }
+    return arrow::Status::IOError("Could not open database '", db_location, "': ", message,
+                                  hint);
+  }
 
   // Apply the DuckDB memory limit (global / instance-wide) if the operator set
   // one. Accepts DuckDB's own syntax ("8GB", "75%", ...). Empty => leave DuckDB's
@@ -2930,6 +3036,10 @@ std::shared_ptr<SensitivePathPolicy> DuckDBFlightSqlServer::GetSensitivePathPoli
 
 void DuckDBFlightSqlServer::SetBlockUnredactedSecrets(bool block) {
   impl_->SetBlockUnredactedSecrets(block);
+}
+
+void DuckDBFlightSqlServer::SetRejectUnknownSessions(bool reject) {
+  impl_->SetRejectUnknownSessions(reject);
 }
 
 bool DuckDBFlightSqlServer::BlockUnredactedSecrets() const {

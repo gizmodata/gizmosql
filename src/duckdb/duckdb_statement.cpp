@@ -16,6 +16,9 @@
 // under the License.
 
 #include "duckdb_statement.h"
+#include "duckdb_compat.h"
+
+#include <arrow/extension/parquet_variant.h>
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/metrics/metrics_registry.h"
 #include <duckdb/transaction/meta_transaction.hpp>
@@ -25,6 +28,7 @@
 #include <duckdb.h>
 #include <duckdb/main/client_config.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_profiler.hpp>
 #include <duckdb/common/arrow/arrow_converter.hpp>
@@ -588,7 +592,7 @@ bool CatalogExistsOnConnection(duckdb::Connection& connection,
                                const std::string& catalog_name) {
   auto stmt = connection.Prepare(
       "SELECT 1 FROM duckdb_databases() WHERE database_name = ? LIMIT 1");
-  if (!stmt || !stmt->success) {
+  if (!stmt || stmt->HasError()) {
     return false;
   }
 
@@ -704,7 +708,7 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
       arrow::FieldVector fields;
       for (auto& child : child_types) {
         fields.push_back(
-            arrow::field(child.first, GetDataTypeFromDuckDbType(child.second)));
+            arrow::field(compat::Str(child.first), GetDataTypeFromDuckDbType(child.second)));
       }
       return arrow::struct_(fields);
     }
@@ -719,11 +723,22 @@ std::shared_ptr<arrow::DataType> GetDataTypeFromDuckDbType(
       auto array_size = duckdb::ArrayType::GetSize(duckdb_type);
       return arrow::fixed_size_list(GetDataTypeFromDuckDbType(child_type), array_size);
     }
-#if !GIZMOSQL_DUCKDB_CHANNEL_LTS
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    case duckdb::LogicalTypeId::VARIANT: {
+      // DuckDB 2.0 exchanges VARIANT as Arrow's canonical arrow.parquet.variant
+      // extension: struct<metadata: binary, value: binary> holding the Parquet
+      // Variant encoding (unshredded). Arrow C++ requires both fields
+      // non-nullable for the extension type.
+      auto storage = arrow::struct_({arrow::field("metadata", arrow::binary(), false),
+                                     arrow::field("value", arrow::binary(), false)});
+      auto variant = arrow::extension::VariantExtensionType::Make(storage);
+      return variant.ok() ? *variant : storage;
+    }
+#elif !GIZMOSQL_DUCKDB_CHANNEL_LTS
     case duckdb::LogicalTypeId::VARIANT:
       // VARIANT is self-describing typed binary data (DuckDB v1.5.0+).
-      // DuckDB's Arrow exporter does not yet support VARIANT natively, so
-      // clients should cast to VARCHAR or JSON before querying:
+      // DuckDB 1.5's Arrow exporter does not support VARIANT, so clients
+      // should cast to VARCHAR or JSON before querying:
       //   SELECT v::VARCHAR FROM t;
       // Not present in the LTS channel (v1.4.x).
       return arrow::binary();
@@ -764,6 +779,158 @@ QueryProfileMode GetSessionOrServerCaptureProfile(
   }
   return QueryProfileMode::kOff;
 }
+
+namespace {
+
+// Statement-level access checks, from the statement's bound properties:
+// the read-only GizmoSQL system catalog, per-catalog read/write grants from the
+// token (Enterprise) and the legacy readonly role. Run for every prepared
+// statement in DuckDBStatement::Create(), and per statement by
+// DirectExecutionAccessGuard for SQL that cannot be prepared as one statement.
+arrow::Status CheckStatementAccess(const std::shared_ptr<ClientSession>& client_session,
+                                   duckdb::StatementProperties stmt_properties,
+                                   const std::string& handle, const std::string& logged_sql,
+                                   const std::string& flight_method, bool is_internal) {
+  // Block writes to the GizmoSQL system catalog regardless of role or
+  // licensing — it is a process-local in-memory catalog that hosts
+  // server-managed metadata views, and clients must not be able to
+  // mutate them. Enforced in both Core and Enterprise builds. The
+  // analogous protection for the instrumentation catalog
+  // (_gizmosql_instr) lives in CheckCatalogWriteAccess and only runs
+  // in Enterprise builds because that catalog only exists there.
+  for (const auto& [catalog_identifier, _ignored] :
+       stmt_properties.modified_databases) {
+    const std::string& catalog_name = compat::Str(catalog_identifier);
+    if (gizmosql::IsSystemCatalog(catalog_name)) {
+      std::string error_msg =
+          "Access denied: The GizmoSQL system catalog '" + catalog_name +
+          "' is read-only.";
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                             "Access denied: system catalog is read-only",
+                             {"kind", "sql"}, {"status", "rejected"},
+                             {"catalog", catalog_name},
+                             {"statement_id", handle},
+                             {"sql", logged_sql});
+#ifdef GIZMOSQL_ENTERPRISE
+      if (auto server = GetServer(*client_session)) {
+        if (auto mgr = server->GetInstrumentationManager()) {
+          StatementInstrumentation(mgr, handle, client_session->session_id,
+                                   logged_sql, flight_method, is_internal,
+                                   error_msg);
+        }
+      }
+#endif
+      return arrow::Status::Invalid(error_msg);
+    }
+  }
+
+#ifdef GIZMOSQL_ENTERPRISE
+  // Check catalog-level access permissions (Enterprise feature)
+  // These checks enforce per-catalog read/write permissions from JWT token claims
+  std::shared_ptr<InstrumentationManager> instr_mgr;
+  std::string log_catalog;
+  if (auto server = GetServer(*client_session)) {
+    instr_mgr = server->GetInstrumentationManager();
+    log_catalog = server->GetLogCatalog();
+  }
+
+  // Check write access for all catalogs the statement will modify
+  auto write_status = gizmosql::enterprise::CheckCatalogWriteAccess(
+      client_session, compat::StringKeyed(stmt_properties.modified_databases),
+      instr_mgr, handle, logged_sql, flight_method, is_internal, log_catalog);
+  if (!write_status.ok()) {
+    return write_status;
+  }
+
+  // Check read access for all catalogs the statement will read
+  auto read_status = gizmosql::enterprise::CheckCatalogReadAccess(
+      client_session, compat::StringKeyed(stmt_properties.read_databases),
+      instr_mgr, handle, logged_sql, flight_method, is_internal, log_catalog);
+  if (!read_status.ok()) {
+    return read_status;
+  }
+#endif
+
+  // Check for readonly role trying to modify data (legacy support)
+  if (!stmt_properties.IsReadOnly() && client_session->role == "readonly") {
+    std::string error_msg =
+        "User '" + client_session->username +
+        "' has a readonly session and cannot run statements that modify state.";
+#ifdef GIZMOSQL_ENTERPRISE
+    // Record the rejected modification attempt by readonly user
+    if (auto server = GetServer(*client_session)) {
+      if (auto mgr = server->GetInstrumentationManager()) {
+        StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
+                                 flight_method, is_internal, error_msg);
+      }
+    }
+#endif
+    return Status::ExecutionError(error_msg);
+  }
+  return arrow::Status::OK();
+}
+
+// Applies CheckStatementAccess() to every statement DuckDB prepares on a
+// session's connection while registered. The direct-execution fallback (SQL
+// that cannot be prepared as one statement: several statements, or one that
+// DuckDB expands into several, like PIVOT) hands DuckDB the whole text, so the
+// per-statement checks in Create() never see the individual statements;
+// DuckDB calls OnFinalizePrepare for each of them as it binds it.
+class DirectExecutionAccessGuard : public duckdb::ClientContextState {
+ public:
+  static constexpr const char* kStateName = "gizmosql_direct_execution_access";
+
+  DirectExecutionAccessGuard(std::weak_ptr<ClientSession> session, std::string handle,
+                             std::string logged_sql, std::string flight_method,
+                             bool is_internal)
+      : session_(std::move(session)),
+        handle_(std::move(handle)),
+        logged_sql_(std::move(logged_sql)),
+        flight_method_(std::move(flight_method)),
+        is_internal_(is_internal) {}
+
+  // OnFinalizePrepare is only called when some registered state can request a
+  // rebind; this one never does, it only rejects.
+  bool CanRequestRebind() override { return true; }
+
+  duckdb::RebindQueryInfo OnFinalizePrepare(duckdb::ClientContext&,
+                                            duckdb::PreparedStatementData& prepared,
+                                            duckdb::PreparedStatementMode) override {
+    auto session = session_.lock();
+    if (!session) {
+      throw duckdb::PermissionException("Access denied: the session has ended.");
+    }
+    auto status = CheckStatementAccess(session, prepared.properties, handle_, logged_sql_,
+                                       flight_method_, is_internal_);
+    if (!status.ok()) throw duckdb::PermissionException(status.message());
+    return duckdb::RebindQueryInfo::DO_NOT_REBIND;
+  }
+
+  // Registers the guard on `context` for the lifetime of the returned object.
+  class Scope {
+   public:
+    Scope(duckdb::ClientContext& context,
+          duckdb::shared_ptr<DirectExecutionAccessGuard> guard)
+        : context_(context) {
+      context_.registered_state->Insert(kStateName, std::move(guard));
+    }
+    ~Scope() { context_.registered_state->Remove(kStateName); }
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
+
+   private:
+    duckdb::ClientContext& context_;
+  };
+
+ private:
+  std::weak_ptr<ClientSession> session_;
+  std::string handle_;
+  std::string logged_sql_;
+  std::string flight_method_;
+  bool is_internal_;
+};
+
+}  // namespace
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
@@ -1114,86 +1281,14 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   std::shared_ptr<duckdb::PreparedStatement> stmt =
       client_session->connection->Get().Prepare(effective_sql);
 
-  if (stmt->success) {
-    // Block writes to the GizmoSQL system catalog regardless of role or
-    // licensing — it is a process-local in-memory catalog that hosts
-    // server-managed metadata views, and clients must not be able to
-    // mutate them. Enforced in both Core and Enterprise builds. The
-    // analogous protection for the instrumentation catalog
-    // (_gizmosql_instr) lives in CheckCatalogWriteAccess and only runs
-    // in Enterprise builds because that catalog only exists there.
-    for (const auto& [catalog_name, _ignored] :
-         stmt->data->properties.modified_databases) {
-      if (gizmosql::IsSystemCatalog(catalog_name)) {
-        std::string error_msg =
-            "Access denied: The GizmoSQL system catalog '" + catalog_name +
-            "' is read-only.";
-        GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
-                               "Access denied: system catalog is read-only",
-                               {"kind", "sql"}, {"status", "rejected"},
-                               {"catalog", catalog_name},
-                               {"statement_id", handle},
-                               {"sql", logged_sql});
-#ifdef GIZMOSQL_ENTERPRISE
-        if (auto server = GetServer(*client_session)) {
-          if (auto mgr = server->GetInstrumentationManager()) {
-            StatementInstrumentation(mgr, handle, client_session->session_id,
-                                     logged_sql, flight_method, is_internal,
-                                     error_msg);
-          }
-        }
-#endif
-        return arrow::Status::Invalid(error_msg);
-      }
-    }
-
-#ifdef GIZMOSQL_ENTERPRISE
-    // Check catalog-level access permissions (Enterprise feature)
-    // These checks enforce per-catalog read/write permissions from JWT token claims
-    std::shared_ptr<InstrumentationManager> instr_mgr;
-    std::string log_catalog;
-    if (auto server = GetServer(*client_session)) {
-      instr_mgr = server->GetInstrumentationManager();
-      log_catalog = server->GetLogCatalog();
-    }
-
-    // Check write access for all catalogs the statement will modify
-    auto write_status = gizmosql::enterprise::CheckCatalogWriteAccess(
-        client_session, stmt->data->properties.modified_databases,
-        instr_mgr, handle, logged_sql, flight_method, is_internal, log_catalog);
-    if (!write_status.ok()) {
-      return write_status;
-    }
-
-    // Check read access for all catalogs the statement will read
-    auto read_status = gizmosql::enterprise::CheckCatalogReadAccess(
-        client_session, stmt->data->properties.read_databases,
-        instr_mgr, handle, logged_sql, flight_method, is_internal, log_catalog);
-    if (!read_status.ok()) {
-      return read_status;
-    }
-#endif
-
-    // Check for readonly role trying to modify data (legacy support)
-    if (!stmt->data->properties.IsReadOnly() && client_session->role == "readonly") {
-      std::string error_msg =
-          "User '" + client_session->username +
-          "' has a readonly session and cannot run statements that modify state.";
-#ifdef GIZMOSQL_ENTERPRISE
-      // Record the rejected modification attempt by readonly user
-      if (auto server = GetServer(*client_session)) {
-        if (auto mgr = server->GetInstrumentationManager()) {
-          StatementInstrumentation(mgr, handle, client_session->session_id, logged_sql,
-                                   flight_method, is_internal, error_msg);
-        }
-      }
-#endif
-      return Status::ExecutionError(error_msg);
-    }
+  if (!stmt->HasError()) {
+    ARROW_RETURN_NOT_OK(CheckStatementAccess(client_session, stmt->GetStatementProperties(),
+                                             handle, logged_sql, flight_method,
+                                             is_internal));
   }
 
-  if (not stmt->success) {
-    std::string error_message = stmt->error.Message();
+  if (stmt->HasError()) {
+    std::string error_message = stmt->GetErrorObject().Message();
 
     // Check if this is the multiple statements error that can be resolved with direct execution
     if (error_message.find("Cannot prepare multiple statements at once") !=
@@ -2142,9 +2237,12 @@ std::string RewriteGizmoSettings(const std::string& sql, const ClientSession& se
 arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
   ARROW_ASSIGN_OR_RAISE(auto session, GetSession());
 
+  // DuckDB 2.0 no longer parses the dotted name unquoted.
+  const std::string set_sql = compat::QuoteDottedSettingName(sql_);
+
   duckdb::Parser parser;
   try {
-    parser.ParseQuery(sql_);
+    parser.ParseQuery(set_sql);
   } catch (const std::exception& ex) {
     return arrow::Status::Invalid("Failed to parse GizmoSQL SET command: " + sql_ +
                                   " - " + ex.what());
@@ -2157,7 +2255,7 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
 
   auto& set_stmt = (duckdb::SetVariableStatement&)*parser.statements[0];
 
-  const std::string& name = set_stmt.name;
+  const std::string& name = compat::Str(set_stmt.name);
   auto scope = set_stmt.scope;
 
   if (!set_stmt.value) {
@@ -2166,7 +2264,7 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
   std::string val;
   if (auto* const_expr =
           dynamic_cast<duckdb::ConstantExpression*>(set_stmt.value.get())) {
-    val = const_expr->value.ToString();
+    val = compat::ConstantValue(*const_expr).ToString();
   } else {
     // Bare keyword/identifier values (notably `= true` / `= false`) are not
     // represented as a ConstantExpression in DuckDB's grammar; fall back to the
@@ -2213,7 +2311,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
   statement_id_ = handle;
   stmt_ = stmt;
   log_queries_ = log_queries;
-  logged_sql_ = redact_sql_for_logs(stmt->query);
+  logged_sql_ = redact_sql_for_logs(compat::Query(*stmt));
   use_direct_execution_ = false;
   log_level_ = log_level;
   is_internal_ = is_internal;
@@ -2221,7 +2319,7 @@ DuckDBStatement::DuckDBStatement(const std::shared_ptr<ClientSession>& client_se
   start_time_ = std::chrono::steady_clock::now();
   override_schema_ = override_schema;
   query_result_ = nullptr;
-  client_context_ = stmt->context;
+  client_context_ = compat::Context(*stmt);
 #ifdef GIZMOSQL_WITH_OPENTELEMETRY
   if (auto trace_ids = GetCurrentTraceCorrelationIds()) {
     creation_trace_id_ = trace_ids->trace_id;
@@ -2282,9 +2380,10 @@ bool DuckDBStatement::ShouldExecuteEagerly() const {
   // the ticket. RETURNING and result-producing SELECT/SHOW/PRAGMA/CALL keep the
   // query path. Statements on the direct-execution fallback (no prepared
   // statement) and GizmoSQL admin commands are handled elsewhere and stay lazy.
-  return stmt_ && stmt_->data && !is_internal_ && !is_gizmosql_admin_ &&
-         bind_parameters.size() == stmt_->named_param_map.size() &&
-         stmt_->data->properties.return_type != duckdb::StatementReturnType::QUERY_RESULT;
+  return stmt_ && !stmt_->HasError() && !is_internal_ && !is_gizmosql_admin_ &&
+         bind_parameters.size() == compat::NamedParameterCount(*stmt_) &&
+         stmt_->GetStatementProperties().return_type !=
+             duckdb::StatementReturnType::QUERY_RESULT;
 }
 
 arrow::Result<int> DuckDBStatement::Execute() {
@@ -2333,7 +2432,7 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
       is_gizmosql_admin_
           ? "ADMIN"
           : GetSqlOperationForMetrics(
-                use_direct_execution_ ? sql_ : (stmt_ ? stmt_->query : sql_));
+                use_direct_execution_ ? sql_ : (stmt_ ? compat::Query(*stmt_) : sql_));
   auto record_query_metric = [this, &metric_operation](const std::string& status_label) {
     end_time_ = std::chrono::steady_clock::now();
     ::gizmosql::metrics::RecordQueryExecution(
@@ -2388,13 +2487,28 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
     auto& cfg = duckdb::ClientConfig::GetConfig(*client_context_);
     if (query_profile_mode_ == QueryProfileMode::kOff) {
       cfg.enable_profiler = false;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION < 2
       cfg.enable_detailed_profiling = false;
+#endif
     } else {
       cfg.enable_profiler = true;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+      // DuckDB 2.x always gathers the detailed metrics and filters them with
+      // tracked_metrics globs; "no_output" stops it printing the profile (we
+      // harvest it via ToJSON()). "standard" leaves out the optimizer/planner
+      // phase timings that "detailed" adds.
+      cfg.profiler_print_format = "no_output";
+      if (query_profile_mode_ == QueryProfileMode::kDetailed) {
+        cfg.tracked_metrics = {"*"};
+      } else {
+        cfg.tracked_metrics = {"query.*", "operator.*", "system.*"};
+      }
+#else
       cfg.emit_profiler_output = false;  // no console/file output; harvested via ToJSON()
       cfg.profiler_print_format = duckdb::ProfilerPrintFormat::JSON;
       cfg.enable_detailed_profiling =
           (query_profile_mode_ == QueryProfileMode::kDetailed);
+#endif
     }
   }
 #endif
@@ -2604,7 +2718,17 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
                 "Direct query execution does not support bind parameters");
           }
 
-          auto result = session->connection->Get().Query(sql_);
+          duckdb::unique_ptr<duckdb::QueryResult> result;
+          {
+            // DuckDB prepares each statement of the batch itself, so check
+            // every one of them as it is bound (see DirectExecutionAccessGuard).
+            auto& connection = session->connection->Get();
+            DirectExecutionAccessGuard::Scope access_guard(
+                *connection.context,
+                duckdb::make_shared_ptr<DirectExecutionAccessGuard>(
+                    session, statement_id_, logged_sql_, flight_method_, is_internal_));
+            result = connection.Query(sql_);
+          }
 
           session->SetActiveSqlHandle("");
 
@@ -2621,7 +2745,7 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
                                                  result->GetError());
           }
 
-          query_result_ = std::move(result);
+          query_result_ = std::make_unique<compat::StatementResult>(std::move(result));
         } else {
           if (log_queries_ && !bind_parameters.empty()) {
             std::stringstream params_str;
@@ -2643,7 +2767,7 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
                 {"flight_method", flight_method_});
           }
 
-          query_result_ = stmt_->Execute(bind_parameters);
+          query_result_ = compat::StatementResult::Execute(*stmt_, bind_parameters);
 
           session->SetActiveSqlHandle("");
 
@@ -2861,7 +2985,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
   ArrowSchema res_schema;
 
   auto res_options = client_context_->GetClientProperties();
-  res_options.time_zone = query_result_->client_properties.time_zone;
+  res_options.time_zone = query_result_->TimeZone();
 
   ARROW_ASSIGN_OR_RAISE(auto schema, GetSchema());
   ARROW_RETURN_NOT_OK(arrow::ExportSchema(*schema, &res_schema));
@@ -2885,7 +3009,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
 
   if (data_chunk != nullptr) {
     auto extension_type_cast = duckdb::ArrowTypeExtensionData::GetExtensionTypes(
-        *client_context_, query_result_->types);
+        *client_context_, query_result_->Types());
     duckdb::ArrowConverter::ToArrowArray(*data_chunk, &res_arr, res_options,
                                          extension_type_cast);
     ARROW_ASSIGN_OR_RAISE(record_batch, arrow::ImportRecordBatch(&res_arr, &res_schema));
@@ -2903,6 +3027,21 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> DuckDBStatement::FetchResult(
       ::gizmosql::metrics::RecordRowsTransferred("outbound", record_batch->num_rows());
     }
   }
+#if defined(GIZMOSQL_ENTERPRISE) && GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  else if (execution_instrumentation_ && query_profile_mode_ != QueryProfileMode::kOff) {
+    // DuckDB 2.x streams results and only finalizes the query-level profile
+    // metrics (query.total_time, optimizer timings, ...) when the query ends,
+    // i.e. once the stream is drained: Execute() only captured the operator
+    // tree. Re-capture the complete profile now.
+    try {
+      execution_instrumentation_->SetQueryProfile(
+          duckdb::QueryProfiler::Get(*client_context_).ToJSON());
+    } catch (const std::exception& ex) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, session, "Failed to capture query profile",
+                             {"statement_id", statement_id_}, {"error", ex.what()});
+    }
+  }
+#endif
 
   status = "success";
   return record_batch;
@@ -3031,8 +3170,8 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
     auto client_properties = client_context_->GetClientProperties();
 
     ArrowSchema arrow_schema;
-    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, query_result_->types,
-                                          query_result_->names, client_properties);
+    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, query_result_->Types(),
+                                          query_result_->Names(), client_properties);
 
     auto return_value = arrow::ImportSchema(&arrow_schema);
     status = "success";
@@ -3046,8 +3185,8 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   // prepare time; DuckDB resolves them when the bound values arrive at
   // execution. Once a result exists, report its real types.
   if (schema_unresolved_ && query_result_) {
-    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, query_result_->types,
-                                          query_result_->names, client_properties);
+    duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, query_result_->Types(),
+                                          query_result_->Names(), client_properties);
     auto return_value = arrow::ImportSchema(&arrow_schema);
     status = "success";
     return return_value;
@@ -3069,7 +3208,8 @@ arrow::Result<std::shared_ptr<arrow::Schema>> DuckDBStatement::ComputeSchema() {
   }
   schema_unresolved_ = unresolved;
 
-  duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, names, client_properties);
+  duckdb::ArrowConverter::ToArrowSchema(&arrow_schema, types, compat::Strs(names),
+                                        client_properties);
 
   auto return_value = arrow::ImportSchema(&arrow_schema);
   status = "success";

@@ -33,6 +33,7 @@
 #include "arrow/flight/sql/types.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/api.h"
+#include "duckdb_compat.h"
 #include "arrow/testing/gtest_util.h"
 #include "test_util.h"
 #include "test_server_fixture.h"
@@ -764,21 +765,21 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
         "WHERE instance_id = '11111111-1111-1111-1111-111111111111'");
     ASSERT_FALSE(check_result->HasError()) << check_result->GetError();
     ASSERT_EQ(check_result->RowCount(), 1);
-    ASSERT_EQ(check_result->GetValue(0, 0).ToString(), "running");
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*check_result, 0, 0).ToString(), "running");
 
     auto session_check = conn.Query(
         "SELECT status FROM _gizmosql_instr.sessions "
         "WHERE session_id = '22222222-2222-2222-2222-222222222222'");
     ASSERT_FALSE(session_check->HasError()) << session_check->GetError();
     ASSERT_EQ(session_check->RowCount(), 1);
-    ASSERT_EQ(session_check->GetValue(0, 0).ToString(), "active");
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*session_check, 0, 0).ToString(), "active");
 
     auto exec_check = conn.Query(
         "SELECT status FROM _gizmosql_instr.sql_executions "
         "WHERE execution_id = '44444444-4444-4444-4444-444444444444'");
     ASSERT_FALSE(exec_check->HasError()) << exec_check->GetError();
     ASSERT_EQ(exec_check->RowCount(), 1);
-    ASSERT_EQ(exec_check->GetValue(0, 0).ToString(), "executing");
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*exec_check, 0, 0).ToString(), "executing");
   }
 
   // Shut down the first manager
@@ -799,9 +800,9 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
         "WHERE instance_id = '11111111-1111-1111-1111-111111111111'");
     ASSERT_FALSE(check_result->HasError()) << check_result->GetError();
     ASSERT_EQ(check_result->RowCount(), 1);
-    ASSERT_EQ(check_result->GetValue(0, 0).ToString(), "stopped")
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*check_result, 0, 0).ToString(), "stopped")
         << "Stale instance should be marked as stopped";
-    ASSERT_EQ(check_result->GetValue(1, 0).ToString(), "unclean_shutdown")
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*check_result, 1, 0).ToString(), "unclean_shutdown")
         << "Stale instance should have unclean_shutdown reason";
 
     // Verify the stale session is now marked as 'closed'
@@ -810,9 +811,9 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
         "WHERE session_id = '22222222-2222-2222-2222-222222222222'");
     ASSERT_FALSE(session_check->HasError()) << session_check->GetError();
     ASSERT_EQ(session_check->RowCount(), 1);
-    ASSERT_EQ(session_check->GetValue(0, 0).ToString(), "closed")
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*session_check, 0, 0).ToString(), "closed")
         << "Stale session should be marked as closed";
-    ASSERT_EQ(session_check->GetValue(1, 0).ToString(), "unclean_shutdown")
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*session_check, 1, 0).ToString(), "unclean_shutdown")
         << "Stale session should have unclean_shutdown reason";
 
     // Verify the stale execution is now marked as 'error'
@@ -821,9 +822,9 @@ TEST(InstrumentationManagerTest, StaleInstanceCleanup) {
         "WHERE execution_id = '44444444-4444-4444-4444-444444444444'");
     ASSERT_FALSE(exec_check->HasError()) << exec_check->GetError();
     ASSERT_EQ(exec_check->RowCount(), 1);
-    ASSERT_EQ(exec_check->GetValue(0, 0).ToString(), "error")
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*exec_check, 0, 0).ToString(), "error")
         << "Stale execution should be marked as error";
-    ASSERT_EQ(exec_check->GetValue(1, 0).ToString(), "Server shutdown unexpectedly")
+    ASSERT_EQ(gizmosql::ddb::compat::ResultValue(*exec_check, 1, 0).ToString(), "Server shutdown unexpectedly")
         << "Stale execution should have appropriate error message";
   }
 
@@ -989,7 +990,7 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
     auto stopped_result = conn.Query(
         "SELECT COUNT(*) FROM instances WHERE status = 'stopped' AND stop_reason = 'graceful'");
     ASSERT_FALSE(stopped_result->HasError()) << stopped_result->GetError();
-    auto count = stopped_result->GetValue(0, 0).GetValue<int64_t>();
+    auto count = gizmosql::ddb::compat::ResultValue(*stopped_result, 0, 0).GetValue<int64_t>();
     ASSERT_GE(count, 1)
         << "Expected at least one instance with graceful stop_reason, got " << count;
 
@@ -1005,7 +1006,7 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
     auto closed_session_result = conn.Query(
         "SELECT COUNT(*) FROM sessions WHERE status = 'closed'");
     ASSERT_FALSE(closed_session_result->HasError()) << closed_session_result->GetError();
-    auto closed_count = closed_session_result->GetValue(0, 0).GetValue<int64_t>();
+    auto closed_count = gizmosql::ddb::compat::ResultValue(*closed_session_result, 0, 0).GetValue<int64_t>();
     ASSERT_GE(closed_count, 1)
         << "Expected at least one closed session, got " << closed_count;
 
@@ -1021,7 +1022,7 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
     auto completed_exec_result = conn.Query(
         "SELECT COUNT(*) FROM sql_executions WHERE status = 'success'");
     ASSERT_FALSE(completed_exec_result->HasError()) << completed_exec_result->GetError();
-    auto completed_count = completed_exec_result->GetValue(0, 0).GetValue<int64_t>();
+    auto completed_count = gizmosql::ddb::compat::ResultValue(*completed_exec_result, 0, 0).GetValue<int64_t>();
     ASSERT_GE(completed_count, 1)
         << "Expected at least one completed execution, got " << completed_count;
 
@@ -1029,7 +1030,7 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
     auto stmt_result = conn.Query(
         "SELECT COUNT(*) FROM sql_statements");
     ASSERT_FALSE(stmt_result->HasError()) << stmt_result->GetError();
-    auto stmt_count = stmt_result->GetValue(0, 0).GetValue<int64_t>();
+    auto stmt_count = gizmosql::ddb::compat::ResultValue(*stmt_result, 0, 0).GetValue<int64_t>();
     ASSERT_GE(stmt_count, 1)
         << "Expected at least one statement, got " << stmt_count;
   }
@@ -1161,14 +1162,14 @@ TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
     // Verify at least one instance was recorded
     auto instance_result = conn.Query("SELECT COUNT(*) FROM instances");
     ASSERT_FALSE(instance_result->HasError()) << instance_result->GetError();
-    auto instance_count = instance_result->GetValue(0, 0).GetValue<int64_t>();
+    auto instance_count = gizmosql::ddb::compat::ResultValue(*instance_result, 0, 0).GetValue<int64_t>();
     ASSERT_GE(instance_count, 1)
         << "Expected at least one instance record when instrumentation enabled via env var";
 
     // Verify at least one session was recorded
     auto session_result = conn.Query("SELECT COUNT(*) FROM sessions");
     ASSERT_FALSE(session_result->HasError()) << session_result->GetError();
-    auto session_count = session_result->GetValue(0, 0).GetValue<int64_t>();
+    auto session_count = gizmosql::ddb::compat::ResultValue(*session_result, 0, 0).GetValue<int64_t>();
     ASSERT_GE(session_count, 1)
         << "Expected at least one session record when instrumentation enabled via env var";
   }
@@ -1321,13 +1322,13 @@ TEST(InstrumentationManagerTest, AutoMigratesNaiveTimestampToTimestampTz) {
         "AND column_name='start_time'");
     ASSERT_FALSE(type_q->HasError()) << type_q->GetError();
     ASSERT_EQ(type_q->RowCount(), 1u);
-    EXPECT_NE(type_q->GetValue(0, 0).ToString().find("WITH TIME ZONE"),
+    EXPECT_NE(gizmosql::ddb::compat::ResultValue(*type_q, 0, 0).ToString().find("WITH TIME ZONE"),
               std::string::npos);
 
     auto count_q = conn.Query(
         "SELECT COUNT(*) FROM _gizmosql_instr.instances WHERE gizmosql_version='x'");
     ASSERT_FALSE(count_q->HasError()) << count_q->GetError();
-    EXPECT_EQ(count_q->GetValue(0, 0).GetValue<int64_t>(), 1);
+    EXPECT_EQ(gizmosql::ddb::compat::ResultValue(*count_q, 0, 0).GetValue<int64_t>(), 1);
   }
 
   (*mgr)->Shutdown();
@@ -1390,13 +1391,13 @@ TEST(InstrumentationManagerTest, FailedWriteDoesNotAffectOtherWrites) {
     duckdb::Connection conn(*shared_db);
     auto total_q = conn.Query("SELECT COUNT(*) FROM memory.main.writer_scratch");
     ASSERT_FALSE(total_q->HasError()) << total_q->GetError();
-    EXPECT_EQ(total_q->GetValue(0, 0).GetValue<int64_t>(), 2)
+    EXPECT_EQ(gizmosql::ddb::compat::ResultValue(*total_q, 0, 0).GetValue<int64_t>(), 2)
         << "A failed write must not discard the writes queued around it";
 
     auto ids_q = conn.Query(
         "SELECT COUNT(*) FROM memory.main.writer_scratch WHERE id IN (1, 2)");
     ASSERT_FALSE(ids_q->HasError()) << ids_q->GetError();
-    EXPECT_EQ(ids_q->GetValue(0, 0).GetValue<int64_t>(), 2);
+    EXPECT_EQ(gizmosql::ddb::compat::ResultValue(*ids_q, 0, 0).GetValue<int64_t>(), 2);
   }
 
   shared_db.reset();

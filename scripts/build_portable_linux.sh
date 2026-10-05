@@ -16,7 +16,7 @@
 #     quay.io/pypa/manylinux_2_28_$(uname -m) \
 #     bash "$PWD/scripts/build_portable_linux.sh" <duckdb_channel> [build_dir]
 #
-#   duckdb_channel : stable | lts
+#   duckdb_channel : stable | lts | edge
 #   build_dir      : CMake build dir relative to the repo root
 #                    (default: build)
 #

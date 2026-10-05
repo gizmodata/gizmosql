@@ -27,21 +27,38 @@ if(WIN32)
 endif()
 
 # --------------------- DuckDB Channel ---------------------
-# Two release channels are supported:
+# Three release channels are supported:
 #   stable  → tracks the latest DuckDB minor release (current default)
 #   lts     → tracks the most recent DuckDB LTS release
-# The LTS channel produces parallel artifacts (gizmosql_server_lts,
-# gizmosql_cli_<os>_<arch>-lts.zip, gizmodata/gizmosql-lts:*) so both
-# variants can be installed side-by-side.
+#   edge    → tracks the next DuckDB major ahead of its release (today a
+#             DuckDB 2.0 alpha). EXPERIMENTAL — not for production workloads.
+# The lts and edge channels produce parallel artifacts (gizmosql_server_lts /
+# gizmosql_server_edge, gizmosql_cli_<os>_<arch>_lts.zip / _edge.zip,
+# gizmodata/gizmosql-lts:* / gizmodata/gizmosql-edge:*) so the variants can be
+# installed side-by-side. iOS builds only the stable channel.
 set(GIZMOSQL_DUCKDB_CHANNEL "stable" CACHE STRING
-    "DuckDB release channel for this build: stable | lts")
-set_property(CACHE GIZMOSQL_DUCKDB_CHANNEL PROPERTY STRINGS stable lts)
+    "DuckDB release channel for this build: stable | lts | edge")
+set_property(CACHE GIZMOSQL_DUCKDB_CHANNEL PROPERTY STRINGS stable lts edge)
 
 set(DUCKDB_STABLE_VERSION "v1.5.6" CACHE STRING
     "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=stable")
 set(DUCKDB_LTS_VERSION "v1.4.5" CACHE STRING
     "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=lts")
+# A DuckDB pre-release has no git tag, so the edge channel pins the commit of
+# an official alpha build. DUCKDB_EDGE_VERSION must be the exact version string
+# DuckDB published that build as: it becomes the runtime extension folder
+# (extensions.duckdb.org/<version>/...), and INSTALL/LOAD 404s for any other
+# string. Get the pair from
+# https://duckdb-staging.duckdb.org/latest_alpha_version.txt
+# ("<commit10>/<version>") and keep DUCKDB_CLI_STAGED in .github/workflows/ci.yml
+# in sync. Once the version is tagged, set DUCKDB_EDGE_GIT_REF to "" (it then
+# defaults to the version tag).
+set(DUCKDB_EDGE_VERSION "v2.0.0-alpha43763" CACHE STRING
+    "DuckDB version used by GIZMOSQL_DUCKDB_CHANNEL=edge")
+set(DUCKDB_EDGE_GIT_REF "96063b9e39749cc0f087bb11501d7edbee527957" CACHE STRING
+    "Git ref (commit SHA) for DUCKDB_EDGE_VERSION when it is not a tag")
 
+set(GIZMOSQL_DUCKDB_CHANNEL_EDGE 0)
 if(GIZMOSQL_DUCKDB_CHANNEL STREQUAL "lts")
     set(DUCKDB_GIT_TAG "${DUCKDB_LTS_VERSION}")
     set(GIZMOSQL_ARTIFACT_SUFFIX_DASH "-lts")
@@ -52,19 +69,59 @@ elseif(GIZMOSQL_DUCKDB_CHANNEL STREQUAL "stable")
     set(GIZMOSQL_ARTIFACT_SUFFIX_DASH "")
     set(GIZMOSQL_ARTIFACT_SUFFIX_UNDER "")
     set(GIZMOSQL_DUCKDB_CHANNEL_LTS 0)
+elseif(GIZMOSQL_DUCKDB_CHANNEL STREQUAL "edge")
+    set(DUCKDB_GIT_TAG "${DUCKDB_EDGE_VERSION}")
+    set(GIZMOSQL_ARTIFACT_SUFFIX_DASH "-edge")
+    set(GIZMOSQL_ARTIFACT_SUFFIX_UNDER "_edge")
+    set(GIZMOSQL_DUCKDB_CHANNEL_LTS 0)
+    set(GIZMOSQL_DUCKDB_CHANNEL_EDGE 1)
 else()
     message(FATAL_ERROR
-        "GIZMOSQL_DUCKDB_CHANNEL must be 'stable' or 'lts' (got '${GIZMOSQL_DUCKDB_CHANNEL}')")
+        "GIZMOSQL_DUCKDB_CHANNEL must be 'stable', 'lts' or 'edge' (got '${GIZMOSQL_DUCKDB_CHANNEL}')")
 endif()
 
-message(STATUS "GIZMOSQL_DUCKDB_CHANNEL: ${GIZMOSQL_DUCKDB_CHANNEL} (DuckDB ${DUCKDB_GIT_TAG})")
+# DUCKDB_GIT_TAG is the version DuckDB reports (and the extension folder);
+# DUCKDB_GIT_REF is what we check out. A shallow clone can only fetch a
+# branch or tag, so a commit-SHA ref needs a full clone.
+set(DUCKDB_GIT_REF "${DUCKDB_GIT_TAG}")
+if(GIZMOSQL_DUCKDB_CHANNEL STREQUAL "edge" AND DUCKDB_EDGE_GIT_REF)
+    set(DUCKDB_GIT_REF "${DUCKDB_EDGE_GIT_REF}")
+endif()
+string(LENGTH "${DUCKDB_GIT_REF}" _duckdb_git_ref_length)
+# (CMake regexes have no {n} quantifier, hence the separate length check.)
+if(DUCKDB_GIT_REF MATCHES "^[0-9a-f]+$" AND _duckdb_git_ref_length EQUAL 40)
+    set(DUCKDB_GIT_SHALLOW FALSE)
+else()
+    set(DUCKDB_GIT_SHALLOW TRUE)
+endif()
+
+message(STATUS "GIZMOSQL_DUCKDB_CHANNEL: ${GIZMOSQL_DUCKDB_CHANNEL} (DuckDB ${DUCKDB_GIT_TAG} @ ${DUCKDB_GIT_REF})")
+
+# DuckDB 2.0 reworked how statically linked extensions reach the engine:
+# there is no duckdb_generated_extension_loader archive any more, and the
+# program registers each extension itself (src/duckdb/duckdb_static_extensions.cpp).
+# It also replaced the Postgres-derived parser, so duckdb_pg_query is gone.
+# Source code bridges the 1.x/2.x C++ API differences on
+# GIZMOSQL_DUCKDB_MAJOR_VERSION (see src/duckdb/duckdb_compat.h).
+if(NOT DUCKDB_GIT_TAG MATCHES "^v([0-9]+)[.]")
+    message(FATAL_ERROR "Cannot read the DuckDB major version from '${DUCKDB_GIT_TAG}'")
+endif()
+set(GIZMOSQL_DUCKDB_MAJOR_VERSION "${CMAKE_MATCH_1}")
+if(GIZMOSQL_DUCKDB_MAJOR_VERSION GREATER_EQUAL 2)
+    set(GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY TRUE)
+else()
+    set(GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY FALSE)
+endif()
+add_compile_definitions(GIZMOSQL_DUCKDB_MAJOR_VERSION=${GIZMOSQL_DUCKDB_MAJOR_VERSION})
 
 # Make the channel visible to source code:
 #   GIZMOSQL_DUCKDB_CHANNEL_LTS  — 0/1, suitable for `#if`
-#   GIZMOSQL_DUCKDB_CHANNEL_NAME — "stable"/"lts" string literal
+#   GIZMOSQL_DUCKDB_CHANNEL_EDGE — 0/1, suitable for `#if`
+#   GIZMOSQL_DUCKDB_CHANNEL_NAME — "stable"/"lts"/"edge" string literal
 #   GIZMOSQL_DUCKDB_VERSION_TAG  — git tag of the linked DuckDB (e.g. "v1.5.6")
 add_compile_definitions(
     GIZMOSQL_DUCKDB_CHANNEL_LTS=${GIZMOSQL_DUCKDB_CHANNEL_LTS}
+    GIZMOSQL_DUCKDB_CHANNEL_EDGE=${GIZMOSQL_DUCKDB_CHANNEL_EDGE}
     GIZMOSQL_DUCKDB_CHANNEL_NAME="${GIZMOSQL_DUCKDB_CHANNEL}"
     GIZMOSQL_DUCKDB_VERSION_TAG="${DUCKDB_GIT_TAG}"
 )
@@ -499,9 +556,15 @@ set_property(TARGET duckdb PROPERTY IMPORTED_NO_SYSTEM TRUE)
 # for duckdb::IcuExtension" etc. Empty string when LTS so the slot
 # collapses out of the list.
 set(_GIZMOSQL_DUCKDB_GENERATED_LOADER "")
-if(NOT GIZMOSQL_DUCKDB_CHANNEL_LTS)
+if(NOT GIZMOSQL_DUCKDB_CHANNEL_LTS AND NOT GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY)
     set(_GIZMOSQL_DUCKDB_GENERATED_LOADER
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_generated_extension_loader${LIB_SUFFIX}")
+endif()
+
+# DuckDB 2.0 parses with its own PEG parser and no longer ships libpg_query.
+set(_GIZMOSQL_DUCKDB_PG_QUERY "")
+if(NOT GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY)
+    set(_GIZMOSQL_DUCKDB_PG_QUERY "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_pg_query${LIB_SUFFIX}")
 endif()
 
 target_link_libraries(duckdb
@@ -512,7 +575,7 @@ target_link_libraries(duckdb
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_hyperloglog${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_mbedtls${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_miniz${LIB_SUFFIX}"
-        "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_pg_query${LIB_SUFFIX}"
+        ${_GIZMOSQL_DUCKDB_PG_QUERY}
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_re2${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_utf8proc${LIB_SUFFIX}"
         "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_yyjson${LIB_SUFFIX}"
@@ -538,6 +601,15 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}httpfs_extension${LIB_SUFFIX}"
             "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}postgres_scanner_extension${LIB_SUFFIX}"
     )
+    # Tells src/duckdb/duckdb_static_extensions.cpp to register these too.
+    target_compile_definitions(duckdb INTERFACE GIZMOSQL_IOS_STATIC_EXTENSIONS=1)
+endif()
+
+# With DuckDB 2.0 the engine no longer references the extensions; they
+# reference the engine. GNU ld resolves archives in a single left-to-right
+# pass, so name the engine archive once more after the extension archives.
+if(GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY)
+    target_link_libraries(duckdb INTERFACE "${DUCKDB_LIBRARY_PATH}")
 endif()
 
 # Only link jemalloc_extension on Linux — and only on the LTS channel.
@@ -762,6 +834,7 @@ set(GIZMOSQL_DUCKDB_SERVER_SRCS
         src/duckdb/admin_command_guard.cpp
         src/duckdb/sensitive_path_guard.cpp
         src/duckdb/duckdb_server.cpp
+        src/duckdb/duckdb_static_extensions.cpp
         src/duckdb/duckdb_tables_schema_batch_reader.cpp
         src/duckdb/duckdb_arrow_ingest.cpp)
 

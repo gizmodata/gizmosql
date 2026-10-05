@@ -6,6 +6,8 @@
 
 #include <duckdb.hpp>
 
+#include "duckdb_compat.h"
+
 #include <string>
 
 #include <arrow/status.h>
@@ -67,15 +69,14 @@ inline CatalogBackend DetectCatalogBackend(duckdb::Connection& conn,
       return CatalogBackend::kDuckDBFile;
     }
     duckdb::vector<duckdb::Value> args{duckdb::Value(catalog)};
-    auto raw = stmt->Execute(args, /*allow_stream_result=*/false);
-    if (!raw || raw->HasError()) {
+    auto result = ddb::compat::ExecuteMaterialized(*stmt, args);
+    if (!result || result->HasError()) {
       return CatalogBackend::kDuckDBFile;
     }
-    auto& result = raw->Cast<duckdb::MaterializedQueryResult>();
-    if (result.RowCount() == 0) {
+    if (ddb::compat::ResultRowCount(*result) == 0) {
       return CatalogBackend::kDuckDBFile;
     }
-    const std::string type = result.GetValue(0, 0).ToString();
+    const std::string type = ddb::compat::ResultValue(*result, 0, 0).ToString();
     if (type.find("postgres") != std::string::npos) {
       return CatalogBackend::kPostgres;
     }

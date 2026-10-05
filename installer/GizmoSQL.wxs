@@ -1,24 +1,68 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One source for the three release channels' MSIs; CI picks the channel with
+  `wix build -d Channel=stable|lts|edge`. Each channel is its own Windows
+  Installer product (own UpgradeCode, name, install folder and component
+  GUIDs), so the three install side by side and upgrade independently.
+  The GUIDs below are permanent: changing an UpgradeCode orphans existing
+  installs, and reusing a component GUID across products breaks the
+  Installer's reference counting.
+-->
+<?ifndef Channel ?>
+<?define Channel = "stable" ?>
+<?endif ?>
+
+<?if $(var.Channel) = "stable" ?>
+<?define ProductName = "GizmoSQL" ?>
+<?define InstallDirName = "GizmoSQL" ?>
+<?define BinSuffix = "" ?>
+<?define UpgradeCode = "{D29A3161-264E-4D77-99F4-EE327AFE8DFA}" ?>
+<?define ServerExeGuid = "{936EF01C-411F-4BF7-B022-4DCDB54E5EEC}" ?>
+<?define ClientExeGuid = "{3B012805-89BA-4295-80BC-04470334BABE}" ?>
+<?define VCRuntimeGuid = "{16322E96-725B-463A-99A7-0D61A622E069}" ?>
+<?define PathEntryGuid = "{AEBEAC22-3F2E-4663-93E2-F9C9325BFD6F}" ?>
+<?elseif $(var.Channel) = "lts" ?>
+<?define ProductName = "GizmoSQL LTS" ?>
+<?define InstallDirName = "GizmoSQL LTS" ?>
+<?define BinSuffix = "_lts" ?>
+<?define UpgradeCode = "{88F2C0BE-336C-4529-985E-EE9946F56FE2}" ?>
+<?define ServerExeGuid = "{EE3D80E8-768F-42A0-BC4A-B5D3F3259921}" ?>
+<?define ClientExeGuid = "{B48F0FDB-DF22-4010-A44F-E011CBCBCB7F}" ?>
+<?define VCRuntimeGuid = "{FCB21ACF-FE65-4055-AC31-EA4B6174A2C1}" ?>
+<?define PathEntryGuid = "{20D207E4-C125-4C38-B8A1-347A86FB171B}" ?>
+<?elseif $(var.Channel) = "edge" ?>
+<?define ProductName = "GizmoSQL Edge (experimental)" ?>
+<?define InstallDirName = "GizmoSQL Edge" ?>
+<?define BinSuffix = "_edge" ?>
+<?define UpgradeCode = "{5B7AF93C-1AC4-48B7-A800-FC81CEA5C5C3}" ?>
+<?define ServerExeGuid = "{15AC91D4-1009-4216-97AC-E8B0F527D886}" ?>
+<?define ClientExeGuid = "{CF97E58B-4AB8-4F3C-AAEB-C5D561F6A9EE}" ?>
+<?define VCRuntimeGuid = "{A3EF4F4B-AE74-49CE-B4F0-2714D881B53A}" ?>
+<?define PathEntryGuid = "{3B0109B1-4755-430C-86C2-28284D5ECC3B}" ?>
+<?else ?>
+<?error Channel must be stable, lts or edge ?>
+<?endif ?>
+
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
-  <Package Name="GizmoSQL"
+  <Package Name="$(var.ProductName)"
            Manufacturer="GizmoData LLC"
            Version="!(bind.fileVersion.GizmoSqlServer)"
-           UpgradeCode="{D29A3161-264E-4D77-99F4-EE327AFE8DFA}"
+           UpgradeCode="$(var.UpgradeCode)"
            Scope="perMachine">
 
     <Icon Id="gizmosql.ico" SourceFile="gizmosql.ico" />
     <Property Id="ARPPRODUCTICON" Value="gizmosql.ico" />
 
     <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of GizmoSQL is already installed." />
+                  DowngradeErrorMessage="A newer version of $(var.ProductName) is already installed." />
     <Media Id="1" Cabinet="gizmosql.cab" EmbedCab="yes" />
 
     <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
     <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
     <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
 
-    <Feature Id="ProductFeature" Title="GizmoSQL" Level="1">
+    <Feature Id="ProductFeature" Title="$(var.ProductName)" Level="1">
       <ComponentGroupRef Id="ServerComponents" />
       <ComponentGroupRef Id="PathComponents" />
     </Feature>
@@ -28,19 +72,21 @@
 
   <Fragment>
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="GizmoSQL" />
+      <Directory Id="INSTALLFOLDER" Name="$(var.InstallDirName)" />
     </StandardDirectory>
   </Fragment>
 
   <Fragment>
+    <!-- LTS / edge binaries keep their channel suffix (gizmosql_server_lts.exe),
+         so every channel's folder can be on PATH at once without shadowing. -->
     <ComponentGroup Id="ServerComponents" Directory="INSTALLFOLDER">
-      <Component Id="ServerExe" Guid="{936EF01C-411F-4BF7-B022-4DCDB54E5EEC}">
-        <File Id="GizmoSqlServer" Source="!(bindpath.BinDir)\gizmosql_server.exe" KeyPath="yes" />
+      <Component Id="ServerExe" Guid="$(var.ServerExeGuid)">
+        <File Id="GizmoSqlServer" Source="!(bindpath.BinDir)\gizmosql_server$(var.BinSuffix).exe" KeyPath="yes" />
       </Component>
-      <Component Id="ClientExe" Guid="{3B012805-89BA-4295-80BC-04470334BABE}">
-        <File Id="GizmoSqlClient" Source="!(bindpath.BinDir)\gizmosql_client.exe" KeyPath="yes" />
+      <Component Id="ClientExe" Guid="$(var.ClientExeGuid)">
+        <File Id="GizmoSqlClient" Source="!(bindpath.BinDir)\gizmosql_client$(var.BinSuffix).exe" KeyPath="yes" />
       </Component>
-      <Component Id="VCRuntime" Guid="{16322E96-725B-463A-99A7-0D61A622E069}">
+      <Component Id="VCRuntime" Guid="$(var.VCRuntimeGuid)">
         <File Id="vcruntime140" Source="!(bindpath.BinDir)\vcruntime140.dll" />
         <File Id="vcruntime140_1" Source="!(bindpath.BinDir)\vcruntime140_1.dll" />
         <File Id="msvcp140" Source="!(bindpath.BinDir)\msvcp140.dll" KeyPath="yes" />
@@ -48,7 +94,7 @@
     </ComponentGroup>
 
     <ComponentGroup Id="PathComponents" Directory="INSTALLFOLDER">
-      <Component Id="PathEntry" Guid="{AEBEAC22-3F2E-4663-93E2-F9C9325BFD6F}">
+      <Component Id="PathEntry" Guid="$(var.PathEntryGuid)">
         <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no"
                      Part="last" Action="set" System="yes" />
       </Component>

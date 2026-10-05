@@ -245,6 +245,9 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   /// When true (the default), client `SET allow_unredacted_secrets = true` is
   /// rejected before DuckDB sees it.
   void SetBlockUnredactedSecrets(bool block);
+  /// --reject-unknown-sessions: refuse closed/idle-evicted and other instances'
+  /// sessions instead of silently starting a new one.
+  void SetRejectUnknownSessions(bool reject);
   bool BlockUnredactedSecrets() const;
 
   arrow::Status SetPrintQueries(const ClientSession& client_session,

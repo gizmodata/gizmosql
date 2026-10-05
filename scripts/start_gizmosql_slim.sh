@@ -70,6 +70,7 @@
 #   GIZMOSQL_CAPTURE_QUERY_PROFILE       --capture-query-profile (Enterprise; off|standard|detailed)
 #   GIZMOSQL_MEMORY_LIMIT                --memory-limit (DuckDB only)
 #   GIZMOSQL_SESSION_IDLE_TIMEOUT        --session-idle-timeout (DuckDB only)
+#   GIZMOSQL_REJECT_UNKNOWN_SESSIONS     --reject-unknown-sessions (DuckDB only; default false)
 #   GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS   --allow-unsigned-extensions (DuckDB only; security-sensitive)
 #   GIZMOSQL_BLOCK_UNREDACTED_SECRETS    --block-unredacted-secrets (DuckDB only; default true)
 #   GIZMOSQL_GRACEFUL_SHUTDOWN           --graceful-shutdown (drain on SIGINT/SIGTERM)

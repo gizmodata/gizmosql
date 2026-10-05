@@ -48,6 +48,16 @@ namespace gizmosql::ddb {
 /// True if the field carries an `ARROW:extension:name` of `geoarrow.*`.
 bool IsGeoArrowField(const arrow::Field& field);
 
+/// True if the field is Arrow's canonical `arrow.parquet.variant` (VARIANT):
+/// either a registered extension type or a struct tagged with that
+/// `ARROW:extension:name` (this server does not register the type, so that
+/// is how it arrives).
+bool IsArrowVariantField(const arrow::Field& field);
+
+/// The DuckDB VARIANT value of one `arrow.parquet.variant` value (a struct of
+/// `metadata` and `value` Variant-encoded binaries). DuckDB 2.0+ only.
+arrow::Result<duckdb::Value> ArrowVariantScalarToDuckDBValue(const arrow::Scalar& scalar);
+
 /// RecordBatchReader over a Flight DoPut message stream. Metadata-only
 /// chunks are skipped; rows and bytes are counted (and reported to
 /// telemetry) as batches are pulled.
@@ -84,6 +94,7 @@ class ArrowIngestStream {
   std::shared_ptr<FlightIngestBatchReader> batch_reader_;
   std::atomic<bool> produced_{false};
 
+ public:
   // arrow_scan factory callbacks (C-style; `factory_ptr` is `this`).
   static duckdb::unique_ptr<duckdb::ArrowArrayStreamWrapper> Produce(
       uintptr_t factory_ptr, duckdb::ArrowStreamParameters& parameters);

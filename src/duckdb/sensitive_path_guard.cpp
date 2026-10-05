@@ -319,6 +319,41 @@ void SensitivePathGuardFileSystem::RemoveFiles(const dd::vector<dd::string>& fil
   dd::VirtualFileSystem::RemoveFiles(filenames, opener);
 }
 
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+dd::unique_ptr<dd::MemoryMappedFile> SensitivePathGuardFileSystem::MemoryMapFile(
+    const dd::OpenFileInfo& path, dd::FileOpenFlags flags, const dd::MMapOptions& options,
+    dd::optional_ptr<dd::FileOpener> opener) {
+  Enforce(path.path, opener);
+  return dd::VirtualFileSystem::MemoryMapFile(path, flags, options, opener);
+}
+
+dd::optional<dd::FileMetadata> SensitivePathGuardFileSystem::GetStatsIfExists(
+    const dd::OpenFileInfo& file, dd::optional_ptr<dd::FileOpener> opener) {
+  Enforce(file.path, opener);
+  return dd::VirtualFileSystem::GetStatsIfExists(file, opener);
+}
+
+bool SensitivePathGuardFileSystem::CreateDirectoryExtended(
+    const dd::string& directory, const dd::CreateDirectoryOptions& options,
+    dd::optional_ptr<dd::FileOpener> opener) {
+  Enforce(directory, opener);
+  return dd::VirtualFileSystem::CreateDirectoryExtended(directory, options, opener);
+}
+
+void SensitivePathGuardFileSystem::CreateDirectoriesRecursive(
+    const dd::string& path, dd::optional_ptr<dd::FileOpener> opener) {
+  Enforce(path, opener);
+  dd::VirtualFileSystem::CreateDirectoriesRecursive(path, opener);
+}
+
+bool SensitivePathGuardFileSystem::RemoveDirectoryExtended(
+    const dd::string& directory, const dd::RemoveDirectoryOptions& options,
+    dd::optional_ptr<dd::FileOpener> opener) {
+  Enforce(directory, opener);
+  return dd::VirtualFileSystem::RemoveDirectoryExtended(directory, options, opener);
+}
+#endif
+
 bool SensitivePathGuardFileSystem::ListFilesExtended(
     const dd::string& directory,
     const std::function<void(dd::OpenFileInfo& info)>& callback,

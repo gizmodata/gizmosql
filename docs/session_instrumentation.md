@@ -503,6 +503,14 @@ ORDER BY e.execution_start_time DESC
 LIMIT 20;
 ```
 
+The profile JSON is DuckDB's own format, so its layout follows the DuckDB
+version GizmoSQL is built with. On the stable and LTS channels (DuckDB 1.5 /
+1.4) the profile is flat and the total query time is `$.latency`, as above.
+On the experimental [edge channel](edge_channel.md) (DuckDB 2.0) the metrics
+are nested by group (`query`, `operator`, `system`; `detailed` adds
+`optimizer`, `planner`, `physical_planner` and `io`), so the same figure is
+`$.query.total_time`.
+
 `query_profile` is also exposed in the `session_activity` and `execution_details`
 views.
 

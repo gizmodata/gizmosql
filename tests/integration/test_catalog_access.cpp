@@ -1286,3 +1286,121 @@ TEST_F(CatalogAccessServerFixture, GetCatalogsRPCRespectsFiltering) {
   ASSERT_TRUE(std::find(catalog_names.begin(), catalog_names.end(), "temp") != catalog_names.end())
       << "GetCatalogs should always include 'temp'";
 }
+
+// ---------------------------------------------------------------------------
+// Multi-statement SQL (the direct-execution fallback)
+// ---------------------------------------------------------------------------
+// SQL that DuckDB cannot prepare as one statement runs as a plain query. Each
+// statement in it must get the same access checks as a single statement, and
+// the batch must run exactly once.
+
+namespace {
+// Row count of `table` as seen by the admin (system) user.
+int64_t AdminCountRows(int port, const std::string& username, const std::string& password,
+                       const std::string& table) {
+  auto location = arrow::flight::Location::ForGrpcTcp("localhost", port).ValueOrDie();
+  auto client = arrow::flight::FlightClient::Connect(location).ValueOrDie();
+  arrow::flight::FlightCallOptions call_options;
+  call_options.headers.push_back(
+      client->AuthenticateBasicToken({}, username, password).ValueOrDie());
+  FlightSqlClient sql_client(std::move(client));
+  auto info = sql_client.Execute(call_options, "SELECT count(*) FROM " + table).ValueOrDie();
+  auto reader = sql_client.DoGet(call_options, info->endpoints()[0].ticket).ValueOrDie();
+  auto table_result = reader->ToTable().ValueOrDie();
+  return std::static_pointer_cast<arrow::Int64Scalar>(
+             table_result->column(0)->GetScalar(0).ValueOrDie())
+      ->value;
+}
+
+void AdminExecute(int port, const std::string& username, const std::string& password,
+                  const std::string& sql) {
+  auto location = arrow::flight::Location::ForGrpcTcp("localhost", port).ValueOrDie();
+  auto client = arrow::flight::FlightClient::Connect(location).ValueOrDie();
+  arrow::flight::FlightCallOptions call_options;
+  call_options.headers.push_back(
+      client->AuthenticateBasicToken({}, username, password).ValueOrDie());
+  FlightSqlClient sql_client(std::move(client));
+  ASSERT_ARROW_OK(ExecuteAndConsume(sql_client, call_options, sql));
+}
+}  // namespace
+
+TEST_F(CatalogAccessServerFixture, MultiStatementBatchCannotBypassReadOnlyCatalogAccess) {
+  SKIP_WITHOUT_LICENSE();  // Token-based catalog permissions require enterprise license
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  AdminExecute(GetPort(), GetUsername(), GetPassword(),
+               "CREATE OR REPLACE TABLE ro_multi (id INTEGER)");
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}])";
+  std::string token = CreateTestJWT("readonly_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // Positive twin: a read-only batch still runs for a read-only token.
+  ASSERT_ARROW_OK(ExecuteAndConsume(*client, call_options, "SELECT 1; SELECT count(*) FROM ro_multi"));
+
+  for (const std::string sql : {"SELECT 1; INSERT INTO ro_multi VALUES (2)",
+                                "INSERT INTO ro_multi VALUES (3); SELECT 1"}) {
+    auto status = ExecuteAndConsume(*client, call_options, sql);
+    ASSERT_FALSE(status.ok()) << "read-only token wrote through: " << sql;
+    EXPECT_NE(status.ToString().find("You do not have write access to catalog"),
+              std::string::npos)
+        << sql << " -> " << status.ToString();
+  }
+  EXPECT_EQ(AdminCountRows(GetPort(), GetUsername(), GetPassword(), "ro_multi"), 0);
+}
+
+TEST_F(CatalogAccessServerFixture, MultiStatementBatchCannotBypassReadonlyRole) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  AdminExecute(GetPort(), GetUsername(), GetPassword(),
+               "CREATE OR REPLACE TABLE ro_role_multi (id INTEGER)");
+
+  std::string token = CreateTestJWT("readonly_role_user", "readonly");
+  auto call_options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  ASSERT_ARROW_OK(ExecuteAndConsume(*client, call_options, "SELECT 1; SELECT 2"));
+  auto status =
+      ExecuteAndConsume(*client, call_options, "SELECT 1; INSERT INTO ro_role_multi VALUES (1)");
+  ASSERT_FALSE(status.ok()) << "readonly role wrote through a multi-statement batch";
+  EXPECT_NE(status.ToString().find("has a readonly session and cannot run statements that "
+                                   "modify state"),
+            std::string::npos)
+      << status.ToString();
+  EXPECT_EQ(AdminCountRows(GetPort(), GetUsername(), GetPassword(), "ro_role_multi"), 0);
+}
+
+TEST_F(CatalogAccessServerFixture, MultiStatementBatchRunsExactlyOnce) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  AdminExecute(GetPort(), GetUsername(), GetPassword(),
+               "CREATE OR REPLACE TABLE once_multi (id INTEGER)");
+  // GetFlightInfo + DoGet of one batch: the INSERT must land once, not twice.
+  AdminExecute(GetPort(), GetUsername(), GetPassword(),
+               "SELECT 1; INSERT INTO once_multi VALUES (1)");
+  EXPECT_EQ(AdminCountRows(GetPort(), GetUsername(), GetPassword(), "once_multi"), 1);
+  // The result of the batch's last statement is still returned.
+  AdminExecute(GetPort(), GetUsername(), GetPassword(),
+               "INSERT INTO once_multi VALUES (2); SELECT count(*) FROM once_multi");
+  EXPECT_EQ(AdminCountRows(GetPort(), GetUsername(), GetPassword(), "once_multi"), 2);
+}
+
+// PIVOT is also run through the direct-execution fallback (DuckDB expands it
+// into several statements). It only reads user data, so read-only principals
+// must still be able to run it under the per-statement checks.
+TEST_F(CatalogAccessServerFixture, ReadOnlyPrincipalsCanRunPivot) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+  AdminExecute(GetPort(), GetUsername(), GetPassword(),
+               "CREATE OR REPLACE TABLE pivot_src AS "
+               "SELECT * FROM (VALUES ('a', 1), ('b', 2), ('a', 3)) t(k, v)");
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}])";
+  for (const auto& token : {CreateTestJWT("readonly_user", "user", catalog_access),
+                            CreateTestJWT("readonly_role_user", "readonly")}) {
+    auto call_options = GetCallOptionsWithToken(token);
+    ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+    auto status = ExecuteAndConsume(*client, call_options,
+                                    "PIVOT pivot_src ON k USING sum(v)");
+    EXPECT_TRUE(status.ok()) << status.ToString();
+  }
+}

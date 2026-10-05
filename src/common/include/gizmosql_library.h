@@ -23,12 +23,14 @@
 
 // Constants
 //
-// GIZMOSQL_SERVER_VERSION is the user-facing version string. On the LTS
-// channel it carries a "-LTS" suffix so log lines, the --version flag,
-// and telemetry attributes make the channel obvious. Stable builds keep
-// the bare semver tag.
+// GIZMOSQL_SERVER_VERSION is the user-facing version string. On the LTS and
+// edge channels it carries a "-LTS" / "-EDGE" suffix so log lines, the
+// --version flag, and telemetry attributes make the channel obvious. Stable
+// builds keep the bare semver tag.
 #if defined(GIZMOSQL_DUCKDB_CHANNEL_LTS) && GIZMOSQL_DUCKDB_CHANNEL_LTS
 const std::string GIZMOSQL_SERVER_VERSION = std::string(PROJECT_VERSION) + "-LTS";
+#elif defined(GIZMOSQL_DUCKDB_CHANNEL_EDGE) && GIZMOSQL_DUCKDB_CHANNEL_EDGE
+const std::string GIZMOSQL_SERVER_VERSION = std::string(PROJECT_VERSION) + "-EDGE";
 #else
 const std::string GIZMOSQL_SERVER_VERSION = PROJECT_VERSION;
 #endif
@@ -287,5 +289,12 @@ int RunFlightSQLServer(
     std::optional<bool> block_sensitive_paths = std::nullopt,
     /// Extra comma-separated paths to protect (--sensitive-paths /
     /// GIZMOSQL_SENSITIVE_PATHS). Empty = consult env var.
-    std::string sensitive_paths = "");
+    std::string sensitive_paths = "",
+    /// Refuse a request whose bearer token names a session that no longer
+    /// exists on this instance (closed or idle-evicted), or that was created by
+    /// another instance, with an Unauthenticated error instead of silently
+    /// starting a new, empty session (--reject-unknown-sessions /
+    /// GIZMOSQL_REJECT_UNKNOWN_SESSIONS). DuckDB backend only. nullopt = consult
+    /// env var, then default false (lazily create the session, as before).
+    std::optional<bool> reject_unknown_sessions = std::nullopt);
 }

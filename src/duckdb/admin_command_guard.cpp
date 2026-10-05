@@ -47,6 +47,21 @@
 #include <duckdb/parser/statement/prepare_statement.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+#include <duckdb/parser/query_node/copy_query_node.hpp>
+#include <duckdb/parser/query_node/delete_query_node.hpp>
+#include <duckdb/parser/query_node/merge_query_node.hpp>
+#include <duckdb/parser/query_node/update_query_node.hpp>
+#include <duckdb/parser/statement/delete_statement.hpp>
+#include <duckdb/parser/statement/merge_into_statement.hpp>
+#include <duckdb/parser/statement/update_statement.hpp>
+#include <duckdb/parser/query_node/insert_query_node.hpp>
+#include <duckdb/parser/query_node/recursive_cte_node.hpp>
+#include <duckdb/parser/query_node/set_operation_node.hpp>
+#include <duckdb/parser/expression/type_expression.hpp>
+#endif
+
+#include "duckdb_compat.h"
 
 #include <arrow/flight/types.h>
 
@@ -62,6 +77,58 @@ std::string ToLower(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(),
                  [](unsigned char c) { return std::tolower(c); });
   return s;
+}
+
+using compat::Str;
+
+// ---- parse-tree accessors (DuckDB 2.x encapsulated the parsed-tree members) --
+
+std::string FunctionNameOf(const dd::FunctionExpression& fe) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  return Str(fe.FunctionName());
+#else
+  return fe.function_name;
+#endif
+}
+
+// The first argument of a call, if it is positional (nullptr otherwise).
+const dd::ParsedExpression* FirstPositionalArg(const dd::FunctionExpression& fe) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  const auto& args = fe.GetArguments();
+  if (args.empty() || args[0].HasName()) return nullptr;
+  return &args[0].GetExpression();
+#else
+  if (fe.children.empty()) return nullptr;
+  return fe.children[0].get();
+#endif
+}
+
+dd::SelectStatement* SubqueryOf(dd::SubqueryExpression& sub) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  return sub.SubqueryMutable().get();
+#else
+  return sub.subquery.get();
+#endif
+}
+
+// For a FROM 'path' replacement scan: the table name when it is unqualified.
+std::optional<std::string> UnqualifiedTableName(const dd::BaseTableRef& bt) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  const auto& name = bt.GetQualifiedName();
+  if (name.Path().size() != 1) return std::nullopt;
+  return Str(name.Name());
+#else
+  if (!bt.catalog_name.empty() || !bt.schema_name.empty()) return std::nullopt;
+  return bt.table_name;
+#endif
+}
+
+// A string constant's text; nullopt for anything else (NULL, numbers, ...).
+std::optional<std::string> StringConstant(const dd::ParsedExpression& expr) {
+  if (expr.GetExpressionClass() != dd::ExpressionClass::CONSTANT) return std::nullopt;
+  const auto value = compat::ConstantValue(expr.Cast<dd::ConstantExpression>());
+  if (value.IsNull() || value.type().id() != dd::LogicalTypeId::VARCHAR) return std::nullopt;
+  return value.GetValue<std::string>();
 }
 
 // A path is "proven remote" only if it begins with an object-storage / network
@@ -113,7 +180,9 @@ const std::unordered_set<std::string>& FsReadFunctions() {
       "read_json",       "read_json_auto",  "read_json_objects","read_ndjson",
       "read_ndjson_auto","read_ndjson_objects","read_text",    "read_blob",
       "glob",            "sniff_csv",       "parquet_metadata","parquet_schema",
-      "parquet_file_metadata","parquet_kv_metadata","read_text_auto"};
+      "parquet_file_metadata","parquet_kv_metadata","read_text_auto",
+      // DuckDB 2.0
+      "read_single_csv_file", "read_single_json_file"};
   return kFns;
 }
 
@@ -121,6 +190,13 @@ const std::unordered_set<std::string>& FsReadFunctions() {
 const std::unordered_set<std::string>& AlwaysGatedFunctions() {
   static const std::unordered_set<std::string> kFns = {"duckdb_secrets"};
   return kFns;
+}
+
+// DuckDB's Quack remote protocol (autoloadable): quack_serve() opens a network
+// server inside this process, quack_query()/quack_cancel() reach other
+// servers. None of it is for non-admin clients.
+bool IsQuackFunction(const std::string& name_lower) {
+  return name_lower.rfind("quack_", 0) == 0;
 }
 
 // Dangerous DuckDB settings that affect the whole instance. `SET GLOBAL x` /
@@ -150,27 +226,25 @@ bool IsDangerousGlobalSetting(const std::string& name_lower) {
 // path, for read_* functions). Returns nullopt if the first argument is not a
 // plain string constant (e.g. a list, a column, or a computed expression).
 std::optional<std::string> FirstStringLiteralArg(const dd::FunctionExpression& fe) {
-  if (fe.children.empty() || !fe.children[0]) return std::nullopt;
-  const auto& child = *fe.children[0];
-  if (child.GetExpressionClass() != dd::ExpressionClass::CONSTANT) return std::nullopt;
-  const auto& ce = child.Cast<dd::ConstantExpression>();
-  if (ce.value.IsNull()) return std::nullopt;
-  if (ce.value.type().id() != dd::LogicalTypeId::VARCHAR) return std::nullopt;
-  return ce.value.GetValue<std::string>();
+  const auto* first = FirstPositionalArg(fe);
+  if (!first) return std::nullopt;
+  return StringConstant(*first);
 }
 
 // Extract a literal path from a COPY/EXPORT target (info.file_path, or a string
 // constant in info.file_path_expression). nullopt => non-literal/unknown.
 std::optional<std::string> CopyPathLiteral(const dd::CopyInfo& info) {
   if (!info.file_path.empty()) return info.file_path;
-  if (info.file_path_expression &&
-      info.file_path_expression->GetExpressionClass() == dd::ExpressionClass::CONSTANT) {
-    const auto& ce = info.file_path_expression->Cast<dd::ConstantExpression>();
-    if (!ce.value.IsNull() && ce.value.type().id() == dd::LogicalTypeId::VARCHAR) {
-      return ce.value.GetValue<std::string>();
-    }
-  }
+  if (info.file_path_expression) return StringConstant(*info.file_path_expression);
   return std::nullopt;
+}
+
+// COPY whose target is not a proven-remote path (COPY TO a local file, or any
+// COPY FROM the local filesystem). nullopt => remote target, allowed.
+std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
+  auto path = CopyPathLiteral(info);
+  if (path && IsProvenRemotePath(ToLower(*path))) return std::nullopt;
+  return info.is_from ? "COPY FROM (local filesystem)" : "COPY TO (local filesystem)";
 }
 
 // Searches a parsed query tree for a gated table function (read_*/duckdb_secrets)
@@ -189,12 +263,68 @@ struct GatedFunctionWalker {
   // genuinely-nested subquery expressions, which are finite and acyclic).
   void WalkNode(dd::QueryNode& node) {
     if (violation) return;
+    CheckNodeTree(node);
+    if (violation) return;
     dd::ParsedExpressionIterator::EnumerateQueryNodeChildren(
         node,
         [this](dd::unique_ptr<dd::ParsedExpression>& child) {
           if (child) CheckExpr(*child);
         },
         [this](dd::TableRef& ref) { CheckRef(ref); });
+  }
+
+  // DuckDB 2.x parses COPY TO and DML as query nodes, and a CTE body may be
+  // any of them, so a SELECT can carry a COPY:
+  //   WITH x AS (COPY t TO '/some/local/file') SELECT 1
+  // The enumerator descends into these nodes (CTE bodies, set-op children,
+  // INSERT/COPY sources) without reporting them, so follow the node-to-node
+  // edges here and gate every COPY found, exactly like a top-level COPY.
+  // Subqueries reached through refs/expressions come back in via CheckRef /
+  // CheckExpr. No-op on DuckDB 1.x, whose COPY is statement-only.
+  void CheckNodeTree(dd::QueryNode& node) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    if (violation) return;
+    switch (node.type) {
+      case dd::QueryNodeType::COPY_QUERY_NODE: {
+        auto& copy = node.Cast<dd::CopyQueryNode>();
+        if (!copy.info) {
+          violation = "COPY";
+          return;
+        }
+        if (auto v = LocalCopyViolation(*copy.info)) {
+          violation = v;
+          return;
+        }
+        if (copy.info->select_statement) CheckNodeTree(*copy.info->select_statement);
+        break;
+      }
+      case dd::QueryNodeType::SET_OPERATION_NODE:
+        for (auto& child : node.Cast<dd::SetOperationNode>().children) {
+          if (child) CheckNodeTree(*child);
+        }
+        break;
+      case dd::QueryNodeType::RECURSIVE_CTE_NODE: {
+        auto& rcte = node.Cast<dd::RecursiveCTENode>();
+        if (rcte.left) CheckNodeTree(*rcte.left);
+        if (rcte.right) CheckNodeTree(*rcte.right);
+        break;
+      }
+      case dd::QueryNodeType::INSERT_QUERY_NODE: {
+        auto& insert = node.Cast<dd::InsertQueryNode>();
+        if (insert.select_statement && insert.select_statement->node) {
+          CheckNodeTree(*insert.select_statement->node);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+    for (auto& entry : node.cte_map.map) {
+      if (entry.second && entry.second->query_node) CheckNodeTree(*entry.second->query_node);
+    }
+#else
+    (void)node;
+#endif
   }
 
   // Check one TableRef (called by the enumerator on every ref in the tree). No
@@ -207,11 +337,14 @@ struct GatedFunctionWalker {
       // A table-in/out function's subquery argument is not enumerated for us.
       if (!violation && tf.subquery && tf.subquery->node) WalkNode(*tf.subquery->node);
     } else if (ref.type == dd::TableReferenceType::BASE_TABLE) {
-      auto& bt = ref.Cast<dd::BaseTableRef>();
-      if (bt.catalog_name.empty() && bt.schema_name.empty() &&
-          LooksLikeLocalFilePath(bt.table_name)) {
-        violation = "reading a local file via FROM '" + bt.table_name + "'";
+      auto table_name = UnqualifiedTableName(ref.Cast<dd::BaseTableRef>());
+      if (table_name && LooksLikeLocalFilePath(*table_name)) {
+        violation = "reading a local file via FROM '" + *table_name + "'";
       }
+    } else if (ref.type == dd::TableReferenceType::SUBQUERY) {
+      // Its children were enumerated already; only the node edges are left.
+      auto& sq = ref.Cast<dd::SubqueryRef>();
+      if (sq.subquery && sq.subquery->node) CheckNodeTree(*sq.subquery->node);
     }
   }
 
@@ -219,9 +352,16 @@ struct GatedFunctionWalker {
   // (e.g. WHERE id IN (SELECT ... read_csv(...))).
   void CheckExpr(dd::ParsedExpression& expr) {
     if (violation) return;
+    if (expr.GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
+      const std::string name = ToLower(FunctionNameOf(expr.Cast<dd::FunctionExpression>()));
+      if (IsQuackFunction(name)) {
+        violation = name + "()";
+        return;
+      }
+    }
     if (expr.GetExpressionClass() == dd::ExpressionClass::SUBQUERY) {
-      auto& sub = expr.Cast<dd::SubqueryExpression>();
-      if (sub.subquery && sub.subquery->node) WalkNode(*sub.subquery->node);
+      auto* subquery = SubqueryOf(expr.Cast<dd::SubqueryExpression>());
+      if (subquery && subquery->node) WalkNode(*subquery->node);
     }
     if (violation) return;
     dd::ParsedExpressionIterator::EnumerateChildren(
@@ -235,8 +375,8 @@ struct GatedFunctionWalker {
       return;
     }
     const auto& fe = tf.function->Cast<dd::FunctionExpression>();
-    const std::string name = ToLower(fe.function_name);
-    if (AlwaysGatedFunctions().count(name)) {
+    const std::string name = ToLower(FunctionNameOf(fe));
+    if (AlwaysGatedFunctions().count(name) || IsQuackFunction(name)) {
       violation = name + "()";
       return;
     }
@@ -259,11 +399,34 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
     }
     case dd::StatementType::INSERT_STATEMENT: {
       auto& s = stmt.Cast<dd::InsertStatement>();
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+      if (s.node) walker.WalkNode(*s.node);
+#else
       if (s.select_statement && s.select_statement->node) {
         walker.WalkNode(*s.select_statement->node);
       }
+#endif
       break;
     }
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    // 2.x parses these as query nodes, so their FROM / USING sources walk
+    // like a SELECT's (UPDATE t SET ... FROM read_csv('/local/file')).
+    case dd::StatementType::UPDATE_STATEMENT: {
+      auto& s = stmt.Cast<dd::UpdateStatement>();
+      if (s.node) walker.WalkNode(*s.node);
+      break;
+    }
+    case dd::StatementType::DELETE_STATEMENT: {
+      auto& s = stmt.Cast<dd::DeleteStatement>();
+      if (s.node) walker.WalkNode(*s.node);
+      break;
+    }
+    case dd::StatementType::MERGE_INTO_STATEMENT: {
+      auto& s = stmt.Cast<dd::MergeIntoStatement>();
+      if (s.node) walker.WalkNode(*s.node);
+      break;
+    }
+#endif
     case dd::StatementType::CREATE_STATEMENT: {
       auto& s = stmt.Cast<dd::CreateStatement>();
       if (s.info && s.info->type == dd::CatalogType::TABLE_ENTRY) {
@@ -302,6 +465,21 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
       }
       case dd::StatementType::ATTACH_STATEMENT:
         return "ATTACH";
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+      // DuckDB 2.0: CONNECT attaches its target (a file path or a postgres:/
+      // sqlite:/quack: URI) and then forwards the session's raw SQL to it,
+      // past these AST checks and catalog permissions — so it is ATTACH-class.
+      // EXTERNAL RESOURCE provisions compute; PASSTHROUGH is raw SQL for a
+      // CONNECTed target.
+      case dd::StatementType::CONNECT_STATEMENT:
+        return "CONNECT";
+      case dd::StatementType::DISCONNECT_STATEMENT:
+        return "DISCONNECT";
+      case dd::StatementType::EXTERNAL_RESOURCE_STATEMENT:
+        return "EXTERNAL RESOURCE";
+      case dd::StatementType::PASSTHROUGH_STATEMENT:
+        return "passthrough SQL";
+#endif
       case dd::StatementType::DETACH_STATEMENT:
         return "DETACH";
       case dd::StatementType::CREATE_STATEMENT: {
@@ -334,14 +512,14 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         const std::string verb =
             ss.set_type == dd::SetType::RESET ? "RESET GLOBAL " : "SET GLOBAL ";
         if (ss.scope == dd::SetScope::GLOBAL) {
-          return verb + ss.name;  // explicit GLOBAL: any setting
+          return verb + Str(ss.name);  // explicit GLOBAL: any setting
         }
         // Bare SET/RESET (scope AUTOMATIC) of a dangerous global-only setting
         // changes it for the whole instance — gate it too. Explicit SESSION /
         // LOCAL, and bare SET of harmless session settings, are allowed.
         if (ss.scope == dd::SetScope::AUTOMATIC &&
-            IsDangerousGlobalSetting(ToLower(ss.name))) {
-          return verb + ss.name;
+            IsDangerousGlobalSetting(ToLower(Str(ss.name)))) {
+          return verb + Str(ss.name);
         }
         break;
       }
@@ -352,20 +530,16 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         if (call.function &&
             call.function->GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
           const std::string fname =
-              ToLower(call.function->Cast<dd::FunctionExpression>().function_name);
+              ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
           if (fname == "checkpoint" || fname == "force_checkpoint") return "CHECKPOINT";
+          if (IsQuackFunction(fname)) return fname + "()";
         }
         break;  // other CALL functions allowed
       }
       case dd::StatementType::COPY_STATEMENT: {
         auto& cs = stmt.Cast<dd::CopyStatement>();
         if (cs.info) {
-          auto path = CopyPathLiteral(*cs.info);
-          const bool remote = path && IsProvenRemotePath(ToLower(*path));
-          if (!remote) {
-            return cs.info->is_from ? "COPY FROM (local filesystem)"
-                                    : "COPY TO (local filesystem)";
-          }
+          if (auto v = LocalCopyViolation(*cs.info)) return v;
           // Remote COPY target is allowed, but a COPY (SELECT read_csv(...)) TO
           // may still read the local filesystem — inspect the embedded query.
           if (cs.info->select_statement) {
@@ -386,7 +560,7 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         // arbitrary DDL + DML from a dump (and reads the filesystem), so it is
         // gated unconditionally, local or remote. Other pragmas are allowed.
         auto& ps = stmt.Cast<dd::PragmaStatement>();
-        if (ps.info && ToLower(ps.info->name) == "import_database") {
+        if (ps.info && ToLower(Str(ps.info->name)) == "import_database") {
           return "IMPORT DATABASE";
         }
         break;
@@ -400,6 +574,15 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     return std::nullopt;
 }
 
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+// DuckDB 2.x keeps a cast's target as an unresolved type expression.
+bool IsBooleanType(const dd::TypeExpression& type) {
+  const auto& name = type.GetQualifiedName();
+  if (name.Path().size() != 1) return false;  // a qualified (user) type
+  const std::string lower = ToLower(Str(name.Name()));
+  return lower == "boolean" || lower == "bool" || lower == "logical";
+}
+#else
 bool IsBooleanType(const dd::LogicalType& type) {
 #if !GIZMOSQL_DUCKDB_CHANNEL_LTS
   // DuckDB 1.5+ leaves parsed type names unbound until binding.
@@ -413,6 +596,7 @@ bool IsBooleanType(const dd::LogicalType& type) {
 #endif
   return type.id() == dd::LogicalTypeId::BOOLEAN;
 }
+#endif
 
 // True only when a SET value is provably false. DuckDB evaluates the value and
 // casts it to BOOLEAN, so true, 1, 'yes', 't', NOT false, (true) all enable the
@@ -423,15 +607,26 @@ bool ExpressionIsFalse(const dd::ParsedExpression* value) {
   if (value->GetExpressionClass() == dd::ExpressionClass::CAST) {
     // DuckDB parses the keyword false as CAST('f' AS BOOLEAN).
     const auto& cast = value->Cast<dd::CastExpression>();
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    if (!IsBooleanType(cast.TargetType())) return false;
+    return ExpressionIsFalse(&cast.Child());
+#else
     if (!IsBooleanType(cast.cast_type)) return false;
     return ExpressionIsFalse(cast.child.get());
+#endif
   }
   if (value->GetExpressionClass() != dd::ExpressionClass::CONSTANT) return false;
-  const auto& ce = value->Cast<dd::ConstantExpression>();
-  if (ce.value.IsNull()) return false;
+  const auto constant = compat::ConstantValue(value->Cast<dd::ConstantExpression>());
+  if (constant.IsNull()) return false;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  auto cast = constant.DefaultTryCastAs(dd::LogicalType::BOOLEAN);
+  if (!cast) return false;
+  const dd::Value as_bool = *cast;
+#else
   dd::Value as_bool;
   std::string error;
-  if (!ce.value.DefaultTryCastAs(dd::LogicalType::BOOLEAN, as_bool, &error)) return false;
+  if (!constant.DefaultTryCastAs(dd::LogicalType::BOOLEAN, as_bool, &error)) return false;
+#endif
   return !as_bool.IsNull() && !as_bool.GetValue<bool>();
 }
 
@@ -450,7 +645,7 @@ std::optional<std::string> ClassifyUnredactedSecretsStatement(dd::SQLStatement& 
   if (stmt.type != dd::StatementType::SET_STATEMENT) return std::nullopt;
   auto& ss = stmt.Cast<dd::SetStatement>();
   if (ss.set_type == dd::SetType::RESET) return std::nullopt;
-  if (ToLower(ss.name) != "allow_unredacted_secrets") return std::nullopt;
+  if (ToLower(Str(ss.name)) != "allow_unredacted_secrets") return std::nullopt;
   auto& set_value = stmt.Cast<dd::SetVariableStatement>();
   if (ExpressionIsFalse(set_value.value.get())) return std::nullopt;
   return "SET allow_unredacted_secrets = true";
@@ -469,7 +664,7 @@ bool IsSetOf(dd::SQLStatement& stmt, const std::string& name) {
   }
   if (stmt.type != dd::StatementType::SET_STATEMENT) return false;
   auto& ss = stmt.Cast<dd::SetStatement>();
-  return ss.set_type != dd::SetType::RESET && ToLower(ss.name) == name;
+  return ss.set_type != dd::SetType::RESET && ToLower(Str(ss.name)) == name;
 }
 
 bool ContainsCaseInsensitive(const std::string& haystack,
@@ -485,7 +680,9 @@ bool ContainsCaseInsensitive(const std::string& haystack,
 std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
   dd::Parser parser;
   try {
-    parser.ParseQuery(sql);
+    // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on
+    // DuckDB 2.x, whose grammar only parses it quoted.
+    parser.ParseQuery(compat::QuoteDottedSettingName(sql));
   } catch (...) {
     // Unparseable here — let DuckDB surface the real parse error during
     // preparation. (The standalone parser uses the same core grammar as the

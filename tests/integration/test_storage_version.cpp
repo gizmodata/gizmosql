@@ -176,9 +176,74 @@ TEST_F(StorageVersionDefaultFixture, TagIsBaselineWhenStorageVersionUnset) {
   const std::string tag = GetStorageVersionTag(sql_client, call_options);
   ASSERT_FALSE(tag.empty()) << "Did not retrieve a storage_version tag";
 
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  // DuckDB 2.0 creates new databases in its own (v2.0.0) storage format by
+  // default; DuckDB 1.x cannot open them. GizmoSQL keeps that default.
+  EXPECT_EQ(tag, "v2.0.0+")
+      << "Expected default storage_version tag to be v2.0.0+; got: " << tag;
+#else
   // Pinned: control case. A fresh DB with default serialization_compatibility
   // is tagged v1.0.0+, which is what proves the "latest" assertion above is
   // actually testing something.
   EXPECT_EQ(tag, "v1.0.0+")
       << "Expected default storage_version tag to be v1.0.0+; got: " << tag;
+#endif
 }
+
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+// ----------------------------------------------------------------------------
+// Fixture: server started with an older --storage-version (DuckDB 2.x)
+// ----------------------------------------------------------------------------
+// On DuckDB 2.x the default already is the latest format, so the "latest"
+// fixture alone no longer proves --storage-version reaches DuckDB. Pinning an
+// older version does: the file must be stamped with it instead of v2.0.0+.
+class StorageVersionPinnedFixture
+    : public gizmosql::testing::ServerTestFixture<StorageVersionPinnedFixture> {
+ public:
+  static gizmosql::testing::TestServerConfig GetConfig() {
+    return {
+        .database_filename = "storage_version_test.db",
+        .port = 31394,
+        .health_port = 31399,
+        .username = "sv_user",
+        .password = "sv_password123",
+        .storage_version = "v1.0.0",
+    };
+  }
+};
+
+template <>
+std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
+    gizmosql::testing::ServerTestFixture<StorageVersionPinnedFixture>::server_{};
+template <>
+std::thread
+    gizmosql::testing::ServerTestFixture<StorageVersionPinnedFixture>::server_thread_{};
+template <>
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<StorageVersionPinnedFixture>::server_ready_{
+        false};
+template <>
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<StorageVersionPinnedFixture>::config_{};
+
+TEST_F(StorageVersionPinnedFixture, TagReflectsPinnedOlderStorageVersion) {
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(location, options));
+
+  arrow::flight::FlightCallOptions call_options;
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  call_options.headers.push_back(bearer);
+
+  FlightSqlClient sql_client(std::move(client));
+
+  const std::string tag = GetStorageVersionTag(sql_client, call_options);
+  EXPECT_EQ(tag, "v1.0.0+")
+      << "Expected --storage-version=v1.0.0 to stamp the file v1.0.0+; got: " << tag;
+}
+#endif

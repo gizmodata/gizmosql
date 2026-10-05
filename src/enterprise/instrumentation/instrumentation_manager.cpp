@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 
+#include "duckdb_compat.h"
 #include "gizmosql_logging.h"
 
 namespace fs = std::filesystem;
@@ -613,9 +614,8 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
     duckdb::vector<duckdb::Value> tz_check_args{
         duckdb::Value(catalog), duckdb::Value("instances"),
         duckdb::Value("start_time")};
-    auto tz_check_raw =
-        tz_check_stmt->Execute(tz_check_args, /*allow_stream_result=*/false);
-    auto& tz_check = tz_check_raw->Cast<duckdb::MaterializedQueryResult>();
+    auto tz_check_result = compat::ExecuteMaterialized(*tz_check_stmt, tz_check_args);
+    auto& tz_check = *tz_check_result;
     // Tables (and their timing columns) we may need to restore from TEMP
     // staging after InitializeSchema reconstructs the schema.
     struct LegacyTable {
@@ -630,8 +630,8 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
           "WHERE table_catalog = '" + catalog + "' AND table_name = 'instances' LIMIT 1");
       if (!table_exists->HasError() && table_exists->RowCount() > 0) {
         // Table exists - check timestamp column type for tz-awareness
-        if (!tz_check.HasError() && tz_check.RowCount() > 0) {
-          std::string start_time_type = tz_check.GetValue(0, 0).ToString();
+        if (!tz_check.HasError() && compat::ResultRowCount(tz_check) > 0) {
+          std::string start_time_type = compat::ResultValue(tz_check, 0, 0).ToString();
           if (start_time_type.find("WITH TIME ZONE") == std::string::npos) {
             GIZMOSQL_LOG(INFO)
                 << "Migrating instrumentation timing columns from TIMESTAMP to "
@@ -669,12 +669,11 @@ arrow::Result<std::shared_ptr<InstrumentationManager>> InstrumentationManager::C
               duckdb::vector<duckdb::Value> col_check_args{
                   duckdb::Value(catalog), duckdb::Value(tbl.table),
                   duckdb::Value(tbl.tz_cols.front())};
-              auto col_check_raw = col_check_stmt->Execute(
-                  col_check_args, /*allow_stream_result=*/false);
-              auto& col_check =
-                  col_check_raw->Cast<duckdb::MaterializedQueryResult>();
-              if (col_check.HasError() || col_check.RowCount() == 0) continue;
-              if (col_check.GetValue(0, 0).ToString().find("WITH TIME ZONE") !=
+              auto col_check_result =
+                  compat::ExecuteMaterialized(*col_check_stmt, col_check_args);
+              auto& col_check = *col_check_result;
+              if (col_check.HasError() || compat::ResultRowCount(col_check) == 0) continue;
+              if (compat::ResultValue(col_check, 0, 0).ToString().find("WITH TIME ZONE") !=
                   std::string::npos) {
                 continue;
               }
@@ -897,7 +896,7 @@ arrow::Status InstrumentationManager::CleanupStaleRecords() {
     std::string instance_ids;
     for (idx_t i = 0; i < stale_instances->RowCount(); i++) {
       if (i > 0) instance_ids += ", ";
-      instance_ids += "'" + stale_instances->GetValue(0, i).ToString() + "'";
+      instance_ids += "'" + compat::ResultValue(*stale_instances, 0, i).ToString() + "'";
     }
 
     // Mark any 'executing' or 'queued' executions from stale instances as 'error'

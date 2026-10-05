@@ -356,6 +356,50 @@ TEST(AdminCommandGuard, RemoteReplacementScanIsAllowed) {
 // Allowed (negative) cases — ordinary queries non-admins should run.
 // =============================================================================
 
+TEST(AdminCommandGuard, QuackFunctionsAreGated) {
+  // DuckDB's Quack remote protocol: quack_serve() would open a network server
+  // inside GizmoSQL. CALL, table-function and scalar forms are all gated.
+  EXPECT_EQ(Category("CALL quack_serve('quack:localhost:9494')"), "quack_serve()");
+  EXPECT_EQ(Category("SELECT * FROM quack_query('quack:host', 'SELECT 1')"),
+            "quack_query()");
+  EXPECT_EQ(Category("SELECT quack_cancel('lake', 42)"), "quack_cancel()");
+  EXPECT_FALSE(Gated("SELECT 'quack_serve' AS s"));
+}
+
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+TEST(AdminCommandGuard, CopyInsideCteIsGated) {
+  // DuckDB 2.0 allows COPY TO as a CTE body, so a SELECT can write a file.
+  EXPECT_EQ(Category("WITH c AS (COPY (SELECT 42) TO '/tmp/out.csv') SELECT 1"),
+            "COPY TO (local filesystem)");
+  EXPECT_EQ(Category("SELECT * FROM (WITH c AS (COPY (SELECT 42) TO 'x.csv') SELECT 1) t"),
+            "COPY TO (local filesystem)");
+  EXPECT_EQ(Category("SELECT 1 UNION ALL (WITH c AS (COPY (SELECT 1) TO 'x.csv') SELECT 2)"),
+            "COPY TO (local filesystem)");
+  EXPECT_FALSE(Gated("WITH c AS (COPY (SELECT 42) TO 's3://bucket/out.csv') SELECT 1"));
+}
+
+TEST(AdminCommandGuard, ConnectAndExternalResourceAreGated) {
+  // CONNECT attaches its target and then forwards raw SQL to it.
+  EXPECT_EQ(Category("CONNECT 'other.db'"), "CONNECT");
+  EXPECT_EQ(Category("DISCONNECT"), "DISCONNECT");
+}
+
+TEST(AdminCommandGuard, NewSingleFileReadersAreGated) {
+  EXPECT_EQ(Category("SELECT * FROM read_single_csv_file('/etc/passwd')"),
+            "read_single_csv_file() (local filesystem)");
+  EXPECT_EQ(Category("SELECT * FROM read_single_json_file('/etc/x.json')"),
+            "read_single_json_file() (local filesystem)");
+}
+
+TEST(AdminCommandGuard, DmlSourcesAreWalked) {
+  EXPECT_EQ(Category("UPDATE t SET a = x.a FROM read_csv('/etc/passwd') x"),
+            "read_csv() (local filesystem)");
+  EXPECT_EQ(Category("DELETE FROM t USING read_csv('/etc/passwd') x WHERE t.a = x.a"),
+            "read_csv() (local filesystem)");
+  EXPECT_FALSE(Gated("UPDATE t SET a = 1 WHERE b = 2"));
+}
+#endif
+
 TEST(AdminCommandGuard, OrdinaryQueriesAreAllowed) {
   EXPECT_FALSE(Gated("SELECT 1"));
   EXPECT_FALSE(Gated("SELECT * FROM my_table WHERE id > 10"));

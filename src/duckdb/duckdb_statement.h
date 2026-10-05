@@ -26,6 +26,8 @@
 #include <arrow/flight/sql/column_metadata.h>
 #include <arrow/type_fwd.h>
 
+#include "duckdb_compat.h"
+
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 #include "session_context.h"
@@ -106,6 +108,13 @@ class DuckDBStatement {
 
   /// True only for fully bound DDL/DML with no user result set.
   bool ShouldExecuteEagerly() const;
+  // SQL that DuckDB could not prepare as one statement (several statements, or
+  // one it expands into several, like PIVOT) and that runs as a plain query.
+  // Computing its schema already runs it, so it must not run again on DoGet.
+  // GizmoSQL admin commands (SET gizmosql.*, KILL SESSION) also take the
+  // direct path but stay lazy: their schema is fixed and computing it runs
+  // nothing.
+  bool IsDirectExecution() const { return use_direct_execution_ && !is_gizmosql_admin_; }
 
   // Serializes prepared bind/update/GetFlightInfo/DoGet operations on one
   // handle. Take it with AcquireExecutionLock(), never directly.
@@ -179,7 +188,7 @@ class DuckDBStatement {
   std::string session_id_;  // cached for use after session expires
   std::string statement_id_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
-  duckdb::unique_ptr<duckdb::QueryResult> query_result_;
+  std::unique_ptr<compat::StatementResult> query_result_;
   std::optional<arrow::util::ArrowLogLevel> log_level_;
   std::shared_ptr<arrow::Schema> override_schema_;
   std::chrono::steady_clock::time_point start_time_;

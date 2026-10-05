@@ -3,6 +3,7 @@
 // See LICENSE file in the enterprise directory for details.
 
 #include "catalog_log_sink.h"
+#include "duckdb_compat.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -335,7 +336,7 @@ void CatalogLogSink::WriteBatch(std::vector<gizmosql::LogRecord>& batch) {
     }
     for (auto& rec : batch) {
       auto params = BindRecord(rec);
-      auto result = stmt->Execute(params, /*allow_stream_result=*/false);
+      auto result = ddb::compat::ExecuteMaterialized(*stmt, params);
       if (result->HasError()) {
         throw std::runtime_error(result->GetError());
       }
@@ -358,7 +359,7 @@ void CatalogLogSink::WriteBatch(std::vector<gizmosql::LogRecord>& batch) {
         throw std::runtime_error("prepare failed: " + stmt->GetError());
       }
       auto params = BindRecord(rec);
-      auto result = stmt->Execute(params, /*allow_stream_result=*/false);
+      auto result = ddb::compat::ExecuteMaterialized(*stmt, params);
       if (result->HasError()) {
         throw std::runtime_error(result->GetError());
       }

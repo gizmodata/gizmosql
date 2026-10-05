@@ -60,10 +60,10 @@ int main(int argc, char** argv) {
              "Specify the database filename (absolute or relative to the current working directory).  If not set, we will open an in-memory database.")
             ("username,U", po::value<std::string>()->default_value(""),
              "Specify the username to allow to connect to the GizmoSQL Server for clients.  If not set, we will use env var: 'GIZMOSQL_USERNAME'.  "
-             "If that isn't set, we will use the default of: 'gizmosql_user'.")
+             "If that isn't set, we will use the default of: 'gizmosql_user'.  Must not contain ':'.")
             ("password,P", po::value<std::string>()->default_value(""),
              "Specify the password to set on the GizmoSQL Server for clients to connect with.  If not set, we will use env var: 'GIZMOSQL_PASSWORD'.  "
-             "If that isn't set, the server will exit with failure.")
+             "If that isn't set, the server will exit with failure.  May contain ':'.")
             ("secret-key,S", po::value<std::string>()->default_value(""),
              "Specify the secret key used to sign JWTs issued by the GizmoSQL Server. "
              "If it isn't set, we use env var: 'SECRET_KEY'.  If that isn't set, the server will create a random secret key.")
@@ -165,6 +165,14 @@ int main(int argc, char** argv) {
              "0 = off. Reuses the existing session-removal path (client sees session "
              "not found / evicted). DuckDB backend only. If 0, uses env var "
              "GIZMOSQL_SESSION_IDLE_TIMEOUT.")
+            ("reject-unknown-sessions", po::value<bool>()->default_value(false),
+             "Refuse a request whose bearer token names a session that is gone from this "
+             "instance (closed or idle-evicted) or that another instance created, with an "
+             "Unauthenticated error, instead of silently starting a new, empty session "
+             "(which would lose the client's open transaction, temp tables, USE and SET). "
+             "The client must re-authenticate. Default is false (the session is recreated, "
+             "as before). If not set, uses env var GIZMOSQL_REJECT_UNKNOWN_SESSIONS "
+             "(1/true to enable). DuckDB backend only.")
             ("block-unredacted-secrets", po::value<bool>()->default_value(true),
              "Reject SET allow_unredacted_secrets to any value other than false from every "
              "client, before DuckDB sees the statement. Default is true. Set to false to let "
@@ -519,6 +527,11 @@ int main(int argc, char** argv) {
 
   int32_t session_idle_timeout = vm["session-idle-timeout"].as<int32_t>();
 
+  std::optional<bool> reject_unknown_sessions =
+      vm["reject-unknown-sessions"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["reject-unknown-sessions"].as<bool>());
+
   std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
 
   std::string query_log_level =
@@ -642,5 +655,5 @@ int main(int argc, char** argv) {
       vm["enable-metrics"].defaulted() ? std::nullopt
                                        : std::optional(vm["enable-metrics"].as<bool>()),
       block_unredacted_secrets, block_sensitive_paths,
-      vm["sensitive-paths"].as<std::string>());
+      vm["sensitive-paths"].as<std::string>(), reject_unknown_sessions);
 }

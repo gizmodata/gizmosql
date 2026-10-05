@@ -57,6 +57,11 @@ set(GIZMOSQL_CORE_TEST_SRCS
         integration/test_ducklake_catalog_fanout.cpp
         integration/test_enterprise_gating.cpp
         integration/test_geoarrow.cpp
+        integration/test_variant.cpp
+        integration/test_credential_parsing.cpp
+        integration/test_reject_unknown_sessions.cpp
+        integration/test_init_sql_splitting.cpp
+        integration/test_table_column_metadata.cpp
         integration/test_client_cli.cpp
         integration/test_client_config.cpp
 )

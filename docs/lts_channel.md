@@ -1,13 +1,14 @@
 # GizmoSQL LTS Channel
 
-GizmoSQL ships in two parallel **release channels** that share the same GizmoSQL feature set and only differ in which DuckDB release is bundled:
+GizmoSQL ships in three parallel **release channels** that share the same GizmoSQL feature set and only differ in which DuckDB release is bundled:
 
 | Channel    | DuckDB tracked                         | When to pick it |
 |------------|----------------------------------------|------------------|
 | **Stable** | Latest DuckDB minor (e.g. `v1.5.6`)    | You want every new DuckDB feature, type, and performance improvement on its normal cadence. |
 | **LTS**    | Most recent DuckDB LTS (e.g. `v1.4.5`) | You need a slower-moving, longer-supported DuckDB engine — production deployments where the underlying database's stability guarantees matter more than new features. |
+| **Edge**   | Next DuckDB major, pre-release (e.g. `v2.0.0-alpha43763`) | **Experimental — not for production workloads.** You want to evaluate the next DuckDB major before it ships. See the [Edge Channel guide](edge_channel.md). |
 
-Both channels get every GizmoSQL fix, feature, and quality-of-life improvement at the same time. Choosing LTS only changes which DuckDB version is statically linked into the binary; the GizmoSQL CLI flags, library API, configuration, authentication, and protocol behavior are identical.
+All channels get every GizmoSQL fix, feature, and quality-of-life improvement at the same time. Choosing LTS or edge only changes which DuckDB version is statically linked into the binary; the GizmoSQL CLI flags, library API, configuration, authentication, and protocol behavior are identical. (Edge does inherit the next DuckDB major's own SQL and storage-format changes — see its guide.)
 
 ## Which DuckDB versions are LTS?
 
@@ -108,6 +109,27 @@ Pin a specific GizmoSQL version with `gizmodata/gizmosql-lts:v1.24.0`.
 ### Direct download
 
 Download the LTS zip / MSI for your platform from the [GitHub Releases page](https://github.com/gizmodata/gizmosql/releases). The LTS files have an `_lts` (zip) or `-lts` (MSI) suffix in the filename.
+
+### Windows MSI
+
+Each channel's MSI is its own Windows product, so stable, LTS and edge install
+side by side and upgrade independently:
+
+| Channel | MSI | Shows in *Installed apps* as | Installs to | Binaries |
+|---------|-----|------------------------------|-------------|----------|
+| Stable  | `GizmoSQL-<arch>.msi`      | GizmoSQL                     | `C:\Program Files\GizmoSQL`      | `gizmosql_server.exe`, `gizmosql_client.exe` |
+| LTS     | `GizmoSQL-<arch>-lts.msi`  | GizmoSQL LTS                 | `C:\Program Files\GizmoSQL LTS`  | `gizmosql_server_lts.exe`, `gizmosql_client_lts.exe` |
+| Edge    | `GizmoSQL-<arch>-edge.msi` | GizmoSQL Edge (experimental) | `C:\Program Files\GizmoSQL Edge` | `gizmosql_server_edge.exe`, `gizmosql_client_edge.exe` |
+
+Each MSI adds its own folder to the system `PATH`; the channel suffix on the
+LTS and edge binaries keeps them from shadowing each other.
+
+> **Upgrading an LTS MSI install from GizmoSQL v1.40.0 or earlier:** those LTS
+> MSIs were registered as the stable product ("GizmoSQL", in
+> `C:\Program Files\GizmoSQL`, with unsuffixed binaries), so the new LTS MSI
+> installs *next to* them instead of replacing them. Uninstall "GizmoSQL" from
+> *Installed apps* first if that install was LTS — otherwise the next stable
+> MSI would upgrade it to the stable channel.
 
 ## Building from source
 

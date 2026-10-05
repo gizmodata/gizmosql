@@ -2,6 +2,7 @@
 // Copyright (c) 2026 GizmoData LLC. All rights reserved.
 // See LICENSE file in the enterprise directory for details.
 #include "metrics_service.h"
+#include "duckdb_compat.h"
 #include "enterprise/enterprise_features.h"
 #include "detail/session_context.h"
 #include <duckdb/main/client_context_state.hpp>
@@ -27,9 +28,12 @@ struct MetricsScan : GlobalTableFunctionState {
   idx_t offset = 0;
 };
 unique_ptr<FunctionData> Bind(ClientContext&, TableFunctionBindInput&,
-                              vector<LogicalType>& types, vector<string>& names) {
+                              vector<LogicalType>& types,
+                              vector<gizmosql::ddb::compat::Name>& names) {
   RequireMetrics();
-  names = {"name", "kind", "labels", "value", "help"};
+  for (const char* name : {"name", "kind", "labels", "value", "help"}) {
+    names.emplace_back(name);
+  }
   types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
            LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
            LogicalType::DOUBLE, LogicalType::VARCHAR};
@@ -93,7 +97,8 @@ void TrackMetricsSession(const std::shared_ptr<gizmosql::ClientSession>& session
 }
 
 void RegisterMetricsFunction(duckdb::DuckDB& db) {
-  duckdb::TableFunction function("gizmosql_metrics", {}, Scan, Bind, Init);
+  duckdb::TableFunction function("gizmosql_metrics", duckdb::vector<duckdb::LogicalType>{}, Scan,
+                                 Bind, Init);
   duckdb::Connection connection(db);
   connection.context->RunFunctionInTransaction([&] {
     duckdb::CreateTableFunctionInfo info(function);

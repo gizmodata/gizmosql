@@ -11,6 +11,7 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 #include <duckdb/main/config.hpp>
+#include "duckdb_compat.h"
 #include <openssl/pem.h>
 #include <cmath>
 #include <fstream>
@@ -32,6 +33,7 @@
 #endif
 namespace gizmosql::enterprise {
 namespace {
+namespace compat = gizmosql::ddb::compat;
 double Now() {
   return std::chrono::duration<double>(
              std::chrono::system_clock::now().time_since_epoch())
@@ -292,9 +294,9 @@ void MetricsService::Collect() {
     if (memory->HasError())
       ok = false;
     else {
-      set("gizmosql_duckdb_memory_used_bytes", memory->GetValue(0, 0).GetValue<double>());
+      set("gizmosql_duckdb_memory_used_bytes", compat::ResultValue(*memory, 0, 0).GetValue<double>());
       set("gizmosql_duckdb_temp_storage_bytes",
-          memory->GetValue(1, 0).GetValue<double>());
+          compat::ResultValue(*memory, 1, 0).GetValue<double>());
     }
   });
   section([&] {
@@ -305,9 +307,9 @@ void MetricsService::Collect() {
       ok = false;
     else {
       set("gizmosql_duckdb_memory_limit_bytes",
-          duckdb::DBConfig::ParseMemoryLimit(settings->GetValue(0, 0).ToString()));
-      set("gizmosql_duckdb_threads", settings->GetValue(1, 0).GetValue<double>());
-      auto temp = std::filesystem::path(settings->GetValue(2, 0).ToString());
+          duckdb::DBConfig::ParseMemoryLimit(compat::ResultValue(*settings, 0, 0).ToString()));
+      set("gizmosql_duckdb_threads", compat::ResultValue(*settings, 1, 0).GetValue<double>());
+      auto temp = std::filesystem::path(compat::ResultValue(*settings, 2, 0).ToString());
       if (!temp.empty()) {
         if (!std::filesystem::exists(temp))
           temp = std::filesystem::absolute(temp).parent_path();
@@ -326,8 +328,8 @@ void MetricsService::Collect() {
     if (spill->HasError())
       ok = false;
     else {
-      set("gizmosql_duckdb_spill_files", spill->GetValue(0, 0).GetValue<double>());
-      set("gizmosql_duckdb_spill_bytes", spill->GetValue(1, 0).GetValue<double>());
+      set("gizmosql_duckdb_spill_files", compat::ResultValue(*spill, 0, 0).GetValue<double>());
+      set("gizmosql_duckdb_spill_bytes", compat::ResultValue(*spill, 1, 0).GetValue<double>());
     }
   });
   section([&] {

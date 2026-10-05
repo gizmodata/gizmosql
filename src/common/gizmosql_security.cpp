@@ -237,9 +237,17 @@ void SecurityUtilities::ParseBasicHeader(const flight::CallHeaders& incoming_hea
   if (!decoded.ok()) {
     return;
   }
-  std::stringstream decoded_stream(decoded.MoveValueUnsafe());
-  std::getline(decoded_stream, username, ':');
-  std::getline(decoded_stream, password, ':');
+  // RFC 7617: the user-id cannot contain ':', so the FIRST ':' separates it
+  // from the password, which may itself contain ':' (and must not be cut at it).
+  const std::string credentials = decoded.MoveValueUnsafe();
+  const auto separator = credentials.find(':');
+  if (separator == std::string::npos) {
+    username = credentials;
+    password.clear();
+    return;
+  }
+  username = credentials.substr(0, separator);
+  password = credentials.substr(separator + 1);
 }
 
 std::string SecurityUtilities::HMAC_SHA256(const std::string& key,
@@ -934,6 +942,10 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").as_string();
       tl_request_ctx.auth_method = decoded_jwt.get_payload_claim("auth_method").as_string();
       tl_request_ctx.catalog_access = ParseCatalogAccessClaim(decoded_jwt);
+      if (decoded_jwt.has_payload_claim("instance_id")) {
+        tl_request_ctx.token_instance_id =
+            decoded_jwt.get_payload_claim("instance_id").as_string();
+      }
     }
   }
   return Status::OK();

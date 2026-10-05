@@ -51,20 +51,22 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ## Component Versions
 
-| Component                                                                        | Stable channel | LTS channel |
-|----------------------------------------------------------------------------------|----------------|-------------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.6         | v1.4.5      |
-| [SQLite](https://sqlite.org)                                                     | 3.53.4         | 3.53.4      |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1         | 25.0.1      |
-| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      |
-| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.29.0        | v1.29.0     |
-| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     |
+| Component                                                                        | Stable channel | LTS channel | Edge channel *(experimental)* |
+|----------------------------------------------------------------------------------|----------------|-------------|-------------------------------|
+| [DuckDB](https://duckdb.org)                                                     | v1.5.6         | v1.4.5      | v2.0.0-alpha43763             |
+| [SQLite](https://sqlite.org)                                                     | 3.53.4         | 3.53.4      | 3.53.4                        |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1         | 25.0.1      | 25.0.1                        |
+| [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      | v0.7.2                        |
+| [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.29.0        | v1.29.0     | v1.29.0                       |
+| [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     | v3.12.0                       |
 
 ### Release channels
 
-GizmoSQL ships two parallel release channels: **stable** (latest DuckDB minor) and **LTS** (most recent DuckDB long-term-support release). Both channels carry every GizmoSQL fix and feature; they only differ in which DuckDB release is bundled. LTS artifacts use an `_lts`/`-lts` suffix so they can coexist with stable installs.
+GizmoSQL ships three parallel release channels: **stable** (latest DuckDB minor), **LTS** (most recent DuckDB long-term-support release) and **edge** (the next DuckDB major, pre-release). All channels carry every GizmoSQL fix and feature; they only differ in which DuckDB release is bundled. LTS and edge artifacts use an `_lts`/`-lts` or `_edge`/`-edge` suffix so they can coexist with stable installs.
 
-See the [LTS Channel guide](lts_channel.md) for details on which DuckDB versions are LTS, artifact naming, install commands, and how to switch channels in production. The DuckDB [release calendar](https://duckdb.org/release_calendar) is the authoritative source for current LTS designations and end-of-support dates.
+> ⚠️ **The edge channel is experimental and NOT meant for production workloads.** It runs on a DuckDB pre-release whose behavior and on-disk format can change between builds; databases it creates cannot be opened by the stable or LTS channel. Use it to evaluate the next DuckDB major, not to run anything you depend on.
+
+See the [LTS Channel guide](lts_channel.md) for details on which DuckDB versions are LTS, artifact naming, install commands, and how to switch channels in production, and the [Edge Channel guide](edge_channel.md) for what is different on edge. The DuckDB [release calendar](https://duckdb.org/release_calendar) is the authoritative source for current LTS designations and end-of-support dates.
 
 ### Running from Docker Image
 
@@ -445,14 +447,14 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | hostname / GIZMOSQL_HOSTNAME | Hostname to listen on. If empty, falls back to env then 0.0.0.0 | 0.0.0.0 (if unset) | --hostname, -H |
 | port / GIZMOSQL_PORT | Flight gRPC port | 31337 | --port, -R |
 | database-filename / DATABASE_FILENAME | Path to DB file (absolute or relative). Empty => in-memory DB | "" (in-memory) | --database-filename, -D |
-| username / GIZMOSQL_USERNAME | Default connection username | gizmosql_user | --username, -U |
-| password / GIZMOSQL_PASSWORD | Server password (required). If unset server will exit | (required) | --password, -P |
+| username / GIZMOSQL_USERNAME | Default connection username. Must not contain `:` (HTTP Basic authentication separates the username from the password with `:`); the server refuses to start otherwise | gizmosql_user | --username, -U |
+| password / GIZMOSQL_PASSWORD | Server password (required). If unset server will exit. May contain any character, including `:` | (required) | --password, -P |
 | secret-key / SECRET_KEY | Secret used to sign JWTs. If unset, env SECRET_KEY used; else random key generated | "" (random if unset) | --secret-key, -S |
 | tls cert/key / TLS_CERT, TLS_KEY | TLS cert and key paths (or provide via --tls cert key) | none (disabled if not set) | --tls, -T (cert key) |
 | mtls CA / TLS_CA or mtls-ca-cert-filename | CA cert path for verifying client certs (PEM) | none | --mtls-ca-cert-filename, -M |
 | print-queries / PRINT_QUERIES | Print incoming SQL to stdout | false | --print-queries, -Q |
 | readonly | Open DB read-only | false | --readonly, -O |
-| init-sql-commands / INIT_SQL_COMMANDS | Semicolon-separated SQL commands to run at startup | none | --init-sql-commands, -I |
+| init-sql-commands / INIT_SQL_COMMANDS | Semicolon-separated SQL commands to run at startup. A `;` inside a string, a `"quoted"` identifier, a `--` or `/* */` comment, or a `$$…$$` string does not end a statement | none | --init-sql-commands, -I |
 | init-sql-commands-file / INIT_SQL_COMMANDS_FILE | File (mounted) containing init SQL commands | none | --init-sql-commands-file, -F |
 | token-allowed-issuer / TOKEN_ALLOWED_ISSUER | Allowed JWT issuer for token auth | none | --token-allowed-issuer |
 | token-allowed-audience / TOKEN_ALLOWED_AUDIENCE | Allowed JWT audience for token auth | none | --token-allowed-audience |
@@ -479,6 +481,7 @@ GizmoSQL can be configured via environment variables or CLI flags. Below are the
 | license-key / GIZMOSQL_LICENSE_KEY | *[Enterprise]* Inline license key (literal JWT value, not a path). Takes precedence over license-key-file when both are set | none | --license-key |
 | allow-cross-instance-tokens / GIZMOSQL_ALLOW_CROSS_INSTANCE_TOKENS | Accept tokens issued by other GizmoSQL instances sharing the same secret key | false | --allow-cross-instance-tokens |
 | session-idle-timeout / GIZMOSQL_SESSION_IDLE_TIMEOUT | Seconds without user SQL after which an idle client session is evicted (DuckDB). `0` = off. Reuses the existing session-removal path (client sees session not found / evicted). If an idle session is evicted, any work that was started but not committed is undone. Pair with session capacity controls to reclaim abandoned seats | 0 | --session-idle-timeout |
+| reject-unknown-sessions / GIZMOSQL_REJECT_UNKNOWN_SESSIONS | Refuse, with an `Unauthenticated` error, a request whose bearer token names a session that has ended on this instance (closed or idle-evicted) or that another instance created (multi-replica setups that accept each other's tokens). Without it the server silently starts a new, empty session for the token, so the client's open transaction, temporary tables, `USE` and `SET` are lost with no error. The client must re-authenticate (DuckDB) | false | --reject-unknown-sessions |
 | allow-unsigned-extensions / GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS | Allow loading unsigned DuckDB extensions (DuckDB's `allow_unsigned_extensions`, GLOBAL_ONLY — must be set at startup, cannot be changed via SET/init SQL). SECURITY: keep disabled unless loading trusted, operator-provided extensions. DuckDB backend only | false | --allow-unsigned-extensions |
 | block-unredacted-secrets / GIZMOSQL_BLOCK_UNREDACTED_SECRETS | Reject `SET allow_unredacted_secrets = <anything but false>` (and the `PRAGMA` form) from every client, including admins, before DuckDB sees it. DuckDB itself also refuses to enable it once the database is open; this gives a clear GizmoSQL error and keeps the block if that DuckDB behavior ever changes. DuckDB backend only | true | --block-unredacted-secrets |
 | block-sensitive-paths / GIZMOSQL_BLOCK_SENSITIVE_PATHS | Refuse SQL access to credential and system files on the server host (DuckDB persistent secrets, ~/.ssh, ~/.aws and other credential stores, /etc/passwd and related, /proc, container secrets, and this server's TLS key, license and init-SQL files) for every client, including admins. See the [Security Guide](security.md#sensitive-path-guard). DuckDB backend only | true | --block-sensitive-paths |

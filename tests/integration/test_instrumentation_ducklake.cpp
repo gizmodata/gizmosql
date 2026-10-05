@@ -49,6 +49,7 @@
 #include <mutex>
 
 #include "arrow/api.h"
+#include "duckdb_compat.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/flight/sql/server.h"
 #include "arrow/flight/sql/types.h"
@@ -496,7 +497,7 @@ TEST(DuckLakeInstrumentation, MultipleInstancesConcurrent) {
       std::cerr << "  Note: Could not clean up stale instances (table may not exist yet): "
                 << cleanup_result->GetError() << std::endl;
     } else {
-      auto changes = cleanup_result->GetValue(0, 0);
+      auto changes = gizmosql::ddb::compat::ResultValue(*cleanup_result, 0, 0);
       std::cerr << "  Marked stale instances as stopped" << std::endl;
     }
   }
@@ -1224,7 +1225,7 @@ TEST(DuckLakeInstrumentation, AutoMigrateLegacyNaiveTimestampSchema) {
           "' AND column_name = '" + col + "'");
       ASSERT_FALSE(q->HasError()) << q->GetError();
       ASSERT_EQ(q->RowCount(), 1u) << "Missing " << tbl << "." << col;
-      auto type_str = q->GetValue(0, 0).ToString();
+      auto type_str = gizmosql::ddb::compat::ResultValue(*q, 0, 0).ToString();
       EXPECT_NE(type_str.find("WITH TIME ZONE"), std::string::npos)
           << tbl << "." << col << " not migrated, got: " << type_str;
     }
@@ -1244,7 +1245,7 @@ TEST(DuckLakeInstrumentation, AutoMigrateLegacyNaiveTimestampSchema) {
                                  schema_name + "." + tbl + " WHERE " + id_col +
                                  " = '" + expected_id + "'");
       ASSERT_FALSE(q->HasError()) << q->GetError();
-      EXPECT_EQ(q->GetValue(0, 0).GetValue<int64_t>(), 1)
+      EXPECT_EQ(gizmosql::ddb::compat::ResultValue(*q, 0, 0).GetValue<int64_t>(), 1)
           << "Legacy row missing from " << tbl;
     }
     std::cerr << "  All 4 legacy rows preserved" << std::endl;
@@ -1254,7 +1255,7 @@ TEST(DuckLakeInstrumentation, AutoMigrateLegacyNaiveTimestampSchema) {
         "SELECT COUNT(*) FROM " + catalog_name + "." + schema_name +
         ".sessions WHERE start_time > now() - INTERVAL '1 hour'");
     ASSERT_FALSE(recent->HasError()) << recent->GetError();
-    EXPECT_GE(recent->GetValue(0, 0).GetValue<int64_t>(), 1)
+    EXPECT_GE(gizmosql::ddb::compat::ResultValue(*recent, 0, 0).GetValue<int64_t>(), 1)
         << "Customer-style filter should match the legacy session "
            "(timestamp interpreted as UTC, < 1 hour ago)";
     std::cerr << "  `WHERE start_time > now() - INTERVAL '1 hour'` works "
@@ -1444,7 +1445,7 @@ TEST(PostgresInstrumentation, SchemaWritesAndCascade) {
       auto r = admin.Query(sql);
       EXPECT_FALSE(r->HasError()) << sql << ": " << r->GetError();
       if (r->HasError() || r->RowCount() == 0) return -1;
-      return r->GetValue(0, 0).GetValue<int64_t>();
+      return gizmosql::ddb::compat::ResultValue(*r, 0, 0).GetValue<int64_t>();
     };
 
     // Records landed; every execution is finalized (no lost finalize UPDATEs —
@@ -1584,7 +1585,7 @@ TEST(PostgresCatalogLogging, ForkLogsToPostgres) {
       auto r = admin.Query(sql);
       EXPECT_FALSE(r->HasError()) << sql << ": " << r->GetError();
       if (r->HasError() || r->RowCount() == 0) return -1;
-      return r->GetValue(0, 0).GetValue<int64_t>();
+      return gizmosql::ddb::compat::ResultValue(*r, 0, 0).GetValue<int64_t>();
     };
 
     EXPECT_EQ(scalar("SELECT COUNT(*) FROM " + p + "logs"), 5)

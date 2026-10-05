@@ -30,6 +30,8 @@ struct RequestCtx
     std::optional<std::string> user_agent;
     std::optional<std::string> connection_protocol;
     std::optional<std::vector<CatalogAccessRule>> catalog_access;
+    // instance_id claim of the bearer token (the instance that issued it).
+    std::optional<std::string> token_instance_id;
 };
 
 // One scratchpad per RPC thread

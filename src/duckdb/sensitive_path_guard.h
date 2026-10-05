@@ -45,6 +45,9 @@
 #include <duckdb/common/virtual_file_system.hpp>
 #if !GIZMOSQL_DUCKDB_CHANNEL_LTS
 #include <duckdb/common/multi_file/multi_file_list.hpp>
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+#include <duckdb/common/memory_mapped_file.hpp>
+#endif
 #endif
 
 namespace gizmosql::ddb {
@@ -128,6 +131,25 @@ class SensitivePathGuardFileSystem : public duckdb::VirtualFileSystem {
                      duckdb::optional_ptr<duckdb::FileOpener> opener) override;
   void RemoveFiles(const duckdb::vector<duckdb::string>& filenames,
                    duckdb::optional_ptr<duckdb::FileOpener> opener) override;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  // Entry points DuckDB 2.0 added to FileSystem; each one reaches a path
+  // without going through OpenFileExtended / CreateDirectory / ... above.
+  duckdb::unique_ptr<duckdb::MemoryMappedFile> MemoryMapFile(
+      const duckdb::OpenFileInfo& path, duckdb::FileOpenFlags flags,
+      const duckdb::MMapOptions& options,
+      duckdb::optional_ptr<duckdb::FileOpener> opener) override;
+  duckdb::optional<duckdb::FileMetadata> GetStatsIfExists(
+      const duckdb::OpenFileInfo& file,
+      duckdb::optional_ptr<duckdb::FileOpener> opener) override;
+  bool CreateDirectoryExtended(const duckdb::string& directory,
+                               const duckdb::CreateDirectoryOptions& options,
+                               duckdb::optional_ptr<duckdb::FileOpener> opener) override;
+  void CreateDirectoriesRecursive(const duckdb::string& path,
+                                  duckdb::optional_ptr<duckdb::FileOpener> opener) override;
+  bool RemoveDirectoryExtended(const duckdb::string& directory,
+                               const duckdb::RemoveDirectoryOptions& options,
+                               duckdb::optional_ptr<duckdb::FileOpener> opener) override;
+#endif
 #if GIZMOSQL_DUCKDB_CHANNEL_LTS
   duckdb::vector<duckdb::OpenFileInfo> Glob(
       const duckdb::string& path, duckdb::FileOpener* opener = nullptr) override;

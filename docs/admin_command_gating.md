@@ -57,11 +57,13 @@ staged with `PREPARE`:
 | **INSTALL / LOAD** extensions | `INSTALL httpfs`, `LOAD spatial`, `FORCE INSTALL …` |
 | **CHECKPOINT** | `CHECKPOINT`, `FORCE CHECKPOINT` |
 | **EXPORT DATABASE / IMPORT DATABASE** (any destination) | `EXPORT DATABASE '/tmp/dump'`, `EXPORT DATABASE 's3://bucket/dump'`, `IMPORT DATABASE '/tmp/dump'` |
-| **COPY** to/from a **local** file | `COPY t TO '/tmp/x.csv'`, `COPY t FROM '/etc/passwd'` |
-| **`read_*` / `glob` / `sniff_csv`** of the **local** filesystem | `SELECT * FROM read_csv('/etc/passwd')`, `read_parquet('/data/x.parquet')`, `glob('/home/*')` |
+| **COPY** to/from a **local** file — including `COPY … TO` as a CTE body ([edge channel](edge_channel.md), DuckDB 2.0) | `COPY t TO '/tmp/x.csv'`, `COPY t FROM '/etc/passwd'`, `WITH c AS (COPY t TO '/tmp/x.csv') SELECT 1` |
+| **`read_*` / `glob` / `sniff_csv`** of the **local** filesystem (also in `UPDATE … FROM` / `DELETE … USING` / `MERGE … USING` sources on the edge channel) | `SELECT * FROM read_csv('/etc/passwd')`, `read_parquet('/data/x.parquet')`, `read_single_csv_file('/etc/passwd')`, `glob('/home/*')` |
 | **Replacement scans** of a **local** path | `SELECT * FROM '/etc/passwd'`, `FROM 'data.parquet'` |
 | **`CREATE SECRET` / `DROP SECRET`** (all variants) | `CREATE [OR REPLACE] [PERSISTENT\|TEMPORARY] SECRET …`, `DROP SECRET …` |
 | **`duckdb_secrets()`** (always) | `SELECT * FROM duckdb_secrets()` |
+| **Quack remote protocol** functions (always) | `CALL quack_serve(…)`, `SELECT * FROM quack_query(…)`, `SELECT quack_cancel(…)` |
+| **`CONNECT` / `DISCONNECT` / `EXTERNAL RESOURCE`** (edge channel, DuckDB 2.0) — `CONNECT` attaches its target and forwards raw SQL to it | `CONNECT 'other.db'`, `CREATE EXTERNAL RESOURCE …` |
 
 ### Local vs. remote
 

@@ -11,6 +11,7 @@ HTML version lives at the same path without the `.md` extension).
 - [Quick Start](https://docs.gizmosql.com/quickstart.md): get a GizmoSQL server running in minutes
 - [Editions](https://docs.gizmosql.com/editions.md): Core vs Enterprise feature comparison
 - [LTS Channel](https://docs.gizmosql.com/lts_channel.md): long-term support release channel
+- [Edge Channel](https://docs.gizmosql.com/edge_channel.md): experimental channel on the next DuckDB major (pre-release; not for production)
 - [Security Guide](https://docs.gizmosql.com/security.md): TLS, authentication, and hardening guidance
 - [Python ADBC Driver](https://docs.gizmosql.com/python_adbc.md): connect from Python via ADBC
 - [Python Library](https://docs.gizmosql.com/python_library.md): run a GizmoSQL server from Python
