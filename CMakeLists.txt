@@ -429,7 +429,8 @@ function(gizmosql_superbuild_require_install project_name stamp_dir install_prob
 endfunction()
 
 gizmosql_superbuild_check(arrow_project "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-stamp" "${CMAKE_BINARY_DIR}/arrow" ARROW_SB_SKIP ARROW_SB_HASH
-        "${CMAKE_SOURCE_DIR}/third_party/patch_arrow.cmake")
+        "${CMAKE_SOURCE_DIR}/third_party/patch_arrow.cmake"
+        "${CMAKE_SOURCE_DIR}/third_party/patch_grpc.cmake")
 gizmosql_superbuild_require_install(arrow_project "${CMAKE_BINARY_DIR}/third_party/src/arrow_project-stamp"
         "${CMAKE_BINARY_DIR}/third_party/arrow/include/arrow/api.h" ARROW_SB_SKIP)
 if(NOT ARROW_SB_SKIP)

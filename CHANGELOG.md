@@ -127,6 +127,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change triggers a cold build instead of a broken one, and the VC++ runtime
   DLLs are copied from whichever `Microsoft.VC*.CRT` redist folder the
   toolset ships instead of a hardcoded `VC143`.
+- Building with Visual Studio 2026 (MSVC 14.5x): the gRPC that Arrow bundles
+  (1.76) failed to compile with `error C3539: a template-argument cannot be a
+  type that contains 'auto'`. This is an MSVC bug, still open upstream
+  (grpc/grpc#41436), so no gRPC release has a fix yet; it is what had kept the Windows arm64
+  build (whose runner image moved to MSVC 14.51) red. The build now applies a small source
+  workaround to that gRPC (`third_party/patch_grpc.cmake`, hooked in by
+  `patch_arrow.cmake`).
 
 ## [1.40.0] - 2026-09-28
 

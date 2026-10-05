@@ -53,3 +53,27 @@ if(EXISTS "${BUILD_UTILS_FILE}")
 
   file(WRITE "${BUILD_UTILS_FILE}" "${BUILD_UTILS_CONTENT}")
 endif()
+
+# Patch the gRPC that ThirdpartyToolchain.cmake fetches, via a PATCH_COMMAND on
+# its fetchcontent_declare(): patch_grpc.cmake works around an MSVC 14.5x
+# (Visual Studio 2026) C3539 compiler bug in gRPC's filter templates (see the
+# comments there). The script path is absolute, because ThirdpartyToolchain.cmake
+# runs from Arrow's build tree.
+file(READ "${TOOLCHAIN_FILE}" CONTENT)
+set(GRPC_DECLARE_ANCHOR "URL_HASH \"SHA256=\${ARROW_GRPC_BUILD_SHA256_CHECKSUM}\")")
+string(FIND "${CONTENT}" "patch_grpc.cmake" GRPC_ALREADY_HOOKED)
+string(FIND "${CONTENT}" "${GRPC_DECLARE_ANCHOR}" GRPC_DECLARE_POS)
+if(NOT GRPC_ALREADY_HOOKED EQUAL -1)
+  # Already hooked: the patch step ran on this source tree before.
+elseif(GRPC_DECLARE_POS EQUAL -1)
+  message(FATAL_ERROR "patch_arrow.cmake: gRPC fetchcontent_declare() not found in "
+                      "${TOOLCHAIN_FILE}; update the patch_grpc.cmake hook for this Arrow version")
+else()
+  string(REPLACE
+    "${GRPC_DECLARE_ANCHOR}"
+    "URL_HASH \"SHA256=\${ARROW_GRPC_BUILD_SHA256_CHECKSUM}\"\n                       PATCH_COMMAND \"\${CMAKE_COMMAND}\" -P \"${CMAKE_CURRENT_LIST_DIR}/patch_grpc.cmake\")"
+    CONTENT
+    "${CONTENT}"
+  )
+  file(WRITE "${TOOLCHAIN_FILE}" "${CONTENT}")
+endif()
