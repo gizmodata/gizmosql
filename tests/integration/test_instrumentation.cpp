@@ -862,30 +862,11 @@ TEST(InstrumentationManagerTest, SIGTERMClosesRecords) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 
-  // Get path to the server executable - try multiple possible locations.
-  // The LTS channel suffixes the binary with _lts, so we probe both names.
-  fs::path server_exe;
-  std::vector<fs::path> search_paths;
-  for (const char* name : {"gizmosql_server",
-#if GIZMOSQL_DUCKDB_CHANNEL_LTS
-                           "gizmosql_server_lts",
-#endif
-                          }) {
-    search_paths.push_back(fs::current_path() / "build" / name);   // CI: ./build/<name>
-    search_paths.push_back(fs::current_path() / name);              // ./<name>
-    search_paths.push_back(fs::current_path().parent_path() / name);// ../<name> (local dev)
-  }
-
-  for (const auto& path : search_paths) {
-    if (fs::exists(path)) {
-      server_exe = path;
-      break;
-    }
-  }
-
-  ASSERT_FALSE(server_exe.empty() || !fs::exists(server_exe))
-      << "Server executable not found. Searched paths: "
-      << search_paths[0] << ", " << search_paths[1] << ", " << search_paths[2];
+  // The server binary this build produced, passed in by tests/CMakeLists.txt.
+  // Its name carries the channel suffix (gizmosql_server_lts / _edge), so do
+  // not guess it: a guessed name can find a stale binary from another channel.
+  const fs::path server_exe = GIZMOSQL_SERVER_BINARY;
+  ASSERT_TRUE(fs::exists(server_exe)) << "Server executable not found: " << server_exe;
 
   // Check for license key - instrumentation requires enterprise license
   const char* license_key_file = std::getenv("GIZMOSQL_LICENSE_KEY_FILE");
@@ -1069,30 +1050,11 @@ TEST(InstrumentationManagerTest, EnvVarEnablesInstrumentation) {
   fs::remove(instr_db);
   fs::remove(instr_db + ".wal");
 
-  // Get path to the server executable - try multiple possible locations.
-  // The LTS channel suffixes the binary with _lts, so we probe both names.
-  fs::path server_exe;
-  std::vector<fs::path> search_paths;
-  for (const char* name : {"gizmosql_server",
-#if GIZMOSQL_DUCKDB_CHANNEL_LTS
-                           "gizmosql_server_lts",
-#endif
-                          }) {
-    search_paths.push_back(fs::current_path() / "build" / name);   // CI: ./build/<name>
-    search_paths.push_back(fs::current_path() / name);              // ./<name>
-    search_paths.push_back(fs::current_path().parent_path() / name);// ../<name> (local dev)
-  }
-
-  for (const auto& path : search_paths) {
-    if (fs::exists(path)) {
-      server_exe = path;
-      break;
-    }
-  }
-
-  ASSERT_FALSE(server_exe.empty() || !fs::exists(server_exe))
-      << "Server executable not found. Searched paths: "
-      << search_paths[0] << ", " << search_paths[1] << ", " << search_paths[2];
+  // The server binary this build produced, passed in by tests/CMakeLists.txt.
+  // Its name carries the channel suffix (gizmosql_server_lts / _edge), so do
+  // not guess it: a guessed name can find a stale binary from another channel.
+  const fs::path server_exe = GIZMOSQL_SERVER_BINARY;
+  ASSERT_TRUE(fs::exists(server_exe)) << "Server executable not found: " << server_exe;
 
   // Build command to start server WITH env var but WITHOUT --enable-instrumentation arg
   // The env var should enable instrumentation

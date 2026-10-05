@@ -77,4 +77,19 @@ arrow::Status RegisterStaticExtensions() {
 #endif
 }
 
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+namespace {
+// Also register at program load, so a duckdb::DuckDB opened anywhere in the
+// process — not only by DuckDBFlightSqlServer::Create() — has its built-in
+// extensions (without core_functions, even now() is missing). This
+// translation unit is always linked, since the server calls
+// RegisterStaticExtensions(), so the initializer runs. DuckDB keeps its
+// static-extension registry in a function-local static for exactly this.
+[[maybe_unused]] const bool kRegisteredAtLoad = [] {
+  (void)RegisterStaticExtensions();
+  return true;
+}();
+}  // namespace
+#endif
+
 }  // namespace gizmosql::ddb

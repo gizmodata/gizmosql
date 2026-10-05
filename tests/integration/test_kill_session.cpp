@@ -97,7 +97,8 @@ TEST_F(KillSessionServerFixture, NonAdminCannotKillSession) {
 
     auto info_result = sql_client.Execute(
         call_options,
-        "SELECT session_id FROM _gizmosql_instr.active_sessions LIMIT 1");
+        "SELECT session_id FROM _gizmosql_instr.active_sessions "
+        "WHERE session_id = GIZMOSQL_CURRENT_SESSION()");
     if (!info_result.ok()) continue;
 
     for (const auto& endpoint : (*info_result)->endpoints()) {
