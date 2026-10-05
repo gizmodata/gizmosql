@@ -33,18 +33,17 @@ DB_FILE="shell_test_client.db"
 export GIZMOSQL_PASSWORD="$PASSWORD"
 
 # Paths - assume we're running from the build directory.
-# The LTS channel suffixes the binaries with _lts; auto-detect so this
-# script works against either channel without needing per-channel forks.
-if [ -x "./gizmosql_server" ] && [ -x "./gizmosql_client" ]; then
-    SERVER_BIN="./gizmosql_server"
-    CLIENT_BIN="./gizmosql_client"
-elif [ -x "./gizmosql_server_lts" ] && [ -x "./gizmosql_client_lts" ]; then
-    SERVER_BIN="./gizmosql_server_lts"
-    CLIENT_BIN="./gizmosql_client_lts"
-else
-    SERVER_BIN="./gizmosql_server"  # let the existence check below fail
-    CLIENT_BIN="./gizmosql_client"  # with the canonical error message
-fi
+# The lts and edge channels suffix the binaries with _lts / _edge; auto-detect
+# so this script works against any channel without per-channel forks.
+SERVER_BIN="./gizmosql_server"  # if none is found, the existence check
+CLIENT_BIN="./gizmosql_client"  # below fails with the canonical message
+for suffix in "" _lts _edge; do
+    if [ -x "./gizmosql_server${suffix}" ] && [ -x "./gizmosql_client${suffix}" ]; then
+        SERVER_BIN="./gizmosql_server${suffix}"
+        CLIENT_BIN="./gizmosql_client${suffix}"
+        break
+    fi
+done
 
 # Cleanup function
 cleanup() {
