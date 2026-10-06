@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.41.0] - 2026-10-05
+
 ### Added
 - **Edge release channel (experimental — not for production workloads).** A
   third channel next to stable and LTS, built on the next DuckDB major ahead
