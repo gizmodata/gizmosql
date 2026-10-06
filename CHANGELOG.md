@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   historical behavior is unchanged.
 
 ### Changed
+- **The macOS binaries now require macOS 15 (Sequoia) or later** (they
+  required macOS 14). Every Apple Silicon Mac can run macOS 15, and Apple no
+  longer ships security updates for macOS 14. The Homebrew formulas declare it
+  (`depends_on macos: :sequoia`). The macOS release builds moved to the
+  standard `macos-15` GitHub runner and set `MACOSX_DEPLOYMENT_TARGET=15.0`.
+  CI fails if a shipped binary, or a Homebrew library it links, targets a newer macOS.
 - **The Windows MSIs of the three channels are separate products** and install
   side by side: stable stays "GizmoSQL" in `C:\Program Files\GizmoSQL`, LTS
   is now "GizmoSQL LTS" in `C:\Program Files\GizmoSQL LTS` with

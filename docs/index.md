@@ -333,7 +333,7 @@ brew install gizmosql
 > trust for just this formula.
 
 Supported platforms:
-- macOS (Apple Silicon / ARM64)
+- macOS 15 (Sequoia) or later (Apple Silicon / ARM64)
 - Linux (x86-64 / AMD64)
 - Linux (ARM64)
 

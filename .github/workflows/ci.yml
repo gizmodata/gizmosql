@@ -190,12 +190,18 @@ jobs:
     # when it fails: a formatting or lint nit must never block (and force a
     # re-cut of) a release tag; the red quality job still shows on the run.
     if: always() && needs.changes.outputs.build == 'true' && (needs.quality.result == 'success' || startsWith(github.ref, 'refs/tags/')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
-    runs-on: macos-14-xlarge
+    # The free standard arm64 runner: a cold stable build peaked at ~2.9 GB of
+    # compiler RSS with no swap on its 7 GB (probe, Oct 2026).
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
         duckdb_channel: [stable, lts, edge]
     env:
+      # Minimum macOS for the shipped binaries. Build on the matching runner
+      # image: the Homebrew static libs we link (OpenSSL, Boost) carry the
+      # image's macOS as their minimum, which "Check minimum macOS" enforces.
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
       # Stable produces gizmosql_cli_macos_arm64.zip (unchanged); LTS and
       # edge get a _lts / _edge suffix so all three land in the release together.
       zip_file_name: gizmosql_cli_macos_arm64${{ matrix.duckdb_channel != 'stable' && format('_{0}', matrix.duckdb_channel) || '' }}.zip
@@ -248,6 +254,18 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "DuckDB ${{ matrix.duckdb_channel }} = $tag"
 
+      # The macOS caches are keyed on the deployment target and the exact
+      # Apple clang build, like the Windows caches on the MSVC toolset: cached
+      # build trees record absolute compiler paths and one minimum macOS.
+      - name: Resolve toolchain for cache keys
+        id: toolchain
+        shell: bash
+        run: |
+          clang_build=$(clang --version | head -1 | sed -nE 's/.*\((clang-[0-9.]+)\).*/\1/p')
+          test -n "$clang_build"
+          echo "key=macos${MACOSX_DEPLOYMENT_TARGET}-${clang_build}" >> "$GITHUB_OUTPUT"
+          echo "Toolchain: ${clang_build}, deployment target ${MACOSX_DEPLOYMENT_TARGET}"
+
       # Two caches so the Arrow/gRPC/OTel/... build (the long pole, identical
       # for both DuckDB channels) is stored once per platform and shared,
       # while DuckDB + extensions is cached per channel and version.
@@ -265,9 +283,9 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            deps-v5-macos-arm64-apache-arrow-25.0.1-
+            deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-25.0.1-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -276,7 +294,7 @@ jobs:
           path: |
             build/third_party/duckdb
             build/third_party/src/duckdb_project*
-          key: duckdb-v2-macos-arm64-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
+          key: duckdb-v2-macos-arm64-${{ steps.toolchain.outputs.key }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Restore OpenTelemetry/cpp-httplib cache
         id: otel-cache
@@ -291,7 +309,7 @@ jobs:
           path: |
             build/opentelemetry/third_party/*
             build/cpp-httplib/third_party/*
-          key: otel-httplib-v1-macos-arm64-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
+          key: otel-httplib-v1-macos-arm64-${{ steps.toolchain.outputs.key }}-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
@@ -313,6 +331,28 @@ jobs:
             OPENSSL_INCLUDE_DIR=${{ env.OPENSSL_INCLUDE_DIR }}
             OPENSSL_CRYPTO_LIBRARY=${{ env.OPENSSL_CRYPTO_LIBRARY }}
             OPENSSL_SSL_LIBRARY=${{ env.OPENSSL_SSL_LIBRARY }}
+
+      - name: Check minimum macOS
+        run: |
+          target="$MACOSX_DEPLOYMENT_TARGET"
+          # true when version $1 needs no newer macOS than the target
+          fits() { [ "$(printf '%s\n%s\n' "$target" "$1" | sort -V | tail -1)" = "$target" ]; }
+          fail=0
+          for bin in build/gizmosql_server${bin_suffix} build/gizmosql_client${bin_suffix}; do
+            minos=$(vtool -show-build "$bin" | awk '/minos/{print $2; exit}')
+            echo "$bin: minos $minos"
+            [ "$minos" = "$target" ] || { echo "::error::$bin has minos '$minos', expected $target"; fail=1; }
+            if otool -L "$bin" | grep -q /opt/homebrew; then
+              otool -L "$bin"; echo "::error::$bin links a Homebrew dylib"; fail=1
+            fi
+          done
+          # Static libs from Homebrew are built for the runner image's macOS.
+          for lib in "$OPENSSL_CRYPTO_LIBRARY" "$OPENSSL_SSL_LIBRARY" "$(brew --prefix boost)"/lib/libboost_program_options*.a; do
+            minos=$(otool -l "$lib" | awk '/minos/{print $2}' | sort -V | tail -1)
+            echo "$lib: minos $minos"
+            fits "$minos" || { echo "::error::$lib needs macOS $minos, newer than the $target target"; fail=1; }
+          done
+          exit $fail
 
       - name: Clang-tidy (project sources, stable and LTS)
         env:
@@ -353,7 +393,7 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-macos-arm64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
 
       - name: Save DuckDB cache
         # Tag-scoped caches can never be restored by another ref and only
@@ -364,7 +404,7 @@ jobs:
           path: |
             build/third_party/duckdb
             build/third_party/src/duckdb_project*
-          key: duckdb-v2-macos-arm64-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
+          key: duckdb-v2-macos-arm64-${{ steps.toolchain.outputs.key }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Save OpenTelemetry/cpp-httplib cache
         if: steps.otel-cache.outputs.cache-hit != 'true' && !startsWith(github.ref, 'refs/tags/')
@@ -373,7 +413,7 @@ jobs:
           path: |
             build/opentelemetry/third_party/*
             build/cpp-httplib/third_party/*
-          key: otel-httplib-v1-macos-arm64-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
+          key: otel-httplib-v1-macos-arm64-${{ steps.toolchain.outputs.key }}-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
       - name: Run Tests (Unlicensed Enterprise Build)
         run: |
@@ -1748,6 +1788,7 @@ jobs:
             license "Apache-2.0"
 
             on_macos do
+              depends_on macos: :sequoia
               if Hardware::CPU.arm?
                 url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_arm64.zip"
                 sha256 "MACOS_ARM64_SHA_PLACEHOLDER"
@@ -1818,6 +1859,7 @@ jobs:
             license "Apache-2.0"
 
             on_macos do
+              depends_on macos: :sequoia
               if Hardware::CPU.arm?
                 url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_arm64_lts.zip"
                 sha256 "MACOS_ARM64_SHA_PLACEHOLDER"
@@ -1888,6 +1930,7 @@ jobs:
             license "Apache-2.0"
 
             on_macos do
+              depends_on macos: :sequoia
               if Hardware::CPU.arm?
                 url "https://github.com/gizmodata/gizmosql/releases/download/vVERSION_PLACEHOLDER/gizmosql_cli_macos_arm64_edge.zip"
                 sha256 "MACOS_ARM64_SHA_PLACEHOLDER"
