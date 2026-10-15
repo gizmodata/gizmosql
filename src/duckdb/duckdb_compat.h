@@ -37,6 +37,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/parser.hpp>
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION < 2
 #include <duckdb/main/prepared_statement_data.hpp>
 #endif
@@ -81,6 +82,19 @@ std::unordered_map<std::string, typename MAP::mapped_type> StringKeyed(const MAP
   std::unordered_map<std::string, typename MAP::mapped_type> result;
   for (const auto& [name, value] : map) result.emplace(Str(name), value);
   return result;
+}
+
+// ---- parser ----------------------------------------------------------------
+
+// A parser with DuckDB's built-in grammar and no client context. DuckDB 2.x
+// (from v2.0.0-alpha46057) dropped Parser's default constructor for
+// Parser::GetBuiltinParser().
+inline duckdb::Parser StandaloneParser() {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  return duckdb::Parser::GetBuiltinParser();
+#else
+  return duckdb::Parser();
+#endif
 }
 
 // ---- prepared statements ---------------------------------------------------

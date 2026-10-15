@@ -2240,7 +2240,7 @@ arrow::Status DuckDBStatement::HandleGizmoSQLSet() {
   // DuckDB 2.0 no longer parses the dotted name unquoted.
   const std::string set_sql = compat::QuoteDottedSettingName(sql_);
 
-  duckdb::Parser parser;
+  auto parser = compat::StandaloneParser();
   try {
     parser.ParseQuery(set_sql);
   } catch (const std::exception& ex) {

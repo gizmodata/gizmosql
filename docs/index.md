@@ -53,9 +53,9 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 | Component                                                                        | Stable channel | LTS channel | Edge channel *(experimental)* |
 |----------------------------------------------------------------------------------|----------------|-------------|-------------------------------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.6         | v1.4.5      | v2.0.0-alpha43763             |
+| [DuckDB](https://duckdb.org)                                                     | v1.5.6         | v1.4.5      | v2.0.0-alpha46057             |
 | [SQLite](https://sqlite.org)                                                     | 3.53.4         | 3.53.4      | 3.53.4                        |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1         | 25.0.1      | 25.0.1                        |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 26.0.0         | 26.0.0      | 26.0.0                        |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      | v0.7.2                        |
 | [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.29.0        | v1.29.0     | v1.29.0                       |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0        | v3.12.0     | v3.12.0                       |
@@ -527,7 +527,7 @@ $ GIZMOSQL_PASSWORD="gizmosql_password" gizmosql_server --database-filename data
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 25.0.1
+Apache Arrow version: 26.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 DuckDB version: v1.5.6
 Running Init SQL command: 
@@ -555,7 +555,7 @@ The above will produce output similar to the following:
 GizmoSQL - Copyright © 2025 GizmoData LLC
  Licensed under the Apache License, Version 2.0
  https://www.apache.org/licenses/LICENSE-2.0
-Apache Arrow version: 25.0.1
+Apache Arrow version: 26.0.0
 WARNING - TLS is disabled for the GizmoSQL server - this is insecure.
 SQLite version: 3.46.1
 Using database file: "/Users/philip/Documents/git/gizmosql/data/TPC-H-small.sqlite"

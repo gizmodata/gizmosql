@@ -283,9 +283,9 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-26.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-25.0.1-
+            deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-26.0.0-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -312,7 +312,7 @@ jobs:
           key: otel-httplib-v1-macos-arm64-${{ steps.toolchain.outputs.key }}-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Configure Project
         uses: threeal/cmake-action@v2.1.0
@@ -393,7 +393,7 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-macos-arm64-${{ steps.toolchain.outputs.key }}-apache-arrow-26.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
 
       - name: Save DuckDB cache
         # Tag-scoped caches can never be restored by another ref and only
@@ -444,7 +444,7 @@ jobs:
           python-version: '3.12'
 
       - name: Set up Java for released-driver checks
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -459,7 +459,7 @@ jobs:
 
       - name: Upload released-driver validation logs
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: driver-matrix-macos-${{ matrix.duckdb_channel }}
           path: build/driver-matrix/*.log
@@ -652,9 +652,9 @@ jobs:
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
             build/portable-deps
-          key: deps-v5-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
+          key: deps-v5-linux-portable228-${{ matrix.platform }}-apache-arrow-26.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
           restore-keys: |
-            deps-v5-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-
+            deps-v5-linux-portable228-${{ matrix.platform }}-apache-arrow-26.0.0-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -681,7 +681,7 @@ jobs:
           key: otel-httplib-v1-linux-portable228-${{ matrix.platform }}-${{ hashFiles('third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/Arrow_CMakeLists.txt.in') }}
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Build (manylinux_2_28 container — glibc 2.28 baseline)
         # Compile inside AlmaLinux 8 (glibc 2.28) with gcc-toolset-14 so the
@@ -751,7 +751,7 @@ jobs:
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
             build/portable-deps
-          key: deps-v5-linux-portable228-${{ matrix.platform }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
+          key: deps-v5-linux-portable228-${{ matrix.platform }}-apache-arrow-26.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'scripts/build_portable_linux.sh') }}
 
       - name: Save DuckDB cache
         # Tag-scoped caches can never be restored by another ref and only
@@ -916,8 +916,8 @@ jobs:
           # The DuckDB CLI tag baked in for ad-hoc shell use must match
           # the channel; default in the Dockerfile is the stable version.
           build-args: |
-            DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.5' || matrix.duckdb_channel == 'edge' && '2.0.0-alpha43763' || '1.5.6' }}
-            DUCKDB_CLI_STAGED=${{ matrix.duckdb_channel == 'edge' && '96063b9e39/v2.0.0-alpha43763' || '' }}
+            DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.5' || matrix.duckdb_channel == 'edge' && '2.0.0-alpha46057' || '1.5.6' }}
+            DUCKDB_CLI_STAGED=${{ matrix.duckdb_channel == 'edge' && 'b15358c371/v2.0.0-alpha46057' || '' }}
           no-cache: true
           provenance: ${{ startsWith(github.ref, 'refs/tags/') && 'mode=max' || 'false' }}
           sbom: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -1114,9 +1114,9 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-26.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
           restore-keys: |
-            deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-25.0.1-
+            deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-26.0.0-
 
       - name: Restore DuckDB cache
         id: duckdb-cache
@@ -1128,7 +1128,7 @@ jobs:
           key: duckdb-v2-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-${{ matrix.duckdb_channel }}-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake') }}
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Configure
         run: |
@@ -1161,7 +1161,7 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
+          key: deps-v5-windows-${{ matrix.vc_arch }}-msvc${{ steps.msvc.outputs.version }}-apache-arrow-26.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/OpenTelemetry_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}
 
       - name: Save DuckDB cache
         # Tag-scoped caches can never be restored by another ref and only

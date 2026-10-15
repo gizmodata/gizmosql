@@ -203,6 +203,35 @@ Same row count and `sum(l_quantity)` checksum on both. At this point the
 client's Parquet decode and the gRPC transfer dominate; the server-side
 conversion is no longer the bottleneck.
 
+### Column types of a created table
+
+When the ingest creates the table (`mode="create"`, `"replace"`, or
+`"create_append"` on a new table), each column gets the type DuckDB's own
+Arrow reader gives that Arrow type, the same type `adbc_driver_duckdb` would
+create. Some mappings worth knowing:
+
+| Arrow type | DuckDB column |
+|---|---|
+| `month_day_nano`, `month`, `day_time` interval; `duration` | `INTERVAL` |
+| `string`, `large_string`, `string_view`, dictionary/run-end-encoded of strings | `VARCHAR` |
+| `binary`, `large_binary`, `binary_view`, `fixed_size_binary` | `BLOB` |
+| `decimal32/64/128/256(p, s)` | `DECIMAL(p,s)` |
+| `list`, `large_list`, `list_view`, `large_list_view` | `T[]` |
+| `fixed_size_list(n)` | `T[n]` |
+| sparse union | `UNION(...)` |
+| `arrow.uuid` / `arrow.bool8` extension | `UUID` / `BOOLEAN` |
+| `geoarrow.*` extension | `GEOMETRY` |
+| `null` (all-null column) | `VARCHAR` |
+
+DuckDB's Arrow reader misreads `day_time` intervals, so the server converts a
+top-level `day_time` column to `month_day_nano` before loading it (in every
+mode); a `day_time` nested in a list, struct or map is refused.
+
+An Arrow type DuckDB cannot read (`halffloat`, dense unions) is refused with
+`Arrow type <type> has no DuckDB equivalent for bulk ingest`. Before v1.42.0,
+types missing from the server's mapping (including `month_day_nano`
+intervals) silently became `VARCHAR` columns.
+
 ## Complete Example
 
 Here's a complete example that generates TPC-H data and measures ingestion performance:

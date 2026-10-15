@@ -102,6 +102,65 @@ arrow::Result<duckdb::Value> ArrowVariantScalarToDuckDBValue(const arrow::Scalar
 
 namespace {
 
+bool ContainsDayTimeInterval(const arrow::DataType& type) {
+  switch (type.id()) {
+    case arrow::Type::INTERVAL_DAY_TIME:
+      return true;
+    case arrow::Type::DICTIONARY:
+      return ContainsDayTimeInterval(
+          *static_cast<const arrow::DictionaryType&>(type).value_type());
+    case arrow::Type::EXTENSION:
+      return ContainsDayTimeInterval(
+          *static_cast<const arrow::ExtensionType&>(type).storage_type());
+    default:
+      for (const auto& child : type.fields()) {
+        if (ContainsDayTimeInterval(*child->type())) return true;
+      }
+      return false;
+  }
+}
+
+arrow::Result<std::shared_ptr<arrow::Array>> DayTimeToMonthDayNano(
+    const arrow::Array& array) {
+  const auto& day_time = static_cast<const arrow::DayTimeIntervalArray&>(array);
+  arrow::MonthDayNanoIntervalBuilder builder;
+  ARROW_RETURN_NOT_OK(builder.Reserve(day_time.length()));
+  for (int64_t i = 0; i < day_time.length(); ++i) {
+    if (day_time.IsNull(i)) {
+      builder.UnsafeAppendNull();
+      continue;
+    }
+    const auto value = day_time.GetValue(i);
+    builder.UnsafeAppend(arrow::MonthDayNanoIntervalType::MonthDayNanos{
+        /*months=*/0, /*days=*/value.days,
+        /*nanoseconds=*/int64_t{value.milliseconds} * 1000000});
+  }
+  return builder.Finish();
+}
+
+}  // namespace
+
+arrow::Result<std::shared_ptr<arrow::Schema>> IngestSchema(
+    const std::shared_ptr<arrow::Schema>& client_schema) {
+  auto schema = client_schema;
+  for (int i = 0; i < client_schema->num_fields(); ++i) {
+    const auto& field = client_schema->field(i);
+    if (field->type()->id() == arrow::Type::INTERVAL_DAY_TIME) {
+      ARROW_ASSIGN_OR_RAISE(
+          schema,
+          schema->SetField(i, field->WithType(arrow::month_day_nano_interval())));
+    } else if (ContainsDayTimeInterval(*field->type())) {
+      return arrow::Status::NotImplemented(
+          "Column \"", field->name(), "\" (", field->type()->ToString(),
+          "): a day_time interval nested in another type cannot be ingested; "
+          "send it as month_day_nano");
+    }
+  }
+  return schema;
+}
+
+namespace {
+
 int64_t RecordBatchSizeBytes(const std::shared_ptr<arrow::RecordBatch>& batch) {
   int64_t total = 0;
   std::function<void(const std::shared_ptr<arrow::ArrayData>&)> visit =
@@ -137,6 +196,18 @@ arrow::Status FlightIngestBatchReader::ReadNext(std::shared_ptr<arrow::RecordBat
       ::gizmosql::metrics::RecordRowsTransferred("inbound", rows);
       ::gizmosql::metrics::RecordBytesTransferred("inbound",
                                                   RecordBatchSizeBytes(chunk.data));
+    }
+    // Present day_time columns as month_day_nano (see IngestSchema()).
+    auto columns = chunk.data->columns();
+    bool converted = false;
+    for (auto& column : columns) {
+      if (column->type_id() == arrow::Type::INTERVAL_DAY_TIME) {
+        ARROW_ASSIGN_OR_RAISE(column, DayTimeToMonthDayNano(*column));
+        converted = true;
+      }
+    }
+    if (converted) {
+      chunk.data = arrow::RecordBatch::Make(schema_, rows, std::move(columns));
     }
     *batch = std::move(chunk.data);
     return arrow::Status::OK();

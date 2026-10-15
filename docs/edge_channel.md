@@ -16,7 +16,7 @@ use new DuckDB features early. It is the third of GizmoSQL's release channels
 |------------|--------------------------------------------------------|--------------|
 | **Stable** | Latest DuckDB minor release (e.g. `v1.5.6`)            | Production |
 | **LTS**    | Most recent DuckDB LTS release (e.g. `v1.4.5`)         | Production that favors a slower-moving engine |
-| **Edge**   | Next DuckDB major, pre-release (`v2.0.0-alpha43763`)   | **Evaluation and testing only** |
+| **Edge**   | Next DuckDB major, pre-release (`v2.0.0-alpha46057`)   | **Evaluation and testing only** |
 
 All three channels share the same GizmoSQL code, flags, API and protocol; edge
 only changes which DuckDB is linked in.
@@ -46,7 +46,7 @@ GizmoSQL:
   profile layout — total query time is `$.query.total_time` rather than
   `$.latency` (see [Session instrumentation](session_instrumentation.md)).
 - **Extensions** come from DuckDB's repository for that exact pre-release
-  (`extensions.duckdb.org/v2.0.0-alpha43763/…`); not every community extension
+  (`extensions.duckdb.org/v2.0.0-alpha46057/…`); not every community extension
   is published for it.
 
 ## Telling an edge build apart
@@ -61,14 +61,14 @@ $ gizmosql_client_edge --version
 GizmoSQL Client v1.40.0-EDGE
 
 $ gizmosql_server_edge --print-duckdb-version
-v2.0.0-alpha43763
+v2.0.0-alpha46057
 ```
 
 At startup it logs the channel and a warning:
 
 ```text
-INFO ... GizmoSQL server version: v1.40.0-EDGE - with engine: DuckDB (edge channel — DuckDB v2.0.0-alpha43763) - will listen on grpc+tcp://0.0.0.0:31337
-WARN ... This is an EDGE channel build of GizmoSQL, on a pre-release DuckDB (v2.0.0-alpha43763). It is EXPERIMENTAL and NOT meant for production workloads: behavior, storage format and extensions can change or break between builds. Use the stable or LTS channel for production.
+INFO ... GizmoSQL server version: v1.40.0-EDGE - with engine: DuckDB (edge channel — DuckDB v2.0.0-alpha46057) - will listen on grpc+tcp://0.0.0.0:31337
+WARN ... This is an EDGE channel build of GizmoSQL, on a pre-release DuckDB (v2.0.0-alpha46057). It is EXPERIMENTAL and NOT meant for production workloads: behavior, storage format and extensions can change or break between builds. Use the stable or LTS channel for production.
 ```
 
 And from SQL:

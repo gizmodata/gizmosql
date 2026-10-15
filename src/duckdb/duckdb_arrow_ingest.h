@@ -54,13 +54,23 @@ bool IsGeoArrowField(const arrow::Field& field);
 /// is how it arrives).
 bool IsArrowVariantField(const arrow::Field& field);
 
+/// The schema DuckDB is shown for an incoming ingest stream. DuckDB's
+/// arrow_scan reads an Arrow `day_time` interval (int32 days + int32
+/// milliseconds) as a single int64 of milliseconds, so its values come out
+/// wrong or overflow. Top-level `day_time` columns are therefore presented as
+/// `month_day_nano` (FlightIngestBatchReader converts each batch); a
+/// `day_time` nested in another type is refused.
+arrow::Result<std::shared_ptr<arrow::Schema>> IngestSchema(
+    const std::shared_ptr<arrow::Schema>& client_schema);
+
 /// The DuckDB VARIANT value of one `arrow.parquet.variant` value (a struct of
 /// `metadata` and `value` Variant-encoded binaries). DuckDB 2.0+ only.
 arrow::Result<duckdb::Value> ArrowVariantScalarToDuckDBValue(const arrow::Scalar& scalar);
 
 /// RecordBatchReader over a Flight DoPut message stream. Metadata-only
 /// chunks are skipped; rows and bytes are counted (and reported to
-/// telemetry) as batches are pulled.
+/// telemetry) as batches are pulled. `schema` is the IngestSchema() of the
+/// client's schema: batches are converted to it (day_time -> month_day_nano).
 class FlightIngestBatchReader : public arrow::RecordBatchReader {
  public:
   FlightIngestBatchReader(arrow::flight::FlightMessageReader* reader,

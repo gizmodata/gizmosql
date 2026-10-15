@@ -132,7 +132,13 @@ class DuckDBTransactionGuard {
   bool committed_;
 };
 
-duckdb::LogicalType GetDuckDBTypeFromArrowType(
+Result<duckdb::LogicalType> GetDuckDBTypeFromArrowField(const arrow::Field& field);
+
+// The DuckDB column type bulk ingest creates for an Arrow type: the type
+// DuckDB's own arrow_scan reads it as (what DuckDB's ADBC ingest creates), so
+// the INSERT ... SELECT from the scan never has to cast. An Arrow type with no
+// DuckDB equivalent is an error rather than a silent VARCHAR column (#196).
+Result<duckdb::LogicalType> GetDuckDBTypeFromArrowType(
     const std::shared_ptr<arrow::DataType>& arrow_type) {
   using arrow::Type;
 
@@ -165,10 +171,13 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
 
     case Type::STRING:
     case Type::LARGE_STRING:
+    case Type::STRING_VIEW:
       return duckdb::LogicalType::VARCHAR;
 
     case Type::BINARY:
     case Type::LARGE_BINARY:
+    case Type::BINARY_VIEW:
+    case Type::FIXED_SIZE_BINARY:
       return duckdb::LogicalType::BLOB;
 
     case Type::DATE32:
@@ -198,17 +207,19 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
       return duckdb::LogicalType::TIMESTAMP;
     }
 
+    // month_day_nano is what ADBC drivers return for SQL INTERVAL columns.
     case Type::DURATION:
+    case Type::INTERVAL_MONTH_DAY_NANO:
+    case Type::INTERVAL_MONTHS:
       return duckdb::LogicalType::INTERVAL;
+    // (day_time arrives here already converted to month_day_nano; see IngestSchema.)
 
-    case Type::DECIMAL128: {
-      auto dec_type = std::static_pointer_cast<arrow::Decimal128Type>(arrow_type);
-      return duckdb::LogicalType::DECIMAL(dec_type->precision(), dec_type->scale());
-    }
-
+    case Type::DECIMAL32:
+    case Type::DECIMAL64:
+    case Type::DECIMAL128:
     case Type::DECIMAL256: {
-      auto dec_type = std::static_pointer_cast<arrow::Decimal256Type>(arrow_type);
-      return duckdb::LogicalType::DECIMAL(dec_type->precision(), dec_type->scale());
+      const auto& dec_type = static_cast<const arrow::DecimalType&>(*arrow_type);
+      return duckdb::LogicalType::DECIMAL(dec_type.precision(), dec_type.scale());
     }
 
     case Type::NA:
@@ -219,67 +230,99 @@ duckdb::LogicalType GetDuckDBTypeFromArrowType(
       return duckdb::LogicalType::VARCHAR;
 
     case Type::LIST:
-    case Type::LARGE_LIST: {
-      auto list_type = std::static_pointer_cast<arrow::BaseListType>(arrow_type);
-      auto child_type = GetDuckDBTypeFromArrowType(list_type->value_type());
+    case Type::LARGE_LIST:
+    case Type::LIST_VIEW:
+    case Type::LARGE_LIST_VIEW: {
+      const auto& list_type = static_cast<const arrow::BaseListType&>(*arrow_type);
+      ARROW_ASSIGN_OR_RAISE(auto child_type,
+                            GetDuckDBTypeFromArrowField(*list_type.value_field()));
       return duckdb::LogicalType::LIST(child_type);
     }
 
     case Type::FIXED_SIZE_LIST: {
-      auto fsl_type = std::static_pointer_cast<arrow::FixedSizeListType>(arrow_type);
-      auto child_type = GetDuckDBTypeFromArrowType(fsl_type->value_type());
-      return duckdb::LogicalType::ARRAY(child_type, fsl_type->list_size());
+      const auto& fsl_type = static_cast<const arrow::FixedSizeListType&>(*arrow_type);
+      ARROW_ASSIGN_OR_RAISE(auto child_type,
+                            GetDuckDBTypeFromArrowField(*fsl_type.value_field()));
+      return duckdb::LogicalType::ARRAY(child_type, fsl_type.list_size());
     }
 
     case Type::STRUCT: {
-      auto struct_type = std::static_pointer_cast<arrow::StructType>(arrow_type);
       duckdb::child_list_t<duckdb::LogicalType> children;
-      for (int i = 0; i < struct_type->num_fields(); i++) {
-        auto field = struct_type->field(i);
-        children.push_back(
-            std::make_pair(compat::Name(field->name()), GetDuckDBTypeFromArrowType(field->type())));
+      for (const auto& child : arrow_type->fields()) {
+        ARROW_ASSIGN_OR_RAISE(auto child_type, GetDuckDBTypeFromArrowField(*child));
+        children.push_back(std::make_pair(compat::Name(child->name()), child_type));
       }
       return duckdb::LogicalType::STRUCT(std::move(children));
     }
 
+    case Type::SPARSE_UNION: {
+      duckdb::child_list_t<duckdb::LogicalType> members;
+      for (const auto& member : arrow_type->fields()) {
+        ARROW_ASSIGN_OR_RAISE(auto member_type, GetDuckDBTypeFromArrowField(*member));
+        members.push_back(std::make_pair(compat::Name(member->name()), member_type));
+      }
+      return duckdb::LogicalType::UNION(std::move(members));
+    }
+
     case Type::MAP: {
-      auto map_type = std::static_pointer_cast<arrow::MapType>(arrow_type);
-      auto key_type = GetDuckDBTypeFromArrowType(map_type->key_type());
-      auto value_type = GetDuckDBTypeFromArrowType(map_type->item_type());
+      const auto& map_type = static_cast<const arrow::MapType&>(*arrow_type);
+      ARROW_ASSIGN_OR_RAISE(auto key_type, GetDuckDBTypeFromArrowField(*map_type.key_field()));
+      ARROW_ASSIGN_OR_RAISE(auto value_type,
+                            GetDuckDBTypeFromArrowField(*map_type.item_field()));
       return duckdb::LogicalType::MAP(key_type, value_type);
     }
 
+    case Type::DICTIONARY:
+      return GetDuckDBTypeFromArrowType(
+          static_cast<const arrow::DictionaryType&>(*arrow_type).value_type());
+
+    case Type::RUN_END_ENCODED:
+      return GetDuckDBTypeFromArrowType(
+          static_cast<const arrow::RunEndEncodedType&>(*arrow_type).value_type());
+
+    case Type::EXTENSION:
+      // A registered extension type other than the ones GetDuckDBTypeFromArrowField
+      // recognizes: store its storage type.
+      return GetDuckDBTypeFromArrowType(
+          static_cast<const arrow::ExtensionType&>(*arrow_type).storage_type());
+
     default:
-      return duckdb::LogicalType::VARCHAR;  // safe fallback
+      // e.g. halffloat or a dense union, which DuckDB's arrow_scan cannot read either.
+      return Status::NotImplemented("Arrow type ", arrow_type->ToString(),
+                                    " has no DuckDB equivalent for bulk ingest");
   }
 }
 
+// The Arrow extension name on a field: from a registered extension type, or
+// from the field metadata when the receiving process doesn't register it.
+std::string ArrowExtensionName(const arrow::Field& field) {
+  if (field.type()->id() == arrow::Type::EXTENSION) {
+    return static_cast<const arrow::ExtensionType&>(*field.type()).extension_name();
+  }
+  const auto& metadata = field.metadata();
+  if (!metadata) return "";
+  const int idx = metadata->FindKey("ARROW:extension:name");
+  return idx >= 0 ? metadata->value(idx) : "";
+}
+
 // GetDuckDBTypeFromArrowType, but aware of extension tags carried on the field
-// (and its nested fields): arrow.parquet.variant becomes VARIANT.
-duckdb::LogicalType GetDuckDBTypeFromArrowField(const arrow::Field& field) {
+// (and its nested fields): arrow.parquet.variant becomes VARIANT (DuckDB 2.x;
+// 1.x keeps its storage struct), arrow.uuid UUID and arrow.bool8 BOOLEAN, as
+// DuckDB's arrow_scan reads them.
+Result<duckdb::LogicalType> GetDuckDBTypeFromArrowField(const arrow::Field& field) {
   if (IsArrowVariantField(field)) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
     return duckdb::LogicalType::VARIANT();
 #endif
   }
-  const auto& type = field.type();
-  switch (type->id()) {
-    case arrow::Type::LIST:
-    case arrow::Type::LARGE_LIST: {
-      const auto& list_type = static_cast<const arrow::BaseListType&>(*type);
-      return duckdb::LogicalType::LIST(GetDuckDBTypeFromArrowField(*list_type.value_field()));
-    }
-    case arrow::Type::STRUCT: {
-      duckdb::child_list_t<duckdb::LogicalType> children;
-      for (const auto& child : type->fields()) {
-        children.push_back(
-            std::make_pair(compat::Name(child->name()), GetDuckDBTypeFromArrowField(*child)));
-      }
-      return duckdb::LogicalType::STRUCT(children);
-    }
-    default:
-      return GetDuckDBTypeFromArrowType(type);
+  const std::string extension_name = ArrowExtensionName(field);
+  if (extension_name == "arrow.uuid") {
+    return duckdb::LogicalType::UUID;
   }
+  if (extension_name == "arrow.bool8") {
+    return duckdb::LogicalType::BOOLEAN;
+  }
+  return GetDuckDBTypeFromArrowType(field.type());
 }
 
 std::string QuoteIdent(const std::string& name) {
@@ -600,7 +643,8 @@ Result<std::string> GenerateCreateTableSQLFromArrowSchema(
     // geoarrow.* extension columns (what GizmoSQL itself emits for GEOMETRY)
     // become GEOMETRY, not BLOB; DuckDB's arrow_scan materializes them as
     // GEOMETRY directly when the spatial extension is loaded.
-    const duckdb::LogicalType duckdb_type = GetDuckDBTypeFromArrowField(*field);
+    ARROW_ASSIGN_OR_RAISE(const duckdb::LogicalType duckdb_type,
+                          GetDuckDBTypeFromArrowField(*field));
     if (duckdb_type.id() == duckdb::LogicalTypeId::STRUCT &&
         duckdb::StructType::GetChildCount(duckdb_type) == 0) {
       return Status::Invalid("Cannot create column ", QuoteIdent(field->name()),
@@ -2479,7 +2523,8 @@ class DuckDBFlightSqlServer::Impl {
     target_table += QuoteIdent(command.table);
 
     // 2. Basic metadata up front (no transaction yet)
-    ARROW_ASSIGN_OR_RAISE(auto arrow_schema, reader->GetSchema());
+    ARROW_ASSIGN_OR_RAISE(auto client_schema, reader->GetSchema());
+    ARROW_ASSIGN_OR_RAISE(auto arrow_schema, IngestSchema(client_schema));
 
     bool target_table_exists = false;
     {

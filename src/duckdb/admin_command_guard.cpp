@@ -678,7 +678,7 @@ bool ContainsCaseInsensitive(const std::string& haystack,
 }  // namespace
 
 std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
-  dd::Parser parser;
+  auto parser = compat::StandaloneParser();
   try {
     // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on
     // DuckDB 2.x, whose grammar only parses it quoted.
@@ -707,7 +707,7 @@ std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) 
                   [](unsigned char a, unsigned char b) { return std::tolower(a) == b; });
   if (it == sql.end()) return std::nullopt;
 
-  dd::Parser parser;
+  auto parser = compat::StandaloneParser();
   try {
     parser.ParseQuery(sql);
   } catch (...) {
@@ -723,7 +723,7 @@ std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) 
 bool IsSecretDirectorySet(const std::string& sql) {
   static const std::string kName = "secret_directory";
   if (!ContainsCaseInsensitive(sql, kName)) return false;
-  dd::Parser parser;
+  auto parser = compat::StandaloneParser();
   try {
     parser.ParseQuery(sql);
   } catch (...) {

@@ -53,9 +53,9 @@ set(DUCKDB_LTS_VERSION "v1.4.5" CACHE STRING
 # ("<commit10>/<version>") and keep DUCKDB_CLI_STAGED in .github/workflows/ci.yml
 # in sync. Once the version is tagged, set DUCKDB_EDGE_GIT_REF to "" (it then
 # defaults to the version tag).
-set(DUCKDB_EDGE_VERSION "v2.0.0-alpha43763" CACHE STRING
+set(DUCKDB_EDGE_VERSION "v2.0.0-alpha46057" CACHE STRING
     "DuckDB version used by GIZMOSQL_DUCKDB_CHANNEL=edge")
-set(DUCKDB_EDGE_GIT_REF "96063b9e39749cc0f087bb11501d7edbee527957" CACHE STRING
+set(DUCKDB_EDGE_GIT_REF "b15358c371daf10dad799a43b6167f6ccdce84d8" CACHE STRING
     "Git ref (commit SHA) for DUCKDB_EDGE_VERSION when it is not a tag")
 
 set(GIZMOSQL_DUCKDB_CHANNEL_EDGE 0)
@@ -610,6 +610,20 @@ endif()
 # reference the engine. GNU ld resolves archives in a single left-to-right
 # pass, so name the engine archive once more after the extension archives.
 if(GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY)
+    # Since v2.0.0-alpha46057, INSTALL/LOAD of external extensions and DuckDB's
+    # built-in HTTP client (which INSTALL downloads with) are separate
+    # "capability" archives, registered like static extensions; without them
+    # every INSTALL fails with "this build does not link the loadable_extensions
+    # library". iOS (stable-only, and no runtime code loading) never takes this.
+    if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_link_libraries(duckdb
+                INTERFACE
+                "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_loadable_extensions${LIB_SUFFIX}"
+                "${DUCKDB_INSTALL_DIR}/lib/${LIB_PREFIX}duckdb_httplib${LIB_SUFFIX}"
+        )
+        # Tells src/duckdb/duckdb_static_extensions.cpp to register them.
+        target_compile_definitions(duckdb INTERFACE GIZMOSQL_DUCKDB_LOADABLE_EXTENSIONS=1)
+    endif()
     target_link_libraries(duckdb INTERFACE "${DUCKDB_LIBRARY_PATH}")
 endif()
 

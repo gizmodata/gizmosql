@@ -37,6 +37,10 @@ int32_t duckdb_extension_ducklake_describe(duckdb_extension_descriptor* descript
 int32_t duckdb_extension_httpfs_describe(duckdb_extension_descriptor* descriptor);
 int32_t duckdb_extension_postgres_scanner_describe(duckdb_extension_descriptor* descriptor);
 #endif
+#if defined(GIZMOSQL_DUCKDB_LOADABLE_EXTENSIONS)
+int32_t duckdb_extension_loadable_extensions_describe(duckdb_extension_descriptor* descriptor);
+int32_t duckdb_extension_httplib_describe(duckdb_extension_descriptor* descriptor);
+#endif
 }
 #endif
 
@@ -60,6 +64,12 @@ arrow::Status RegisterStaticExtensions() {
         {"ducklake", duckdb_extension_ducklake_describe},
         {"httpfs", duckdb_extension_httpfs_describe},
         {"postgres_scanner", duckdb_extension_postgres_scanner_describe},
+#endif
+#if defined(GIZMOSQL_DUCKDB_LOADABLE_EXTENSIONS)
+        // Not extensions but DuckDB "capabilities": INSTALL/LOAD of external
+        // extensions, and the built-in HTTP client INSTALL downloads with.
+        {"loadable_extensions", duckdb_extension_loadable_extensions_describe},
+        {"httplib", duckdb_extension_httplib_describe},
 #endif
     };
     for (const auto& extension : extensions) {

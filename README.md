@@ -73,9 +73,9 @@ configurable HTTP port/bind address, SQL access, and Prometheus/Grafana setup.
 
 | Component                                                                        | Version |
 |----------------------------------------------------------------------------------|---------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.6 *(stable)* · v1.4.5 *([LTS](https://docs.gizmosql.com/lts_channel/))* · v2.0.0-alpha43763 *([edge](https://docs.gizmosql.com/edge_channel/) — experimental, not for production)* |
+| [DuckDB](https://duckdb.org)                                                     | v1.5.6 *(stable)* · v1.4.5 *([LTS](https://docs.gizmosql.com/lts_channel/))* · v2.0.0-alpha46057 *([edge](https://docs.gizmosql.com/edge_channel/) — experimental, not for production)* |
 | [SQLite](https://sqlite.org)                                                     | 3.53.4  |
-| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 25.0.1  |
+| [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 26.0.0  |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2  |
 | [OpenTelemetry C++](https://opentelemetry.io/docs/languages/cpp/)                | v1.29.0 |
 | [nlohmann/json](https://json.nlohmann.me)                                        | v3.12.0 |

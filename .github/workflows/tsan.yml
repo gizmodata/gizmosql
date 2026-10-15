@@ -85,7 +85,7 @@ jobs:
             !build/third_party/src
             build/third_party/src/*
             !build/third_party/src/duckdb_project*
-          key: tsan-deps-v1-linux-amd64-apache-arrow-25.0.1-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'CMakeLists.txt') }}
+          key: tsan-deps-v1-linux-amd64-apache-arrow-26.0.0-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in', 'CMakeLists.txt') }}
 
       - name: Restore DuckDB cache (TSan)
         id: duckdb-cache
@@ -97,7 +97,7 @@ jobs:
           key: tsan-duckdb-v1-linux-amd64-stable-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'CMakeLists.txt') }}
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Configure and build (ThreadSanitizer)
         run: |

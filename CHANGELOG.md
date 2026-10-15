@@ -7,9 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Bulk ingest created `month_day_nano` interval columns as `VARCHAR`**
+  ([#196](https://github.com/gizmodata/gizmosql/issues/196)). A table created by
+  `adbc_ingest` / `CommandStatementIngest` now gets `INTERVAL` for Arrow
+  `month_day_nano`, `month` and `day_time` intervals (what ADBC drivers return
+  for SQL `INTERVAL` columns, e.g. Oracle `INTERVAL DAY TO SECOND`), so interval
+  math such as `epoch(col)` works on them. The same gap sent other Arrow types to
+  `VARCHAR` too; each now gets the type DuckDB's own Arrow reader (and
+  `adbc_driver_duckdb`) gives it: `string_view` → `VARCHAR`; `binary_view` and
+  `fixed_size_binary` → `BLOB`; dictionary and run-end-encoded columns → their
+  value type; `decimal32`/`decimal64` → `DECIMAL(p,s)`; `list_view` /
+  `large_list_view` → lists; sparse unions → `UNION`; `arrow.uuid` → `UUID`;
+  `arrow.bool8` → `BOOLEAN`. An Arrow type DuckDB cannot read (`halffloat`, dense
+  unions) is now refused with a clear error instead of producing a `VARCHAR`
+  column. Existing tables (append mode) keep their column types. DuckDB's own
+  Arrow reader misreads `day_time` intervals (it takes the int32 days + int32
+  milliseconds pair as one int64 of milliseconds, so values came out wrong or
+  failed with `Could not convert Interval to Microsecond`); the server now
+  converts top-level `day_time` columns to `month_day_nano` before loading them,
+  in every ingest mode, and refuses a `day_time` nested in a list, struct or map.
+  See `docs/bulk_ingestion.md`.
+
 ### Changed
+- **Apache Arrow 26.0.0** (was 25.0.1).
+- **Edge channel: DuckDB `v2.0.0-alpha46057`** (commit `b15358c371`, was
+  `v2.0.0-alpha43763`), the latest published DuckDB 2.0 alpha build. That build
+  moved runtime `INSTALL`/`LOAD` and its built-in HTTP client into separate
+  libraries, which the edge server now links and registers.
+- Dependency bumps: cpp-httplib v0.61.0 (was v0.58.0), SQLite 3.54.0 (was
+  3.53.4), GoogleTest v1.18.0 (was v1.17.0, tests only); the Python helper
+  requirements pin `duckdb==1.5.6` and `adbc-driver-gizmosql>=2.0.15`.
 - The `-adbc` images bundle gizmosql-adbc **v2.0.15** (was v2.0.14), whose Linux driver library is built for
-  glibc 2.17 instead of 2.34.
+  glibc 2.17 instead of 2.34; GizmoData's Oracle ADBC driver **v1.0.1** (was v0.4.2) and Db2 ADBC driver
+  **v0.2.1** (was v0.1.11).
 
 ## [1.41.0] - 2026-10-05
 
