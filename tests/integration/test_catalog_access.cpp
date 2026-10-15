@@ -1402,5 +1402,22 @@ TEST_F(CatalogAccessServerFixture, ReadOnlyPrincipalsCanRunPivot) {
     auto status = ExecuteAndConsume(*client, call_options,
                                     "PIVOT pivot_src ON k USING sum(v)");
     EXPECT_TRUE(status.ok()) << status.ToString();
+
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    // Only DuckDB's own PIVOT enum helper is exempt from the temp-catalog write
+    // check: other temp writes in a batch are still refused. (DuckDB 1.x does
+    // not report temp-catalog writes at all, so this holds on 2.x only.)
+    for (const std::string sql :
+         {"SELECT 1; CREATE TEMPORARY TABLE pivot_tmp AS SELECT 1 AS x",
+          "SELECT 1; CREATE TEMPORARY TYPE pivot_mood AS ENUM ('a', 'b')"}) {
+      auto refused = ExecuteAndConsume(*client, call_options, sql);
+      ASSERT_FALSE(refused.ok()) << sql;
+      EXPECT_TRUE(refused.message().find("cannot run statements that modify state") !=
+                      std::string::npos ||
+                  refused.message().find("do not have write access to catalog 'temp'") !=
+                      std::string::npos)
+          << sql << ": " << refused.ToString();
+    }
+#endif
   }
 }

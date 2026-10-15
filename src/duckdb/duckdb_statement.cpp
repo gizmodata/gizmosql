@@ -34,6 +34,8 @@
 #include <duckdb/common/arrow/arrow_converter.hpp>
 #include <duckdb/function/table/arrow/arrow_duck_schema.hpp>
 #include <duckdb/parser/parser.hpp>
+#include <duckdb/execution/operator/schema/physical_create_type.hpp>
+#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/common/enums/set_scope.hpp>
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -870,6 +872,24 @@ arrow::Status CheckStatementAccess(const std::shared_ptr<ClientSession>& client_
   return arrow::Status::OK();
 }
 
+// DuckDB expands a PIVOT whose column values come from the data into
+// `CREATE TEMPORARY TYPE __pivot_enum_<uuid> AS ENUM (SELECT DISTINCT ...)`
+// followed by the SELECT. Since DuckDB v2.0.0-alpha46057 that helper reports a
+// write to the session-local temp catalog. It is not a write by the user, so it
+// must not count against read-only principals.
+bool IsPivotEnumHelper(duckdb::PreparedStatementData& prepared) {
+  static const std::string kPrefix = "__pivot_enum_";
+  // (unbound_statement is not set yet when OnFinalizePrepare runs; the plan is.)
+  if (prepared.statement_type != duckdb::StatementType::CREATE_STATEMENT ||
+      !prepared.physical_plan) {
+    return false;
+  }
+  auto& root = prepared.physical_plan->Root();
+  if (root.type != duckdb::PhysicalOperatorType::CREATE_TYPE) return false;
+  const auto& info = *root.Cast<duckdb::PhysicalCreateType>().info;
+  return info.temporary && compat::TypeName(info).rfind(kPrefix, 0) == 0;
+}
+
 // Applies CheckStatementAccess() to every statement DuckDB prepares on a
 // session's connection while registered. The direct-execution fallback (SQL
 // that cannot be prepared as one statement: several statements, or one that
@@ -900,8 +920,16 @@ class DirectExecutionAccessGuard : public duckdb::ClientContextState {
     if (!session) {
       throw duckdb::PermissionException("Access denied: the session has ended.");
     }
-    auto status = CheckStatementAccess(session, prepared.properties, handle_, logged_sql_,
-                                       flight_method_, is_internal_);
+    auto properties = prepared.properties;
+    if (IsPivotEnumHelper(prepared)) {
+      // Its enum's source query still goes through the read checks below.
+      auto& modified = properties.modified_databases;
+      for (auto it = modified.begin(); it != modified.end();) {
+        it = compat::Str(it->first) == TEMP_CATALOG ? modified.erase(it) : std::next(it);
+      }
+    }
+    auto status = CheckStatementAccess(session, std::move(properties), handle_,
+                                       logged_sql_, flight_method_, is_internal_);
     if (!status.ok()) throw duckdb::PermissionException(status.message());
     return duckdb::RebindQueryInfo::DO_NOT_REBIND;
   }

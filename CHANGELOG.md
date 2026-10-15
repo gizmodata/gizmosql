@@ -34,7 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Edge channel: DuckDB `v2.0.0-alpha46057`** (commit `b15358c371`, was
   `v2.0.0-alpha43763`), the latest published DuckDB 2.0 alpha build. That build
   moved runtime `INSTALL`/`LOAD` and its built-in HTTP client into separate
-  libraries, which the edge server now links and registers.
+  libraries, which the edge server now links and registers. It also reports
+  the temporary enum type a PIVOT creates as a write, which made read-only
+  principals' PIVOTs fail on edge; that helper is now exempt (other temporary
+  objects stay refused for them).
 - Dependency bumps: cpp-httplib v0.61.0 (was v0.58.0), SQLite 3.54.0 (was
   3.53.4), GoogleTest v1.18.0 (was v1.17.0, tests only); the Python helper
   requirements pin `duckdb==1.5.6` and `adbc-driver-gizmosql>=2.0.15`.

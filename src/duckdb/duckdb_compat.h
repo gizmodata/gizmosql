@@ -37,6 +37,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/parsed_data/create_type_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION < 2
 #include <duckdb/main/prepared_statement_data.hpp>
@@ -82,6 +83,16 @@ std::unordered_map<std::string, typename MAP::mapped_type> StringKeyed(const MAP
   std::unordered_map<std::string, typename MAP::mapped_type> result;
   for (const auto& [name, value] : map) result.emplace(Str(name), value);
   return result;
+}
+
+// ---- parsed statements -----------------------------------------------------
+
+inline const std::string& TypeName(const duckdb::CreateTypeInfo& info) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  return Str(info.GetTypeName());
+#else
+  return info.name;
+#endif
 }
 
 // ---- parser ----------------------------------------------------------------
