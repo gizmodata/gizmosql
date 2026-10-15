@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.42.0] - 2026-10-15
+
 ### Fixed
 - **Bulk ingest created `month_day_nano` interval columns as `VARCHAR`**
   ([#196](https://github.com/gizmodata/gizmosql/issues/196)). A table created by
