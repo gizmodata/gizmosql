@@ -77,3 +77,26 @@ else()
   )
   file(WRITE "${TOOLCHAIN_FILE}" "${CONTENT}")
 endif()
+
+# Fix: Arrow 26 bundles uriparser 1.0.2, which calls reallocarray() whenever
+# check_function_exists finds the symbol, but only defines the feature macros
+# that declare it for glibc >= 2.29. On the glibc 2.28 portable Linux build
+# (manylinux_2_28) the symbol exists while the declaration needs _GNU_SOURCE,
+# so UriMemory.c fails with "implicit declaration of function 'reallocarray'".
+# Presetting HAVE_REALLOCARRAY=0 skips that check; uriparser then uses its own
+# overflow-checked realloc() path, on every platform.
+file(READ "${TOOLCHAIN_FILE}" CONTENT)
+set(URIPARSER_ANCHOR "  set(URIPARSER_ENABLE_INSTALL OFF)\n")
+string(FIND "${CONTENT}" "HAVE_REALLOCARRAY" URIPARSER_ALREADY_PATCHED)
+string(FIND "${CONTENT}" "${URIPARSER_ANCHOR}" URIPARSER_ANCHOR_POS)
+if(NOT URIPARSER_ALREADY_PATCHED EQUAL -1)
+  # Already patched: the patch step ran on this source tree before.
+elseif(URIPARSER_ANCHOR_POS EQUAL -1)
+  message(WARNING "patch_arrow.cmake: uriparser block not found in ${TOOLCHAIN_FILE}; "
+                  "reallocarray workaround not applied")
+else()
+  string(REPLACE "${URIPARSER_ANCHOR}"
+    "${URIPARSER_ANCHOR}  # GizmoSQL patch: no reallocarray (glibc 2.28 hides its declaration).\n  set(HAVE_REALLOCARRAY 0)\n"
+    CONTENT "${CONTENT}")
+  file(WRITE "${TOOLCHAIN_FILE}" "${CONTENT}")
+endif()
