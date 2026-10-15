@@ -51,6 +51,13 @@ if [ ! -f "${HOST_BUILD_DIR}/protoc" ] || [ ! -f "${HOST_BUILD_DIR}/grpc_cpp_plu
     # 'iOS', but linking in dylib built for 'macOS'". Scrub those vars and
     # pin sysroot/arch explicitly.
     HOST_SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+    # Build the host gRPC against Homebrew's OpenSSL 3: the bundled gRPC does
+    # not compile against OpenSSL 4 (const X509_NAME from X509_CRL_get_issuer),
+    # which newer macOS runner images install as plain `openssl`.
+    HOST_OPENSSL_ARGS=()
+    if command -v brew >/dev/null 2>&1 && HOST_OPENSSL_PREFIX="$(brew --prefix --installed openssl@3 2>/dev/null)"; then
+        HOST_OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR="${HOST_OPENSSL_PREFIX}" -DOPENSSL_USE_STATIC_LIBS=TRUE)
+    fi
     env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \
         -u WATCHOS_DEPLOYMENT_TARGET -u XROS_DEPLOYMENT_TARGET \
     cmake "${REPO_ROOT}" \
@@ -60,7 +67,8 @@ if [ ! -f "${HOST_BUILD_DIR}/protoc" ] || [ ! -f "${HOST_BUILD_DIR}/grpc_cpp_plu
         -DCMAKE_OSX_ARCHITECTURES=arm64 \
         -DCMAKE_SYSTEM_NAME=Darwin \
         -DGIZMOSQL_ENTERPRISE=OFF \
-        -DWITH_OPENTELEMETRY=OFF
+        -DWITH_OPENTELEMETRY=OFF \
+        ${HOST_OPENSSL_ARGS[@]+"${HOST_OPENSSL_ARGS[@]}"}
 
     # Build just the proto tools (they are host-architecture binaries)
     env -u SDKROOT -u IPHONEOS_DEPLOYMENT_TARGET -u TVOS_DEPLOYMENT_TARGET \

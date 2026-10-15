@@ -2073,7 +2073,8 @@ jobs:
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
         run: |
-          brew install automake boost xcodegen ninja cmake
+          # openssl@3: the host-tools gRPC build needs it (see ios/scripts/build-ios-libs.sh).
+          brew install automake boost xcodegen ninja cmake openssl@3
 
       # Cache the heavy iOS deps build (DuckDB + arrow + extensions cross-compile).
       # Key on the inputs that materially change the output.
