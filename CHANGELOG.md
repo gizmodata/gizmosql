@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The `-adbc` images bundle gizmosql-adbc **v2.0.15** (was v2.0.14), whose Linux driver library is built for
+  glibc 2.17 instead of 2.34.
+
 ## [1.41.0] - 2026-10-05
 
 ### Added
