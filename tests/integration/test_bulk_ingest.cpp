@@ -531,8 +531,10 @@ arrow::Result<std::shared_ptr<arrow::Table>> QueryTable(IngestClient& c,
 std::map<std::string, std::string> ColumnTypes(IngestClient& c,
                                                const std::string& table_name) {
   std::map<std::string, std::string> types;
-  auto table = QueryTable(c, "SELECT column_name, data_type FROM information_schema.columns "
-                             "WHERE table_name = '" + table_name + "'");
+  auto table = QueryTable(c,
+                          "SELECT column_name, data_type FROM information_schema.columns "
+                          "WHERE table_name = '" +
+                              table_name + "'");
   EXPECT_TRUE(table.ok()) << table.status().ToString();
   if (!table.ok()) return types;
   for (int64_t i = 0; i < (*table)->num_rows(); ++i) {
@@ -562,12 +564,13 @@ std::vector<std::string> FirstRow(IngestClient& c, const std::string& sql) {
 // INTERVAL like a duration column does, months included.
 TEST_F(BulkIngestServerFixture, MonthDayNanoIntervalIngestsAsInterval) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-  ASSERT_ARROW_OK_AND_ASSIGN(auto c,
-                             ConnectIngestClient(GetPort(), GetUsername(), GetPassword()));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto c, ConnectIngestClient(GetPort(), GetUsername(), GetPassword()));
 
-  auto schema = arrow::schema({arrow::field("mdn", arrow::month_day_nano_interval()),
-                               arrow::field("ym", arrow::month_day_nano_interval()),
-                               arrow::field("dur", arrow::duration(arrow::TimeUnit::MICRO))});
+  auto schema =
+      arrow::schema({arrow::field("mdn", arrow::month_day_nano_interval()),
+                     arrow::field("ym", arrow::month_day_nano_interval()),
+                     arrow::field("dur", arrow::duration(arrow::TimeUnit::MICRO))});
   auto batch = arrow::RecordBatch::Make(
       schema, 1,
       {Json(arrow::month_day_nano_interval(), "[[0, 0, 7200000000000]]"),
@@ -581,8 +584,9 @@ TEST_F(BulkIngestServerFixture, MonthDayNanoIntervalIngestsAsInterval) {
   EXPECT_EQ(types.at("ym"), "INTERVAL");
   EXPECT_EQ(types.at("dur"), "INTERVAL");
 
-  EXPECT_EQ(FirstRow(c, "SELECT epoch(mdn), epoch(dur), ym::VARCHAR, "
-                        "ym = INTERVAL '1 year 2 months 3 days' FROM interval_ingest"),
+  EXPECT_EQ(FirstRow(c,
+                     "SELECT epoch(mdn), epoch(dur), ym::VARCHAR, "
+                     "ym = INTERVAL '1 year 2 months 3 days' FROM interval_ingest"),
             (std::vector<std::string>{"7200", "7200", "1 year 2 months 3 days", "true"}));
 }
 
@@ -591,19 +595,17 @@ TEST_F(BulkIngestServerFixture, MonthDayNanoIntervalIngestsAsInterval) {
 // value intact. Before #196 these all fell through to VARCHAR.
 TEST_F(BulkIngestServerFixture, ArrowTypesIngestAsTheirDuckDBTypes) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-  ASSERT_ARROW_OK_AND_ASSIGN(auto c,
-                             ConnectIngestClient(GetPort(), GetUsername(), GetPassword()));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto c, ConnectIngestClient(GetPort(), GetUsername(), GetPassword()));
 
   ASSERT_ARROW_OK_AND_ASSIGN(
-      auto list_view,
-      arrow::ListViewArray::FromArrays(*Json(arrow::int32(), "[0]"),
-                                       *Json(arrow::int32(), "[2]"),
-                                       *Json(arrow::int32(), "[1, 2]")));
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto large_list_view,
-      arrow::LargeListViewArray::FromArrays(*Json(arrow::int64(), "[0]"),
-                                            *Json(arrow::int64(), "[1]"),
-                                            *Json(arrow::int32(), "[7]")));
+      auto list_view, arrow::ListViewArray::FromArrays(*Json(arrow::int32(), "[0]"),
+                                                       *Json(arrow::int32(), "[2]"),
+                                                       *Json(arrow::int32(), "[1, 2]")));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto large_list_view, arrow::LargeListViewArray::FromArrays(
+                                                       *Json(arrow::int64(), "[0]"),
+                                                       *Json(arrow::int64(), "[1]"),
+                                                       *Json(arrow::int32(), "[7]")));
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto run_end_encoded,
       arrow::RunEndEncodedArray::Make(1, Json(arrow::int32(), "[1]"),
@@ -620,8 +622,7 @@ TEST_F(BulkIngestServerFixture, ArrowTypesIngestAsTheirDuckDBTypes) {
       Json(arrow::utf8_view(), R"(["view"])"),
       Json(arrow::binary_view(), R"(["bv"])"),
       Json(arrow::fixed_size_binary(4), R"(["abcd"])"),
-      DictJson(arrow::dictionary(arrow::int32(), arrow::utf8()), "[0]",
-                               R"(["dict"])"),
+      DictJson(arrow::dictionary(arrow::int32(), arrow::utf8()), "[0]", R"(["dict"])"),
       Json(arrow::decimal32(7, 2), R"(["12.34"])"),
       Json(arrow::decimal64(15, 3), R"(["123.456"])"),
       list_view,
@@ -633,9 +634,9 @@ TEST_F(BulkIngestServerFixture, ArrowTypesIngestAsTheirDuckDBTypes) {
       bool8,
       Json(sparse_union_type, R"([[1, "u"]])"),
   };
-  const std::vector<std::string> names = {"sview", "bview",   "fsb",   "dict", "dec32",
-                                          "dec64", "lview",   "llview", "months",
-                                          "day_time", "ree",  "uuid",  "b8",   "sunion"};
+  const std::vector<std::string> names = {
+      "sview",  "bview",  "fsb",      "dict", "dec32", "dec64", "lview",
+      "llview", "months", "day_time", "ree",  "uuid",  "b8",    "sunion"};
   arrow::FieldVector fields;
   for (size_t i = 0; i < arrays.size(); ++i) {
     fields.push_back(arrow::field(names[i], arrays[i]->type()));
@@ -645,44 +646,37 @@ TEST_F(BulkIngestServerFixture, ArrowTypesIngestAsTheirDuckDBTypes) {
   EXPECT_EQ(rows, 1);
 
   const std::map<std::string, std::string> expected_types = {
-      {"sview", "VARCHAR"},
-      {"bview", "BLOB"},
-      {"fsb", "BLOB"},
-      {"dict", "VARCHAR"},
-      {"dec32", "DECIMAL(7,2)"},
-      {"dec64", "DECIMAL(15,3)"},
-      {"lview", "INTEGER[]"},
-      {"llview", "INTEGER[]"},
-      {"months", "INTERVAL"},
-      {"day_time", "INTERVAL"},
-      {"ree", "VARCHAR"},
-      {"uuid", "UUID"},
-      {"b8", "BOOLEAN"},
-      {"sunion", "UNION(i BIGINT, s VARCHAR)"},
+      {"sview", "VARCHAR"},      {"bview", "BLOB"},
+      {"fsb", "BLOB"},           {"dict", "VARCHAR"},
+      {"dec32", "DECIMAL(7,2)"}, {"dec64", "DECIMAL(15,3)"},
+      {"lview", "INTEGER[]"},    {"llview", "INTEGER[]"},
+      {"months", "INTERVAL"},    {"day_time", "INTERVAL"},
+      {"ree", "VARCHAR"},        {"uuid", "UUID"},
+      {"b8", "BOOLEAN"},         {"sunion", "UNION(i BIGINT, s VARCHAR)"},
   };
   EXPECT_EQ(ColumnTypes(c, "arrow_types_ingest"), expected_types);
 
-  EXPECT_EQ(FirstRow(c, "SELECT sview, bview::VARCHAR, fsb::VARCHAR, dict, dec32::VARCHAR, "
-                        "dec64::VARCHAR, lview::VARCHAR, llview::VARCHAR, months::VARCHAR, "
-                        "day_time::VARCHAR, ree, uuid::VARCHAR, b8::VARCHAR, "
-                        "sunion::VARCHAR FROM arrow_types_ingest"),
-            (std::vector<std::string>{"view", "bv", "abcd", "dict", "12.34", "123.456",
-                                      "[1, 2]", "[7]", "1 year 2 months",
-                                      "1 day 01:00:00", "ree",
-                                      "30313233-3435-3637-3839-616263646566", "true",
-                                      "u"}));
+  EXPECT_EQ(FirstRow(c,
+                     "SELECT sview, bview::VARCHAR, fsb::VARCHAR, dict, dec32::VARCHAR, "
+                     "dec64::VARCHAR, lview::VARCHAR, llview::VARCHAR, months::VARCHAR, "
+                     "day_time::VARCHAR, ree, uuid::VARCHAR, b8::VARCHAR, "
+                     "sunion::VARCHAR FROM arrow_types_ingest"),
+            (std::vector<std::string>{
+                "view", "bv", "abcd", "dict", "12.34", "123.456", "[1, 2]", "[7]",
+                "1 year 2 months", "1 day 01:00:00", "ree",
+                "30313233-3435-3637-3839-616263646566", "true", "u"}));
 }
 
 // An Arrow type DuckDB cannot store is refused with the reason, instead of
 // silently becoming a VARCHAR column (#196). Its twin, a float32 column, ingests.
 TEST_F(BulkIngestServerFixture, UnsupportedArrowTypeIsRefusedNotStoredAsVarchar) {
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
-  ASSERT_ARROW_OK_AND_ASSIGN(auto c,
-                             ConnectIngestClient(GetPort(), GetUsername(), GetPassword()));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto c, ConnectIngestClient(GetPort(), GetUsername(), GetPassword()));
 
-  auto half = arrow::RecordBatch::Make(
-      arrow::schema({arrow::field("h", arrow::float16())}), 1,
-      {Json(arrow::float16(), "[1.5]")});
+  auto half =
+      arrow::RecordBatch::Make(arrow::schema({arrow::field("h", arrow::float16())}), 1,
+                               {Json(arrow::float16(), "[1.5]")});
   auto refused = IngestReplace(c, "halffloat_ingest", half);
   ASSERT_FALSE(refused.ok()) << "halffloat ingest unexpectedly succeeded";
   EXPECT_NE(refused.status().message().find(
@@ -703,9 +697,9 @@ TEST_F(BulkIngestServerFixture, UnsupportedArrowTypeIsRefusedNotStoredAsVarchar)
             std::string::npos)
       << nested_refused.status().ToString();
 
-  auto single = arrow::RecordBatch::Make(
-      arrow::schema({arrow::field("h", arrow::float32())}), 1,
-      {Json(arrow::float32(), "[1.5]")});
+  auto single =
+      arrow::RecordBatch::Make(arrow::schema({arrow::field("h", arrow::float32())}), 1,
+                               {Json(arrow::float32(), "[1.5]")});
   ASSERT_ARROW_OK_AND_ASSIGN(auto rows, IngestReplace(c, "float_ingest", single));
   EXPECT_EQ(rows, 1);
   EXPECT_EQ(ColumnTypes(c, "float_ingest").at("h"), "FLOAT");

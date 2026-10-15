@@ -38,7 +38,8 @@ int32_t duckdb_extension_httpfs_describe(duckdb_extension_descriptor* descriptor
 int32_t duckdb_extension_postgres_scanner_describe(duckdb_extension_descriptor* descriptor);
 #endif
 #if defined(GIZMOSQL_DUCKDB_LOADABLE_EXTENSIONS)
-int32_t duckdb_extension_loadable_extensions_describe(duckdb_extension_descriptor* descriptor);
+int32_t duckdb_extension_loadable_extensions_describe(
+    duckdb_extension_descriptor* descriptor);
 int32_t duckdb_extension_httplib_describe(duckdb_extension_descriptor* descriptor);
 #endif
 }

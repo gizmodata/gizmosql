@@ -147,8 +147,7 @@ arrow::Result<std::shared_ptr<arrow::Schema>> IngestSchema(
     const auto& field = client_schema->field(i);
     if (field->type()->id() == arrow::Type::INTERVAL_DAY_TIME) {
       ARROW_ASSIGN_OR_RAISE(
-          schema,
-          schema->SetField(i, field->WithType(arrow::month_day_nano_interval())));
+          schema, schema->SetField(i, field->WithType(arrow::month_day_nano_interval())));
     } else if (ContainsDayTimeInterval(*field->type())) {
       return arrow::Status::NotImplemented(
           "Column \"", field->name(), "\" (", field->type()->ToString(),

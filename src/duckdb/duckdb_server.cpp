@@ -212,7 +212,7 @@ Result<duckdb::LogicalType> GetDuckDBTypeFromArrowType(
     case Type::INTERVAL_MONTH_DAY_NANO:
     case Type::INTERVAL_MONTHS:
       return duckdb::LogicalType::INTERVAL;
-    // (day_time arrives here already converted to month_day_nano; see IngestSchema.)
+      // (day_time arrives here already converted to month_day_nano; see IngestSchema.)
 
     case Type::DECIMAL32:
     case Type::DECIMAL64:
@@ -266,7 +266,8 @@ Result<duckdb::LogicalType> GetDuckDBTypeFromArrowType(
 
     case Type::MAP: {
       const auto& map_type = static_cast<const arrow::MapType&>(*arrow_type);
-      ARROW_ASSIGN_OR_RAISE(auto key_type, GetDuckDBTypeFromArrowField(*map_type.key_field()));
+      ARROW_ASSIGN_OR_RAISE(auto key_type,
+                            GetDuckDBTypeFromArrowField(*map_type.key_field()));
       ARROW_ASSIGN_OR_RAISE(auto value_type,
                             GetDuckDBTypeFromArrowField(*map_type.item_field()));
       return duckdb::LogicalType::MAP(key_type, value_type);
