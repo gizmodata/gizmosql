@@ -61,6 +61,7 @@
 #include "gizmosql_logging.h"
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/rbac/rbac_engine.h"
+#include "enterprise/rbac/rbac_enforcement.h"
 #endif
 #include "system_catalog.h"
 #include "gizmosql_telemetry.h"
@@ -1298,6 +1299,18 @@ class DuckDBFlightSqlServer::Impl {
 
       new_session->connection =
           std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
+#ifdef GIZMOSQL_ENTERPRISE
+      // Every client session on an access-control server carries its principal
+      // into DuckDB, where the plan check reads it.
+      if (rbac_engine_) {
+        enterprise::rbac::AttachRbacSession(
+            *new_session->connection->Get().context, rbac_engine_,
+            new_session->rbac_superuser
+                ? enterprise::rbac::Principal::Superuser(new_session->username)
+                : enterprise::rbac::Principal{false, new_session->rbac_user_id,
+                                              new_session->username});
+      }
+#endif
 
 #ifdef GIZMOSQL_ENTERPRISE
       gizmosql::enterprise::TrackMetricsSession(new_session);
@@ -3024,10 +3037,11 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     const int32_t& session_idle_timeout_seconds,
     std::shared_ptr<SensitivePathPolicy> sensitive_path_policy,
 #ifdef GIZMOSQL_ENTERPRISE
-    std::shared_ptr<InstrumentationManager> instrumentation_manager) {
+    std::shared_ptr<InstrumentationManager> instrumentation_manager,
 #else
-    std::shared_ptr<void> /* unused_instrumentation_manager */) {
+    std::shared_ptr<void> /* unused_instrumentation_manager */,
 #endif
+    bool enable_rbac_enforcement) {
   GIZMOSQL_LOG(INFO) << "DuckDB version: " << duckdb_library_version();
 
   bool in_memory = path == ":memory:";
@@ -3079,6 +3093,12 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
                           "on this host are blocked for every client";
   }
 
+#ifdef GIZMOSQL_ENTERPRISE
+  // Access control checks every statement's plan before optimization.
+  if (enable_rbac_enforcement) enterprise::rbac::RegisterRbacEnforcement(config);
+#else
+  (void)enable_rbac_enforcement;
+#endif
   ARROW_RETURN_NOT_OK(RegisterStaticExtensions());
   // Opening the database throws on an unreadable file (written by a newer
   // DuckDB, locked by another process, corrupt, no permission, ...). Turn that

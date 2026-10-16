@@ -17,8 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The administrator manages access; token users must exist in the store, and the
   token's `catalog_access` claim is ignored once RBAC is on. Disabling or dropping a
   user, or changing their password, ends their sessions on every node. Requires a
-  license that includes `rbac` or `catalog_permissions`. Enforcement of grants on
-  queries is the next step on this branch.
+  license that includes `rbac` or `catalog_permissions`.
+  Every statement of a store user is checked on DuckDB's own plan before
+  optimization: each table read (and every column referenced, in filters and joins
+  too), each write target, and each `CREATE` / `DROP` / `ALTER`. Anything that cannot
+  be classified is refused, a plan that never reached the check is refused, and a
+  prepared statement is re-checked when grants change, so a `REVOKE` applies to its
+  next run. Works on DuckLake and PostgreSQL catalogs. Under access control, files
+  and URLs (remote ones too) and `query()` are refused before DuckDB reads them.
+  Creators own what they create. Views still read with the caller's rights.
 
 ### Fixed
 - **`KILL SESSION` ran twice through Flight SQL `Execute`.** GizmoSQL's own commands

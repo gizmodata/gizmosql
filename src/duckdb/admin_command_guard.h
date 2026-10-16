@@ -72,7 +72,11 @@ namespace gizmosql::ddb {
 /// std::nullopt if the statement is permitted for a non-admin session. A SQL
 /// string that fails to parse returns std::nullopt (DuckDB surfaces the real
 /// parse error during preparation).
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql);
+/// `strict` (sessions under access control): every file or URL a statement
+/// would read or write is gated, remote ones too, as are query() / query_table().
+/// DuckDB reads remote metadata while binding, before the access-control plan
+/// check runs, so these must be refused before DuckDB sees the statement.
+std::optional<std::string> ClassifyGatedCommand(const std::string& sql, bool strict = false);
 
 /// `SET allow_unredacted_secrets = <value>` (or the PRAGMA form) for any role,
 /// or std::nullopt. Any value that is not a false constant matches (true, 1,

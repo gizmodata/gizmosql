@@ -100,6 +100,9 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_rbac_engine.cpp
             integration/test_rbac_store_postgres.cpp
             integration/test_rbac_server.cpp
+            integration/test_rbac_enforcement.cpp
+            integration/test_rbac_backstop.cpp
+            integration/test_rbac_attached.cpp
     )
 endif()
 

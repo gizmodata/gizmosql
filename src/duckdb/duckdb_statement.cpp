@@ -1032,7 +1032,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   // non-admin roles. Internal/system queries are exempt. Admins and internal
   // queries skip the parse entirely (fast path).
   if (!is_internal && client_session->role != "admin") {
-    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql)) {
+    // Under access control every file and URL is gated, remote ones too.
+    const bool strict_gate = client_session->rbac_enabled && !client_session->rbac_superuser;
+    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql, strict_gate)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Client attempted a gated admin command",
                              {"kind", "sql"}, {"status", "rejected"},
@@ -1405,8 +1407,28 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     }
   }
 
-  std::shared_ptr<duckdb::PreparedStatement> stmt =
-      client_session->connection->Get().Prepare(effective_sql);
+  std::shared_ptr<duckdb::PreparedStatement> stmt;
+#ifdef GIZMOSQL_ENTERPRISE
+  std::vector<gizmosql::enterprise::rbac::PendingOwnership> rbac_prepared_ownership;
+#endif
+  {
+#ifdef GIZMOSQL_ENTERPRISE
+    // GizmoSQL's own statements are not subject to the access-control plan check.
+    std::optional<gizmosql::enterprise::rbac::RbacSessionState::BypassScope> rbac_bypass;
+    if (is_internal) rbac_bypass.emplace(*client_session->connection->Get().context);
+#endif
+    stmt = client_session->connection->Get().Prepare(effective_sql);
+#ifdef GIZMOSQL_ENTERPRISE
+    if (!is_internal) {
+      if (auto rbac_state =
+              client_session->connection->Get().context->registered_state
+                  ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
+                      gizmosql::enterprise::rbac::kRbacSessionStateName)) {
+        rbac_prepared_ownership = rbac_state->TakePreparedOwnership();
+      }
+    }
+#endif
+  }
 
   if (!stmt->HasError()) {
     ARROW_RETURN_NOT_OK(CheckStatementAccess(client_session, stmt->GetStatementProperties(),
@@ -1482,6 +1504,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
       client_session, handle, stmt, log_level, log_queries, override_schema, is_internal,
       flight_method));
+#ifdef GIZMOSQL_ENTERPRISE
+  result->rbac_ownership_ = std::move(rbac_prepared_ownership);
+#endif
 
   // Bind the gizmosql_settings() values (if this statement referenced it).
   if (!settings_binds.empty()) {
@@ -2514,6 +2539,31 @@ bool DuckDBStatement::ShouldExecuteEagerly() const {
 }
 
 arrow::Result<int> DuckDBStatement::Execute() {
+#ifdef GIZMOSQL_ENTERPRISE
+  // GizmoSQL's own statements are not subject to the access-control plan check
+  // (a re-plan at execution runs it again).
+  std::optional<gizmosql::enterprise::rbac::RbacSessionState::BypassScope> rbac_bypass;
+  if (is_internal_ && client_context_) rbac_bypass.emplace(*client_context_);
+  auto result = ExecuteWithMetrics();
+  // A client-prepared CREATE / DROP took effect: record its ownership change.
+  if (result.ok() && !rbac_ownership_.empty()) {
+    if (auto state = client_context_ ? client_context_->registered_state
+                                           ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
+                                               gizmosql::enterprise::rbac::kRbacSessionStateName)
+                                     : nullptr) {
+      if (auto engine = state->engine()) {
+        gizmosql::enterprise::rbac::ApplyOwnership(*engine, state->principal(), rbac_ownership_);
+      }
+    }
+    rbac_ownership_.clear();
+  }
+  return result;
+#else
+  return ExecuteWithMetrics();
+#endif
+}
+
+arrow::Result<int> DuckDBStatement::ExecuteWithMetrics() {
 #ifdef GIZMOSQL_ENTERPRISE
   auto metrics_session = is_internal_ ? nullptr : client_session_.lock();
   if (auto registry = metrics_session ? metrics_session->metrics : nullptr) {

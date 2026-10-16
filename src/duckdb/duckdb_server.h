@@ -76,10 +76,13 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
       const int32_t& session_idle_timeout_seconds,
       std::shared_ptr<SensitivePathPolicy> sensitive_path_policy = nullptr,
 #ifdef GIZMOSQL_ENTERPRISE
-      std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr);
+      std::shared_ptr<InstrumentationManager> instrumentation_manager = nullptr,
 #else
-      std::shared_ptr<void> unused_instrumentation_manager = nullptr);
+      std::shared_ptr<void> unused_instrumentation_manager = nullptr,
 #endif
+      /// Install the access-control plan check on the database (Enterprise; set
+      /// when the server has an access-control store).
+      bool enable_rbac_enforcement = false);
 
   /// \brief Auxiliary method used to execute an arbitrary SQL statement on the underlying
   ///        DuckDB database.

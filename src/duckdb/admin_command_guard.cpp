@@ -131,11 +131,19 @@ std::optional<std::string> StringConstant(const dd::ParsedExpression& expr) {
   return value.GetValue<std::string>();
 }
 
+// Strict mode for the classification running on this thread (sessions under
+// access control): no path counts as remote. Set for one ClassifyGatedCommand call.
+thread_local bool t_strict = false;
+
+// "(local filesystem)", or under strict mode "(files and URLs)".
+std::string PathKind() { return t_strict ? " (files and URLs)" : " (local filesystem)"; }
+
 // A path is "proven remote" only if it begins with an object-storage / network
 // scheme we recognize. Anything else — a bare path, a relative path, file://,
 // or a non-literal/computed path — is treated as LOCAL (and therefore gated for
 // non-admins). Fail closed: when we cannot prove a path is remote, we gate it.
 bool IsProvenRemotePath(const std::string& path_lower) {
+  if (t_strict) return false;
   static const std::array<const char*, 14> kRemoteSchemes = {
       "s3://",   "s3a://",  "s3n://", "gs://",  "gcs://",    "r2://",   "az://",
       "azure://","abfs://", "abfss://","http://","https://", "hf://",   "remote://"};
@@ -269,7 +277,7 @@ std::optional<std::string> CopyPathLiteral(const dd::CopyInfo& info) {
 std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
   auto path = CopyPathLiteral(info);
   if (path && IsProvenRemotePath(ToLower(*path))) return std::nullopt;
-  return info.is_from ? "COPY FROM (local filesystem)" : "COPY TO (local filesystem)";
+  return std::string(info.is_from ? "COPY FROM" : "COPY TO") + PathKind();
 }
 
 // Searches a parsed query tree for a gated table function (read_*/duckdb_secrets)
@@ -405,10 +413,16 @@ struct GatedFunctionWalker {
       violation = name + "()";
       return;
     }
+    // query('<sql>') / query_table('<name>') bind SQL from a string inside
+    // DuckDB, where the remote reads it may contain happen before any check.
+    if (t_strict && (name == "query" || name == "query_table")) {
+      violation = name + "()";
+      return;
+    }
     if (FsReadFunctions().count(name)) {
       auto path = FirstStringLiteralArg(fe);
       if (path && IsProvenRemotePath(ToLower(*path))) return;  // remote read allowed
-      violation = name + "() (local filesystem)";
+      violation = name + "()" + PathKind();
     }
   }
 };
@@ -716,7 +730,12 @@ bool ContainsCaseInsensitive(const std::string& haystack,
 
 }  // namespace
 
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
+std::optional<std::string> ClassifyGatedCommand(const std::string& sql, bool strict) {
+  struct StrictScope {
+    explicit StrictScope(bool on) : previous(t_strict) { t_strict = on; }
+    ~StrictScope() { t_strict = previous; }
+    bool previous;
+  } strict_scope(strict);
   auto parser = compat::StandaloneParser();
   try {
     // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on

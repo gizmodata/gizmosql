@@ -772,7 +772,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             admin_bypass_queue_default, memory_limit, capture_query_profile,
             allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds,
             sensitive_path_policy,
-            nullptr));  // No instrumentation manager yet
+            nullptr,  // No instrumentation manager yet
+            /*enable_rbac_enforcement=*/!rbac_store_uri.empty()));
     duckdb_server->SetBlockUnredactedSecrets(block_unredacted_secrets);
     duckdb_server->SetRejectUnknownSessions(reject_unknown_sessions);
 #ifdef GIZMOSQL_ENTERPRISE

@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/planner/binder.hpp>
 
 #include "duckdb_compat.h"
@@ -65,6 +66,18 @@ dd::optional_ptr<dd::Catalog> CatalogNamed(dd::ClientContext& context, const std
 }
 
 }  // namespace
+
+ObjectPath PathOfEntry(dd::CatalogEntry& entry) {
+  ObjectPath path;
+  path.catalog = compat::Str(entry.ParentCatalog().GetName());
+  if (entry.type == dd::CatalogType::SCHEMA_ENTRY) {
+    path.schema_path = SchemaPathOf(entry.Cast<dd::SchemaCatalogEntry>());
+    return path;
+  }
+  path.schema_path = SchemaPathOf(entry.ParentSchema());
+  path.object_name = compat::Str(entry.name);
+  return path;
+}
 
 arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const QualifiedName& name) {
   ResolvedObject resolved;
@@ -136,17 +149,23 @@ arrow::Result<ObjectPath> SessionObjectResolver::ResolveSchema(const QualifiedNa
   bool found = false;
   ARROW_RETURN_NOT_OK(InTransaction(connection_, [&]() -> arrow::Status {
     auto& context = *connection_.context;
-    // The first part is a catalog when one by that name is attached.
+    // The first part is a catalog when one by that name is attached. An
+    // unqualified schema is the session's current database's, never the
+    // session-local temp catalog that heads the search path.
     std::string catalog;
     std::vector<std::string> schema_path = name.parts;
     if (name.parts.size() > 1 && CatalogNamed(context, name.parts[0])) {
       catalog = name.parts[0];
       schema_path.erase(schema_path.begin());
+    } else {
+      catalog = compat::Str(dd::DatabaseManager::GetDefaultDatabase(context));
     }
     dd::optional_ptr<dd::SchemaCatalogEntry> schema;
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
     dd::vector<dd::Identifier> path;
     for (const auto& part : schema_path) path.emplace_back(part);
+    // An unqualified schema lives in the session's default catalog; DuckDB 2.x
+    // spells "no catalog given" as InvalidCatalog(), not an empty identifier.
     schema = dd::Catalog::GetSchema(context, dd::Identifier(catalog), path,
                                     dd::OnEntryNotFound::RETURN_NULL);
 #else

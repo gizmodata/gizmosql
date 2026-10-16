@@ -31,6 +31,9 @@
 #include "flight_sql_fwd.h"
 #include "gizmosql_logging.h"
 #include "session_context.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/rbac/rbac_enforcement.h"
+#endif
 #include <chrono>
 #include <arrow/record_batch.h>
 
@@ -180,6 +183,7 @@ class DuckDBStatement {
       const bool& log_queries, const std::shared_ptr<arrow::Schema>& override_schema,
       const std::string& flight_method, bool is_internal);
   arrow::Result<int> ExecuteImpl();
+  arrow::Result<int> ExecuteWithMetrics();
 #ifdef GIZMOSQL_ENTERPRISE
   std::unique_ptr<StatementInstrumentation> instrumentation_;
   std::unique_ptr<ExecutionInstrumentation> execution_instrumentation_;
@@ -192,6 +196,11 @@ class DuckDBStatement {
   std::string session_id_;  // cached for use after session expires
   std::string statement_id_;
   std::shared_ptr<duckdb::PreparedStatement> stmt_;
+#ifdef GIZMOSQL_ENTERPRISE
+  // Access control: objects a client-prepared CREATE / DROP will create or
+  // drop, recorded as owned once it has run successfully.
+  std::vector<gizmosql::enterprise::rbac::PendingOwnership> rbac_ownership_;
+#endif
   std::unique_ptr<compat::StatementResult> query_result_;
   std::optional<arrow::util::ArrowLogLevel> log_level_;
   std::shared_ptr<arrow::Schema> override_schema_;

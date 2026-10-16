@@ -24,6 +24,7 @@
 
 namespace duckdb {
 class Connection;
+class CatalogEntry;
 }
 
 namespace gizmosql::enterprise::rbac {
@@ -41,5 +42,8 @@ class SessionObjectResolver : public ObjectResolver {
  private:
   duckdb::Connection& connection_;
 };
+
+// catalog, schema path and name of a catalog entry (a table, view or schema).
+ObjectPath PathOfEntry(duckdb::CatalogEntry& entry);
 
 }  // namespace gizmosql::enterprise::rbac
