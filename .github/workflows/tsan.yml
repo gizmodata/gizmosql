@@ -94,7 +94,7 @@ jobs:
           path: |
             build/third_party/duckdb
             build/third_party/src/duckdb_project*
-          key: tsan-duckdb-v1-linux-amd64-stable-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'CMakeLists.txt') }}
+          key: tsan-duckdb-v1-linux-amd64-stable-${{ steps.duckdb-tag.outputs.tag }}-${{ hashFiles('third_party/DuckDB_CMakeLists.txt.in', 'third_party/duckdb_extensions.cmake', 'third_party/patch_duckdb.cmake', 'CMakeLists.txt') }}
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11

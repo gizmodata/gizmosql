@@ -279,7 +279,8 @@ arrow::Status RbacStore::InitializeSchema() {
       "CREATE TABLE IF NOT EXISTS " + T("owners") +
           " (object_key VARCHAR PRIMARY KEY, catalog_name VARCHAR NOT NULL, schema_path "
           "VARCHAR NOT NULL, object_name VARCHAR NOT NULL, object_type VARCHAR NOT NULL, "
-          "owner_kind VARCHAR NOT NULL, owner_id VARCHAR NOT NULL)",
+          "owner_kind VARCHAR NOT NULL, owner_id VARCHAR NOT NULL, definition_hash VARCHAR NOT "
+          "NULL)",
   };
   for (const auto& sql : ddl) ARROW_RETURN_NOT_OK(Exec(conn, sql));
   ARROW_RETURN_NOT_OK(Run(conn,
@@ -374,7 +375,7 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
   std::vector<OwnerRecord> owners;
   ARROW_ASSIGN_OR_RAISE(
       auto o, Run(conn, "SELECT catalog_name, schema_path, object_name, object_type, owner_kind, "
-                        "owner_id FROM " + T("owners")));
+                        "owner_id, definition_hash FROM " + T("owners")));
   for (dd::idx_t r = 0; r < compat::ResultRowCount(*o); ++r) {
     OwnerRecord owner;
     owner.object.catalog = GetString(*o, 0, r);
@@ -383,6 +384,7 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
     owner.type = ObjectTypeFrom(GetString(*o, 3, r));
     owner.owner_kind = OwnerKindFrom(GetString(*o, 4, r));
     owner.owner_id = GetString(*o, 5, r);
+    owner.definition_hash = GetString(*o, 6, r);
     owners.push_back(std::move(owner));
   }
 
@@ -523,10 +525,10 @@ arrow::Status StoreTransaction::DeleteGrant(const std::string& grant_id) {
 
 arrow::Status StoreTransaction::UpsertOwner(const OwnerRecord& o) {
   ARROW_RETURN_NOT_OK(DeleteOwner(o.object));
-  return Run(conn_, "INSERT INTO " + T("owners") + " VALUES ($1, $2, $3, $4, $5, $6, $7)",
+  return Run(conn_, "INSERT INTO " + T("owners") + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
              {Text(ObjectKey(o.object)), Text(o.object.catalog), Text(ToJson(o.object.schema_path)),
               Text(o.object.object_name), Text(ObjectTypeName(o.type)),
-              Text(OwnerKindName(o.owner_kind)), Text(o.owner_id)})
+              Text(OwnerKindName(o.owner_kind)), Text(o.owner_id), Text(o.definition_hash)})
       .status();
 }
 

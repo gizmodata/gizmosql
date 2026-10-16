@@ -83,16 +83,26 @@ struct OwnerRecord {
   ObjectType type = ObjectType::kTable;
   OwnerKind owner_kind = OwnerKind::kSystem;
   std::string owner_id;  // user or role id; empty for kSystem
+  // Views: a hash of the view's definition when ownership was recorded. A view
+  // reads with its owner's rights only while its definition still matches, so
+  // a record left behind by a dropped view never applies to a new one.
+  std::string definition_hash;
 };
 
 // Who is asking. The administrator (a superuser) is never looked up in the
-// store and is allowed everything.
+// store and is allowed everything. A view owned by a role reads with that
+// role's rights: a role principal has `role_id` set and no `user_id`.
 struct Principal {
   bool superuser = false;
   std::string user_id;    // for a store user
-  std::string user_name;  // for messages and audit
+  std::string user_name;  // for messages and audit (a role principal: the role's name)
+  std::string role_id;    // for a role principal
 
-  static Principal Superuser(std::string name) { return {true, "", std::move(name)}; }
+  static Principal Superuser(std::string name) { return {true, "", std::move(name), ""}; }
+  static Principal Role(std::string id, std::string name) {
+    return {false, "", std::move(name), std::move(id)};
+  }
+  bool is_role() const { return !superuser && user_id.empty() && !role_id.empty(); }
 };
 
 // One required privilege on one object, as the enforcement layer derives it
@@ -143,6 +153,10 @@ class Snapshot {
 
   // Is the principal the owner of the object (directly, or through a role)?
   bool IsOwner(const Principal& principal, const OwnerRecord& owner) const;
+
+  // Every role whose grants apply to the principal (empty for an unknown or
+  // disabled user, or an unknown role).
+  std::set<std::string> RolesOf(const Principal& principal) const;
 
  private:
   bool GrantCovers(const ObjectGrantRecord& grant, const AccessRequest& request) const;

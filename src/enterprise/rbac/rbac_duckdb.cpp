@@ -24,7 +24,10 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/planner/binder.hpp>
+
+#include <openssl/evp.h>
 
 #include "duckdb_compat.h"
 
@@ -128,9 +131,8 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const Qualifi
       resolved.type = ObjectType::kView;
       auto& view = entry->Cast<dd::ViewCatalogEntry>();
       view.BindView(context);
-      if (auto info = view.GetColumnInfo()) {
-        for (const auto& n : info->names) resolved.columns.push_back(compat::Str(n));
-      }
+      resolved.columns = ViewColumnNames(view);
+      resolved.definition_hash = ViewDefinitionHash(view.GetQuery());
     } else {
       resolved.type = ObjectType::kTable;
       auto& table = entry->Cast<dd::TableCatalogEntry>();
@@ -195,6 +197,33 @@ arrow::Result<std::string> SessionObjectResolver::ResolveCatalog(const std::stri
   }));
   if (resolved.empty()) return AccessControlError("catalog " + name + " does not exist");
   return resolved;
+}
+
+std::string ViewDefinitionHash(const dd::SelectStatement& query) {
+  const std::string text = compat::Str(query.ToString());
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int length = 0;
+  if (EVP_Digest(text.data(), text.size(), digest, &length, EVP_sha256(), nullptr) != 1) {
+    return "";  // no hash: the view reads with the caller's rights
+  }
+  static const char* kHex = "0123456789abcdef";
+  std::string hex;
+  for (unsigned int i = 0; i < length; ++i) {
+    hex.push_back(kHex[digest[i] >> 4]);
+    hex.push_back(kHex[digest[i] & 0xf]);
+  }
+  return hex;
+}
+
+std::vector<std::string> ViewColumnNames(const dd::ViewCatalogEntry& view) {
+  std::vector<std::string> names;
+  auto info = view.GetColumnInfo();
+  if (!info) return names;
+  for (size_t i = 0; i < info->names.size(); ++i) {
+    names.push_back(i < view.aliases.size() ? compat::Str(view.aliases[i])
+                                            : compat::Str(info->names[i]));
+  }
+  return names;
 }
 
 }  // namespace gizmosql::enterprise::rbac

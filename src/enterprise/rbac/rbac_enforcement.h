@@ -50,6 +50,7 @@ struct PendingOwnership {
   Kind kind;
   ObjectPath object;
   ObjectType type;
+  std::string definition_hash;  // a created view's (OwnerRecord::definition_hash)
 };
 
 class RbacSessionState : public duckdb::ClientContextState {

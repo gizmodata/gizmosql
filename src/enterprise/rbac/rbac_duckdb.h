@@ -25,6 +25,8 @@
 namespace duckdb {
 class Connection;
 class CatalogEntry;
+class SelectStatement;
+class ViewCatalogEntry;
 }
 
 namespace gizmosql::enterprise::rbac {
@@ -45,5 +47,14 @@ class SessionObjectResolver : public ObjectResolver {
 
 // catalog, schema path and name of a catalog entry (a table, view or schema).
 ObjectPath PathOfEntry(duckdb::CatalogEntry& entry);
+
+// SHA-256 (hex) of a view's query as DuckDB prints it back: the same for the
+// CREATE VIEW that made it and for the view DuckDB reads from any catalog.
+std::string ViewDefinitionHash(const duckdb::SelectStatement& query);
+
+// A bound view's output column names, as grants on the view name them (the
+// view's own column aliases, else the names its query gives them). Empty when
+// the view has not been bound.
+std::vector<std::string> ViewColumnNames(const duckdb::ViewCatalogEntry& view);
 
 }  // namespace gizmosql::enterprise::rbac

@@ -203,13 +203,14 @@ bool RbacEngine::IsActive(const Principal& principal) const {
 }
 
 arrow::Status RbacEngine::RecordOwner(const ObjectPath& object, ObjectType type,
-                                      const Principal& owner) {
+                                      const Principal& owner, const std::string& definition_hash) {
   ARROW_RETURN_NOT_OK(store_->Mutate([&](StoreTransaction& txn, const Snapshot&) {
     OwnerRecord record;
     record.object = object;
     record.type = type;
     record.owner_kind = owner.superuser ? OwnerKind::kSystem : OwnerKind::kUser;
     record.owner_id = owner.superuser ? "" : owner.user_id;
+    record.definition_hash = definition_hash;
     return txn.UpsertOwner(record);
   }));
   ARROW_ASSIGN_OR_RAISE(auto snap, store_->Load());
@@ -644,6 +645,7 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       record.type = obj.type;
       record.owner_kind = owner.kind == PrincipalKind::kUser ? OwnerKind::kUser : OwnerKind::kRole;
       record.owner_id = owner.id;
+      record.definition_hash = obj.definition_hash;
       message = obj.path.ToString() + " is now owned by " + owner.name;
       return txn.UpsertOwner(record);
     }));

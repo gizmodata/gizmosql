@@ -113,6 +113,12 @@ else()
     set(GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY FALSE)
 endif()
 add_compile_definitions(GIZMOSQL_DUCKDB_MAJOR_VERSION=${GIZMOSQL_DUCKDB_MAJOR_VERSION})
+# third_party/patch_duckdb.cmake adds a view-binding hook from DuckDB 1.5 on.
+if(DUCKDB_GIT_TAG MATCHES "^v1[.][0-4][.]")
+    add_compile_definitions(GIZMOSQL_DUCKDB_HAS_VIEW_HOOK=0)
+else()
+    add_compile_definitions(GIZMOSQL_DUCKDB_HAS_VIEW_HOOK=1)
+endif()
 
 # Make the channel visible to source code:
 #   GIZMOSQL_DUCKDB_CHANNEL_LTS  — 0/1, suitable for `#if`
@@ -513,7 +519,8 @@ set(DUCKDB_EXTENSION_CONFIGS "${CMAKE_SOURCE_DIR}/third_party/duckdb_extensions.
 
 configure_file(third_party/DuckDB_CMakeLists.txt.in duckdb/CMakeLists.txt)
 gizmosql_superbuild_check(duckdb_project "${CMAKE_BINARY_DIR}/third_party/src/duckdb_project-stamp" "${CMAKE_BINARY_DIR}/duckdb" DUCKDB_SB_SKIP DUCKDB_SB_HASH
-        "${DUCKDB_EXTENSION_CONFIGS}")
+        "${DUCKDB_EXTENSION_CONFIGS}"
+        "${CMAKE_SOURCE_DIR}/third_party/patch_duckdb.cmake")
 gizmosql_superbuild_require_install(duckdb_project "${CMAKE_BINARY_DIR}/third_party/src/duckdb_project-stamp"
         "${CMAKE_BINARY_DIR}/third_party/duckdb/include/duckdb.hpp" DUCKDB_SB_SKIP)
 if(NOT DUCKDB_SB_SKIP)
@@ -876,7 +883,8 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/rbac/rbac_store.cpp
             src/enterprise/rbac/rbac_engine.cpp
             src/enterprise/rbac/rbac_duckdb.cpp
-            src/enterprise/rbac/rbac_enforcement.cpp)
+            src/enterprise/rbac/rbac_enforcement.cpp
+            src/enterprise/rbac/rbac_views.cpp)
 endif()
 
 # Add a library target

@@ -28,6 +28,8 @@
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
@@ -36,6 +38,7 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
+#include <duckdb/planner/operator/logical_reset.hpp>
 #include <duckdb/planner/operator/logical_set.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
@@ -48,6 +51,7 @@
 
 #include "duckdb_compat.h"
 #include "rbac_duckdb.h"
+#include "rbac_views.h"
 
 namespace gizmosql::enterprise::rbac {
 
@@ -163,6 +167,12 @@ std::string TypeWord(ObjectType type) {
   return "object";
 }
 
+// A CREATE VIEW's definition hash (see OwnerRecord::definition_hash).
+std::string DefinitionHashOf(dd::CreateInfo& info) {
+  auto& view = info.Cast<dd::CreateViewInfo>();
+  return view.query ? ViewDefinitionHash(*view.query) : "";
+}
+
 [[noreturn]] void Deny(const Principal& who, const std::string& what) {
   throw dd::PermissionException(
       "GizmoSQL blocked this statement: " + what + ". Access control on this server lets user " +
@@ -170,10 +180,23 @@ std::string TypeWord(ObjectType type) {
 }
 
 // Walks one statement's bound plan and checks every access it makes.
+//
+// What the statement names itself is checked against the caller. What a view
+// reads is checked against the view's owner (the caller needs SELECT on the
+// view only), view inside view, each against its own owner. A view without a
+// valid owner record reads with the caller's rights, in addition to the
+// rights of any view it sits in.
 class PlanChecker {
  public:
-  PlanChecker(dd::ClientContext& context, const Snapshot& snapshot, const Principal& principal)
-      : context_(context), snapshot_(snapshot), principal_(principal) {}
+  using ViewColumns = std::unordered_map<const ViewMarker*, std::vector<std::string>>;
+
+  PlanChecker(dd::ClientContext& context, const Snapshot& snapshot, const Principal& principal,
+              const ViewColumns& view_columns)
+      : context_(context),
+        snapshot_(snapshot),
+        principal_(principal),
+        view_columns_(view_columns),
+        rights_{Rights{principal, ""}} {}
 
   void Visit(dd::LogicalOperator& op, dd::optional_ptr<dd::TableCatalogEntry> dml_target = nullptr) {
     switch (op.type) {
@@ -224,7 +247,9 @@ class PlanChecker {
       }
       case OpType::LOGICAL_CREATE_VIEW: {
         auto& create = op.Cast<dd::LogicalCreate>();
+        const size_t before = ownership_.size();
         CheckCreate(*create.info, ObjectType::kView, Privilege::kCreateView);
+        if (ownership_.size() > before) ownership_.back().definition_hash = DefinitionHashOf(*create.info);
         return;
       }
       case OpType::LOGICAL_CREATE_SCHEMA: {
@@ -240,13 +265,17 @@ class PlanChecker {
         VisitChildren(op, nullptr);
         return;
       }
-      case OpType::LOGICAL_CREATE_SEQUENCE:
-      case OpType::LOGICAL_CREATE_MACRO:
-      case OpType::LOGICAL_CREATE_TYPE: {
+      case OpType::LOGICAL_CREATE_SEQUENCE: {
         auto& create = op.Cast<dd::LogicalCreate>();
         if (create.info->temporary) return;  // session-local
-        Deny(principal_, "creating sequences, macros and types needs an administrator");
+        Deny(principal_, "creating sequences needs an administrator");
       }
+      // Not even temporary ones: a session's macro or type is found before the
+      // catalog's, also inside a view, and would change what the view computes.
+      case OpType::LOGICAL_CREATE_MACRO:
+        Deny(principal_, "creating macros needs an administrator");
+      case OpType::LOGICAL_CREATE_TYPE:
+        Deny(principal_, "creating types needs an administrator");
       case OpType::LOGICAL_DROP:
         CheckDrop(op);
         return;
@@ -255,14 +284,34 @@ class PlanChecker {
         return;
 
       // ---- session statements --------------------------------------------
-      case OpType::LOGICAL_SET:
-      case OpType::LOGICAL_RESET: {
+      case OpType::LOGICAL_SET: {
         const auto& set = op.Cast<dd::LogicalSet>();
+        // A variable's value is computed by a query (which would otherwise go
+        // unchecked here), and getvariable() hands it to any view that asks.
+        if (set.scope == dd::SetScope::VARIABLE) {
+          Deny(principal_, "SET VARIABLE is not available under access control");
+        }
         if (BlockedSettings().count(Lower(compat::Str(set.name)))) {
           Deny(principal_, "changing " + compat::Str(set.name) + " is not allowed");
         }
         return;
       }
+      case OpType::LOGICAL_RESET: {
+        const auto& reset = op.Cast<dd::LogicalReset>();
+        if (reset.scope != dd::SetScope::VARIABLE &&
+            BlockedSettings().count(Lower(compat::Str(reset.name)))) {
+          Deny(principal_, "changing " + compat::Str(reset.name) + " is not allowed");
+        }
+        return;
+      }
+
+      // ---- a view's plan, marked when it was bound -------------------------
+      case OpType::LOGICAL_EXTENSION_OPERATOR:
+        if (auto* marker = dynamic_cast<ViewMarker*>(&op)) {
+          VisitView(*marker);
+          return;
+        }
+        Deny(principal_, "extension operators are not available under access control");
       case OpType::LOGICAL_TRANSACTION:
         return;
 
@@ -330,6 +379,7 @@ class PlanChecker {
     auto table = get.GetTable();
     if (!table) {
       const std::string name = Lower(TableFunctionName(get));
+      if (OnlySuperusers()) return;  // in a view an administrator owns
       if (!AllowedTableFunctions().count(name)) {
         Deny(principal_, "the table function " + name + " is not available under access control");
       }
@@ -350,17 +400,114 @@ class PlanChecker {
   ObjectPath PathOf(dd::CatalogEntry& entry) { return PathOfEntry(entry); }
 
   void Require(dd::CatalogEntry& entry, Privilege privilege, std::vector<std::string> columns) {
-    ObjectPath path = PathOf(entry);
-    if (IsTempCatalog(path.catalog)) return;  // session-local objects
-    AccessRequest request{path, ObjectTypeOf(entry), privilege, std::move(columns)};
-    auto decision = snapshot_.Check(principal_, request);
-    if (decision.allowed) return;
-    std::string what = "user " + principal_.user_name + " has no " + PrivilegeName(privilege) +
-                       " privilege on " + TypeWord(request.type) + " " + path.ToString();
-    if (privilege == Privilege::kSelect && decision.reason.rfind("no SELECT on column", 0) == 0) {
-      what = "user " + principal_.user_name + " has " + decision.reason + " of " + path.ToString();
+    RequireObject(PathOf(entry), ObjectTypeOf(entry), privilege, std::move(columns));
+  }
+
+  void RequireObject(const ObjectPath& path, ObjectType type, Privilege privilege,
+                     std::vector<std::string> columns) {
+    if (IsTempCatalog(path.catalog)) {
+      // A session's temporary table or view is found before the catalog's
+      // objects, inside a view too: it could stand in for a table the view's
+      // owner reads (a list of allowed rows, say). Only the caller's own
+      // statement may read one.
+      if (in_owned_view_) {
+        Deny(principal_, "the view " + owned_view_ + " cannot read a temporary " + TypeWord(type) +
+                             " of this session");
+      }
+      return;
     }
-    Deny(principal_, what);
+    AccessRequest request{path, type, privilege, std::move(columns)};
+    for (const auto& rights : rights_) {
+      auto decision = snapshot_.Check(rights.principal, request);
+      if (decision.allowed) continue;
+      if (!rights.owner_of_view.empty()) {
+        // Never name what the view reads: the caller may not know it.
+        Deny(principal_, "the view " + rights.owner_of_view +
+                             " cannot be read, because its owner lacks a privilege on an object "
+                             "the view reads");
+      }
+      std::string what = "user " + principal_.user_name + " has no " + PrivilegeName(privilege) +
+                         " privilege on " + TypeWord(request.type) + " " + path.ToString();
+      if (privilege == Privilege::kSelect && decision.reason.rfind("no SELECT on column", 0) == 0) {
+        what = "user " + principal_.user_name + " has " + decision.reason + " of " + path.ToString();
+      }
+      if (!unowned_view_.empty()) {
+        what += " (read through the view " + unowned_view_ +
+                ", which has no owner, so it reads with your rights)";
+      }
+      Deny(principal_, what);
+    }
+  }
+
+  bool OnlySuperusers() const {
+    for (const auto& rights : rights_) {
+      if (!rights.principal.superuser) return false;
+    }
+    return true;
+  }
+
+  // The caller needs SELECT on the view (on the columns the statement uses);
+  // the view's body is then checked with its owner's rights.
+  void VisitView(ViewMarker& view) {
+    const std::string name = view.view.ToString();
+    if (view.temporary) {
+      if (in_owned_view_) {
+        Deny(principal_, "the view " + owned_view_ + " cannot read a temporary view of this session");
+      }
+      VisitChildren(view, nullptr);  // the session's own view: the caller's rights
+      return;
+    }
+    auto used = view_columns_.find(&view);
+    RequireObject(view.view, ObjectType::kView, Privilege::kSelect,
+                  used != view_columns_.end() ? used->second : view.column_names);
+
+    const auto saved_rights = rights_;
+    const auto saved_in_owned = in_owned_view_;
+    const auto saved_owned = owned_view_;
+    const auto saved_unowned = unowned_view_;
+    const OwnerRecord* owner = snapshot_.FindOwner(view.view);
+    if (owner && owner->type == ObjectType::kView && !owner->definition_hash.empty() &&
+        owner->definition_hash == view.definition_hash) {
+      rights_ = {Rights{OwnerPrincipal(*owner, name), name}};
+      in_owned_view_ = true;
+      owned_view_ = name;
+      unowned_view_.clear();
+    } else {
+      // No owner on record, or the record is of an earlier view of this name:
+      // the caller's own rights apply as well.
+      bool has_caller = false;
+      for (const auto& r : rights_) has_caller = has_caller || r.owner_of_view.empty();
+      if (!has_caller) rights_.push_back(Rights{principal_, ""});
+      unowned_view_ = name;
+    }
+    VisitChildren(view, nullptr);
+    rights_ = saved_rights;
+    in_owned_view_ = saved_in_owned;
+    owned_view_ = saved_owned;
+    unowned_view_ = saved_unowned;
+  }
+
+  Principal OwnerPrincipal(const OwnerRecord& owner, const std::string& view_name) {
+    switch (owner.owner_kind) {
+      case OwnerKind::kSystem:
+        return Principal::Superuser("administrator");
+      case OwnerKind::kUser: {
+        const UserRecord* user = snapshot_.FindUserById(owner.owner_id);
+        if (!user || !user->enabled) {
+          Deny(principal_, "the view " + view_name +
+                               " cannot be read, because its owner is disabled or was dropped");
+        }
+        return Principal{false, user->id, user->name, ""};
+      }
+      case OwnerKind::kRole: {
+        const RoleRecord* role = snapshot_.FindRoleById(owner.owner_id);
+        if (!role) {
+          Deny(principal_, "the view " + view_name + " cannot be read, because its owner was dropped");
+        }
+        return Principal::Role(role->id, role->name);
+      }
+    }
+    Deny(principal_, "the view " + view_name + " has an owner record that is not understood");
   }
 
   void RequireAllColumns(dd::TableCatalogEntry& table) {
@@ -485,9 +632,21 @@ class PlanChecker {
     Deny(principal_, "this ALTER needs an administrator");
   }
 
+  // Whose rights a read must satisfy, every one of them: the caller's, or a
+  // view owner's (owner_of_view names the view).
+  struct Rights {
+    Principal principal;
+    std::string owner_of_view;
+  };
+
   dd::ClientContext& context_;
   const Snapshot& snapshot_;
   const Principal& principal_;
+  const ViewColumns& view_columns_;
+  std::vector<Rights> rights_;
+  bool in_owned_view_ = false;
+  std::string owned_view_;    // the innermost view read with its owner's rights
+  std::string unowned_view_;  // the innermost view read with the caller's rights
   std::vector<PendingOwnership> ownership_;
 };
 
@@ -520,7 +679,8 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
           if (parts.size() >= 3 && !IsTempCatalog(parts[0])) {
             ownership.push_back({PendingOwnership::Kind::kCreate,
                                  {parts[0], {parts.begin() + 1, parts.end() - 1}, parts.back()},
-                                 ObjectType::kView});
+                                 ObjectType::kView,
+                                 DefinitionHashOf(*op.Cast<dd::LogicalCreate>().info)});
           }
         }
         for (auto& child : op.children) {
@@ -529,6 +689,7 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
       };
       collect(*plan);
     }
+    RemoveViewMarkers(plan);
     state->NoteChecked(snapshot->version(), std::move(ownership),
                        plan && plan->type == OpType::LOGICAL_PREPARE);
     return;
@@ -537,8 +698,10 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
     throw dd::PermissionException("GizmoSQL blocked this statement: user " +
                                   state->principal().user_name + " is disabled or was dropped");
   }
-  PlanChecker checker(context, *snapshot, state->principal());
+  const auto view_columns = ViewColumnsUsed(*plan);
+  PlanChecker checker(context, *snapshot, state->principal(), view_columns);
   checker.Visit(*plan);
+  RemoveViewMarkers(plan);
   state->NoteChecked(snapshot->version(), checker.TakeOwnership(),
                      plan->type == OpType::LOGICAL_PREPARE);
 }
@@ -652,7 +815,7 @@ void ApplyOwnership(RbacEngine& engine, const Principal& principal,
                     const std::vector<PendingOwnership>& changes) {
   for (const auto& p : changes) {
     if (p.kind == PendingOwnership::Kind::kCreate) {
-      (void)engine.RecordOwner(p.object, p.type, principal);
+      (void)engine.RecordOwner(p.object, p.type, principal, p.definition_hash);
     } else {
       (void)engine.ForgetOwner(p.object);
     }
@@ -660,6 +823,7 @@ void ApplyOwnership(RbacEngine& engine, const Principal& principal,
 }
 
 void RegisterRbacEnforcement(dd::DBConfig& config) {
+  InstallViewHook();
   dd::OptimizerExtension extension;
   extension.pre_optimize_function = PreOptimize;
   dd::OptimizerExtension::Register(config, std::move(extension));

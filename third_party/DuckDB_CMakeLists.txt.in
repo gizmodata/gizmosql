@@ -12,6 +12,9 @@ ExternalProject_Add(
     GIT_TAG @DUCKDB_GIT_REF@
     UPDATE_DISCONNECTED TRUE
     GIT_SHALLOW @DUCKDB_GIT_SHALLOW@
+    # patch_duckdb.cmake adds the view-binding hook access control uses (see
+    # the comments there).
+    PATCH_COMMAND "${CMAKE_COMMAND}" -DDUCKDB_SOURCE_DIR=<SOURCE_DIR> -DDUCKDB_VERSION_TAG=@DUCKDB_GIT_TAG@ -P "${CMAKE_SOURCE_DIR}/third_party/patch_duckdb.cmake"
     CMAKE_ARGS
           -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/duckdb
           # Pin the libdir: Red Hat-family hosts (e.g. the manylinux_2_28

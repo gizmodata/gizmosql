@@ -255,8 +255,10 @@ TEST_F(RbacEnforcementFixture, WrappingAStatementDoesNotHideIt) {
   // Session-local wrappers inline the protected table: still checked.
   ExpectAllowed(*joe_, "CREATE TEMP VIEW tv AS SELECT * FROM secrets");
   ExpectBlocked(*joe_, "SELECT * FROM tv", kSecret);
-  ExpectAllowed(*joe_, "CREATE TEMP MACRO tm() AS TABLE SELECT * FROM secrets");
-  ExpectBlocked(*joe_, "SELECT * FROM tm()", kSecret);
+  // A session's macro would be found before the catalog's functions, inside a
+  // view too, so users may not create even temporary ones.
+  ExpectBlocked(*joe_, "CREATE TEMP MACRO tm() AS TABLE SELECT * FROM secrets",
+                "creating macros needs an administrator");
 }
 
 TEST_F(RbacEnforcementFixture, TheCheckCannotBeSwitchedOff) {
@@ -358,9 +360,17 @@ TEST_F(RbacEnforcementFixture, AdministrativeStatementsStayDenied) {
 // Views (this release: a view reads with the caller's rights)
 // ---------------------------------------------------------------------------
 
-TEST_F(RbacEnforcementFixture, ViewsDoNotLaunderAccess) {
+// Views read with their owner's rights (test_rbac_views.cpp has the rest): the
+// administrator's view publishes what it selects once the view is granted,
+// while the table behind it stays closed.
+TEST_F(RbacEnforcementFixture, ViewsReadWithTheirOwnersRights) {
+  ExpectBlocked(*joe_, "SELECT * FROM orders_over_secrets", "no SELECT privilege on view");
   ExpectAllowed(*admin_, "GRANT SELECT ON orders_over_secrets TO reader");
-  ExpectBlocked(*joe_, "SELECT * FROM orders_over_secrets", "secrets");
+  auto t = ExpectAllowed(*joe_, "SELECT * FROM orders_over_secrets");
+  ASSERT_TRUE(t);
+  EXPECT_EQ(t->num_rows(), 1);
+  ExpectBlocked(*joe_, "SELECT * FROM secrets", "no SELECT privilege on table");
+  ExpectAllowed(*admin_, "REVOKE SELECT ON orders_over_secrets FROM reader");
 }
 
 // ---------------------------------------------------------------------------

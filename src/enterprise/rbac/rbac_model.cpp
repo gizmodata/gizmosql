@@ -135,15 +135,27 @@ const OwnerRecord* Snapshot::FindOwner(const ObjectPath& object) const {
   return nullptr;
 }
 
+std::set<std::string> Snapshot::RolesOf(const Principal& principal) const {
+  if (principal.is_role()) {
+    if (!FindRoleById(principal.role_id)) return {};
+    std::set<std::string> roles = RoleClosure(kPublicRoleId);
+    for (const auto& r : RoleClosure(principal.role_id)) roles.insert(r);
+    return roles;
+  }
+  const UserRecord* user = FindUserById(principal.user_id);
+  if (!user || !user->enabled) return {};
+  return EffectiveRoleIds(principal.user_id);
+}
+
 bool Snapshot::IsOwner(const Principal& principal, const OwnerRecord& owner) const {
   if (principal.superuser) return owner.owner_kind == OwnerKind::kSystem;
   switch (owner.owner_kind) {
     case OwnerKind::kSystem:
       return false;
     case OwnerKind::kUser:
-      return owner.owner_id == principal.user_id;
+      return !principal.is_role() && owner.owner_id == principal.user_id;
     case OwnerKind::kRole:
-      return EffectiveRoleIds(principal.user_id).count(owner.owner_id) > 0;
+      return RolesOf(principal).count(owner.owner_id) > 0;
   }
   return false;
 }
@@ -170,8 +182,10 @@ bool Snapshot::GrantCovers(const ObjectGrantRecord& grant, const AccessRequest& 
 
 AccessDecision Snapshot::Check(const Principal& principal, const AccessRequest& request) const {
   if (principal.superuser) return {true, "superuser", "superuser"};
-  const UserRecord* user = FindUserById(principal.user_id);
-  if (!user || !user->enabled) return {false, "unknown or disabled user", ""};
+  const auto roles = RolesOf(principal);
+  if (roles.empty()) {
+    return {false, principal.is_role() ? "unknown role" : "unknown or disabled user", ""};
+  }
 
   // The owner holds every privilege on the object (for a schema: on the schema
   // itself, which covers DROP SCHEMA).
@@ -179,7 +193,6 @@ AccessDecision Snapshot::Check(const Principal& principal, const AccessRequest& 
     if (IsOwner(principal, *owner)) return {true, "owner", "owner"};
   }
 
-  const auto roles = EffectiveRoleIds(principal.user_id);
   std::set<std::string> covered_columns;
   bool all_columns = false;
   std::string satisfying_role;

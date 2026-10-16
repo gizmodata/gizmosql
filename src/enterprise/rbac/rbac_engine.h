@@ -46,6 +46,7 @@ struct ResolvedObject {
   ObjectPath path;
   ObjectType type = ObjectType::kTable;
   std::vector<std::string> columns;
+  std::string definition_hash;  // views: see OwnerRecord::definition_hash
 };
 
 // Resolves names in GRANT / REVOKE / ALTER ... OWNER TO the way the caller's
@@ -104,7 +105,8 @@ class RbacEngine {
   bool IsActive(const Principal& principal) const;
 
   // Ownership bookkeeping for objects created / dropped through GizmoSQL.
-  arrow::Status RecordOwner(const ObjectPath& object, ObjectType type, const Principal& owner);
+  arrow::Status RecordOwner(const ObjectPath& object, ObjectType type, const Principal& owner,
+                            const std::string& definition_hash = "");
   arrow::Status ForgetOwner(const ObjectPath& object);
 
   const std::string& store_description() const { return store_->description(); }

@@ -139,6 +139,15 @@ TEST_F(RbacAttachedFixture, GrantsApplyToDuckLakeTables) {
   ExpectBlocked("INSERT INTO lake.main.events VALUES (2, 'x')", "no INSERT privilege");
   // Time travel reads the same table: same check.
   ExpectBlocked("SELECT body FROM lake.main.events AT (VERSION => 1)", "body");
+#if GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
+  // A DuckLake view the administrator made reads with the administrator's
+  // rights (DuckLake stores the view's SQL and parses it back: same definition).
+  ASSERT_OK(Admin("CREATE VIEW lake.main.hidden_v AS SELECT id FROM lake.main.hidden"));
+  ExpectBlocked("SELECT * FROM lake.main.hidden_v", "no SELECT privilege on view");
+  ASSERT_OK(Admin("GRANT SELECT ON lake.main.hidden_v TO lake_reader"));
+  ASSERT_OK(User("SELECT * FROM lake.main.hidden_v"));
+  ExpectBlocked("SELECT * FROM lake.main.hidden", "no SELECT privilege on table lake.main.hidden");
+#endif
 
   std::filesystem::remove_all(dir);
 }

@@ -103,6 +103,8 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_rbac_enforcement.cpp
             integration/test_rbac_backstop.cpp
             integration/test_rbac_attached.cpp
+            integration/test_rbac_views.cpp
+            integration/test_rbac_views_unit.cpp
     )
 endif()
 

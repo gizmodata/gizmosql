@@ -25,7 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prepared statement is re-checked when grants change, so a `REVOKE` applies to its
   next run. Works on DuckLake and PostgreSQL catalogs. Under access control, files
   and URLs (remote ones too) and `query()` are refused before DuckDB reads them.
-  Creators own what they create. Views still read with the caller's rights.
+  Creators own what they create.
+  Views read with their owner's rights: reading a view needs `SELECT` on the view
+  (on the columns the statement uses), and what the view reads is checked against
+  its owner (a view the administrator created can publish tables, and even files,
+  its readers cannot reach themselves). Anything the statement names beside the
+  view is still checked against the caller. A view with no owner on record (made
+  before access control, or by init SQL) reads with the caller's rights until
+  `ALTER VIEW ... OWNER TO` gives it one, and an owner record applies only to the
+  view definition it was recorded for. Inside a view, a session's temporary tables
+  and views are refused, and store users may not create macros or types (not even
+  temporary ones) or `SET VARIABLE`, since each could change what a view computes.
+  This uses a small hook added to DuckDB's binder at build time
+  (`third_party/patch_duckdb.cmake`); on the LTS channel (DuckDB 1.4) views read
+  with the caller's rights.
 
 ### Fixed
 - **`KILL SESSION` ran twice through Flight SQL `Execute`.** GizmoSQL's own commands
