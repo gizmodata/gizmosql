@@ -96,6 +96,9 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_oauth_server.cpp
             integration/test_inline_license_key.cpp
             integration/test_system_managed_catalog_visibility.cpp
+            integration/test_rbac_ddl.cpp
+            integration/test_rbac_engine.cpp
+            integration/test_rbac_store_postgres.cpp
     )
 endif()
 

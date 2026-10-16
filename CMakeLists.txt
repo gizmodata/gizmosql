@@ -868,7 +868,13 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/catalog_permissions/catalog_permissions_handler.cpp
             src/enterprise/catalog_logging/catalog_log_sink.cpp
             src/enterprise/jwks/jwks_manager.cpp
-            src/enterprise/oauth/oauth_http_server.cpp)
+            src/enterprise/oauth/oauth_http_server.cpp
+            src/enterprise/rbac/rbac_types.cpp
+            src/enterprise/rbac/rbac_ddl.cpp
+            src/enterprise/rbac/rbac_model.cpp
+            src/enterprise/rbac/rbac_password.cpp
+            src/enterprise/rbac/rbac_store.cpp
+            src/enterprise/rbac/rbac_engine.cpp)
 endif()
 
 # Add a library target
