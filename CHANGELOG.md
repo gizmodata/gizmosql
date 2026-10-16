@@ -17,8 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run callbacks named by string on an internal connection, outside the checks
   applied to the client's statement: `destroy_external_resource('query', '<sql>')`
   runs `<sql>` and returns its error text, so a non-admin could read local files
-  the gate otherwise blocks (`<sql>` = a `read_text(...)` of the file) and, with
-  per-catalog permissions, query catalogs their token does not grant. It also gates changing the session's SQL grammar
+  the gate otherwise blocks (`<sql>` = a `read_text(...)` of the file). It also gates changing the session's SQL grammar
   (`current_dialect`, `active_grammar_extensions`, `enable_legacy_parser`) in any
   scope, because a session with its own grammar could send SQL the gate cannot
   parse but DuckDB can; and the new global settings `allow_extension_repositories`,
