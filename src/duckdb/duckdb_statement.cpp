@@ -67,6 +67,9 @@
 #include "enterprise/instrumentation/instrumentation_manager.h"
 #include "enterprise/instrumentation/instrumentation_records.h"
 #include "enterprise/kill_session/kill_session_handler.h"
+#include "enterprise/rbac/rbac_ddl.h"
+#include "enterprise/rbac/rbac_duckdb.h"
+#include "enterprise/rbac/rbac_engine.h"
 #include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #include "enterprise/enterprise_features.h"
 #endif
@@ -1049,6 +1052,102 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
                                             gate_error_msg);
     }
   }
+
+#ifdef GIZMOSQL_ENTERPRISE
+  // Access-control statements (CREATE USER / ROLE, GRANT, REVOKE, ...): GizmoSQL
+  // parses and runs them itself against the access-control store; they never
+  // reach DuckDB. With no store configured, SHOW GRANTS and ALTER ... OWNER TO
+  // are left to DuckDB and the rest get a clear error.
+  if (!is_internal && gizmosql::enterprise::rbac::LooksLikeRbacStatement(sql)) {
+    namespace rbac = gizmosql::enterprise::rbac;
+    auto server = GetServer(*client_session);
+    auto engine = server ? server->GetRbacEngine() : nullptr;
+    auto parsed = rbac::ParseRbacStatement(sql);
+    const bool engine_optional =
+        parsed.ok() && (std::holds_alternative<rbac::ShowGrantsCommand>(*parsed) ||
+                        std::holds_alternative<rbac::AlterOwnerCommand>(*parsed));
+    if (!engine && (!parsed.ok() || engine_optional)) {
+      // Not ours on this server: DuckDB reports what it makes of it.
+    } else if (!engine) {
+      return arrow::Status::Invalid(
+          "GizmoSQL access control is not enabled on this server, so " +
+          rbac::CommandKind(*parsed) +
+          " is not available. (Server operators: start GizmoSQL Enterprise with "
+          "--rbac-store-uri)");
+    } else {
+      std::shared_ptr<InstrumentationManager> rbac_instr_mgr = server->GetInstrumentationManager();
+      auto record_failure = [&](const std::string& message) {
+        if (rbac_instr_mgr) {
+          StatementInstrumentation(rbac_instr_mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, message);
+        }
+      };
+      if (!parsed.ok()) {
+        record_failure(parsed.status().message());
+        return arrow::Status::Invalid(parsed.status().message());
+      }
+      const std::string kind = rbac::CommandKind(*parsed);
+      rbac::Principal actor = client_session->rbac_superuser
+                                  ? rbac::Principal::Superuser(client_session->username)
+                                  : rbac::Principal{false, client_session->rbac_user_id,
+                                                    client_session->username};
+      rbac::SessionObjectResolver resolver(client_session->connection->Get());
+      auto executed = engine->Execute(*parsed, actor, resolver);
+      if (!executed.ok()) {
+        const std::string message = executed.status().message();
+        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access-control statement refused",
+                               {"kind", "access_control"}, {"statement", kind},
+                               {"status", "rejected"}, {"error", message},
+                               {"statement_id", handle});
+        record_failure(message);
+        if (message.find("GizmoSQL blocked") != std::string::npos) {
+          return arrow::flight::MakeFlightError(arrow::flight::FlightStatusCode::Unauthorized,
+                                                message);
+        }
+        return arrow::Status::Invalid(message);
+      }
+      for (const auto& user_id : executed->terminate_user_ids) {
+        const int ended = server->TerminateRbacUserSessions(user_id);
+        if (ended > 0) {
+          GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Ended sessions of an access-control user",
+                                 {"kind", "access_control"}, {"statement", kind},
+                                 {"sessions", std::to_string(ended)});
+        }
+      }
+      GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Access-control statement",
+                             {"kind", "access_control"}, {"statement", kind},
+                             {"status", "success"}, {"statement_id", handle});
+
+      // The result is a small table of strings.
+      arrow::FieldVector fields;
+      for (const auto& name : executed->column_names) fields.push_back(arrow::field(name, arrow::utf8()));
+      auto schema = arrow::schema(fields);
+      std::vector<std::shared_ptr<arrow::Array>> columns;
+      for (size_t c = 0; c < executed->column_names.size(); ++c) {
+        arrow::StringBuilder builder;
+        for (const auto& row : executed->rows) {
+          ARROW_RETURN_NOT_OK(builder.Append(c < row.size() ? row[c] : std::string()));
+        }
+        std::shared_ptr<arrow::Array> array;
+        ARROW_RETURN_NOT_OK(builder.Finish(&array));
+        columns.push_back(std::move(array));
+      }
+      // logged_sql, not sql: CREATE / ALTER USER may carry a password.
+      std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
+          client_session, handle, logged_sql, display_severity, log_queries, schema, is_internal,
+          flight_method));
+      result->is_gizmosql_admin_ = true;
+      if (rbac_instr_mgr) {
+        result->instrumentation_ = std::make_unique<StatementInstrumentation>(
+            rbac_instr_mgr, handle, client_session->session_id, logged_sql, flight_method,
+            is_internal, "", client_session->QueryTag());
+      }
+      result->synthetic_result_batch_ = arrow::RecordBatch::Make(
+          schema, static_cast<int64_t>(executed->rows.size()), std::move(columns));
+      return result;
+    }
+  }
+#endif
 
   // Get instance_id + cluster_id from the server for the
   // GIZMOSQL_CURRENT_INSTANCE() / GIZMOSQL_CURRENT_CLUSTER() pseudo-functions.

@@ -296,5 +296,11 @@ int RunFlightSQLServer(
     /// starting a new, empty session (--reject-unknown-sessions /
     /// GIZMOSQL_REJECT_UNKNOWN_SESSIONS). DuckDB backend only. nullopt = consult
     /// env var, then default false (lazily create the session, as before).
-    std::optional<bool> reject_unknown_sessions = std::nullopt);
+    std::optional<bool> reject_unknown_sessions = std::nullopt,
+    /// [Enterprise] Role-based access control: a PostgreSQL connection string for
+    /// the store of users, roles and grants (--rbac-store-uri /
+    /// GIZMOSQL_RBAC_STORE_URI). Empty = consult the env var, then RBAC is off.
+    /// When set, the server refuses to start without a license that includes RBAC
+    /// or when the store is unreachable. Never logged (it carries credentials).
+    std::string rbac_store_uri = "");
 }

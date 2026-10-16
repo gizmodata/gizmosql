@@ -21,6 +21,7 @@ constexpr const char* kFeatureCatalogPermissions = "catalog_permissions";
 constexpr const char* kFeatureExternalAuth = "external_auth";
 constexpr const char* kFeatureStatementQueue = "statement_queue";
 constexpr const char* kFeatureMetrics = "metrics";
+constexpr const char* kFeatureRbac = "rbac";
 
 /// Singleton class for managing enterprise feature availability
 class EnterpriseFeatures {
@@ -61,6 +62,11 @@ class EnterpriseFeatures {
 
   /// Check if Prometheus metrics and gizmosql_metrics() are licensed.
   bool IsMetricsAvailable() const;
+
+  /// Check if role-based access control is licensed. RBAC is part of the
+  /// Enterprise license: a license that lists "rbac", or "catalog_permissions"
+  /// (which RBAC succeeds), enables it.
+  bool IsRbacAvailable() const;
 
   /// Get the license manager (for advanced usage)
   LicenseManager* GetLicenseManager() const { return license_manager_.get(); }

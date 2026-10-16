@@ -81,6 +81,7 @@
 #include "enterprise/jwks/jwks_manager.h"
 #include "enterprise/oauth/oauth_http_server.h"
 #include "enterprise/metrics/metrics_service.h"
+#include "enterprise/rbac/rbac_engine.h"
 #endif
 #include "version.h"
 
@@ -508,7 +509,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
     int32_t metrics_port, const std::string& metrics_bind_address, bool enable_metrics,
     const bool& block_unredacted_secrets,
     std::shared_ptr<gizmosql::ddb::SensitivePathPolicy> sensitive_path_policy,
-    bool reject_unknown_sessions) {
+    bool reject_unknown_sessions, const std::string& rbac_store_uri) {
   // HTTP Basic authentication (RFC 7617) sends "username:password" and splits it
   // at the first ':', so a username containing ':' could never log in. (The
   // password may contain ':'.)
@@ -774,6 +775,28 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
             nullptr));  // No instrumentation manager yet
     duckdb_server->SetBlockUnredactedSecrets(block_unredacted_secrets);
     duckdb_server->SetRejectUnknownSessions(reject_unknown_sessions);
+#ifdef GIZMOSQL_ENTERPRISE
+    if (!rbac_store_uri.empty()) {
+      if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsRbacAvailable()) {
+        return arrow::Status::Invalid(gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
+            "Role-based access control (--rbac-store-uri)"));
+      }
+      gizmosql::enterprise::rbac::RbacEngine::Options rbac_options;
+      rbac_options.store_uri = rbac_store_uri;
+      ARROW_ASSIGN_OR_RAISE(auto rbac_engine,
+                            gizmosql::enterprise::rbac::RbacEngine::Create(rbac_options));
+      GIZMOSQL_LOG(INFO) << "Role-based access control is ON (store: "
+                         << rbac_engine->store_description()
+                         << "). Users, roles and grants come from the store; token "
+                            "catalog_access claims are ignored";
+      duckdb_server->SetRbacEngine(std::move(rbac_engine));
+    }
+#else
+    if (!rbac_store_uri.empty()) {
+      return arrow::Status::Invalid(
+          "Role-based access control (--rbac-store-uri) is a GizmoSQL Enterprise feature");
+    }
+#endif
     if (reject_unknown_sessions) {
       GIZMOSQL_LOG(INFO) << "Rejecting requests for closed, idle-evicted or other "
                             "instances' sessions (--reject-unknown-sessions)";
@@ -1289,7 +1312,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
     int32_t session_idle_timeout_seconds, int32_t metrics_port,
     std::string metrics_bind_address, bool enable_metrics, bool block_unredacted_secrets,
     bool block_sensitive_paths, std::vector<std::string> sensitive_paths,
-    std::vector<std::string> server_credential_files, bool reject_unknown_sessions) {
+    std::vector<std::string> server_credential_files, bool reject_unknown_sessions,
+    std::string rbac_store_uri) {
   // Reset graceful-shutdown drain state for every fresh server. The drain flags
   // are process-global; without this, a prior server that entered the draining
   // state (e.g. a previous server in the same process, as in the test binary)
@@ -1633,7 +1657,7 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> CreateFlightSQL
       log_catalog_db_path, health_check_interval_seconds, health_check_staleness_seconds,
       allow_unsigned_extensions, max_sessions, session_idle_timeout_seconds, metrics_port,
       metrics_bind_address, enable_metrics, block_unredacted_secrets,
-      sensitive_path_policy, reject_unknown_sessions);
+      sensitive_path_policy, reject_unknown_sessions, rbac_store_uri);
 }
 
 arrow::Status StartFlightSQLServer(
@@ -1887,7 +1911,7 @@ int RunFlightSQLServer(
     std::string metrics_bind_address, std::optional<bool> enable_metrics,
     std::optional<bool> block_unredacted_secrets,
     std::optional<bool> block_sensitive_paths, std::string sensitive_paths,
-    std::optional<bool> reject_unknown_sessions) {
+    std::optional<bool> reject_unknown_sessions, std::string rbac_store_uri) {
   // ---- Logging normalization (library-owned) ----------------
   auto pick = [&](std::string v, const char* env_name, std::string def) -> std::string {
     if (!v.empty()) return v;
@@ -1989,6 +2013,13 @@ int RunFlightSQLServer(
   resolve_bool_env(block_sensitive_paths, "GIZMOSQL_BLOCK_SENSITIVE_PATHS",
                    /*default_value=*/true);
   resolve_bool_env(reject_unknown_sessions, "GIZMOSQL_REJECT_UNKNOWN_SESSIONS");
+  if (rbac_store_uri.empty()) {
+    rbac_store_uri = gizmosql::SafeGetEnvVarValue("GIZMOSQL_RBAC_STORE_URI");
+  }
+  if (rbac_store_uri == "memory") {  // the in-process store is for tests only
+    GIZMOSQL_LOG(ERROR) << "--rbac-store-uri must be a PostgreSQL connection string";
+    return EXIT_FAILURE;
+  }
   if (sensitive_paths.empty()) {
     sensitive_paths = gizmosql::SafeGetEnvVarValue("GIZMOSQL_SENSITIVE_PATHS");
   }
@@ -2369,7 +2400,7 @@ int RunFlightSQLServer(
       extra_sensitive_paths,
       license_key_file.empty() ? std::vector<std::string>{}
                                : std::vector<std::string>{license_key_file},
-      reject_unknown_sessions.value());
+      reject_unknown_sessions.value(), rbac_store_uri);
 
   if (create_server_result.ok()) {
     auto server_ptr = create_server_result.ValueOrDie();

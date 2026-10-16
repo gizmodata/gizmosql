@@ -59,6 +59,9 @@
 #include "duckdb_arrow_ingest.h"
 #include "gizmosql_security.h"
 #include "gizmosql_logging.h"
+#ifdef GIZMOSQL_ENTERPRISE
+#include "enterprise/rbac/rbac_engine.h"
+#endif
 #include "system_catalog.h"
 #include "gizmosql_telemetry.h"
 #include "session_idle.h"
@@ -1061,6 +1064,9 @@ class DuckDBFlightSqlServer::Impl {
   bool reject_unknown_sessions_ = false;
   std::unordered_map<std::string, std::chrono::steady_clock::time_point> ended_session_ids_;
 
+  // Role-based access control (Enterprise); null when not configured.
+  std::shared_ptr<enterprise::rbac::RbacEngine> rbac_engine_;
+
   static std::optional<std::string> SessionValueToString(
       const flight::SessionOptionValue& v) {
     if (auto p = std::get_if<std::string>(&v)) return *p;
@@ -1218,6 +1224,29 @@ class DuckDBFlightSqlServer::Impl {
     new_session->connection_protocol = tl_request_ctx.connection_protocol.value_or("plaintext");
     new_session->catalog_access = tl_request_ctx.catalog_access.value_or(std::vector<CatalogAccessRule>{});
     new_session->TouchSqlActivity();
+
+#ifdef GIZMOSQL_ENTERPRISE
+    // Role-based access control: the administrator is the superuser; anyone
+    // else must be a store user that exists and is enabled. Grants then come
+    // only from GRANT, so the token's catalog_access claim no longer applies.
+    if (rbac_engine_) {
+      new_session->rbac_enabled = true;
+      if (new_session->role == "admin") {
+        new_session->rbac_superuser = true;
+      } else {
+        auto principal = rbac_engine_->PrincipalForUser(new_session->username);
+        if (!principal.ok()) {
+          return flight::MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                                         principal.status().message());
+        }
+        new_session->rbac_user_id = principal->user_id;
+        if (const auto* user = rbac_engine_->snapshot()->FindUserById(principal->user_id)) {
+          new_session->rbac_credential = user->password_hash.value_or("");
+        }
+      }
+      new_session->catalog_access.clear();
+    }
+#endif
     // Note: query_timeout and query_log_level are intentionally left as nullopt
     // so that sessions fall through to the server's current global values via
     // GetQueryTimeout() and GetSessionOrServerLogLevel(). This ensures that
@@ -1423,6 +1452,53 @@ class DuckDBFlightSqlServer::Impl {
 
   void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
   void SetRejectUnknownSessions(bool reject) { reject_unknown_sessions_ = reject; }
+  void SetRbacEngine(std::shared_ptr<enterprise::rbac::RbacEngine> engine) {
+    rbac_engine_ = std::move(engine);
+#ifdef GIZMOSQL_ENTERPRISE
+    if (rbac_engine_) {
+      rbac_engine_->SetSnapshotListener(
+          [this](const enterprise::rbac::Snapshot& snapshot) { EndStaleRbacSessions(snapshot); });
+    }
+#endif
+  }
+
+#ifdef GIZMOSQL_ENTERPRISE
+  // A user disabled, dropped or with a changed password on ANY node: end their
+  // sessions on this one, exactly as the node that made the change does.
+  void EndStaleRbacSessions(const enterprise::rbac::Snapshot& snapshot) {
+    std::shared_lock read_lock(sessions_mutex_);
+    for (auto& [id, session] : client_sessions_) {
+      if (!session || session->rbac_user_id.empty() || session->kill_requested) continue;
+      const auto* user = snapshot.FindUserById(session->rbac_user_id);
+      const bool stale = !user || !user->enabled ||
+                         user->password_hash.value_or("") != session->rbac_credential;
+      if (!stale) continue;
+      session->kill_requested = true;
+      if (session->connection) session->connection->Get().Interrupt();
+      GIZMOSQL_LOGKV_SESSION(INFO, session, "Ended a session after an access-control change",
+                             {"kind", "access_control"},
+                             {"reason", !user ? "user dropped"
+                                        : !user->enabled ? "user disabled"
+                                                         : "password changed"});
+    }
+  }
+#endif
+  std::shared_ptr<enterprise::rbac::RbacEngine> GetRbacEngine() const { return rbac_engine_; }
+
+  // Flag every session of an access-control user for termination and interrupt
+  // its running statement; the next request on it is refused.
+  int TerminateRbacUserSessions(const std::string& user_id) {
+    if (user_id.empty()) return 0;
+    int ended = 0;
+    std::shared_lock read_lock(sessions_mutex_);
+    for (auto& [id, session] : client_sessions_) {
+      if (!session || session->rbac_user_id != user_id) continue;
+      session->kill_requested = true;
+      if (session->connection) session->connection->Get().Interrupt();
+      ++ended;
+    }
+    return ended;
+  }
 
   // With --reject-unknown-sessions, a bearer token whose session is not live
   // here may only start a session on its first use on the instance that issued
@@ -1679,7 +1755,12 @@ class DuckDBFlightSqlServer::Impl {
     return arrow::Status::OK();
   }
 
-  ~Impl() { StopIdleSessionSweeper(); }
+  ~Impl() {
+#ifdef GIZMOSQL_ENTERPRISE
+    if (rbac_engine_) rbac_engine_->SetSnapshotListener(nullptr);
+#endif
+    StopIdleSessionSweeper();
+  }
 
   static constexpr const char* kCompletedTicketPrefix = "gizmosql-completed:";
 
@@ -1763,8 +1844,11 @@ class DuckDBFlightSqlServer::Impl {
                                 nullptr, "GetFlightInfoStatement", false))
     // Direct-execution SQL runs when its schema is computed, so keep that one
     // result for the ticket instead of re-running the SQL (and its side
-    // effects) on DoGet.
-    if (statement->ShouldExecuteEagerly() || statement->IsDirectExecution()) {
+    // effects) on DoGet. The same holds for commands GizmoSQL already ran
+    // itself (KILL SESSION, GRANT, CREATE USER, ...): a SQL ticket would make
+    // DoGet run them a second time.
+    if (statement->ShouldExecuteEagerly() || statement->IsDirectExecution() ||
+        statement->HasSyntheticResult()) {
       return ExecuteForFlightInfo(context, client_session, statement, descriptor);
     }
     statement->SetCallContext(&context);
@@ -3086,6 +3170,18 @@ void DuckDBFlightSqlServer::SetBlockUnredactedSecrets(bool block) {
 
 void DuckDBFlightSqlServer::SetRejectUnknownSessions(bool reject) {
   impl_->SetRejectUnknownSessions(reject);
+}
+
+void DuckDBFlightSqlServer::SetRbacEngine(std::shared_ptr<enterprise::rbac::RbacEngine> engine) {
+  impl_->SetRbacEngine(std::move(engine));
+}
+
+std::shared_ptr<enterprise::rbac::RbacEngine> DuckDBFlightSqlServer::GetRbacEngine() const {
+  return impl_->GetRbacEngine();
+}
+
+int DuckDBFlightSqlServer::TerminateRbacUserSessions(const std::string& user_id) {
+  return impl_->TerminateRbacUserSessions(user_id);
 }
 
 bool DuckDBFlightSqlServer::BlockUnredactedSecrets() const {

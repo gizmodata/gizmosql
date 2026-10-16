@@ -109,6 +109,13 @@ class RbacEngine {
 
   const std::string& store_description() const { return store_->description(); }
 
+  // Called (outside any engine lock) whenever a newer snapshot replaces the
+  // current one: after a local change or when the version poll sees another
+  // node's. Each node uses it to end its own sessions of users who were
+  // disabled, dropped or had their password changed anywhere in the cluster.
+  using SnapshotListener = std::function<void(const Snapshot&)>;
+  void SetSnapshotListener(SnapshotListener listener);
+
  private:
   explicit RbacEngine(Options options) : options_(std::move(options)) {}
   void PollLoop();
@@ -119,6 +126,8 @@ class RbacEngine {
   std::unique_ptr<RbacStore> store_;
   mutable std::mutex snapshot_mutex_;
   std::shared_ptr<const Snapshot> snapshot_;
+  std::mutex listener_mutex_;
+  SnapshotListener listener_;
 
   std::mutex poll_mutex_;
   std::condition_variable poll_cv_;

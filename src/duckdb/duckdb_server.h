@@ -31,6 +31,10 @@
 #include "sensitive_path_guard.h"
 
 #ifdef GIZMOSQL_ENTERPRISE
+namespace gizmosql::enterprise::rbac {
+class RbacEngine;
+}  // namespace gizmosql::enterprise::rbac
+
 namespace gizmosql::enterprise {
 class MetricsRegistry;
 }
@@ -249,6 +253,14 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   /// sessions instead of silently starting a new one.
   void SetRejectUnknownSessions(bool reject);
   bool BlockUnredactedSecrets() const;
+
+  /// Role-based access control (Enterprise): the engine holding users, roles
+  /// and grants, or nullptr when the server runs without an access-control store.
+  void SetRbacEngine(std::shared_ptr<enterprise::rbac::RbacEngine> engine);
+  std::shared_ptr<enterprise::rbac::RbacEngine> GetRbacEngine() const;
+  /// End every session of an access-control user (disabled, dropped, password
+  /// changed). Returns how many were ended.
+  int TerminateRbacUserSessions(const std::string& user_id);
 
   arrow::Status SetPrintQueries(const ClientSession& client_session,
                                 const bool& enabled);

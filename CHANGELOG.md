@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Role-based access control (Enterprise, in progress on this branch).** Start the
+  server with `--rbac-store-uri` (or `GIZMOSQL_RBAC_STORE_URI`) pointing at a
+  PostgreSQL database, shared by every node of a cluster, to manage users, roles and
+  grants in SQL: `CREATE USER` / `ROLE`, `GRANT` / `REVOKE` (roles, and `SELECT`,
+  `INSERT`, `UPDATE`, `DELETE` and DDL privileges on tables, views, schemas and
+  catalogs, with column lists), `ALTER TABLE | VIEW ... OWNER TO`, `SHOW GRANTS`.
+  The administrator manages access; token users must exist in the store, and the
+  token's `catalog_access` claim is ignored once RBAC is on. Disabling or dropping a
+  user, or changing their password, ends their sessions on every node. Requires a
+  license that includes `rbac` or `catalog_permissions`. Enforcement of grants on
+  queries is the next step on this branch.
+
+### Fixed
+- **`KILL SESSION` ran twice through Flight SQL `Execute`.** GizmoSQL's own commands
+  were executed when the statement was created and again when the client fetched
+  the result. They now run once and their result is kept for the fetch.
+
 ### Security
 - **Edge channel: more DuckDB 2.0 commands are admin-only.** The admin command
   gate now also blocks, for non-admin sessions, DuckDB 2.0's external-resource

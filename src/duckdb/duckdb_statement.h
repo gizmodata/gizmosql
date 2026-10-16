@@ -115,6 +115,10 @@ class DuckDBStatement {
   // direct path but stay lazy: their schema is fixed and computing it runs
   // nothing.
   bool IsDirectExecution() const { return use_direct_execution_ && !is_gizmosql_admin_; }
+  // A command GizmoSQL already ran itself (KILL SESSION, access-control
+  // statements): its result is ready, and re-creating it from the SQL would run
+  // it again.
+  bool HasSyntheticResult() const { return synthetic_result_batch_ != nullptr; }
 
   // Serializes prepared bind/update/GetFlightInfo/DoGet operations on one
   // handle. Take it with AcquireExecutionLock(), never directly.

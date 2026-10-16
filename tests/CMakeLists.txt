@@ -99,6 +99,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_rbac_ddl.cpp
             integration/test_rbac_engine.cpp
             integration/test_rbac_store_postgres.cpp
+            integration/test_rbac_server.cpp
     )
 endif()
 

@@ -142,9 +142,23 @@ std::shared_ptr<const Snapshot> RbacEngine::snapshot() const {
 }
 
 void RbacEngine::Publish(std::shared_ptr<const Snapshot> snapshot) {
-  std::lock_guard<std::mutex> lock(snapshot_mutex_);
-  // Never go backwards (a slow reload must not undo a newer local write).
-  if (!snapshot_ || snapshot->version() >= snapshot_->version()) snapshot_ = std::move(snapshot);
+  bool replaced = false;
+  {
+    std::lock_guard<std::mutex> lock(snapshot_mutex_);
+    // Never go backwards (a slow reload must not undo a newer local write).
+    if (!snapshot_ || snapshot->version() > snapshot_->version()) {
+      snapshot_ = snapshot;
+      replaced = true;
+    }
+  }
+  if (!replaced) return;
+  std::lock_guard<std::mutex> lock(listener_mutex_);
+  if (listener_) listener_(*snapshot);
+}
+
+void RbacEngine::SetSnapshotListener(SnapshotListener listener) {
+  std::lock_guard<std::mutex> lock(listener_mutex_);
+  listener_ = std::move(listener);
 }
 
 arrow::Status RbacEngine::Refresh() {

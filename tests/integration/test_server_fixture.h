@@ -77,7 +77,7 @@ CreateFlightSQLServer(
     bool enable_metrics = false, bool block_unredacted_secrets = true,
     bool block_sensitive_paths = true, std::vector<std::string> sensitive_paths = {},
     std::vector<std::string> server_credential_files = {},
-    bool reject_unknown_sessions = false);
+    bool reject_unknown_sessions = false, std::string rbac_store_uri = "");
 
 // Cleanup function to reset global state between test suites
 void CleanupServerResources();
@@ -144,6 +144,7 @@ struct TestServerConfig {
   std::string metrics_bind_address = "127.0.0.1";
   bool block_unredacted_secrets = true;  // reject SET allow_unredacted_secrets = true
   bool reject_unknown_sessions = false;  // refuse closed/evicted/foreign sessions
+  std::string rbac_store_uri;            // role-based access control store (Enterprise)
   bool block_sensitive_paths = true;     // refuse credential/system paths on the host
   std::vector<std::string> sensitive_paths;  // extra protected paths
 };
@@ -289,7 +290,8 @@ class ServerTestFixture : public ::testing::Test {
         /*block_sensitive_paths=*/config_.block_sensitive_paths,
         /*sensitive_paths=*/config_.sensitive_paths,
         /*server_credential_files=*/{},
-        /*reject_unknown_sessions=*/config_.reject_unknown_sessions);
+        /*reject_unknown_sessions=*/config_.reject_unknown_sessions,
+        /*rbac_store_uri=*/config_.rbac_store_uri);
 
     ASSERT_TRUE(result.ok()) << "Failed to create server: " << result.status().ToString();
     server_ = *result;

@@ -874,7 +874,8 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/rbac/rbac_model.cpp
             src/enterprise/rbac/rbac_password.cpp
             src/enterprise/rbac/rbac_store.cpp
-            src/enterprise/rbac/rbac_engine.cpp)
+            src/enterprise/rbac/rbac_engine.cpp
+            src/enterprise/rbac/rbac_duckdb.cpp)
 endif()
 
 # Add a library target

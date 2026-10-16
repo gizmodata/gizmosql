@@ -178,6 +178,15 @@ struct ClientSession {
   // Rules are evaluated in order; first match wins
   // Access checking is done via enterprise::HasReadAccess/HasWriteAccess
   std::vector<CatalogAccessRule> catalog_access;
+  // Role-based access control (Enterprise), set at session creation when the
+  // server has an access-control store. The administrator (role "admin") is
+  // the superuser; anyone else is the store user `rbac_user_id`.
+  bool rbac_enabled = false;
+  bool rbac_superuser = false;
+  std::string rbac_user_id;
+  // The user's password hash when the session started (empty: none). A change
+  // anywhere in the cluster ends the session, as on the node that made it.
+  std::string rbac_credential;
 
 #ifdef GIZMOSQL_ENTERPRISE
   // Instrumentation for session lifecycle tracking (Enterprise feature)

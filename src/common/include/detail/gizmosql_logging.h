@@ -50,8 +50,18 @@ static inline bool should_redact_secret_sql(std::string_view sql) {
   return std::regex_search(sql.begin(), sql.end(), secret_re);
 }
 
+// CREATE / ALTER USER can carry a password. Searched anywhere in the text, not
+// just at the start, so comments (nested ones included) cannot hide it.
+static inline bool should_redact_user_sql(std::string_view sql) {
+  static const std::regex user_re(R"(\b(?:CREATE|ALTER)\s+USER\b)",
+                                  std::regex::icase | std::regex::optimize);
+  return std::regex_search(sql.begin(), sql.end(), user_re);
+}
+
 static inline std::string redact_sql_for_logs(std::string_view sql) {
-  return should_redact_secret_sql(sql) ? "[REDACTED: secret DDL]" : std::string(sql);
+  if (should_redact_secret_sql(sql)) return "[REDACTED: secret DDL]";
+  if (should_redact_user_sql(sql)) return "[REDACTED: user DDL]";
+  return std::string(sql);
 }
 
 // -----------------------------------------------------------------------------

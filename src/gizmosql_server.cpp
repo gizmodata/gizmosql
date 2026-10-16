@@ -173,6 +173,12 @@ int main(int argc, char** argv) {
              "The client must re-authenticate. Default is false (the session is recreated, "
              "as before). If not set, uses env var GIZMOSQL_REJECT_UNKNOWN_SESSIONS "
              "(1/true to enable). DuckDB backend only.")
+            ("rbac-store-uri", po::value<std::string>()->default_value(""),
+             "[Enterprise] Turn on role-based access control with users, roles and grants "
+             "kept in this PostgreSQL database (postgresql://user:password@host/db, or a libpq "
+             "'host=... dbname=...' string). Every replica of a cluster points at the same "
+             "database. The server refuses to start if the store is unreachable or the license "
+             "does not include RBAC. If not set, uses env var GIZMOSQL_RBAC_STORE_URI.")
             ("block-unredacted-secrets", po::value<bool>()->default_value(true),
              "Reject SET allow_unredacted_secrets to any value other than false from every "
              "client, before DuckDB sees the statement. Default is true. Set to false to let "
@@ -655,5 +661,6 @@ int main(int argc, char** argv) {
       vm["enable-metrics"].defaulted() ? std::nullopt
                                        : std::optional(vm["enable-metrics"].as<bool>()),
       block_unredacted_secrets, block_sensitive_paths,
-      vm["sensitive-paths"].as<std::string>(), reject_unknown_sessions);
+      vm["sensitive-paths"].as<std::string>(), reject_unknown_sessions,
+      vm["rbac-store-uri"].as<std::string>());
 }
