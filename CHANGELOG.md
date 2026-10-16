@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Edge channel: more DuckDB 2.0 commands are admin-only.** The admin command
+  gate now also blocks, for non-admin sessions, DuckDB 2.0's external-resource
+  table functions (`create_external_resource`, `destroy_external_resource`,
+  `register_external_resource[_type]`, `deregister_external_resource`, also via
+  `CALL`) and their metadata functions (`duckdb_external_resources()`,
+  `duckdb_external_resource_types()`, `duckdb_extension_repositories()`). These
+  run callbacks named by string on an internal connection, outside the checks
+  applied to the client's statement: `destroy_external_resource('query', '<sql>')`
+  runs `<sql>` and returns its error text, so a non-admin could read local files
+  the gate otherwise blocks (`<sql>` = a `read_text(...)` of the file) and, with
+  per-catalog permissions, query catalogs their token does not grant. It also gates changing the session's SQL grammar
+  (`current_dialect`, `active_grammar_extensions`, `enable_legacy_parser`) in any
+  scope, because a session with its own grammar could send SQL the gate cannot
+  parse but DuckDB can; and the new global settings `allow_extension_repositories`,
+  `extension_repository_directory`, `extension_directories` and `redact_http_logs`.
+  `CREATE` / `DROP EXTENSION REPOSITORY` were already blocked (as LOAD statements);
+  the error now names them. Stable and LTS builds are unaffected: their DuckDB
+  versions have none of these functions or settings.
+
 ## [1.42.0] - 2026-10-15
 
 ### Fixed

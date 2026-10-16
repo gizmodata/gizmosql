@@ -53,8 +53,9 @@ staged with `PREPARE`:
 |----------|----------|
 | **ATTACH / DETACH** (any database) | `ATTACH 'lake.db' AS lake`, `DETACH my_ducklake` |
 | **SET GLOBAL / RESET GLOBAL** (any setting) | `SET GLOBAL memory_limit='8GB'`, `RESET GLOBAL …` |
-| **Dangerous bare `SET`** of a global-only setting | `SET memory_limit='100GB'`, `SET threads=1`, `SET enable_external_access=false`, `SET temp_directory='…'` |
-| **INSTALL / LOAD** extensions | `INSTALL httpfs`, `LOAD spatial`, `FORCE INSTALL …` |
+| **Dangerous bare `SET`** of a global-only setting | `SET memory_limit='100GB'`, `SET threads=1`, `SET enable_external_access=false`, `SET temp_directory='…'`, and on the edge channel `SET allow_extension_repositories='allowed'`, `SET extension_repository_directory=…`, `SET extension_directories=…`, `SET redact_http_logs=false` |
+| **Grammar-switching settings, in any scope** (edge channel, DuckDB 2.0) — a session that changed its own grammar could send SQL the gate cannot parse but DuckDB can | `SET current_dialect=…`, `SET SESSION active_grammar_extensions=[…]`, `SET SESSION enable_legacy_parser=true` (`RESET` is allowed) |
+| **INSTALL / LOAD** extensions, and extension repositories (edge channel) — a repository's public keys become trusted extension-signing keys | `INSTALL httpfs`, `LOAD spatial`, `FORCE INSTALL …`, `INSTALL AND LOAD …`, `CREATE EXTENSION REPOSITORY …`, `DROP EXTENSION REPOSITORY …` |
 | **CHECKPOINT** | `CHECKPOINT`, `FORCE CHECKPOINT` |
 | **EXPORT DATABASE / IMPORT DATABASE** (any destination) | `EXPORT DATABASE '/tmp/dump'`, `EXPORT DATABASE 's3://bucket/dump'`, `IMPORT DATABASE '/tmp/dump'` |
 | **COPY** to/from a **local** file — including `COPY … TO` as a CTE body ([edge channel](edge_channel.md), DuckDB 2.0) | `COPY t TO '/tmp/x.csv'`, `COPY t FROM '/etc/passwd'`, `WITH c AS (COPY t TO '/tmp/x.csv') SELECT 1` |
@@ -64,6 +65,7 @@ staged with `PREPARE`:
 | **`duckdb_secrets()`** (always) | `SELECT * FROM duckdb_secrets()` |
 | **Quack remote protocol** functions (always) | `CALL quack_serve(…)`, `SELECT * FROM quack_query(…)`, `SELECT quack_cancel(…)` |
 | **`CONNECT` / `DISCONNECT` / `EXTERNAL RESOURCE`** (edge channel, DuckDB 2.0) — `CONNECT` attaches its target and forwards raw SQL to it | `CONNECT 'other.db'`, `CREATE EXTERNAL RESOURCE …` |
+| **External-resource functions** (edge channel, always) — they run callbacks named by string on an internal connection, outside the checks on the client's statement (`destroy_external_resource('query', '<sql>')` runs `<sql>`) | `SELECT * FROM destroy_external_resource(…)`, `CALL create_external_resource(…)`, `register_external_resource[_type](…)`, `deregister_external_resource(…)`, `duckdb_external_resources()`, `duckdb_external_resource_types()`, `duckdb_extension_repositories()` |
 
 ### Local vs. remote
 
@@ -103,7 +105,8 @@ Ordinary queries non-admins need keep working: `SELECT`, `INSERT`, `UPDATE`,
 functions (`range()`, `duckdb_settings()`, …), harmless pragmas
 (`PRAGMA table_info(...)`), and **session-scoped** settings — a non-admin can
 still tune their own session with `SET SESSION …` or a bare `SET timezone=…` /
-`SET search_path=…`.
+`SET search_path=…` — except the grammar-switching settings above, which are
+gated in every scope.
 
 ## How it works
 
@@ -139,7 +142,10 @@ enforcement in GizmoSQL 2.0:
   could be mis-flagged (rare).
 - **Custom parser extensions.** A statement that GizmoSQL's standalone parser
   cannot parse is passed through (DuckDB surfaces the real error at execution).
-  The gated statement types here are all core SQL grammar.
+  The gated statement types here are all core SQL grammar. On DuckDB 2.0 a
+  session can switch its grammar (`current_dialect`, `active_grammar_extensions`),
+  which would let it send SQL the gate cannot parse; non-admins therefore cannot
+  change those settings.
 
 The **statement-type** gates — ATTACH/DETACH, SET GLOBAL, INSTALL/LOAD,
 CHECKPOINT, COPY/EXPORT — have **no** such gaps; they are exact.

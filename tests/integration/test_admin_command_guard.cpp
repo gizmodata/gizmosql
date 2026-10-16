@@ -398,6 +398,85 @@ TEST(AdminCommandGuard, DmlSourcesAreWalked) {
             "read_csv() (local filesystem)");
   EXPECT_FALSE(Gated("UPDATE t SET a = 1 WHERE b = 2"));
 }
+
+// DuckDB 2.0's external-resource table functions run callbacks named by string
+// on an internal connection, past every check on the client's own statement:
+// destroy_external_resource('query', '<sql>') executes <sql> and returns its
+// error text, so it reads any table or file the engine can reach.
+TEST(AdminCommandGuard, ExternalResourceFunctionsAreGated) {
+  EXPECT_EQ(Category("SELECT * FROM destroy_external_resource('query', 'SELECT 1')"),
+            "destroy_external_resource()");
+  EXPECT_EQ(Category("CALL destroy_external_resource('query', 'SELECT 1')"),
+            "destroy_external_resource()");
+  EXPECT_EQ(Category("SELECT * FROM create_external_resource('t', 'n')"),
+            "create_external_resource()");
+  EXPECT_EQ(Category("CALL register_external_resource_type('t', create_function := 'read_csv')"),
+            "register_external_resource_type()");
+  EXPECT_EQ(Category("SELECT * FROM register_external_resource('t', 'n', {})"),
+            "register_external_resource()");
+  EXPECT_EQ(Category("CALL deregister_external_resource('t', 'n')"),
+            "deregister_external_resource()");
+  // Nesting, case and PREPARE do not get it past the gate.
+  EXPECT_TRUE(Gated("SELECT * FROM (SELECT * FROM DESTROY_EXTERNAL_RESOURCE('query', 'SELECT 1')) x"));
+  EXPECT_TRUE(Gated("WITH c AS (SELECT * FROM destroy_external_resource('query', 'SELECT 1')) "
+                    "SELECT * FROM c"));
+  EXPECT_TRUE(Gated("SELECT 1 WHERE EXISTS "
+                    "(SELECT * FROM destroy_external_resource('query', 'SELECT 1'))"));
+  EXPECT_TRUE(Gated("PREPARE p AS SELECT * FROM destroy_external_resource('query', 'SELECT 1')"));
+  EXPECT_FALSE(Gated("SELECT 'destroy_external_resource' AS s"));
+}
+
+TEST(AdminCommandGuard, ExternalResourceMetadataIsGated) {
+  // Instance-wide: handles, URIs and callback names of every resource.
+  EXPECT_EQ(Category("SELECT * FROM duckdb_external_resources()"),
+            "duckdb_external_resources()");
+  EXPECT_EQ(Category("SELECT * FROM duckdb_external_resource_types()"),
+            "duckdb_external_resource_types()");
+  EXPECT_EQ(Category("SELECT * FROM duckdb_extension_repositories()"),
+            "duckdb_extension_repositories()");
+}
+
+// A repository's public keys become trusted extension-signing keys, so adding
+// one lets its owner load their own native code. These parse as LOAD
+// statements; the category names what the user actually typed.
+TEST(AdminCommandGuard, ExtensionRepositoryStatementsAreGated) {
+  EXPECT_EQ(Category("CREATE EXTENSION REPOSITORY r WITH PREFIX 'https://example.invalid/ext' "
+                     "USING PUBLIC KEY 'k'"),
+            "CREATE EXTENSION REPOSITORY");
+  EXPECT_EQ(Category("CREATE OR REPLACE EXTENSION REPOSITORY r PREFIX 'https://example.invalid/x'"),
+            "CREATE EXTENSION REPOSITORY");
+  EXPECT_EQ(Category("DROP EXTENSION REPOSITORY IF EXISTS r"), "DROP EXTENSION REPOSITORY");
+  EXPECT_EQ(Category("INSTALL AND LOAD httpfs"), "INSTALL extension");
+}
+
+// The gate parses with DuckDB's built-in grammar and lets through what it
+// cannot parse (DuckDB reports the error). A session that switches its own
+// grammar could send SQL the gate cannot parse but the engine can, so these
+// settings are gated in every scope, not only as bare SETs.
+TEST(AdminCommandGuard, GrammarSwitchingSettingsAreGatedInAnyScope) {
+  EXPECT_EQ(Category("SET current_dialect = 'other'"), "SET current_dialect");
+  EXPECT_EQ(Category("SET SESSION current_dialect = 'other'"), "SET current_dialect");
+  EXPECT_EQ(Category("SET active_grammar_extensions = ['x']"), "SET active_grammar_extensions");
+  EXPECT_EQ(Category("SET SESSION active_grammar_extensions = ['x']"),
+            "SET active_grammar_extensions");
+  EXPECT_EQ(Category("SET SESSION enable_legacy_parser = true"), "SET enable_legacy_parser");
+  // EXPLAIN ANALYZE runs the wrapped SET (DuckDB does not PREPARE a SET).
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE SET SESSION current_dialect = 'other'"));
+  // Going back to the built-in grammar is harmless.
+  EXPECT_FALSE(Gated("RESET current_dialect"));
+  EXPECT_FALSE(Gated("RESET active_grammar_extensions"));
+}
+
+TEST(AdminCommandGuard, NewExtensionAndLoggingSettingsAreGated) {
+  EXPECT_EQ(Category("SET allow_extension_repositories = 'allowed'"),
+            "SET GLOBAL allow_extension_repositories");
+  EXPECT_EQ(Category("SET extension_repository_directory = '/tmp/repos'"),
+            "SET GLOBAL extension_repository_directory");
+  EXPECT_EQ(Category("SET extension_directories = ['/tmp/ext']"),
+            "SET GLOBAL extension_directories");
+  // false would put other sessions' HTTP headers into duckdb_logs.
+  EXPECT_EQ(Category("SET redact_http_logs = false"), "SET GLOBAL redact_http_logs");
+}
 #endif
 
 TEST(AdminCommandGuard, OrdinaryQueriesAreAllowed) {
@@ -549,6 +628,36 @@ TEST_F(AdminGateServerFixture, NonAdminTokenAllowedForOrdinaryQueries) {
   // A harmless session SET is allowed for non-admins.
   EXPECT_TRUE(ExecAs(GetPort(), analyst, "SET search_path = 'main'").ok());
 }
+
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+// DuckDB 2.0 surfaces, end to end. The marker in the callback SQL proves the
+// gate refused the statement before the engine ran it: without the gate,
+// destroy_external_resource executes the string and returns its error text.
+TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForDuckDB2Commands) {
+  ASSERT_TRUE(IsServerReady());
+  const std::pair<std::string, std::string> analyst{
+      "authorization", "Bearer " + MintToken("analyst_user", "analyst")};
+  const std::string kMarker = "reached-the-engine";
+
+  for (const std::string& sql : {
+           "SELECT * FROM destroy_external_resource('query', 'SELECT error(''" + kMarker +
+               "'')')",
+           "CALL destroy_external_resource('query', 'SELECT error(''" + kMarker + "'')')",
+           std::string("SELECT * FROM duckdb_external_resources()"),
+           std::string("SET SESSION current_dialect = 'other'"),
+           std::string("SET allow_extension_repositories = 'allowed'"),
+           std::string("CREATE EXTENSION REPOSITORY r WITH PREFIX 'https://example.invalid/x'"),
+       }) {
+    auto st = ExecAs(GetPort(), analyst, sql);
+    EXPECT_FALSE(st.ok()) << "non-admin should be rejected for: " << sql;
+    EXPECT_NE(st.ToString().find("requires the 'admin' role"), std::string::npos)
+        << "rejection should come from the admin gate for: " << sql
+        << " (got: " << st.ToString() << ")";
+    EXPECT_EQ(st.ToString().find(kMarker), std::string::npos)
+        << "the engine ran the callback SQL for: " << sql << " (got: " << st.ToString() << ")";
+  }
+}
+#endif
 
 TEST_F(AdminGateServerFixture, AdminBasicAuthUnaffected) {
   ASSERT_TRUE(IsServerReady());

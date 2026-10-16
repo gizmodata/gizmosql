@@ -188,7 +188,16 @@ const std::unordered_set<std::string>& FsReadFunctions() {
 
 // Table functions gated for non-admins regardless of arguments.
 const std::unordered_set<std::string>& AlwaysGatedFunctions() {
-  static const std::unordered_set<std::string> kFns = {"duckdb_secrets"};
+  static const std::unordered_set<std::string> kFns = {
+      "duckdb_secrets",
+      // DuckDB 2.0 external resources. Their callbacks are named by string and
+      // run on an internal connection, outside every check on the client's
+      // statement: destroy_external_resource('query', '<sql>') executes <sql>
+      // and returns its error text. The metadata functions are instance-wide.
+      "create_external_resource", "destroy_external_resource",
+      "register_external_resource", "register_external_resource_type",
+      "deregister_external_resource", "duckdb_external_resources",
+      "duckdb_external_resource_types", "duckdb_extension_repositories"};
   return kFns;
 }
 
@@ -218,7 +227,23 @@ bool IsDangerousGlobalSetting(const std::string& name_lower) {
       "enable_external_file_cache",
       // secrets / filesystem
       "secret_directory", "allow_persistent_secrets", "disabled_filesystems",
-      "allowed_directories", "allowed_paths", "home_directory", "lock_configuration"};
+      "allowed_directories", "allowed_paths", "home_directory", "lock_configuration",
+      // DuckDB 2.0: extension repositories (their public keys become trusted
+      // extension-signing keys), extension search paths, and HTTP log redaction
+      // (false would put other sessions' HTTP headers into duckdb_logs)
+      "allow_extension_repositories", "extension_repository_directory",
+      "extension_directories", "redact_http_logs"};
+  return kSettings.count(name_lower) > 0;
+}
+
+// DuckDB 2.0 settings that switch the session's SQL grammar. This gate parses
+// with the built-in grammar and lets through what it cannot parse, so a session
+// with its own grammar could send SQL the gate cannot read but the engine runs.
+// Gated in every scope (SESSION too); RESET, back to the built-in grammar, is
+// allowed.
+bool IsGrammarSetting(const std::string& name_lower) {
+  static const std::unordered_set<std::string> kSettings = {
+      "current_dialect", "active_grammar_extensions", "enable_legacy_parser"};
   return kSettings.count(name_lower) > 0;
 }
 
@@ -504,6 +529,15 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
       }
       case dd::StatementType::LOAD_STATEMENT: {
         auto& ls = stmt.Cast<dd::LoadStatement>();
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+        // CREATE / DROP EXTENSION REPOSITORY parse as LOAD statements.
+        if (ls.info && ls.info->load_type == dd::LoadType::CREATE_REPOSITORY) {
+          return "CREATE EXTENSION REPOSITORY";
+        }
+        if (ls.info && ls.info->load_type == dd::LoadType::DROP_REPOSITORY) {
+          return "DROP EXTENSION REPOSITORY";
+        }
+#endif
         const bool is_load = ls.info && ls.info->load_type == dd::LoadType::LOAD;
         return is_load ? "LOAD extension" : "INSTALL extension";
       }
@@ -521,6 +555,9 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
             IsDangerousGlobalSetting(ToLower(Str(ss.name)))) {
           return verb + Str(ss.name);
         }
+        if (ss.set_type != dd::SetType::RESET && IsGrammarSetting(ToLower(Str(ss.name)))) {
+          return "SET " + Str(ss.name);
+        }
         break;
       }
       case dd::StatementType::CALL_STATEMENT: {
@@ -532,7 +569,9 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
           const std::string fname =
               ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
           if (fname == "checkpoint" || fname == "force_checkpoint") return "CHECKPOINT";
-          if (IsQuackFunction(fname)) return fname + "()";
+          if (IsQuackFunction(fname) || AlwaysGatedFunctions().count(fname)) {
+            return fname + "()";
+          }
         }
         break;  // other CALL functions allowed
       }
