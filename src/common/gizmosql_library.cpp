@@ -786,6 +786,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       gizmosql::enterprise::rbac::RbacEngine::Options rbac_options;
       rbac_options.store_uri = rbac_store_uri;
       rbac_options.administrator_name = username;
+      rbac_options.policy_service_url = SafeGetEnvVarValue("GIZMOSQL_RBAC_OPA_URL");
+      if (const auto timeout = SafeGetEnvVarValue("GIZMOSQL_RBAC_OPA_TIMEOUT_MS"); !timeout.empty()) {
+        try {
+          rbac_options.policy_service_timeout = std::chrono::milliseconds(std::stoll(timeout));
+        } catch (const std::exception&) {
+          return arrow::Status::Invalid("GIZMOSQL_RBAC_OPA_TIMEOUT_MS must be a number of milliseconds");
+        }
+      }
       ARROW_ASSIGN_OR_RAISE(auto rbac_engine,
                             gizmosql::enterprise::rbac::RbacEngine::Create(rbac_options));
       // Store users with a password log in with it, like the administrator does.
@@ -793,6 +801,18 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
           [engine = rbac_engine](const std::string& user, const std::string& password) {
             return engine->AuthenticatePassword(user, password).ok();
           });
+      if (!rbac_options.policy_service_url.empty()) {
+        // Never log credentials in the URL (scheme://user:password@host/...).
+        std::string shown = rbac_options.policy_service_url;
+        const auto scheme_end = shown.find("://");
+        const auto at = shown.find('@');
+        if (scheme_end != std::string::npos && at != std::string::npos &&
+            at < shown.find('/', scheme_end + 3)) {
+          shown = shown.substr(0, scheme_end + 3) + "***@" + shown.substr(at + 1);
+        }
+        GIZMOSQL_LOG(INFO) << "Access control also asks the policy service at " << shown
+                           << " (statements are refused when it does not answer)";
+      }
       GIZMOSQL_LOG(INFO) << "Role-based access control is ON (store: "
                          << rbac_engine->store_description()
                          << "). Users, roles and grants come from the store; token "

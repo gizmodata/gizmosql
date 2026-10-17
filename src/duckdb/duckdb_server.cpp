@@ -1279,6 +1279,34 @@ class DuckDBFlightSqlServer::Impl {
         new_session->rbac_idp_issuer = tl_request_ctx.idp_issuer.value_or("");
         new_session->rbac_idp_groups =
             tl_request_ctx.idp_groups.value_or(std::vector<std::string>{});
+        // The external policy service may refuse the session. Asked here, before
+        // any session lock is taken: it is a network call.
+        if (const auto* service = rbac_engine_->policy_service()) {
+          enterprise::rbac::Principal who = *principal;
+          who.idp_issuer = new_session->rbac_idp_issuer;
+          who.idp_groups = new_session->rbac_idp_groups;
+          if (!new_session->rbac_scope_id.empty()) {
+            who.scope = snap->ValidScope(new_session->rbac_scope_id, who.user_id,
+                                         std::chrono::duration_cast<std::chrono::seconds>(
+                                             std::chrono::system_clock::now().time_since_epoch())
+                                             .count());
+          }
+          auto input = enterprise::rbac::PolicyInput(*snap, who, "connect");
+          input["peer"] = new_session->peer;
+          switch (service->Decide(input)) {
+            case enterprise::rbac::PolicyService::Decision::kAllow:
+              break;
+            case enterprise::rbac::PolicyService::Decision::kDeny:
+              return flight::MakeFlightError(
+                  flight::FlightStatusCode::Unauthenticated,
+                  "GizmoSQL access control: the access policy service refused the session");
+            case enterprise::rbac::PolicyService::Decision::kNoAnswer:
+              return flight::MakeFlightError(
+                  flight::FlightStatusCode::Unauthenticated,
+                  "GizmoSQL access control: GizmoSQL could not get an answer from the access "
+                  "policy service, and refuses sessions until it can");
+          }
+        }
       }
       new_session->catalog_access.clear();
       if (!new_session->rbac_tenant_id.empty()) {

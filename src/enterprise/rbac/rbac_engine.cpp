@@ -139,6 +139,10 @@ arrow::Result<std::shared_ptr<RbacEngine>> RbacEngine::Create(const Options& opt
   ARROW_ASSIGN_OR_RAISE(engine->dummy_hash_,
                         HashPassword("gizmosql-timing-equalizer", options.password_iterations));
   ARROW_ASSIGN_OR_RAISE(engine->store_, RbacStore::Open(options.store_uri));
+  if (!options.policy_service_url.empty()) {
+    engine->policy_service_ =
+        std::make_unique<PolicyService>(options.policy_service_url, options.policy_service_timeout);
+  }
   ARROW_ASSIGN_OR_RAISE(auto snapshot, engine->store_->Load());
   engine->Publish(std::move(snapshot));
   if (options.poll_interval.count() > 0) {

@@ -446,6 +446,55 @@ start begins a new chain. `--verify-audit-log-partial` accepts a rotated log tha
 begins in the middle of a chain. The newest records can be cut off a log file
 without a trace, so ship the log to another system as it is written.
 
+## An external policy service (Open Policy Agent)
+
+GizmoSQL can also ask [Open Policy Agent](https://www.openpolicyagent.org/) about
+every store user's session and statement, after its own check passed. OPA can
+refuse what the grants allow, never allow what they refuse:
+
+```bash
+gizmosql_server ... --rbac-store-uri postgresql://... \
+  --rbac-opa-url http://127.0.0.1:8181/v1/data/gizmosql/allow
+```
+
+GizmoSQL sends `POST {"input": ...}` and runs the statement only if the answer is
+`{"result": true}`. An error, a timeout (`--rbac-opa-timeout-ms`, default 2000), or
+any other answer refuses it: GizmoSQL fails closed. The input carries `action`
+(`connect` or `statement`), `user`, `roles` (what the session acts with),
+`active_role`, `tenant`, `scoped_token`, `identity_provider_groups`, and for a
+statement the `objects` it touches, each with `catalog`, `schema`, `name`,
+`type`, `privilege`, `columns` and `through_view`. For example, a policy that
+keeps `payroll` to the `hr` role even where a grant allows more:
+
+```rego
+package gizmosql
+
+default allow := false
+
+# Sessions: anyone GizmoSQL lets in.
+allow if input.action == "connect"
+
+# Statements: what the grants allow, except payroll outside the hr role.
+allow if {
+	input.action == "statement"
+	not payroll_without_hr
+}
+
+payroll_without_hr if {
+	some object in input.objects
+	object.name == "payroll"
+	not "hr" in input.roles
+}
+```
+
+A refused statement fails with `the access policy service denied it for user
+ana`. The administrator's statements are not sent to the service, so the server
+stays manageable while it is down. A statement is checked when DuckDB plans it:
+a prepared statement when it is prepared, and again whenever grants change. Each
+store-user statement costs one request to the service, so run OPA next to the
+server (a sidecar). The URL may also come from `GIZMOSQL_RBAC_OPA_URL` (and
+`GIZMOSQL_RBAC_OPA_TIMEOUT_MS`).
+
 ## What store users cannot do
 
 Besides what their grants and system privileges do not cover, store users cannot:

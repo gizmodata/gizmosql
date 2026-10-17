@@ -40,7 +40,14 @@
 
 #include "rbac_engine.h"
 
+#include <nlohmann/json.hpp>
+
 namespace gizmosql::enterprise::rbac {
+
+// Who is acting, as the external policy service receives it
+// ({"action", "user", "roles", "active_role", "tenant", "scoped_token", ...}).
+nlohmann::json PolicyInput(const Snapshot& snapshot, const Principal& principal,
+                           const std::string& action);
 
 constexpr const char* kRbacSessionStateName = "gizmosql_rbac";
 

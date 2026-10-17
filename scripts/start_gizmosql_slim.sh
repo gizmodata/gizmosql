@@ -74,6 +74,10 @@
 #   GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS   --allow-unsigned-extensions (DuckDB only; security-sensitive)
 #   GIZMOSQL_BLOCK_UNREDACTED_SECRETS    --block-unredacted-secrets (DuckDB only; default true)
 #   GIZMOSQL_RBAC_STORE_URI              --rbac-store-uri (Enterprise, DuckDB only; access-control store)
+#   GIZMOSQL_RBAC_OPA_URL                --rbac-opa-url (Enterprise; Open Policy Agent decision URL)
+#   GIZMOSQL_RBAC_OPA_TIMEOUT_MS         --rbac-opa-timeout-ms (Enterprise; default 2000)
+#   GIZMOSQL_AUDIT_CHAIN_KEY             (Enterprise; HMAC key sealing access-control audit records)
+#   GIZMOSQL_TOKEN_GROUPS_CLAIM          (Enterprise; login-token claim with the user's groups, default "groups")
 #   GIZMOSQL_GRACEFUL_SHUTDOWN           --graceful-shutdown (drain on SIGINT/SIGTERM)
 #   GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS  --shutdown-grace-period-seconds
 #

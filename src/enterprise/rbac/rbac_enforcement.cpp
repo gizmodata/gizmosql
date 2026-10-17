@@ -65,6 +65,8 @@
 #include "rbac_policies.h"
 #include "rbac_views.h"
 
+#include <nlohmann/json.hpp>
+
 namespace gizmosql::enterprise::rbac {
 
 namespace {
@@ -513,6 +515,8 @@ class PlanChecker {
   }
 
   std::vector<PendingOwnership> TakeOwnership() { return std::move(ownership_); }
+  // What the statement touches, for the policy service.
+  nlohmann::json TakeObjects() { return std::move(objects_); }
   std::vector<std::string> TakeAccesses() {
     return std::vector<std::string>(accesses_.begin(), accesses_.end());
   }
@@ -648,6 +652,17 @@ class PlanChecker {
     AccessRequest request{path, type, privilege, std::move(columns)};
     NoteAccess(PrivilegeName(privilege) + " on " + TypeWord(type) + " " + path.ToString(),
                request.columns);
+    {
+      std::string schema;
+      for (const auto& part : path.schema_path) schema += (schema.empty() ? "" : ".") + part;
+      objects_.push_back({{"catalog", path.catalog},
+                          {"schema", schema},
+                          {"name", path.object_name},
+                          {"type", TypeWord(type)},
+                          {"privilege", PrivilegeName(privilege)},
+                          {"columns", request.columns},
+                          {"through_view", owned_view_}});
+    }
     for (const auto& rights : rights_) {
       auto decision = snapshot_.Check(rights.principal, request);
       if (decision.allowed) continue;
@@ -918,7 +933,29 @@ class PlanChecker {
   std::string unowned_view_;  // the innermost view read with the caller's rights
   std::vector<PendingOwnership> ownership_;
   std::set<std::string> accesses_;
+  nlohmann::json objects_ = nlohmann::json::array();
 };
+
+}  // namespace
+
+nlohmann::json PolicyInput(const Snapshot& snapshot, const Principal& principal,
+                           const std::string& action) {
+  nlohmann::json roles = nlohmann::json::array();
+  for (const auto& id : snapshot.RolesOf(principal)) {
+    if (const auto* role = snapshot.FindRoleById(id)) roles.push_back(role->name);
+  }
+  const std::string tenant_id = snapshot.TenantOfPrincipal(principal);
+  const auto* tenant = tenant_id.empty() ? nullptr : snapshot.FindTenantById(tenant_id);
+  return {{"action", action},
+          {"user", principal.user_name},
+          {"roles", roles},
+          {"active_role", principal.active_role_name},
+          {"tenant", tenant ? tenant->name : ""},
+          {"scoped_token", principal.scope ? principal.scope->name : ""},
+          {"identity_provider_groups", principal.idp_groups}};
+}
+
+namespace {
 
 // A session whose SET ROLE role was revoked acts with nothing until it picks
 // another one: say so rather than refusing every object.
@@ -996,6 +1033,24 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
   PlanChecker checker(context, *snapshot, principal, view_columns);
   checker.Visit(*plan);
   RemoveViewMarkers(plan);
+  // The external policy service may refuse what passed.
+  if (const auto* service = engine->policy_service()) {
+    auto input = PolicyInput(*snapshot, principal, "statement");
+    input["objects"] = checker.TakeObjects();
+    switch (service->Decide(input)) {
+      case PolicyService::Decision::kAllow:
+        break;
+      case PolicyService::Decision::kDeny:
+        // Not a missing grant: say only who refused.
+        throw dd::PermissionException(
+            "GizmoSQL blocked this statement: the access policy service denied it for user " +
+            principal.user_name);
+      case PolicyService::Decision::kNoAnswer:
+        throw dd::PermissionException(
+            "GizmoSQL blocked this statement: GizmoSQL could not get an answer from the access "
+            "policy service, and refuses statements until it can");
+    }
+  }
   // Row and masking policies apply to what passed the check.
   ApplyPolicies(context, *snapshot, principal, plan);
   state->NoteChecked(snapshot->version(), checker.TakeOwnership(),

@@ -37,6 +37,7 @@
 
 #include "rbac_ddl.h"
 #include "rbac_model.h"
+#include "rbac_opa.h"
 #include "rbac_password.h"
 #include "rbac_store.h"
 
@@ -100,6 +101,10 @@ class RbacEngine {
     std::chrono::milliseconds poll_interval{1000};
     // The server administrator's user name, which no store user may take.
     std::string administrator_name;
+    // An external policy service (Open Policy Agent decision URL) asked after
+    // GizmoSQL's own check; empty: none.
+    std::string policy_service_url;
+    std::chrono::milliseconds policy_service_timeout{2000};
   };
 
   static arrow::Result<std::shared_ptr<RbacEngine>> Create(const Options& options);
@@ -107,6 +112,9 @@ class RbacEngine {
 
   RbacEngine(const RbacEngine&) = delete;
   RbacEngine& operator=(const RbacEngine&) = delete;
+
+  // The external policy service, or null.
+  const PolicyService* policy_service() const { return policy_service_.get(); }
 
   // The snapshot every check reads. Never null.
   std::shared_ptr<const Snapshot> snapshot() const;
@@ -153,6 +161,7 @@ class RbacEngine {
   Options options_;
   std::string dummy_hash_;  // verified against for unknown users (equal timing)
   std::unique_ptr<RbacStore> store_;
+  std::unique_ptr<PolicyService> policy_service_;
   mutable std::mutex snapshot_mutex_;
   std::shared_ptr<const Snapshot> snapshot_;
   std::mutex listener_mutex_;

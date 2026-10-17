@@ -18,6 +18,7 @@
 #include "gizmosql_library.h"
 #include "common/include/detail/gizmosql_audit.h"
 #include "common/include/detail/gizmosql_logging.h"
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -189,6 +190,14 @@ int main(int argc, char** argv) {
              "'host=... dbname=...' string). Every replica of a cluster points at the same "
              "database. The server refuses to start if the store is unreachable or the license "
              "does not include RBAC. If not set, uses env var GIZMOSQL_RBAC_STORE_URI.")
+            ("rbac-opa-url", po::value<std::string>()->default_value(""),
+             "[Enterprise] With --rbac-store-uri: also ask this Open Policy Agent decision URL "
+             "(e.g. http://127.0.0.1:8181/v1/data/gizmosql/allow) about every store user's "
+             "session and statement once GizmoSQL's own check passed. Only {\"result\": true} "
+             "lets them run; no answer refuses. If not set, uses env var GIZMOSQL_RBAC_OPA_URL.")
+            ("rbac-opa-timeout-ms", po::value<int>()->default_value(0),
+             "[Enterprise] How long to wait for the policy service, in milliseconds (default "
+             "2000). If not set, uses env var GIZMOSQL_RBAC_OPA_TIMEOUT_MS.")
             ("block-unredacted-secrets", po::value<bool>()->default_value(true),
              "Reject SET allow_unredacted_secrets to any value other than false from every "
              "client, before DuckDB sees the statement. Default is true. Set to false to let "
@@ -600,6 +609,22 @@ int main(int argc, char** argv) {
 
   std::string instance_tag =
       vm.count("instance-tag") ? vm["instance-tag"].as<std::string>() : "";
+
+  // The policy service settings reach the server through their environment
+  // variables; a flag overrides the variable.
+  auto set_env = [](const char* name, const std::string& value) {
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+  };
+  if (!vm["rbac-opa-url"].as<std::string>().empty()) {
+    set_env("GIZMOSQL_RBAC_OPA_URL", vm["rbac-opa-url"].as<std::string>());
+  }
+  if (vm["rbac-opa-timeout-ms"].as<int>() > 0) {
+    set_env("GIZMOSQL_RBAC_OPA_TIMEOUT_MS", std::to_string(vm["rbac-opa-timeout-ms"].as<int>()));
+  }
 
   std::string cluster_id =
       vm.count("cluster-id") ? vm["cluster-id"].as<std::string>() : "";

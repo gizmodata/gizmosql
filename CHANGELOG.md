@@ -106,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TOKEN` revokes a token with everything minted under it, ending their sessions on
   every node. `SHOW SCOPED TOKENS` lists them without the tokens. `gizmosql_client`
   shows the result of `CREATE SCOPED TOKEN` instead of a row count.
+  An external policy service: `--rbac-opa-url` (or `GIZMOSQL_RBAC_OPA_URL`) names an
+  Open Policy Agent decision URL that is asked about every store user's session
+  and statement (user, roles, tenant, scoped token, groups, and the objects with
+  privilege and columns) after GizmoSQL's own check. Only `{"result": true}` lets
+  it run; errors and timeouts (`--rbac-opa-timeout-ms`) refuse. The administrator is
+  not sent to the service.
 
 ### Fixed
 - **`KILL SESSION` ran twice through Flight SQL `Execute`.** GizmoSQL's own commands
