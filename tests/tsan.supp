@@ -35,3 +35,11 @@ race:third_party/jemalloc
 # (CPLCreateOrAcquireMutexEx vs CPLAcquireMutex) while single-threaded at load
 # time. TSan reports the cycle as a potential deadlock; both stacks are GDAL.
 deadlock:duckdb::RegisterGDALModule
+
+# DuckDB settings: SET checkpoint_threshold stores the new WAL size in DBConfig
+# (CheckpointThresholdSetting::SetGlobal) while a commit on another connection
+# reads it to decide whether to checkpoint (AutomaticCheckpoint), without a
+# shared lock. It is one aligned 8-byte value; the worst case is a commit that
+# uses the previous threshold. Reported when a test changes the setting while
+# the instrumentation writer commits.
+race:duckdb::CheckpointThresholdSetting::SetGlobal

@@ -13,8 +13,9 @@
 // where every client is a store user whose statements are checked and rewritten
 // for a row policy and a mask. For each,
 // one client and then many clients run every TPC-H query; the test fails if
-// access control makes the concurrent run much slower, or scales worse with
-// more clients, than the baseline.
+// access control makes the concurrent run much slower than the baseline, uses
+// much more CPU, or slows it down more than its CPU grows (sessions waiting on
+// each other).
 //
 // GIZMOSQL_TEST_CONCURRENCY_SF sets the scale factor (default 0.1; small
 // queries make any per-statement or shared-lock cost easier to see).
@@ -35,6 +36,10 @@
 #include <thread>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
 #include "arrow/api.h"
 #include "arrow/flight/sql/client.h"
 #include "arrow/testing/gtest_util.h"
@@ -49,7 +54,20 @@ namespace {
 
 constexpr int kClients = 10;
 constexpr int kRounds = 3;  // passes over the 22 queries per client
-constexpr int kTrials = 3;  // medians over this many measurements per mode
+constexpr int kTrials = 4;  // medians over this many measurements per mode
+
+// CPU seconds this process has used so far (both servers and the clients run
+// in it, one server busy at a time), or 0 where that isn't available.
+double ProcessCpuSeconds() {
+#ifndef _WIN32
+  rusage u{};
+  getrusage(RUSAGE_SELF, &u);
+  return u.ru_utime.tv_sec + u.ru_stime.tv_sec +
+         (u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
+#else
+  return 0;
+#endif
+}
 
 std::string ScaleFactor() {
   const char* sf = std::getenv("GIZMOSQL_TEST_CONCURRENCY_SF");
@@ -244,10 +262,12 @@ class RbacConcurrency : public ::testing::Test {
   }
 
   // `clients` clients at once, each with its own session, run every query
-  // kRounds times. Returns seconds; checks every result's row count.
+  // kRounds times. Returns seconds, and the process's CPU seconds in `cpu`;
+  // checks every result's row count.
   static double Run(int port, bool rbac, int clients,
                     const std::vector<std::string>& queries,
-                    const std::vector<int64_t>& expected, int session_base) {
+                    const std::vector<int64_t>& expected, int session_base,
+                    double* cpu = nullptr) {
     std::vector<std::unique_ptr<Client>> sessions;
     for (int c = 0; c < clients; ++c) {
       // Baseline clients are token users too (role "user"), so both servers
@@ -261,6 +281,7 @@ class RbacConcurrency : public ::testing::Test {
     }
     std::atomic<int> wrong{0};
     std::mutex log_mutex;
+    const double cpu_start = ProcessCpuSeconds();
     const auto start = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
     for (int c = 0; c < clients; ++c) {
@@ -283,6 +304,7 @@ class RbacConcurrency : public ::testing::Test {
     for (auto& t : threads) t.join();
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (cpu) *cpu = ProcessCpuSeconds() - cpu_start;
     EXPECT_EQ(wrong.load(), 0) << (rbac ? "access control" : "baseline")
                                << " returned wrong results";
     return seconds;
@@ -290,7 +312,8 @@ class RbacConcurrency : public ::testing::Test {
 
   static double Median(std::vector<double> v) {
     std::sort(v.begin(), v.end());
-    return v[v.size() / 2];
+    const size_t n = v.size();
+    return n % 2 ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) / 2;
   }
 };
 
@@ -317,16 +340,29 @@ TEST_F(RbacConcurrency, AccessControlDoesNotCostConcurrency) {
   Run(base_port, false, 1, queries, expected, 800);
   Run(rbac_port, true, 1, queries, expected, 800);
 
-  // Alternate the servers so drift on the machine hits both alike.
+  // Alternate which server goes first, so drift on the machine and the tail
+  // of the previous run (sessions closing, instrumentation catching up) fall
+  // on both alike.
   std::vector<double> base_single, base_multi, rbac_single, rbac_multi;
+  std::vector<double> base_cpu, rbac_cpu;  // CPU seconds of the concurrent runs
   for (int trial = 0; trial < kTrials; ++trial) {
     const int sessions = 100 + trial * 20;
-    base_single.push_back(Run(base_port, false, 1, queries, expected, sessions));
-    rbac_single.push_back(Run(rbac_port, true, 1, queries, expected, sessions));
-    base_multi.push_back(
-        Run(base_port, false, kClients, queries, expected, sessions + 1));
-    rbac_multi.push_back(Run(rbac_port, true, kClients, queries, expected, sessions + 1));
+    for (const bool rbac : {trial % 2 == 1, trial % 2 == 0}) {
+      const int port = rbac ? rbac_port : base_port;
+      double cpu = 0;
+      (rbac ? rbac_single : base_single)
+          .push_back(Run(port, rbac, 1, queries, expected, sessions));
+      (rbac ? rbac_multi : base_multi)
+          .push_back(Run(port, rbac, kClients, queries, expected, sessions + 1, &cpu));
+      (rbac ? rbac_cpu : base_cpu).push_back(cpu);
+      std::cerr << std::fixed << std::setprecision(2) << "trial " << trial << " "
+                << (rbac ? "access control" : "baseline") << ": 1 client "
+                << (rbac ? rbac_single : base_single).back() << " s, " << kClients
+                << " clients " << (rbac ? rbac_multi : base_multi).back() << " s, CPU "
+                << cpu << " s\n";
+    }
   }
+  const double base_cpu_s = Median(base_cpu), rbac_cpu_s = Median(rbac_cpu);
   const Measurement base{Median(base_single), Median(base_multi)};
   const Measurement rbac{Median(rbac_single), Median(rbac_multi)};
 
@@ -341,13 +377,35 @@ TEST_F(RbacConcurrency, AccessControlDoesNotCostConcurrency) {
             << rbac.multi_s << std::setw(14) << rbac.Scaling() << "\n"
             << "overhead       " << std::setw(9)
             << (rbac.single_s / base.single_s - 1) * 100 << "%" << std::setw(15)
-            << (rbac.multi_s / base.multi_s - 1) * 100 << "%\n";
+            << (rbac.multi_s / base.multi_s - 1) * 100 << "%\n"
+            << "CPU of the concurrent runs (s): baseline " << base_cpu_s
+            << ", access control " << rbac_cpu_s << "\n";
 
-  // A shared lock or anything else that serializes sessions shows up as the
-  // concurrent run slowing down far more than the single-client one, and as
-  // worse scaling. Allow for timing noise on a busy machine.
+  // Under ThreadSanitizer the run still checks every result for races, but its
+  // instrumentation dominates the timings.
+#if defined(__SANITIZE_THREAD__)
+  constexpr bool kTimed = false;
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  constexpr bool kTimed = false;
+#else
+  constexpr bool kTimed = true;
+#endif
+#else
+  constexpr bool kTimed = true;
+#endif
+  if (!kTimed) return;
+  // Allow for timing noise on a busy machine. The 1-client times are too
+  // short to gate on a shared CI runner, so the checks use the concurrent runs.
   EXPECT_LE(rbac.multi_s, base.multi_s * 1.25 + 0.5)
       << "access control slowed down concurrent clients";
-  EXPECT_GE(rbac.Scaling(), base.Scaling() * 0.8)
-      << "access control scales worse with concurrent clients than the baseline";
+  if (base_cpu_s > 0) {
+    // Work per statement: the checks and rewrites themselves.
+    EXPECT_LE(rbac_cpu_s, base_cpu_s * 1.15 + 0.5)
+        << "access control costs too much CPU per statement";
+    // A shared lock or anything else that serializes sessions makes them wait
+    // without using CPU: the concurrent run slows down more than its CPU grows.
+    EXPECT_LE(rbac.multi_s / base.multi_s, rbac_cpu_s / base_cpu_s * 1.2)
+        << "concurrent clients waited on each other under access control";
+  }
 }

@@ -44,3 +44,7 @@ xcuserdata/
 # Local design scratch docs (kept out of the repo)
 statement-queuing-design.md
 *.lic
+
+# Python bytecode (scripts/check_quality.py, tests/quality)
+__pycache__/
+*.pyc

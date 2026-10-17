@@ -156,8 +156,12 @@ jobs:
         run: |
           mkdir -p build/tsan-reports
           # TPC-H and benchmark suites assert wall-clock limits that instrumented
-          # code cannot meet; they are covered by the regular CI matrix.
-          ./build/tests/gizmosql_integration_tests --gtest_filter='-TPCH*:*Benchmark*'
+          # code cannot meet; they are covered by the regular CI matrix. So is
+          # the DuckLake RBAC test: the ducklake extension is downloaded, built
+          # without TSan, so TSan cannot see its synchronization and reports
+          # DuckDB's own task handoffs through it as races.
+          ./build/tests/gizmosql_integration_tests \
+            --gtest_filter='-TPCH*:*Benchmark*:RbacAttachedFixture.GrantsApplyToDuckLakeTables'
 
       - name: Summarize ThreadSanitizer reports
         if: always()
