@@ -207,6 +207,16 @@ class ServerTestFixture : public ::testing::Test {
     }
 #endif
 
+#ifdef GIZMOSQL_ENTERPRISE
+    // An access-control server needs a license that includes RBAC, and the
+    // server refuses to start without one. Its tests skip themselves then (the
+    // unlicensed CI run checks exactly that refusal elsewhere).
+    if (!config_.rbac_store_uri.empty() &&
+        !gizmosql::enterprise::EnterpriseFeatures::Instance().IsRbacAvailable()) {
+      return;
+    }
+#endif
+
     // Remove any existing database files
     CleanupDatabaseFiles();
 

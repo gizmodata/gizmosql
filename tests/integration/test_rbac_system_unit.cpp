@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+
 #include <filesystem>
 #include <unistd.h>
 
@@ -43,9 +45,18 @@ class RbacSystemUnit : public ::testing::Test {
                .string();
     std::filesystem::create_directories(dir_);
     ASSERT_FALSE(admin_->Query("CREATE TABLE t AS SELECT 1 AS id")->HasError());
-    // The s3 secret type comes with httpfs (linked into GizmoSQL).
-    auto loaded = admin_->Query("LOAD httpfs");
-    ASSERT_FALSE(loaded->HasError()) << loaded->GetError();
+    // The s3 secret type comes with httpfs, which DuckDB loads (installing it
+    // if needed) when a statement uses it, as on a GizmoSQL server.
+    for (const char* sql : {"SET autoinstall_known_extensions = true",
+                            "SET autoload_known_extensions = true"}) {
+      auto set = admin_->Query(sql);
+      ASSERT_FALSE(set->HasError()) << sql << ": " << set->GetError();
+    }
+    if (const char* dir = std::getenv("GIZMOSQL_TEST_EXTENSION_DIRECTORY")) {
+      // Lets a run start from no installed extensions, as on a CI runner.
+      auto set = admin_->Query(std::string("SET extension_directory = '") + dir + "'");
+      ASSERT_FALSE(set->HasError()) << set->GetError();
+    }
     ASSERT_FALSE(
         admin_->Query("COPY (SELECT 7 AS n) TO '" + dir_ + "/f.parquet' (FORMAT parquet)")
             ->HasError());
