@@ -327,6 +327,10 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         return arrow::Status::OK();
       }
       ARROW_RETURN_NOT_OK(CheckNameFree(snap, c->name));
+      if (!options_.administrator_name.empty() &&
+          IdentifiersEqual(c->name, options_.administrator_name)) {
+        return AccessControlError(c->name + " is the server administrator's name");
+      }
       message = "User " + c->name + " created";
       return txn.InsertUser({StoreTransaction::NewId(), c->name, hash, true});
     }));
@@ -639,13 +643,20 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
                                 "; use ALTER " + (obj.type == ObjectType::kView ? "VIEW" : "TABLE"));
     }
     ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
-      ARROW_ASSIGN_OR_RAISE(auto owner, ResolveGrantee(snap, c->new_owner));
       OwnerRecord record;
       record.object = obj.path;
       record.type = obj.type;
+      record.definition_hash = obj.definition_hash;
+      if (!options_.administrator_name.empty() && c->new_owner.kind != GranteeKind::kRole &&
+          IdentifiersEqual(c->new_owner.name, options_.administrator_name)) {
+        // Back to the administrator, as if the administrator had created it.
+        record.owner_kind = OwnerKind::kSystem;
+        message = obj.path.ToString() + " is now owned by the administrator";
+        return txn.UpsertOwner(record);
+      }
+      ARROW_ASSIGN_OR_RAISE(auto owner, ResolveGrantee(snap, c->new_owner));
       record.owner_kind = owner.kind == PrincipalKind::kUser ? OwnerKind::kUser : OwnerKind::kRole;
       record.owner_id = owner.id;
-      record.definition_hash = obj.definition_hash;
       message = obj.path.ToString() + " is now owned by " + owner.name;
       return txn.UpsertOwner(record);
     }));

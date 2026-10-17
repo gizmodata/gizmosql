@@ -130,7 +130,9 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const Qualifi
     if (entry->type == dd::CatalogType::VIEW_ENTRY) {
       resolved.type = ObjectType::kView;
       auto& view = entry->Cast<dd::ViewCatalogEntry>();
-      view.BindView(context);
+#if !(GIZMOSQL_DUCKDB_MAJOR_VERSION == 1 && GIZMOSQL_DUCKDB_MINOR_VERSION < 5)
+      view.BindView(context);  // DuckDB 1.4 keeps a view's names from when it was made
+#endif
       resolved.columns = ViewColumnNames(view);
       resolved.definition_hash = ViewDefinitionHash(view.GetQuery());
     } else {
@@ -217,11 +219,15 @@ std::string ViewDefinitionHash(const dd::SelectStatement& query) {
 
 std::vector<std::string> ViewColumnNames(const dd::ViewCatalogEntry& view) {
   std::vector<std::string> names;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION == 1 && GIZMOSQL_DUCKDB_MINOR_VERSION < 5
+  const auto& bound = view.names;
+#else
   auto info = view.GetColumnInfo();
   if (!info) return names;
-  for (size_t i = 0; i < info->names.size(); ++i) {
-    names.push_back(i < view.aliases.size() ? compat::Str(view.aliases[i])
-                                            : compat::Str(info->names[i]));
+  const auto& bound = info->names;
+#endif
+  for (size_t i = 0; i < bound.size(); ++i) {
+    names.push_back(i < view.aliases.size() ? compat::Str(view.aliases[i]) : compat::Str(bound[i]));
   }
   return names;
 }

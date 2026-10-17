@@ -58,8 +58,10 @@ class ViewMarker : public duckdb::LogicalExtensionOperator {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
   duckdb::TableIndex GetRootIndex() override;
   duckdb::vector<duckdb::TableIndex> GetTableIndex() const override;
-#else
+#elif GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
   duckdb::idx_t GetRootIndex() override;
+  duckdb::vector<duckdb::idx_t> GetTableIndex() const override;
+#else
   duckdb::vector<duckdb::idx_t> GetTableIndex() const override;
 #endif
   duckdb::PhysicalOperator& CreatePlan(duckdb::ClientContext& context,

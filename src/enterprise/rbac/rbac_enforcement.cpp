@@ -24,10 +24,12 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -102,18 +104,84 @@ std::string TableFunctionName(const dd::LogicalGet& get) {
 #endif
 }
 
-// The parts of a (bound) qualified name: catalog, schema path..., name.
+// The parts of a (bound) qualified name: catalog, schema path..., name (any
+// part the statement left out is missing).
 std::vector<std::string> NameParts(const dd::QualifiedName& name) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-  const auto parts = compat::Strs(name.Path());
-  return std::vector<std::string>(parts.begin(), parts.end());
+  const auto path = compat::Strs(name.Path());
+  std::vector<std::string> parts(path.begin(), path.end());
+  if (!parts.empty() && parts.back().empty()) parts.pop_back();  // CREATE SCHEMA has no name
+  return parts;
 #else
   std::vector<std::string> parts;
   if (!name.catalog.empty()) parts.push_back(name.catalog);
   if (!name.schema.empty()) parts.push_back(name.schema);
-  parts.push_back(name.name);
+  if (!name.name.empty()) parts.push_back(name.name);  // empty for CREATE SCHEMA
   return parts;
 #endif
+}
+
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION == 1 && GIZMOSQL_DUCKDB_MINOR_VERSION < 5
+// DuckDB 1.4 keeps the name of a created object on each kind of CreateInfo.
+std::vector<std::string> PartsOf(const dd::CreateInfo& info) {
+  std::string name;
+  switch (info.type) {
+    case dd::CatalogType::TABLE_ENTRY:
+      name = info.Cast<dd::CreateTableInfo>().table;
+      break;
+    case dd::CatalogType::VIEW_ENTRY:
+      name = info.Cast<dd::CreateViewInfo>().view_name;
+      break;
+    default:
+      break;  // schemas have no name of their own; other kinds need only the catalog
+  }
+  return NameParts(dd::QualifiedName{info.catalog, info.schema, name});
+}
+std::vector<std::string> PartsOf(const dd::DropInfo& info) {
+  return NameParts(dd::QualifiedName{info.catalog, info.schema, info.name});
+}
+std::vector<std::string> PartsOf(const dd::AlterInfo& info) {
+  return NameParts(dd::QualifiedName{info.catalog, info.schema, info.name});
+}
+#else
+template <class Info>
+std::vector<std::string> PartsOf(const Info& info) {
+  return NameParts(info.GetQualifiedName());
+}
+#endif
+
+// The catalog and schema path a CREATE / DROP SCHEMA names: a lone name is a
+// schema of the session's default catalog, as DuckDB resolves it.
+ObjectPath SchemaTarget(dd::ClientContext& context, const std::vector<std::string>& parts) {
+  ObjectPath target;
+  if (parts.size() == 1) {
+    target.catalog = compat::Str(dd::DatabaseManager::GetDefaultDatabase(context));
+    target.schema_path = parts;
+  } else if (!parts.empty()) {
+    target.catalog = parts[0];
+    target.schema_path.assign(parts.begin() + 1, parts.end());
+  }
+  return target;
+}
+
+dd::optional_ptr<dd::CatalogEntry> LookUpSchema(dd::ClientContext& context, const ObjectPath& schema) {
+  if (schema.catalog.empty() || schema.schema_path.empty()) return nullptr;
+  try {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    dd::vector<dd::Identifier> path;
+    for (const auto& p : schema.schema_path) path.emplace_back(p);
+    auto entry = dd::Catalog::GetSchema(context, dd::Identifier(schema.catalog), path,
+                                        dd::OnEntryNotFound::RETURN_NULL);
+    return entry ? dd::optional_ptr<dd::CatalogEntry>(entry.get()) : nullptr;
+#else
+    if (schema.schema_path.size() != 1) return nullptr;
+    auto entry = dd::Catalog::GetSchema(context, schema.catalog, schema.schema_path[0],
+                                        dd::OnEntryNotFound::RETURN_NULL);
+    return entry ? dd::optional_ptr<dd::CatalogEntry>(entry.get()) : nullptr;
+#endif
+  } catch (...) {
+    return nullptr;
+  }
 }
 
 // Look an entry up inside the current transaction (the hook runs while the
@@ -367,6 +435,9 @@ class PlanChecker {
   }
 
   std::vector<PendingOwnership> TakeOwnership() { return std::move(ownership_); }
+  std::vector<std::string> TakeAccesses() {
+    return std::vector<std::string>(accesses_.begin(), accesses_.end());
+  }
 
  private:
   void VisitChildren(dd::LogicalOperator& op, dd::optional_ptr<dd::TableCatalogEntry> dml_target) {
@@ -417,6 +488,8 @@ class PlanChecker {
       return;
     }
     AccessRequest request{path, type, privilege, std::move(columns)};
+    NoteAccess(PrivilegeName(privilege) + " on " + TypeWord(type) + " " + path.ToString(),
+               request.columns);
     for (const auto& rights : rights_) {
       auto decision = snapshot_.Check(rights.principal, request);
       if (decision.allowed) continue;
@@ -437,6 +510,17 @@ class PlanChecker {
       }
       Deny(principal_, what);
     }
+  }
+
+  // For the audit record; written before the check, which throws on a refusal.
+  void NoteAccess(std::string what, const std::vector<std::string>& columns) {
+    if (!columns.empty()) {
+      what += " (";
+      for (size_t i = 0; i < columns.size(); ++i) what += (i ? ", " : "") + columns[i];
+      what += ")";
+    }
+    if (!owned_view_.empty()) what += " as the owner of view " + owned_view_;
+    accesses_.insert(std::move(what));
   }
 
   bool OnlySuperusers() const {
@@ -520,22 +604,21 @@ class PlanChecker {
   // existing object also needs the right to drop it; IF NOT EXISTS on an
   // existing object changes nothing and never takes its ownership.
   void CheckCreate(dd::CreateInfo& info, ObjectType type, Privilege privilege) {
-    auto parts = NameParts(info.GetQualifiedName());
+    auto parts = PartsOf(info);
     if (info.temporary || (!parts.empty() && IsTempCatalog(parts[0]))) return;
     ObjectPath target;
+    dd::optional_ptr<dd::CatalogEntry> existing;
     if (type == ObjectType::kSchema) {
-      if (parts.size() < 2) Deny(principal_, "the new schema's catalog could not be determined");
-      target.catalog = parts[0];
-      target.schema_path.assign(parts.begin() + 1, parts.end());
+      if (parts.empty()) Deny(principal_, "the new schema's name could not be determined");
+      target = SchemaTarget(context_, parts);
+      existing = LookUpSchema(context_, target);
     } else {
       if (parts.size() < 3) Deny(principal_, "the new object's schema could not be determined");
       target.catalog = parts[0];
       target.schema_path.assign(parts.begin() + 1, parts.end() - 1);
       target.object_name = parts.back();
+      existing = LookUp(context_, dd::CatalogType::TABLE_ENTRY, parts);
     }
-    const auto lookup_type =
-        type == ObjectType::kSchema ? dd::CatalogType::SCHEMA_ENTRY : dd::CatalogType::TABLE_ENTRY;
-    auto existing = LookUp(context_, lookup_type, parts);
     if (existing && info.on_conflict == dd::OnCreateConflict::IGNORE_ON_CONFLICT) return;
     if (existing && info.on_conflict == dd::OnCreateConflict::REPLACE_ON_CONFLICT) {
       CheckDropOf(*existing);
@@ -580,16 +663,20 @@ class PlanChecker {
     auto& simple = op.Cast<dd::LogicalSimple>();
     auto& info = simple.info->Cast<dd::DropInfo>();
 #endif
-    auto parts = NameParts(info.GetQualifiedName());
+    auto parts = PartsOf(info);
     if (!parts.empty() && IsTempCatalog(parts[0])) return;
     switch (info.type) {
-      case dd::CatalogType::TABLE_ENTRY:
-      case dd::CatalogType::VIEW_ENTRY:
       case dd::CatalogType::SCHEMA_ENTRY: {
-        auto entry = LookUp(context_, info.type == dd::CatalogType::SCHEMA_ENTRY
-                                          ? dd::CatalogType::SCHEMA_ENTRY
-                                          : dd::CatalogType::TABLE_ENTRY,
-                            parts);
+        // Found the way DuckDB finds it: the named catalog, or the session's.
+        auto entry = LookUpSchema(context_, SchemaTarget(context_, parts));
+        if (!entry) return;  // DROP SCHEMA IF EXISTS of nothing; DuckDB reports a missing schema
+        CheckDropOf(*entry);
+        return;
+      }
+      case dd::CatalogType::TABLE_ENTRY:
+      case dd::CatalogType::VIEW_ENTRY: {
+        // The binder has already qualified the name of an existing object.
+        auto entry = LookUp(context_, dd::CatalogType::TABLE_ENTRY, parts);
         if (!entry) return;  // DROP ... IF EXISTS of nothing; DuckDB reports a missing object
         CheckDropOf(*entry);
         return;
@@ -606,7 +693,7 @@ class PlanChecker {
     auto& simple = op.Cast<dd::LogicalSimple>();
     auto& info = simple.info->Cast<dd::AlterInfo>();
 #endif
-    auto parts = NameParts(info.GetQualifiedName());
+    auto parts = PartsOf(info);
     if (!parts.empty() && IsTempCatalog(parts[0])) return;
     const auto catalog_type = info.GetCatalogType();
     if (catalog_type != dd::CatalogType::TABLE_ENTRY && catalog_type != dd::CatalogType::VIEW_ENTRY) {
@@ -648,6 +735,7 @@ class PlanChecker {
   std::string owned_view_;    // the innermost view read with its owner's rights
   std::string unowned_view_;  // the innermost view read with the caller's rights
   std::vector<PendingOwnership> ownership_;
+  std::set<std::string> accesses_;
 };
 
 void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalOperator>& plan) {
@@ -668,14 +756,14 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
       // user's earlier object of the same name can never apply to them.
       std::function<void(dd::LogicalOperator&)> collect = [&](dd::LogicalOperator& op) {
         if (op.type == OpType::LOGICAL_CREATE_TABLE) {
-          auto parts = NameParts(op.Cast<dd::LogicalCreateTable>().info->base->GetQualifiedName());
+          auto parts = PartsOf(*op.Cast<dd::LogicalCreateTable>().info->base);
           if (parts.size() >= 3 && !IsTempCatalog(parts[0])) {
             ownership.push_back({PendingOwnership::Kind::kCreate,
                                  {parts[0], {parts.begin() + 1, parts.end() - 1}, parts.back()},
                                  ObjectType::kTable});
           }
         } else if (op.type == OpType::LOGICAL_CREATE_VIEW) {
-          auto parts = NameParts(op.Cast<dd::LogicalCreate>().info->GetQualifiedName());
+          auto parts = PartsOf(*op.Cast<dd::LogicalCreate>().info);
           if (parts.size() >= 3 && !IsTempCatalog(parts[0])) {
             ownership.push_back({PendingOwnership::Kind::kCreate,
                                  {parts[0], {parts.begin() + 1, parts.end() - 1}, parts.back()},
@@ -703,7 +791,7 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
   checker.Visit(*plan);
   RemoveViewMarkers(plan);
   state->NoteChecked(snapshot->version(), checker.TakeOwnership(),
-                     plan->type == OpType::LOGICAL_PREPARE);
+                     plan->type == OpType::LOGICAL_PREPARE, checker.TakeAccesses());
 }
 
 }  // namespace
@@ -723,12 +811,21 @@ RbacSessionState::BypassScope::~BypassScope() {
 }
 
 void RbacSessionState::NoteChecked(int64_t snapshot_version,
-                                   std::vector<PendingOwnership> ownership, bool prepare_only) {
+                                   std::vector<PendingOwnership> ownership, bool prepare_only,
+                                   std::vector<std::string> accesses) {
   std::lock_guard<std::mutex> lock(mutex_);
+  last_accesses_ = std::move(accesses);
   ++checked_pending_;
   last_checked_version_ = snapshot_version;
   planned_prepare_only_ = prepare_only;
   for (auto& o : ownership) planned_ownership_.push_back(std::move(o));
+}
+
+std::vector<std::string> RbacSessionState::TakeAccesses() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<std::string> taken;
+  taken.swap(last_accesses_);
+  return taken;
 }
 
 std::vector<PendingOwnership> RbacSessionState::TakePreparedOwnership() {
@@ -826,7 +923,11 @@ void RegisterRbacEnforcement(dd::DBConfig& config) {
   InstallViewHook();
   dd::OptimizerExtension extension;
   extension.pre_optimize_function = PreOptimize;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION == 1 && GIZMOSQL_DUCKDB_MINOR_VERSION < 5
+  config.optimizer_extensions.push_back(std::move(extension));
+#else
   dd::OptimizerExtension::Register(config, std::move(extension));
+#endif
 }
 
 void AttachRbacSession(dd::ClientContext& context, std::shared_ptr<RbacEngine> engine,

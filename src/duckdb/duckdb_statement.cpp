@@ -1425,6 +1425,15 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
                   ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
                       gizmosql::enterprise::rbac::kRbacSessionStateName)) {
         rbac_prepared_ownership = rbac_state->TakePreparedOwnership();
+        // The audit record of what access control allowed this statement.
+        const auto accesses = rbac_state->TakeAccesses();
+        if (!stmt->HasError() && !rbac_state->unchecked() && !accesses.empty()) {
+          std::string objects;
+          for (const auto& a : accesses) objects += (objects.empty() ? "" : "; ") + a;
+          GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Access control allowed a statement",
+                                 {"kind", "access_control"}, {"status", "allowed"},
+                                 {"statement_id", handle}, {"objects", objects});
+        }
       }
     }
 #endif
@@ -1483,6 +1492,14 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
                      {"kind", "sql"}, {"status", "failure"},
                      {"statement_id", handle}, {"error", err_msg},
                      {"sql", logged_sql});
+    }
+    // An access-control refusal is always recorded, whether or not queries are logged.
+    if (client_session->rbac_enabled &&
+        error_message.find("GizmoSQL blocked this statement") != std::string::npos) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access control refused a statement",
+                             {"kind", "access_control"}, {"status", "denied"},
+                             {"statement_id", handle}, {"error", error_message},
+                             {"sql", logged_sql});
     }
 
 #ifdef GIZMOSQL_ENTERPRISE

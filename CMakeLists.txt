@@ -103,18 +103,20 @@ message(STATUS "GIZMOSQL_DUCKDB_CHANNEL: ${GIZMOSQL_DUCKDB_CHANNEL} (DuckDB ${DU
 # It also replaced the Postgres-derived parser, so duckdb_pg_query is gone.
 # Source code bridges the 1.x/2.x C++ API differences on
 # GIZMOSQL_DUCKDB_MAJOR_VERSION (see src/duckdb/duckdb_compat.h).
-if(NOT DUCKDB_GIT_TAG MATCHES "^v([0-9]+)[.]")
+if(NOT DUCKDB_GIT_TAG MATCHES "^v([0-9]+)[.]([0-9]+)[.]")
     message(FATAL_ERROR "Cannot read the DuckDB major version from '${DUCKDB_GIT_TAG}'")
 endif()
 set(GIZMOSQL_DUCKDB_MAJOR_VERSION "${CMAKE_MATCH_1}")
+set(GIZMOSQL_DUCKDB_MINOR_VERSION "${CMAKE_MATCH_2}")
 if(GIZMOSQL_DUCKDB_MAJOR_VERSION GREATER_EQUAL 2)
     set(GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY TRUE)
 else()
     set(GIZMOSQL_DUCKDB_STATIC_EXTENSION_REGISTRY FALSE)
 endif()
-add_compile_definitions(GIZMOSQL_DUCKDB_MAJOR_VERSION=${GIZMOSQL_DUCKDB_MAJOR_VERSION})
+add_compile_definitions(GIZMOSQL_DUCKDB_MAJOR_VERSION=${GIZMOSQL_DUCKDB_MAJOR_VERSION}
+                        GIZMOSQL_DUCKDB_MINOR_VERSION=${GIZMOSQL_DUCKDB_MINOR_VERSION})
 # third_party/patch_duckdb.cmake adds a view-binding hook from DuckDB 1.5 on.
-if(DUCKDB_GIT_TAG MATCHES "^v1[.][0-4][.]")
+if(GIZMOSQL_DUCKDB_MAJOR_VERSION EQUAL 1 AND GIZMOSQL_DUCKDB_MINOR_VERSION LESS 5)
     add_compile_definitions(GIZMOSQL_DUCKDB_HAS_VIEW_HOOK=0)
 else()
     add_compile_definitions(GIZMOSQL_DUCKDB_HAS_VIEW_HOOK=1)

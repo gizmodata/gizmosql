@@ -16,6 +16,7 @@
 // under the License.
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <arrow/flight/sql/server.h>
 #include <arrow/flight/server_auth.h>
@@ -132,6 +133,15 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   void SetTokenAuthorizedEmails(const std::string& patterns);
 
 #ifdef GIZMOSQL_ENTERPRISE
+  /// Password login for users other than the administrator (Enterprise
+  /// role-based access control): returns true when `username` / `password`
+  /// belong to an enabled user of the access-control store.
+  using PasswordAuthenticator =
+      std::function<bool(const std::string& username, const std::string& password)>;
+  void SetPasswordAuthenticator(PasswordAuthenticator authenticator) {
+    password_authenticator_ = std::move(authenticator);
+  }
+
   /// Set the JWKS manager for validating externally-issued tokens via JWKS.
   void SetJwksManager(std::shared_ptr<gizmosql::enterprise::JwksManager> manager) {
     jwks_manager_ = std::move(manager);
@@ -145,6 +155,7 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
  private:
   std::string username_;
   std::string password_;  // Stores SHA256 hash of password, not plaintext
+  PasswordAuthenticator password_authenticator_;
   std::string secret_key_;
   std::string token_allowed_issuer_;
   std::string token_allowed_audience_;

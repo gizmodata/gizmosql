@@ -336,6 +336,37 @@ TEST_F(RbacEnforcementFixture, CreatingNeedsThePrivilegeAndMakesTheCreatorOwner)
   ExpectAllowed(*bob_, "DROP TABLE bob_table");
 }
 
+TEST_F(RbacEnforcementFixture, ASchemasCreatorOwnsIt) {
+  ExpectAllowed(*admin_, "CREATE ROLE IF NOT EXISTS schema_maker");
+  ExpectAllowed(*admin_, "GRANT CREATE SCHEMA ON CATALOG rbac_enforce_test TO schema_maker");
+  ExpectAllowed(*admin_, "GRANT schema_maker TO bob");
+  ExpectBlocked(*joe_, "CREATE SCHEMA joes", "no CREATE SCHEMA privilege");
+  ExpectAllowed(*bob_, "CREATE SCHEMA bobs");
+  // The owner of a schema may create in it and drop it; nobody else may.
+  ExpectAllowed(*bob_, "CREATE TABLE bobs.t AS SELECT 1 AS x");
+  ExpectAllowed(*bob_, "SELECT * FROM bobs.t");
+  // However the schema is named, another user may not drop it.
+  for (const char* sql : {"DROP SCHEMA bobs CASCADE", "DROP SCHEMA IF EXISTS bobs CASCADE",
+                          "DROP SCHEMA BOBS CASCADE", "DROP SCHEMA rbac_enforce_test.bobs CASCADE",
+                          "DROP SCHEMA IF EXISTS rbac_enforce_test.bobs CASCADE"}) {
+    ExpectBlocked(*joe_, sql, "may not drop schema");
+  }
+  ExpectAllowed(*bob_, "SELECT * FROM bobs.t");  // still there
+  ExpectAllowed(*bob_, "DROP TABLE bobs.t");
+  ExpectAllowed(*bob_, "DROP SCHEMA bobs");
+  ExpectAllowed(*admin_, "REVOKE schema_maker FROM bob");
+}
+
+TEST_F(RbacEnforcementFixture, DropIfExistsOfAnotherOwnersObjectIsRefused) {
+  for (const char* sql : {"DROP TABLE IF EXISTS orders", "DROP TABLE IF EXISTS main.ORDERS",
+                          "DROP TABLE IF EXISTS rbac_enforce_test.main.orders",
+                          "DROP VIEW IF EXISTS orders_over_secrets", "DROP SCHEMA IF EXISTS main CASCADE"}) {
+    ExpectBlocked(*joe_, sql, "may not drop");
+  }
+  ExpectAllowed(*joe_, "SELECT count(*) FROM orders");  // still there
+  ExpectAllowed(*joe_, "DROP TABLE IF EXISTS no_such_table");  // nothing to drop
+}
+
 TEST_F(RbacEnforcementFixture, ReplacingOrIgnoringAnotherOwnersObject) {
   // bob may create tables but does not own orders.
   ExpectBlocked(*bob_, "CREATE OR REPLACE TABLE orders AS SELECT 1 AS id", "may not drop table");

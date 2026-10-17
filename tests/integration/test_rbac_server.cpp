@@ -81,6 +81,15 @@ arrow::Result<std::shared_ptr<arrow::Table>> Query(int port, const Header& auth,
   return arrow::ConcatenateTables(tables);
 }
 
+// Log in with a user name and password (Basic); the server answers with the
+// Bearer header the client uses from then on.
+arrow::Result<Header> PasswordLogin(int port, const std::string& user, const std::string& password) {
+  ARROW_ASSIGN_OR_RAISE(auto loc, arrow::flight::Location::ForGrpcTcp("127.0.0.1", port));
+  ARROW_ASSIGN_OR_RAISE(auto client, arrow::flight::FlightClient::Connect(loc, {}));
+  ARROW_ASSIGN_OR_RAISE(auto bearer, client->AuthenticateBasicToken({}, user, password));
+  return Header{bearer.first, bearer.second};
+}
+
 std::string Cell(const std::shared_ptr<arrow::Table>& t, int col, int row) {
   auto chunked = t->column(col);
   auto arr = std::static_pointer_cast<arrow::StringArray>(chunked->chunk(0));
@@ -241,6 +250,47 @@ TEST_F(RbacServerFixture, DisablingAUserEndsTheirLiveSession) {
   st = Query(GetPort(), Bearer("leo", "user", "00000000-0000-4000-8000-000000000006"), "SELECT 1").status();
   ASSERT_FALSE(st.ok());
   EXPECT_NE(st.ToString().find("is disabled"), std::string::npos) << st.ToString();
+}
+
+TEST_F(RbacServerFixture, StoreUsersLogInWithTheirPassword) {
+  REQUIRE_RBAC_SERVER();
+  const auto admin = Bearer("admin_user", "admin", "00000000-0000-4000-8000-000000000010");
+  ASSERT_OK(Query(GetPort(), admin, "CREATE USER IF NOT EXISTS pat WITH PASSWORD 'correct horse 1'").status());
+  ASSERT_OK(Query(GetPort(), admin, "CREATE USER IF NOT EXISTS nopass").status());
+
+  ASSERT_ARROW_OK_AND_ASSIGN(auto pat, PasswordLogin(GetPort(), "pat", "correct horse 1"));
+  ASSERT_OK(Query(GetPort(), pat, "SELECT 1").status());
+  // The session is pat's, not the administrator's.
+  auto st = Query(GetPort(), pat, "CREATE ROLE pats_role").status();
+  ASSERT_FALSE(st.ok()) << "a password login got administrator rights";
+  EXPECT_NE(st.ToString().find("only administrators manage users, roles and grants"), std::string::npos)
+      << st.ToString();
+
+  // Every failure looks the same: wrong password, no password, unknown name.
+  for (const auto& [user, password] : std::vector<std::pair<std::string, std::string>>{
+           {"pat", "wrong"}, {"pat", "correct horse"}, {"nopass", "anything"}, {"nobody_at_all", "x"}}) {
+    auto login = PasswordLogin(GetPort(), user, password);
+    ASSERT_FALSE(login.ok()) << user << " logged in with a bad password";
+    EXPECT_NE(login.status().ToString().find("Invalid credentials"), std::string::npos)
+        << user << " -> " << login.status().ToString();
+  }
+
+  ASSERT_OK(Query(GetPort(), admin, "ALTER USER pat DISABLE").status());
+  EXPECT_FALSE(PasswordLogin(GetPort(), "pat", "correct horse 1").ok()) << "a disabled user logged in";
+  ASSERT_OK(Query(GetPort(), admin, "ALTER USER pat ENABLE").status());
+  ASSERT_OK(Query(GetPort(), admin, "ALTER USER pat WITH PASSWORD 'battery staple 2'").status());
+  EXPECT_FALSE(PasswordLogin(GetPort(), "pat", "correct horse 1").ok()) << "the old password still works";
+  ASSERT_OK(PasswordLogin(GetPort(), "pat", "battery staple 2").status());
+
+  // The administrator's own login is unchanged, and its name is not available.
+  ASSERT_ARROW_OK_AND_ASSIGN(auto admin_login, PasswordLogin(GetPort(), "admin_user", "admin_pass"));
+  ASSERT_OK(Query(GetPort(), admin_login, "CREATE ROLE IF NOT EXISTS via_password").status());
+  for (const char* sql : {"CREATE USER admin_user WITH PASSWORD 'x'", "CREATE USER ADMIN_USER"}) {
+    st = Query(GetPort(), admin, sql).status();
+    ASSERT_FALSE(st.ok()) << sql;
+    EXPECT_NE(st.ToString().find("is the server administrator's name"), std::string::npos)
+        << sql << " -> " << st.ToString();
+  }
 }
 
 TEST_F(RbacServerFixture, NothingRidesAlongWithAnAccessControlStatement) {

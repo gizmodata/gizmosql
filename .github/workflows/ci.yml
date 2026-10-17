@@ -605,6 +605,21 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # PostgreSQL for the access-control store tests (RBAC), shared by the
+      # two "nodes" of the cluster tests
+      postgres-rbac:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: rbac_store
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -812,6 +827,7 @@ jobs:
       - name: Run Tests (Enterprise Edition - With License)
         env:
           GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_METRICS_TEST_LICENSE || secrets.GIZMOSQL_LICENSE_KEY }}
+          GIZMOSQL_TEST_RBAC_PG_URI: postgresql://postgres:testpassword@127.0.0.1:5434/rbac_store
         if: env.GIZMOSQL_LICENSE_KEY != ''
         run: |
           ./build/tests/gizmosql_integration_tests

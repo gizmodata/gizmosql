@@ -192,6 +192,26 @@ AccessDecision Snapshot::Check(const Principal& principal, const AccessRequest& 
   if (const OwnerRecord* owner = FindOwner(request.object)) {
     if (IsOwner(principal, *owner)) return {true, "owner", "owner"};
   }
+  // The owner of a schema may create objects in it and drop them, as in Postgres.
+  switch (request.privilege) {
+    case Privilege::kCreateTable:
+    case Privilege::kCreateView:
+    case Privilege::kDropTable:
+    case Privilege::kDropView: {
+      ObjectPath schema = request.object;
+      schema.object_name.clear();
+      if (request.type != ObjectType::kSchema && !schema.schema_path.empty()) {
+        if (const OwnerRecord* owner = FindOwner(schema)) {
+          if (owner->type == ObjectType::kSchema && IsOwner(principal, *owner)) {
+            return {true, "owner of the schema", "owner"};
+          }
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
 
   std::set<std::string> covered_columns;
   bool all_columns = false;

@@ -9,10 +9,11 @@ filesystem, attaching databases, installing extensions, or changing global
 server settings.
 
 !!! info "Interim control, not the full model"
-    This is intentionally a small, conservative gate built on SQL parsing. The
-    complete, binding-level authorization model (object- and column-level grants,
-    `GRANT`/`REVOKE` DDL, multi-tenant policies) is the GizmoSQL 2.0 cornerstone.
-    The known limitations below are addressed properly there.
+    This is intentionally a small, conservative gate built on SQL parsing. GizmoSQL
+    Enterprise also offers [role-based access control](access_control.md): users,
+    roles and object- and column-level grants managed with `GRANT` / `REVOKE`, and
+    checked on each statement's plan. With it on, this gate is stricter still for
+    store users (every file and URL, remote ones included, is refused).
 
 !!! tip "Admins are protected from reading host secrets too"
     This gate only applies to non-admin roles. Independently of it, the
@@ -27,13 +28,14 @@ The gate keys off the session **role**:
 
 | Authentication | Role | Affected by the gate? |
 |----------------|------|-----------------------|
-| Username / password (Basic auth) | always `admin` | **No** — basic-auth users are admins |
+| Username / password (Basic auth) of the server's `--username` | `admin` | **No** |
+| Username / password of a [role-based access control](access_control.md) store user | `user` | **Yes** — gated |
 | Token (JWT) with `role: admin` | `admin` | **No** |
 | Token (JWT) with a non-admin `role` (e.g. `analyst`) | that role | **Yes** — gated |
 | Token with no `role` claim + `--token-default-role` set to a non-admin role | that role | **Yes** — gated |
 
-In other words: a deployment that only uses username/password auth is unchanged —
-every such user is an admin. The gate matters specifically for **token / SSO
+In other words: without role-based access control, a deployment that only uses
+username/password auth is unchanged — every such user is an admin. The gate matters specifically for **token / SSO
 deployments that mint non-admin roles**. Internal/system queries that GizmoSQL
 runs on your behalf (metadata, instrumentation) are always exempt.
 

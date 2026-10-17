@@ -525,6 +525,18 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
             {"user", username}, {"peer", context.peer()}, {"kind", "authentication"},
             {"authentication_type", "basic"},
             {"authentication_method", "username/password"}, {"result", "success"});
+      } else if (username != username_ && password_authenticator_ &&
+                 password_authenticator_(username, password)) {
+        // A user of the access-control store (never under the administrator's name).
+        *middleware = std::make_shared<BasicAuthServerMiddleware>(username, "user", "Basic",
+                                                                  secret_key_, instance_id_);
+        GIZMOSQL_LOGKV_DYNAMIC_AT(
+            auth_log_level_, arrow::util::ArrowLogLevel::ARROW_INFO,
+            "User: " + username + " (peer " + context.peer() +
+                ") - Successfully Basic authenticated via an access-control password",
+            {"user", username}, {"peer", context.peer()}, {"kind", "authentication"},
+            {"authentication_type", "basic"},
+            {"authentication_method", "access_control_password"}, {"result", "success"});
       } else {
         GIZMOSQL_LOGKV(WARNING,
                        "User: " + username + " (peer " + context.peer() +

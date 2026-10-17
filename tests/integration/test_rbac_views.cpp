@@ -332,6 +332,9 @@ TEST_F(RbacViewsFixture, AViewWithoutAnOwnerReadsWithTheCallersRights) {
   // A role owner's rights are the role's, checked at query time.
   ExpectAllowed(*admin_, "REVOKE SELECT ON legacy.base FROM publisher");
   ExpectBlocked(*ann_, "SELECT * FROM legacy.v", "its owner lacks a privilege");
+  // The administrator can take it back, under its own name.
+  ExpectAllowed(*admin_, "ALTER VIEW legacy.v OWNER TO admin_user");
+  EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT * FROM legacy.v")), 1);
 }
 
 TEST_F(RbacViewsFixture, ASessionsTemporaryObjectsCannotStandInForWhatAViewReads) {
@@ -372,4 +375,29 @@ TEST_F(RbacViewsFixture, AnAdministratorsViewMayReadAFile) {
   auto st = ann_->Run("SELECT * FROM read_parquet('" + ParquetPath() + "')").status();
   ASSERT_FALSE(st.ok()) << "a user read a file directly";
   EXPECT_NE(st.ToString().find("GizmoSQL blocked"), std::string::npos) << st.ToString();
+}
+
+TEST_F(RbacViewsFixture, ARefusalIsAlwaysRecorded) {
+  // The server logs a structured record of every access-control refusal, also
+  // when queries are not logged (this server does not log them).
+  ::testing::internal::CaptureStderr();
+  ExpectBlocked(*dan_, "SELECT * FROM curated.orders_v", "no SELECT privilege on view");
+  const std::string log = ::testing::internal::GetCapturedStderr();
+  // (The log format, JSON or text, is whatever earlier tests left set.)
+  const auto record = log.find("Access control refused a statement");
+  ASSERT_NE(record, std::string::npos) << log;
+  const std::string line = log.substr(log.rfind('\n', record) + 1,
+                                      log.find('\n', record) - log.rfind('\n', record));
+  EXPECT_NE(line.find("denied"), std::string::npos) << line;
+  EXPECT_NE(line.find("dan"), std::string::npos) << line;
+
+  // So is what an allowed statement read, including through a view's owner.
+  ::testing::internal::CaptureStderr();
+  ExpectAllowed(*ann_, "SELECT id FROM curated.nested_v");
+  const std::string allowed = ::testing::internal::GetCapturedStderr();
+  EXPECT_NE(allowed.find("Access control allowed a statement"), std::string::npos) << allowed;
+  EXPECT_NE(allowed.find("SELECT on view rbac_views_test.curated.nested_v (id)"), std::string::npos)
+      << allowed;
+  EXPECT_NE(allowed.find("as the owner of view rbac_views_test.curated.nested_v"), std::string::npos)
+      << allowed;
 }

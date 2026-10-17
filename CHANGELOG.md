@@ -14,8 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grants in SQL: `CREATE USER` / `ROLE`, `GRANT` / `REVOKE` (roles, and `SELECT`,
   `INSERT`, `UPDATE`, `DELETE` and DDL privileges on tables, views, schemas and
   catalogs, with column lists), `ALTER TABLE | VIEW ... OWNER TO`, `SHOW GRANTS`.
-  The administrator manages access; token users must exist in the store, and the
-  token's `catalog_access` claim is ignored once RBAC is on. Disabling or dropping a
+  The administrator manages access. Store users log in with the password set in the
+  store (Basic authentication) or with a token naming them; a token for a user not in
+  the store is refused, and the token's `catalog_access` claim is ignored once RBAC is
+  on. No store user may take the administrator's name, and `OWNER TO <administrator>`
+  gives an object back to the administrator. Disabling or dropping a
   user, or changing their password, ends their sessions on every node. Requires a
   license that includes `rbac` or `catalog_permissions`.
   Every statement of a store user is checked on DuckDB's own plan before
@@ -25,7 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prepared statement is re-checked when grants change, so a `REVOKE` applies to its
   next run. Works on DuckLake and PostgreSQL catalogs. Under access control, files
   and URLs (remote ones too) and `query()` are refused before DuckDB reads them.
-  Creators own what they create.
+  Creators own what they create; a schema's owner may also create and drop objects
+  in it. Every refused statement is logged (`"kind":"access_control"`,
+  `"status":"denied"`) whether or not queries are logged. See
+  `docs/access_control.md`.
   Views read with their owner's rights: reading a view needs `SELECT` on the view
   (on the columns the statement uses), and what the view reads is checked against
   its owner (a view the administrator created can publish tables, and even files,

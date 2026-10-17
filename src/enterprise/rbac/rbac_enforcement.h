@@ -79,7 +79,11 @@ class RbacSessionState : public duckdb::ClientContextState {
   // `prepare_only`: the plan is a PREPARE (DuckDB 2.x prepares a client-side
   // statement by running one), so its ownership changes wait for a later run.
   void NoteChecked(int64_t snapshot_version, std::vector<PendingOwnership> ownership,
-                   bool prepare_only);
+                   bool prepare_only, std::vector<std::string> accesses = {});
+
+  // What the plan most recently checked was allowed to do ("SELECT on table
+  // t (a, b)", ...), for the audit record GizmoSQL writes once it is prepared.
+  std::vector<std::string> TakeAccesses();
 
   // Ownership changes of the statement most recently prepared without being
   // run (a client-side prepared statement). GizmoSQL takes them right after
@@ -117,6 +121,7 @@ class RbacSessionState : public duckdb::ClientContextState {
   std::vector<PendingOwnership> planned_ownership_;
   bool planned_prepare_only_ = false;
   std::vector<PendingOwnership> prepared_ownership_;
+  std::vector<std::string> last_accesses_;
   // Which snapshot version each prepared statement was checked against.
   std::unordered_map<const void*, int64_t> prepared_versions_;
   std::vector<PendingOwnership> pending_ownership_;

@@ -75,6 +75,8 @@ class RbacEngine {
     int password_iterations = kDefaultPasswordIterations;
     // How often to look for changes made by other replicas. 0 disables polling.
     std::chrono::milliseconds poll_interval{1000};
+    // The server administrator's user name, which no store user may take.
+    std::string administrator_name;
   };
 
   static arrow::Result<std::shared_ptr<RbacEngine>> Create(const Options& options);

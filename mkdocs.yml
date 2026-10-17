@@ -90,6 +90,7 @@ nav:
       - Session Instrumentation (Enterprise): session_instrumentation.md
       - Catalog Logging (Enterprise): catalog_logging.md
       - Statement Queuing (Enterprise): statement_queuing.md
+      - Role-Based Access Control (Enterprise): access_control.md
       - Admin Command Gating: admin_command_gating.md
       - Graceful Shutdown: graceful_shutdown.md
       - OpenTelemetry Integration: opentelemetry.md

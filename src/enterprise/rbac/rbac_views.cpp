@@ -61,8 +61,10 @@ dd::vector<dd::ColumnBinding> ViewMarker::GetColumnBindings() {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
 dd::TableIndex ViewMarker::GetRootIndex() { return children[0]->GetRootIndex(); }
 dd::vector<dd::TableIndex> ViewMarker::GetTableIndex() const { return children[0]->GetTableIndex(); }
-#else
+#elif GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
 dd::idx_t ViewMarker::GetRootIndex() { return children[0]->GetRootIndex(); }
+dd::vector<dd::idx_t> ViewMarker::GetTableIndex() const { return children[0]->GetTableIndex(); }
+#else
 dd::vector<dd::idx_t> ViewMarker::GetTableIndex() const { return children[0]->GetTableIndex(); }
 #endif
 

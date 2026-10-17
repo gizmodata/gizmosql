@@ -73,6 +73,7 @@
 #   GIZMOSQL_REJECT_UNKNOWN_SESSIONS     --reject-unknown-sessions (DuckDB only; default false)
 #   GIZMOSQL_ALLOW_UNSIGNED_EXTENSIONS   --allow-unsigned-extensions (DuckDB only; security-sensitive)
 #   GIZMOSQL_BLOCK_UNREDACTED_SECRETS    --block-unredacted-secrets (DuckDB only; default true)
+#   GIZMOSQL_RBAC_STORE_URI              --rbac-store-uri (Enterprise, DuckDB only; access-control store)
 #   GIZMOSQL_GRACEFUL_SHUTDOWN           --graceful-shutdown (drain on SIGINT/SIGTERM)
 #   GIZMOSQL_SHUTDOWN_GRACE_PERIOD_SECONDS  --shutdown-grace-period-seconds
 #

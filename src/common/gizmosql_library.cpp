@@ -784,8 +784,14 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       }
       gizmosql::enterprise::rbac::RbacEngine::Options rbac_options;
       rbac_options.store_uri = rbac_store_uri;
+      rbac_options.administrator_name = username;
       ARROW_ASSIGN_OR_RAISE(auto rbac_engine,
                             gizmosql::enterprise::rbac::RbacEngine::Create(rbac_options));
+      // Store users with a password log in with it, like the administrator does.
+      header_middleware->SetPasswordAuthenticator(
+          [engine = rbac_engine](const std::string& user, const std::string& password) {
+            return engine->AuthenticatePassword(user, password).ok();
+          });
       GIZMOSQL_LOG(INFO) << "Role-based access control is ON (store: "
                          << rbac_engine->store_description()
                          << "). Users, roles and grants come from the store; token "
