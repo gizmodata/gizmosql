@@ -127,6 +127,12 @@ class RbacSessionState : public duckdb::ClientContextState {
   std::vector<PendingOwnership> pending_ownership_;
 };
 
+// The system privilege that lets a store user past the admin command gate for
+// one of its categories ("ATTACH", "read_csv() (files and URLs)", ...), if any.
+// Categories with none (query(), passthrough SQL, grammar settings, ...) stay
+// the administrator's.
+std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(const std::string& category);
+
 // Record what a statement that ran successfully created or dropped.
 void ApplyOwnership(RbacEngine& engine, const Principal& principal,
                     const std::vector<PendingOwnership>& changes);

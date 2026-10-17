@@ -48,7 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removes everything granted through it (`CASCADE`; `RESTRICT` refuses instead).
   An owner can hand an object to itself or a role it holds. A user who loses any
   privilege has their running statement stopped on every node of the cluster.
-  `SHOW GRANTS` gains a `granted_by` column.
+  `SHOW GRANTS` gains a `granted_by` column. System privileges (`READ FILESYSTEM`,
+  `WRITE FILESYSTEM`, `MANAGE CATALOGS`, `MANAGE EXTENSIONS`, `MANAGE SECRETS`,
+  `MANAGE CONFIG`, `EXPORT DATABASE`, `IMPORT DATABASE`, `CHECKPOINT`) are granted
+  to roles with no `ON` clause and open the matching admin-only statements to
+  their holders, checked by the admin command gate and again on the plan; a
+  statement runs only if every gated operation in it is covered.
   This uses a small hook added to DuckDB's binder at build time
   (`third_party/patch_duckdb.cmake`); on the LTS channel (DuckDB 1.4) views read
   with the caller's rights.

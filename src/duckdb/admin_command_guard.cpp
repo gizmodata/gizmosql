@@ -135,6 +135,15 @@ std::optional<std::string> StringConstant(const dd::ParsedExpression& expr) {
 // access control): no path counts as remote. Set for one ClassifyGatedCommand call.
 thread_local bool t_strict = false;
 
+// Categories this classification may let through (see ClassifyGatedCommand).
+thread_local const std::function<bool(const std::string&)>* t_permitted = nullptr;
+
+// `category`, unless the session may run it after all.
+std::optional<std::string> Gate(std::string category) {
+  if (t_permitted && *t_permitted && (*t_permitted)(category)) return std::nullopt;
+  return category;
+}
+
 // "(local filesystem)", or under strict mode "(files and URLs)".
 std::string PathKind() { return t_strict ? " (files and URLs)" : " (local filesystem)"; }
 
@@ -292,6 +301,9 @@ std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
 struct GatedFunctionWalker {
   std::optional<std::string> violation;
 
+  // Record a gated operation, unless the session may run it.
+  void Flag(std::string category) { violation = Gate(std::move(category)); }
+
   // Drive a full walk of a query node. Safe to call recursively (only on
   // genuinely-nested subquery expressions, which are finite and acyclic).
   void WalkNode(dd::QueryNode& node) {
@@ -321,12 +333,12 @@ struct GatedFunctionWalker {
       case dd::QueryNodeType::COPY_QUERY_NODE: {
         auto& copy = node.Cast<dd::CopyQueryNode>();
         if (!copy.info) {
-          violation = "COPY";
+          Flag("COPY");
           return;
         }
         if (auto v = LocalCopyViolation(*copy.info)) {
-          violation = v;
-          return;
+          Flag(*v);
+          if (violation) return;
         }
         if (copy.info->select_statement) CheckNodeTree(*copy.info->select_statement);
         break;
@@ -372,7 +384,7 @@ struct GatedFunctionWalker {
     } else if (ref.type == dd::TableReferenceType::BASE_TABLE) {
       auto table_name = UnqualifiedTableName(ref.Cast<dd::BaseTableRef>());
       if (table_name && LooksLikeLocalFilePath(*table_name)) {
-        violation = "reading a local file via FROM '" + *table_name + "'";
+        Flag("reading a local file via FROM '" + *table_name + "'");
       }
     } else if (ref.type == dd::TableReferenceType::SUBQUERY) {
       // Its children were enumerated already; only the node edges are left.
@@ -388,7 +400,7 @@ struct GatedFunctionWalker {
     if (expr.GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
       const std::string name = ToLower(FunctionNameOf(expr.Cast<dd::FunctionExpression>()));
       if (IsQuackFunction(name)) {
-        violation = name + "()";
+        Flag(name + "()");
         return;
       }
     }
@@ -410,19 +422,19 @@ struct GatedFunctionWalker {
     const auto& fe = tf.function->Cast<dd::FunctionExpression>();
     const std::string name = ToLower(FunctionNameOf(fe));
     if (AlwaysGatedFunctions().count(name) || IsQuackFunction(name)) {
-      violation = name + "()";
+      Flag(name + "()");
       return;
     }
     // query('<sql>') / query_table('<name>') bind SQL from a string inside
     // DuckDB, where the remote reads it may contain happen before any check.
     if (t_strict && (name == "query" || name == "query_table")) {
-      violation = name + "()";
+      Flag(name + "()");
       return;
     }
     if (FsReadFunctions().count(name)) {
       auto path = FirstStringLiteralArg(fe);
       if (path && IsProvenRemotePath(ToLower(*path))) return;  // remote read allowed
-      violation = name + "()" + PathKind();
+      Flag(name + "()" + PathKind());
     }
   }
 };
@@ -503,7 +515,7 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         break;
       }
       case dd::StatementType::ATTACH_STATEMENT:
-        return "ATTACH";
+        return Gate("ATTACH");
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
       // DuckDB 2.0: CONNECT attaches its target (a file path or a postgres:/
       // sqlite:/quack: URI) and then forwards the session's raw SQL to it,
@@ -511,16 +523,16 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
       // EXTERNAL RESOURCE provisions compute; PASSTHROUGH is raw SQL for a
       // CONNECTed target.
       case dd::StatementType::CONNECT_STATEMENT:
-        return "CONNECT";
+        return Gate("CONNECT");
       case dd::StatementType::DISCONNECT_STATEMENT:
-        return "DISCONNECT";
+        return Gate("DISCONNECT");
       case dd::StatementType::EXTERNAL_RESOURCE_STATEMENT:
-        return "EXTERNAL RESOURCE";
+        return Gate("EXTERNAL RESOURCE");
       case dd::StatementType::PASSTHROUGH_STATEMENT:
-        return "passthrough SQL";
+        return Gate("passthrough SQL");
 #endif
       case dd::StatementType::DETACH_STATEMENT:
-        return "DETACH";
+        return Gate("DETACH");
       case dd::StatementType::CREATE_STATEMENT: {
         // CREATE SECRET (incl. OR REPLACE / PERSISTENT / TEMPORARY — all parse
         // as a CreateStatement with a SECRET_ENTRY catalog type). Secrets hold
@@ -528,7 +540,7 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         // (incl. CTAS) fall through to the gated-function walk below.
         auto& cs = stmt.Cast<dd::CreateStatement>();
         if (cs.info && cs.info->type == dd::CatalogType::SECRET_ENTRY) {
-          return "CREATE SECRET";
+          return Gate("CREATE SECRET");
         }
         break;
       }
@@ -537,7 +549,7 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         // DropStatement with a SECRET_ENTRY catalog type). Other DROPs allowed.
         auto& ds = stmt.Cast<dd::DropStatement>();
         if (ds.info && ds.info->type == dd::CatalogType::SECRET_ENTRY) {
-          return "DROP SECRET";
+          return Gate("DROP SECRET");
         }
         break;
       }
@@ -546,31 +558,31 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
         // CREATE / DROP EXTENSION REPOSITORY parse as LOAD statements.
         if (ls.info && ls.info->load_type == dd::LoadType::CREATE_REPOSITORY) {
-          return "CREATE EXTENSION REPOSITORY";
+          return Gate("CREATE EXTENSION REPOSITORY");
         }
         if (ls.info && ls.info->load_type == dd::LoadType::DROP_REPOSITORY) {
-          return "DROP EXTENSION REPOSITORY";
+          return Gate("DROP EXTENSION REPOSITORY");
         }
 #endif
         const bool is_load = ls.info && ls.info->load_type == dd::LoadType::LOAD;
-        return is_load ? "LOAD extension" : "INSTALL extension";
+        return Gate(is_load ? "LOAD extension" : "INSTALL extension");
       }
       case dd::StatementType::SET_STATEMENT: {
         auto& ss = stmt.Cast<dd::SetStatement>();
         const std::string verb =
             ss.set_type == dd::SetType::RESET ? "RESET GLOBAL " : "SET GLOBAL ";
         if (ss.scope == dd::SetScope::GLOBAL) {
-          return verb + Str(ss.name);  // explicit GLOBAL: any setting
+          return Gate(verb + Str(ss.name));  // explicit GLOBAL: any setting
         }
         // Bare SET/RESET (scope AUTOMATIC) of a dangerous global-only setting
         // changes it for the whole instance — gate it too. Explicit SESSION /
         // LOCAL, and bare SET of harmless session settings, are allowed.
         if (ss.scope == dd::SetScope::AUTOMATIC &&
             IsDangerousGlobalSetting(ToLower(Str(ss.name)))) {
-          return verb + Str(ss.name);
+          return Gate(verb + Str(ss.name));
         }
         if (ss.set_type != dd::SetType::RESET && IsGrammarSetting(ToLower(Str(ss.name)))) {
-          return "SET " + Str(ss.name);
+          return Gate("SET " + Str(ss.name));
         }
         break;
       }
@@ -582,9 +594,9 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
             call.function->GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
           const std::string fname =
               ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
-          if (fname == "checkpoint" || fname == "force_checkpoint") return "CHECKPOINT";
+          if (fname == "checkpoint" || fname == "force_checkpoint") return Gate("CHECKPOINT");
           if (IsQuackFunction(fname) || AlwaysGatedFunctions().count(fname)) {
-            return fname + "()";
+            return Gate(fname + "()");
           }
         }
         break;  // other CALL functions allowed
@@ -592,7 +604,9 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
       case dd::StatementType::COPY_STATEMENT: {
         auto& cs = stmt.Cast<dd::CopyStatement>();
         if (cs.info) {
-          if (auto v = LocalCopyViolation(*cs.info)) return v;
+          if (auto v = LocalCopyViolation(*cs.info)) {
+            if (auto gated = Gate(*v)) return gated;
+          }
           // Remote COPY target is allowed, but a COPY (SELECT read_csv(...)) TO
           // may still read the local filesystem — inspect the embedded query.
           if (cs.info->select_statement) {
@@ -607,14 +621,14 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         // EXPORT DATABASE dumps the ENTIRE database (every schema/table) to a
         // location — full-database egress, NOT bounded by object grants — so it
         // is gated unconditionally, local or remote.
-        return "EXPORT DATABASE";
+        return Gate("EXPORT DATABASE");
       case dd::StatementType::PRAGMA_STATEMENT: {
         // IMPORT DATABASE is parsed as `PRAGMA import_database('dir')`. It runs
         // arbitrary DDL + DML from a dump (and reads the filesystem), so it is
         // gated unconditionally, local or remote. Other pragmas are allowed.
         auto& ps = stmt.Cast<dd::PragmaStatement>();
         if (ps.info && ToLower(Str(ps.info->name)) == "import_database") {
-          return "IMPORT DATABASE";
+          return Gate("IMPORT DATABASE");
         }
         break;
       }
@@ -730,12 +744,22 @@ bool ContainsCaseInsensitive(const std::string& haystack,
 
 }  // namespace
 
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql, bool strict) {
+std::optional<std::string> ClassifyGatedCommand(
+    const std::string& sql, bool strict,
+    const std::function<bool(const std::string& category)>& permitted) {
   struct StrictScope {
-    explicit StrictScope(bool on) : previous(t_strict) { t_strict = on; }
-    ~StrictScope() { t_strict = previous; }
+    StrictScope(bool on, const std::function<bool(const std::string&)>* allow)
+        : previous(t_strict), previous_permitted(t_permitted) {
+      t_strict = on;
+      t_permitted = allow;
+    }
+    ~StrictScope() {
+      t_strict = previous;
+      t_permitted = previous_permitted;
+    }
     bool previous;
-  } strict_scope(strict);
+    const std::function<bool(const std::string&)>* previous_permitted;
+  } strict_scope(strict, &permitted);
   auto parser = compat::StandaloneParser();
   try {
     // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on
@@ -806,6 +830,10 @@ arrow::Status CheckNonAdminCommandAllowed(const std::string& sql) {
   if (!category) return arrow::Status::OK();
   return flight::MakeFlightError(flight::FlightStatusCode::Unauthorized,
                                  GatedCommandDeniedMessage(*category));
+}
+
+bool IsFileReadingTableFunction(const std::string& name_lower) {
+  return FsReadFunctions().count(name_lower) > 0;
 }
 
 }  // namespace gizmosql::ddb

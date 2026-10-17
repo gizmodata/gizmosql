@@ -101,6 +101,9 @@ class StoreTransaction {
   arrow::Status UpdateGrant(const ObjectGrantRecord& grant);
   arrow::Status DeleteGrant(const std::string& grant_id);
   arrow::Status UpsertOwner(const OwnerRecord& owner);
+  // One record per (role, privilege, grantor).
+  arrow::Status UpsertSystemPrivilege(const SystemPrivilegeRecord& record);
+  arrow::Status DeleteSystemPrivilege(const SystemPrivilegeRecord& record);
   arrow::Status DeleteOwner(const ObjectPath& object);
 
   // A fresh random id (UUID v4 text).

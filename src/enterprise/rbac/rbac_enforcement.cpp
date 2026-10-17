@@ -51,6 +51,7 @@
 #include <duckdb/planner/operator/logical_simple.hpp>
 #endif
 
+#include "admin_command_guard.h"
 #include "duckdb_compat.h"
 #include "rbac_duckdb.h"
 #include "rbac_views.h"
@@ -362,6 +363,9 @@ class PlanChecker {
         if (BlockedSettings().count(Lower(compat::Str(set.name)))) {
           Deny(principal_, "changing " + compat::Str(set.name) + " is not allowed");
         }
+        if (set.scope == dd::SetScope::GLOBAL) {
+          RequireSystem(SystemPrivilege::kManageConfig, "SET GLOBAL");
+        }
         return;
       }
       case OpType::LOGICAL_RESET: {
@@ -369,6 +373,9 @@ class PlanChecker {
         if (reset.scope != dd::SetScope::VARIABLE &&
             BlockedSettings().count(Lower(compat::Str(reset.name)))) {
           Deny(principal_, "changing " + compat::Str(reset.name) + " is not allowed");
+        }
+        if (reset.scope == dd::SetScope::GLOBAL) {
+          RequireSystem(SystemPrivilege::kManageConfig, "RESET GLOBAL");
         }
         return;
       }
@@ -381,6 +388,26 @@ class PlanChecker {
         }
         Deny(principal_, "extension operators are not available under access control");
       case OpType::LOGICAL_TRANSACTION:
+        return;
+
+      // ---- system privileges ---------------------------------------------
+      case OpType::LOGICAL_ATTACH:
+      case OpType::LOGICAL_DETACH:
+        RequireSystem(SystemPrivilege::kManageCatalogs, "ATTACH and DETACH");
+        return;
+      case OpType::LOGICAL_LOAD:
+        RequireSystem(SystemPrivilege::kManageExtensions, "INSTALL and LOAD");
+        return;
+      case OpType::LOGICAL_CREATE_SECRET:
+        RequireSystem(SystemPrivilege::kManageSecrets, "CREATE SECRET");
+        return;
+      case OpType::LOGICAL_COPY_TO_FILE:
+        RequireSystem(SystemPrivilege::kWriteFilesystem, "COPY ... TO");
+        VisitChildren(op, nullptr);  // and SELECT on what it copies
+        return;
+      case OpType::LOGICAL_EXPORT:
+        RequireSystem(SystemPrivilege::kExportDatabase, "EXPORT DATABASE");
+        VisitChildren(op, nullptr);
         return;
 
       // ---- plain relational operators: check what they read --------------
@@ -451,6 +478,18 @@ class PlanChecker {
     if (!table) {
       const std::string name = Lower(TableFunctionName(get));
       if (OnlySuperusers()) return;  // in a view an administrator owns
+      if (gizmosql::ddb::IsFileReadingTableFunction(name)) {
+        RequireSystem(SystemPrivilege::kReadFilesystem, "reading files and URLs");
+        return;
+      }
+      if (name == "checkpoint" || name == "force_checkpoint") {
+        RequireSystem(SystemPrivilege::kCheckpoint, "CHECKPOINT");
+        return;
+      }
+      if (name == "duckdb_secrets") {
+        RequireSystem(SystemPrivilege::kManageSecrets, "duckdb_secrets()");
+        return;
+      }
       if (!AllowedTableFunctions().count(name)) {
         Deny(principal_, "the table function " + name + " is not available under access control");
       }
@@ -521,6 +560,22 @@ class PlanChecker {
     }
     if (!owned_view_.empty()) what += " as the owner of view " + owned_view_;
     accesses_.insert(std::move(what));
+  }
+
+  // A system privilege, held by every principal whose rights apply here (the
+  // caller, or the owner of the view this is read through).
+  void RequireSystem(SystemPrivilege privilege, const std::string& what) {
+    NoteAccess(SystemPrivilegeName(privilege), {});
+    for (const auto& rights : rights_) {
+      if (snapshot_.HasSystemPrivilege(rights.principal, privilege)) continue;
+      if (!rights.owner_of_view.empty()) {
+        Deny(principal_, "the view " + rights.owner_of_view +
+                             " cannot be read, because its owner lacks a privilege on an object "
+                             "the view reads");
+      }
+      Deny(principal_, what + " needs the " + SystemPrivilegeName(privilege) +
+                           " privilege, which user " + principal_.user_name + " does not hold");
+    }
   }
 
   bool OnlySuperusers() const {
@@ -681,6 +736,9 @@ class PlanChecker {
         CheckDropOf(*entry);
         return;
       }
+      case dd::CatalogType::SECRET_ENTRY:
+        RequireSystem(SystemPrivilege::kManageSecrets, "DROP SECRET");
+        return;
       default:
         Deny(principal_, "dropping this kind of object needs an administrator");
     }
@@ -917,6 +975,39 @@ void ApplyOwnership(RbacEngine& engine, const Principal& principal,
       (void)engine.ForgetOwner(p.object);
     }
   }
+}
+
+std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(const std::string& category) {
+  auto starts = [&](const char* prefix) { return category.rfind(prefix, 0) == 0; };
+  auto ends = [&](const std::string& suffix) {
+    return category.size() >= suffix.size() &&
+           category.compare(category.size() - suffix.size(), suffix.size(), suffix) == 0;
+  };
+  if (category == "ATTACH" || category == "DETACH") return SystemPrivilege::kManageCatalogs;
+  if (category == "INSTALL extension" || category == "LOAD extension" ||
+      category == "CREATE EXTENSION REPOSITORY" || category == "DROP EXTENSION REPOSITORY") {
+    return SystemPrivilege::kManageExtensions;
+  }
+  if (category == "CREATE SECRET" || category == "DROP SECRET" || category == "duckdb_secrets()") {
+    return SystemPrivilege::kManageSecrets;
+  }
+  if (starts("SET GLOBAL ") || starts("RESET GLOBAL ")) return SystemPrivilege::kManageConfig;
+  if (category == "EXPORT DATABASE") return SystemPrivilege::kExportDatabase;
+  if (category == "IMPORT DATABASE") return SystemPrivilege::kImportDatabase;
+  if (category == "CHECKPOINT") return SystemPrivilege::kCheckpoint;
+  if (starts("COPY TO")) return SystemPrivilege::kWriteFilesystem;
+  if (starts("COPY FROM") || starts("reading a local file via FROM")) {
+    return SystemPrivilege::kReadFilesystem;
+  }
+  // read_csv() (files and URLs), glob() (local filesystem), ...
+  if (ends(" (files and URLs)") || ends(" (local filesystem)")) {
+    const auto paren = category.find("()");
+    if (paren != std::string::npos &&
+        gizmosql::ddb::IsFileReadingTableFunction(Lower(category.substr(0, paren)))) {
+      return SystemPrivilege::kReadFilesystem;
+    }
+  }
+  return std::nullopt;
 }
 
 void RegisterRbacEnforcement(dd::DBConfig& config) {

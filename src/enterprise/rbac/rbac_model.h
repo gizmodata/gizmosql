@@ -73,6 +73,14 @@ struct ObjectGrantRecord {
   std::string granted_by;  // user id of the grantor; empty for the administrator
 };
 
+// A system privilege a role holds (one record per grantor).
+struct SystemPrivilegeRecord {
+  std::string role_id;
+  SystemPrivilege privilege = SystemPrivilege::kCheckpoint;
+  bool admin_option = false;
+  std::string granted_by;  // user id of the grantor; empty for the administrator
+};
+
 // kSchema: the object is the schema itself (catalog + schema path, no name).
 enum class ObjectType { kTable, kView, kSchema };
 
@@ -124,7 +132,8 @@ class Snapshot {
  public:
   Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<RoleRecord> roles,
            std::vector<MembershipRecord> memberships, std::vector<ObjectGrantRecord> grants,
-           std::vector<OwnerRecord> owners);
+           std::vector<OwnerRecord> owners,
+           std::vector<SystemPrivilegeRecord> system_privileges = {});
 
   int64_t version() const { return version_; }
 
@@ -137,6 +146,13 @@ class Snapshot {
   const std::vector<MembershipRecord>& memberships() const { return memberships_; }
   const std::vector<ObjectGrantRecord>& grants() const { return grants_; }
   const std::vector<OwnerRecord>& owners() const { return owners_; }
+  const std::vector<SystemPrivilegeRecord>& system_privileges() const { return system_privileges_; }
+
+  // Does the principal hold the system privilege through one of its roles?
+  // Always true for the administrator.
+  bool HasSystemPrivilege(const Principal& principal, SystemPrivilege privilege) const;
+  // May it grant and revoke it (it holds it WITH ADMIN OPTION)?
+  bool CanGrantSystemPrivilege(const Principal& principal, SystemPrivilege privilege) const;
 
   // Every role the user holds: PUBLIC, direct roles, and roles those roles
   // were granted, transitively.
@@ -184,7 +200,10 @@ class Snapshot {
   struct Fallen {
     std::vector<std::string> grant_ids;
     std::vector<MembershipRecord> memberships;
-    bool empty() const { return grant_ids.empty() && memberships.empty(); }
+    std::vector<SystemPrivilegeRecord> system_privileges;
+    bool empty() const {
+      return grant_ids.empty() && memberships.empty() && system_privileges.empty();
+    }
   };
   Fallen FallenDelegations() const;
 
@@ -197,6 +216,7 @@ class Snapshot {
   std::vector<MembershipRecord> memberships_;
   std::vector<ObjectGrantRecord> grants_;
   std::vector<OwnerRecord> owners_;
+  std::vector<SystemPrivilegeRecord> system_privileges_;
   std::map<std::string, size_t> user_by_key_, user_by_id_, role_by_key_, role_by_id_;
   std::map<std::string, std::vector<const ObjectGrantRecord*>> grants_by_role_;
 };

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -76,7 +77,17 @@ namespace gizmosql::ddb {
 /// would read or write is gated, remote ones too, as are query() / query_table().
 /// DuckDB reads remote metadata while binding, before the access-control plan
 /// check runs, so these must be refused before DuckDB sees the statement.
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql, bool strict = false);
+/// `permitted` (optional): categories the session may run after all (under
+/// access control, those its user holds a system privilege for). They are
+/// skipped and the search goes on, so the result is the first category that
+/// is NOT permitted: a statement passes only if everything gated in it is.
+std::optional<std::string> ClassifyGatedCommand(
+    const std::string& sql, bool strict = false,
+    const std::function<bool(const std::string& category)>& permitted = {});
+
+/// Table functions that read files or URLs (read_csv, read_parquet, glob, ...),
+/// by lower-case name.
+bool IsFileReadingTableFunction(const std::string& name_lower);
 
 /// `SET allow_unredacted_secrets = <value>` (or the PRAGMA form) for any role,
 /// or std::nullopt. Any value that is not a false constant matches (true, 1,

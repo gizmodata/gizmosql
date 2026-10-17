@@ -100,6 +100,16 @@ struct ObjectPrivilegeCommand {
   bool cascade = true;  // REVOKE ... [CASCADE | RESTRICT]
 };
 
+// GRANT sys_priv, ... TO role, ... [WITH ADMIN OPTION]
+// REVOKE [ADMIN OPTION FOR] sys_priv, ... FROM role, ... [CASCADE | RESTRICT]
+struct SystemPrivilegeCommand {
+  bool grant = true;
+  std::vector<SystemPrivilege> privileges;
+  std::vector<Grantee> grantees;
+  bool with_admin_option = false;  // REVOKE: only the admin option
+  bool cascade = true;
+};
+
 // ALTER TABLE | VIEW obj OWNER TO principal
 struct AlterOwnerCommand {
   bool is_view = false;
@@ -115,7 +125,7 @@ struct ShowGrantsCommand {
 using RbacCommand =
     std::variant<CreateUserCommand, AlterUserCommand, DropUserCommand, CreateRoleCommand,
                  DropRoleCommand, RoleMembershipCommand, ObjectPrivilegeCommand,
-                 AlterOwnerCommand, ShowGrantsCommand>;
+                 SystemPrivilegeCommand, AlterOwnerCommand, ShowGrantsCommand>;
 
 // True when `sql` begins like an access-control statement (GRANT, REVOKE,
 // CREATE/ALTER/DROP USER or ROLE, ALTER TABLE|VIEW ... OWNER TO, SHOW GRANTS).

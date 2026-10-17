@@ -59,13 +59,15 @@ std::string ObjectKey(const ObjectPath& path) {
 
 Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<RoleRecord> roles,
                    std::vector<MembershipRecord> memberships,
-                   std::vector<ObjectGrantRecord> grants, std::vector<OwnerRecord> owners)
+                   std::vector<ObjectGrantRecord> grants, std::vector<OwnerRecord> owners,
+                   std::vector<SystemPrivilegeRecord> system_privileges)
     : version_(version),
       users_(std::move(users)),
       roles_(std::move(roles)),
       memberships_(std::move(memberships)),
       grants_(std::move(grants)),
-      owners_(std::move(owners)) {
+      owners_(std::move(owners)),
+      system_privileges_(std::move(system_privileges)) {
   for (size_t i = 0; i < users_.size(); ++i) {
     user_by_key_[FoldIdentifier(users_[i].name)] = i;
     user_by_id_[users_[i].id] = i;
@@ -266,6 +268,11 @@ std::set<std::string> Snapshot::RightsOf(const Principal& principal) const {
   for (const auto& o : owners_) {
     if (IsOwner(principal, o)) rights.insert("owner\x1f" + ObjectKey(o.object));
   }
+  for (auto p : AllSystemPrivileges()) {
+    if (!principal.superuser && HasSystemPrivilege(principal, p)) {
+      rights.insert("system\x1f" + SystemPrivilegeName(p));
+    }
+  }
   return rights;
 }
 
@@ -282,6 +289,24 @@ bool Snapshot::LostRightsSince(const Snapshot& before, const Principal& principa
       }
     }
     return true;
+  }
+  return false;
+}
+
+bool Snapshot::HasSystemPrivilege(const Principal& principal, SystemPrivilege privilege) const {
+  if (principal.superuser) return true;
+  const auto roles = RolesOf(principal);
+  for (const auto& r : system_privileges_) {
+    if (r.privilege == privilege && roles.count(r.role_id)) return true;
+  }
+  return false;
+}
+
+bool Snapshot::CanGrantSystemPrivilege(const Principal& principal, SystemPrivilege privilege) const {
+  if (principal.superuser) return true;
+  const auto roles = RolesOf(principal);
+  for (const auto& r : system_privileges_) {
+    if (r.privilege == privilege && r.admin_option && roles.count(r.role_id)) return true;
   }
   return false;
 }
@@ -384,9 +409,13 @@ bool Snapshot::CanAdminRole(const Principal& principal, const std::string& role_
 Snapshot::Fallen Snapshot::FallenDelegations() const {
   // Start from what the administrator granted, and grow what stands until it
   // stops changing.
-  std::vector<bool> m_ok(memberships_.size()), g_ok(grants_.size());
+  std::vector<bool> m_ok(memberships_.size()), g_ok(grants_.size()),
+      s_ok(system_privileges_.size());
   for (size_t i = 0; i < memberships_.size(); ++i) m_ok[i] = memberships_[i].granted_by.empty();
   for (size_t i = 0; i < grants_.size(); ++i) g_ok[i] = grants_[i].granted_by.empty();
+  for (size_t i = 0; i < system_privileges_.size(); ++i) {
+    s_ok[i] = system_privileges_[i].granted_by.empty();
+  }
 
   // A user's roles through standing memberships only.
   auto roles_of = [&](const std::string& user_id) {
@@ -459,6 +488,20 @@ Snapshot::Fallen Snapshot::FallenDelegations() const {
       }
       if (stands) g_ok[i] = changed = true;
     }
+    for (size_t i = 0; i < system_privileges_.size(); ++i) {
+      if (s_ok[i]) continue;
+      const auto& r = system_privileges_[i];
+      if (!FindUserById(r.granted_by)) continue;
+      const auto roles = roles_of(r.granted_by);
+      for (size_t j = 0; j < system_privileges_.size(); ++j) {
+        const auto& h = system_privileges_[j];
+        if (j != i && s_ok[j] && h.privilege == r.privilege && h.admin_option &&
+            roles.count(h.role_id)) {
+          s_ok[i] = changed = true;
+          break;
+        }
+      }
+    }
   }
 
   Fallen fallen;
@@ -467,6 +510,9 @@ Snapshot::Fallen Snapshot::FallenDelegations() const {
   }
   for (size_t i = 0; i < grants_.size(); ++i) {
     if (!g_ok[i]) fallen.grant_ids.push_back(grants_[i].id);
+  }
+  for (size_t i = 0; i < system_privileges_.size(); ++i) {
+    if (!s_ok[i]) fallen.system_privileges.push_back(system_privileges_[i]);
   }
   return fallen;
 }

@@ -122,7 +122,11 @@ TEST_F(RbacPostgresStoreTest, ConcurrentWritersSerialize) {
   std::atomic<int> failures{0};
   auto writer = [&](RbacEngine& engine, const std::string& prefix) {
     for (int i = 0; i < 15; ++i) {
-      if (!Run(engine, "CREATE ROLE " + prefix + std::to_string(i)).ok()) ++failures;
+      auto st = Run(engine, "CREATE ROLE " + prefix + std::to_string(i));
+      if (!st.ok()) {
+        ++failures;
+        ADD_FAILURE() << prefix << i << " -> " << st.ToString();
+      }
     }
   };
   std::thread ta(writer, std::ref(*a), "a_role_");

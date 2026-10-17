@@ -50,6 +50,26 @@ std::string PrivilegeName(Privilege privilege);
 // The object privileges ALL stands for on a table or view.
 const std::vector<Privilege>& TableLevelPrivileges();
 
+// Server-wide capabilities, granted to roles with no ON clause
+// (GRANT READ FILESYSTEM TO etl). Each opens one family of statements that the
+// admin command gate otherwise keeps for the administrator.
+enum class SystemPrivilege {
+  kManageCatalogs,    // ATTACH, DETACH
+  kManageExtensions,  // INSTALL, LOAD, extension repositories
+  kManageSecrets,     // CREATE / DROP SECRET, duckdb_secrets()
+  kManageConfig,      // SET GLOBAL, instance-wide settings
+  kReadFilesystem,    // read_csv / read_parquet / ..., FROM 'file', COPY FROM: local and remote
+  kWriteFilesystem,   // COPY ... TO a file or URL
+  kExportDatabase,    // EXPORT DATABASE
+  kImportDatabase,    // IMPORT DATABASE
+  kCheckpoint,        // CHECKPOINT, FORCE CHECKPOINT
+};
+
+// "MANAGE CATALOGS", "READ FILESYSTEM", ...
+std::string SystemPrivilegeName(SystemPrivilege privilege);
+const std::vector<SystemPrivilege>& AllSystemPrivileges();
+std::optional<SystemPrivilege> SystemPrivilegeFromName(const std::string& name);
+
 // What a GRANT is attached to. kObject is one table or view; kSchema and
 // kCatalog grant on every present and future object in the container.
 enum class GrantScope { kObject, kSchema, kCatalog };

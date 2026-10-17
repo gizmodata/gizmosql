@@ -217,3 +217,42 @@ TEST_F(RbacDelegation, UsersAndRolesStayWithTheAdministrator) {
         << sql;
   }
 }
+
+TEST_F(RbacDelegation, SystemPrivilegesAndTheirAdminOption) {
+  auto has = [&](const std::string& user, SystemPrivilege p) {
+    return engine_->snapshot()->HasSystemPrivilege(engine_->PrincipalForUser(user).ValueOrDie(), p);
+  };
+  EXPECT_NE(As("ann", "GRANT READ FILESYSTEM TO team").find("may not grant READ FILESYSTEM"),
+            std::string::npos);
+  Admin("GRANT READ FILESYSTEM, CHECKPOINT TO leads WITH ADMIN OPTION");
+  EXPECT_TRUE(has("ann", SystemPrivilege::kReadFilesystem));
+  EXPECT_FALSE(has("bob", SystemPrivilege::kReadFilesystem));
+  EXPECT_EQ(As("ann", "GRANT READ FILESYSTEM TO team"), "");
+  EXPECT_TRUE(has("bob", SystemPrivilege::kReadFilesystem));
+  // Only what she holds with the option.
+  EXPECT_NE(As("ann", "GRANT MANAGE CATALOGS TO team").find("may not grant MANAGE CATALOGS"),
+            std::string::npos);
+  EXPECT_NE(As("bob", "GRANT READ FILESYSTEM TO others").find("may not grant"), std::string::npos);
+  // Revoking the administrator's grant takes ann's with it.
+  Admin("REVOKE READ FILESYSTEM FROM leads");
+  EXPECT_FALSE(has("ann", SystemPrivilege::kReadFilesystem));
+  EXPECT_FALSE(has("bob", SystemPrivilege::kReadFilesystem)) << "a delegated system privilege survived";
+  EXPECT_TRUE(has("ann", SystemPrivilege::kCheckpoint));
+}
+
+TEST_F(RbacDelegation, SystemPrivilegeGrammar) {
+  for (const auto& [sql, why] : std::vector<std::pair<std::string, std::string>>{
+           {"GRANT READ FILESYSTEM ON orders TO team", "no ON clause"},
+           {"GRANT MANAGE CATALOGS TO ann", "granted to roles, not users"},
+           {"REVOKE GRANT OPTION FOR CHECKPOINT FROM team", ""}}) {
+    auto parsed = ParseRbacStatement(sql);
+    std::string error = parsed.ok() ? "" : parsed.status().message();
+    if (parsed.ok()) {
+      auto r = engine_->Execute(*parsed, Principal::Superuser("admin"), resolver_);
+      error = r.ok() ? "" : r.status().message();
+    }
+    EXPECT_FALSE(error.empty()) << sql << " was accepted";
+    if (!why.empty()) EXPECT_NE(error.find(why), std::string::npos) << sql << " -> " << error;
+  }
+  EXPECT_EQ(As("ann", "SHOW GRANTS"), "");
+}

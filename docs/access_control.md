@@ -165,18 +165,50 @@ ALTER VIEW curated.orders_by_region OWNER TO analyst;  -- a role, a user, ...
     Use views to choose which tables and columns users see; do not rely on them
     to hide rows.
 
+## System privileges
+
+Server-wide operations stay the administrator's unless granted to a role as a
+**system privilege**, with no `ON` clause:
+
+```sql
+CREATE ROLE etl;
+GRANT READ FILESYSTEM, WRITE FILESYSTEM TO etl;
+GRANT MANAGE CATALOGS TO etl WITH ADMIN OPTION;  -- its members may grant it on
+```
+
+| System privilege | Lets its holders run |
+|------------------|----------------------|
+| `READ FILESYSTEM` | `read_csv`, `read_parquet`, `read_json`, `read_text`, `glob`, ..., `FROM 'file.parquet'`, `COPY ... FROM`: local files and URLs |
+| `WRITE FILESYSTEM` | `COPY ... TO` a file or URL (plus `SELECT` on what is copied) |
+| `MANAGE CATALOGS` | `ATTACH`, `DETACH` |
+| `MANAGE EXTENSIONS` | `INSTALL`, `LOAD`, extension repositories |
+| `MANAGE SECRETS` | `CREATE SECRET`, `DROP SECRET`, `duckdb_secrets()` |
+| `MANAGE CONFIG` | `SET GLOBAL` and other instance-wide settings |
+| `EXPORT DATABASE` | `EXPORT DATABASE` (plus `SELECT` on what is exported) |
+| `IMPORT DATABASE` | `IMPORT DATABASE` (each statement it runs is checked as usual) |
+| `CHECKPOINT` | `CHECKPOINT`, `FORCE CHECKPOINT` |
+
+A statement runs only if every gated operation in it is covered: holding
+`READ FILESYSTEM` does not let an `ATTACH` ride along. The [sensitive-path
+guard](security.md#sensitive-path-guard) still applies to everyone. A view reads
+with its owner's system privileges, so a view over a file works for readers who
+hold none, while its owner holds `READ FILESYSTEM`. `MANAGE EXTENSIONS`,
+`MANAGE SECRETS` and `MANAGE CONFIG` reach the whole server: grant them only to
+operators you would trust with it.
+
 ## What store users cannot do
 
-Besides what their grants do not cover, store users cannot:
+Besides what their grants and system privileges do not cover, store users cannot:
 
-- read files or URLs directly (`read_parquet(...)`, `FROM 'file.csv'`, `COPY ... TO`),
-  or run `query()` / `query_table()`. A view the administrator owns may read files.
+- run `query()` / `query_table()`, or read files or URLs without `READ FILESYSTEM`.
+  A view the administrator owns may read files.
 - create macros or types (not even temporary ones), or use `SET VARIABLE`. Each of
   these could change what someone else's view computes.
 - have a view read their temporary tables or views. Temporary tables are fine in
   their own statements.
-- turn off the optimizer, change the SQL dialect, attach or detach databases,
-  install or load extensions, or run the other [admin-only commands](admin_command_gating.md).
+- turn off the optimizer or change the SQL dialect (not even with `MANAGE CONFIG`),
+  or run the other [admin-only commands](admin_command_gating.md) that no system
+  privilege covers.
 
 Every refusal says `GizmoSQL blocked ...` and what is missing; a refusal caused by
 what a view reads does not name the objects behind the view. The server also logs

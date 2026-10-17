@@ -291,6 +291,15 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
                                "ROLE", g.grant_option ? "YES" : "NO", grantor_name(g.granted_by)});
       }
     }
+    for (const auto& role_id : role_ids) {
+      const auto* role = snap->FindRoleById(role_id);
+      for (const auto& r : snap->system_privileges()) {
+        if (r.role_id != role_id) continue;
+        result.rows.push_back({SystemPrivilegeName(r.privilege), "SYSTEM", "", "",
+                               role ? role->name : role_id, "ROLE", r.admin_option ? "YES" : "NO",
+                               grantor_name(r.granted_by)});
+      }
+    }
     for (const auto& o : snap->owners()) {
       if (show->principal ? false : snap->IsOwner(actor, o)) {
         result.rows.push_back({"OWNERSHIP",
@@ -338,7 +347,11 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       for (const auto& m : fallen.memberships) {
         ARROW_RETURN_NOT_OK(txn.DeleteMembership(m.member_kind, m.member_id, m.role_id));
       }
-      cascaded = fallen.grant_ids.size() + fallen.memberships.size();
+      for (const auto& r : fallen.system_privileges) {
+        ARROW_RETURN_NOT_OK(txn.DeleteSystemPrivilege(r));
+      }
+      cascaded = fallen.grant_ids.size() + fallen.memberships.size() +
+                 fallen.system_privileges.size();
       return arrow::Status::OK();
     }));
     ARROW_ASSIGN_OR_RAISE(auto snap, store_->Load());
@@ -719,6 +732,73 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
             done.push_back((c->with_grant_option ? "Revoked the grant option for " : "Revoked ") +
                            what + " from " + grantee.name);
           }
+        }
+      }
+      return arrow::Status::OK();
+    }));
+    return with_cascade_note(Join(done, "; "));
+  }
+
+  // ---- GRANT / REVOKE system privileges -----------------------------------
+  if (const auto* c = std::get_if<SystemPrivilegeCommand>(&command)) {
+    std::vector<std::string> done;
+    ARROW_RETURN_NOT_OK(mutate_with(!c->grant && !c->cascade,
+                                    [&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      for (SystemPrivilege p : c->privileges) {
+        const std::string name = SystemPrivilegeName(p);
+        if (c->grant && !snap.CanGrantSystemPrivilege(actor, p)) {
+          return AccessControlError("GizmoSQL blocked GRANT: user " + actor.user_name +
+                                    " may not grant " + name +
+                                    " (only an administrator, or a holder of it WITH ADMIN OPTION)");
+        }
+        for (const auto& g : c->grantees) {
+          ARROW_ASSIGN_OR_RAISE(auto grantee, ResolveGrantee(snap, g));
+          if (grantee.kind != PrincipalKind::kRole) {
+            return AccessControlError("privileges are granted to roles, not users. Grant them to a "
+                                      "role, then GRANT the role TO USER " + grantee.name);
+          }
+          std::vector<SystemPrivilegeRecord> matching;
+          const SystemPrivilegeRecord* own = nullptr;
+          for (const auto& r : snap.system_privileges()) {
+            if (r.role_id == grantee.id && r.privilege == p) {
+              matching.push_back(r);
+              if (r.granted_by == grantor) own = &r;
+            }
+          }
+          if (c->grant) {
+            SystemPrivilegeRecord record{grantee.id, p, c->with_admin_option, grantor};
+            if (own && (own->admin_option || !c->with_admin_option)) {
+              done.push_back(grantee.name + " already has " + name);
+              continue;
+            }
+            ARROW_RETURN_NOT_OK(txn.UpsertSystemPrivilege(record));
+            done.push_back("Granted " + name + " to " + grantee.name +
+                           (c->with_admin_option ? " WITH ADMIN OPTION" : ""));
+            continue;
+          }
+          std::vector<SystemPrivilegeRecord> revocable;
+          for (const auto& r : matching) {
+            if (actor.superuser || r.granted_by == grantor) revocable.push_back(r);
+          }
+          if (revocable.empty()) {
+            if (!matching.empty()) {
+              return AccessControlError("GizmoSQL blocked REVOKE: " + grantee.name + " has " + name +
+                                        " from another grantor; only that grantor or an "
+                                        "administrator can revoke it");
+            }
+            done.push_back(grantee.name + " does not have " + name);
+            continue;
+          }
+          for (auto r : revocable) {
+            if (c->with_admin_option) {
+              r.admin_option = false;
+              ARROW_RETURN_NOT_OK(txn.UpsertSystemPrivilege(r));
+            } else {
+              ARROW_RETURN_NOT_OK(txn.DeleteSystemPrivilege(r));
+            }
+          }
+          done.push_back((c->with_admin_option ? "Revoked the admin option on " : "Revoked ") +
+                         name + " from " + grantee.name);
         }
       }
       return arrow::Status::OK();

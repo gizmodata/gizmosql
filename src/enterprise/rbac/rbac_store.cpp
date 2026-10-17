@@ -17,8 +17,10 @@
 
 #include "rbac_store.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <random>
 #include <regex>
 #include <thread>
 
@@ -281,6 +283,9 @@ arrow::Status RbacStore::InitializeSchema() {
           "VARCHAR NOT NULL, object_name VARCHAR NOT NULL, object_type VARCHAR NOT NULL, "
           "owner_kind VARCHAR NOT NULL, owner_id VARCHAR NOT NULL, definition_hash VARCHAR NOT "
           "NULL)",
+      "CREATE TABLE IF NOT EXISTS " + T("system_privileges") +
+          " (role_id VARCHAR NOT NULL, privilege VARCHAR NOT NULL, admin_option BOOLEAN NOT NULL, "
+          "granted_by VARCHAR NOT NULL, PRIMARY KEY (role_id, privilege, granted_by))",
   };
   for (const auto& sql : ddl) ARROW_RETURN_NOT_OK(Exec(conn, sql));
   ARROW_RETURN_NOT_OK(Run(conn,
@@ -388,9 +393,20 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
     owners.push_back(std::move(owner));
   }
 
+  std::vector<SystemPrivilegeRecord> system_privileges;
+  ARROW_ASSIGN_OR_RAISE(
+      auto sp, Run(conn, "SELECT role_id, privilege, admin_option, granted_by FROM " +
+                             T("system_privileges") + " ORDER BY role_id, privilege, granted_by"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*sp); ++r) {
+    auto privilege = SystemPrivilegeFromName(GetString(*sp, 1, r));
+    if (!privilege) return StoreError("corrupt store", "unknown system privilege");
+    system_privileges.push_back(
+        {GetString(*sp, 0, r), *privilege, GetBool(*sp, 2, r), GetString(*sp, 3, r)});
+  }
+
   return std::make_shared<const Snapshot>(version, std::move(users), std::move(roles),
                                           std::move(memberships), std::move(grants),
-                                          std::move(owners));
+                                          std::move(owners), std::move(system_privileges));
 }
 
 arrow::Status RbacStore::Mutate(
@@ -398,7 +414,12 @@ arrow::Status RbacStore::Mutate(
   std::lock_guard<std::mutex> lock(mutex_);
   auto& conn = *conn_;
   arrow::Status last;
-  for (int attempt = 0; attempt < 5; ++attempt) {
+  // Replicas writing at once conflict on the version row; the loser retries.
+  // Under steady contention a few attempts are not enough, so keep trying for
+  // a while, with jitter so two replicas do not retry in lockstep.
+  thread_local std::minstd_rand jitter(std::random_device{}());
+  constexpr int kAttempts = 40;
+  for (int attempt = 0; attempt < kAttempts; ++attempt) {
     ARROW_RETURN_NOT_OK(Exec(conn, "BEGIN TRANSACTION"));
     auto body = [&]() -> arrow::Status {
       // Bump the version first: the row lock serializes writers on every replica.
@@ -415,7 +436,9 @@ arrow::Status RbacStore::Mutate(
     if (last.ok()) return last;
     (void)conn.Query("ROLLBACK");
     if (!IsRetryableConflict(last.message())) return last;
-    std::this_thread::sleep_for(std::chrono::milliseconds(20 * (attempt + 1)));
+    const int backoff_ms = std::min(10 * (attempt + 1), 200) +
+                           static_cast<int>(jitter() % 25);
+    std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
   }
   return last;
 }
@@ -478,6 +501,9 @@ arrow::Status StoreTransaction::DeleteRole(const std::string& role_id) {
   ARROW_RETURN_NOT_OK(
       Run(conn_, "DELETE FROM " + T("object_grants") + " WHERE role_id = $1", {Text(role_id)})
           .status());
+  ARROW_RETURN_NOT_OK(
+      Run(conn_, "DELETE FROM " + T("system_privileges") + " WHERE role_id = $1", {Text(role_id)})
+          .status());
   return Run(conn_, "DELETE FROM " + T("roles") + " WHERE role_id = $1", {Text(role_id)})
       .status();
 }
@@ -529,6 +555,21 @@ arrow::Status StoreTransaction::UpsertOwner(const OwnerRecord& o) {
              {Text(ObjectKey(o.object)), Text(o.object.catalog), Text(ToJson(o.object.schema_path)),
               Text(o.object.object_name), Text(ObjectTypeName(o.type)),
               Text(OwnerKindName(o.owner_kind)), Text(o.owner_id), Text(o.definition_hash)})
+      .status();
+}
+
+arrow::Status StoreTransaction::UpsertSystemPrivilege(const SystemPrivilegeRecord& r) {
+  ARROW_RETURN_NOT_OK(DeleteSystemPrivilege(r));
+  return Run(conn_, "INSERT INTO " + T("system_privileges") + " VALUES ($1, $2, $3, $4)",
+             {Text(r.role_id), Text(SystemPrivilegeName(r.privilege)), Bool(r.admin_option),
+              Text(r.granted_by)})
+      .status();
+}
+
+arrow::Status StoreTransaction::DeleteSystemPrivilege(const SystemPrivilegeRecord& r) {
+  return Run(conn_, "DELETE FROM " + T("system_privileges") +
+                        " WHERE role_id = $1 AND privilege = $2 AND granted_by = $3",
+             {Text(r.role_id), Text(SystemPrivilegeName(r.privilege)), Text(r.granted_by)})
       .status();
 }
 

@@ -394,6 +394,65 @@ class Parser {
     return std::nullopt;
   }
 
+  // A system privilege phrase starting here: its privilege and length.
+  std::optional<std::pair<SystemPrivilege, size_t>> PeekSystemPrivilege() const {
+    if (PeekKeyword("CHECKPOINT")) return std::make_pair(SystemPrivilege::kCheckpoint, size_t{1});
+    struct Phrase {
+      const char* first;
+      const char* second;
+      SystemPrivilege privilege;
+    };
+    static const Phrase kPhrases[] = {
+        {"MANAGE", "CATALOGS", SystemPrivilege::kManageCatalogs},
+        {"MANAGE", "EXTENSIONS", SystemPrivilege::kManageExtensions},
+        {"MANAGE", "SECRETS", SystemPrivilege::kManageSecrets},
+        {"MANAGE", "CONFIG", SystemPrivilege::kManageConfig},
+        {"READ", "FILESYSTEM", SystemPrivilege::kReadFilesystem},
+        {"WRITE", "FILESYSTEM", SystemPrivilege::kWriteFilesystem},
+        {"EXPORT", "DATABASE", SystemPrivilege::kExportDatabase},
+        {"IMPORT", "DATABASE", SystemPrivilege::kImportDatabase},
+    };
+    for (const auto& phrase : kPhrases) {
+      if (PeekKeyword(phrase.first) && PeekKeyword(phrase.second, 1)) {
+        return std::make_pair(phrase.privilege, size_t{2});
+      }
+    }
+    return std::nullopt;
+  }
+
+  arrow::Result<RbacCommand> ParseSystemPrivileges(bool grant, bool admin_option_for) {
+    SystemPrivilegeCommand cmd;
+    cmd.grant = grant;
+    cmd.with_admin_option = admin_option_for;
+    do {
+      auto found = PeekSystemPrivilege();
+      if (!found) {
+        return SyntaxError("expected a system privilege but found '" + Describe(Peek()) + "'");
+      }
+      cmd.privileges.push_back(found->first);
+      pos_ += found->second;
+    } while (PeekSymbol(",") && (++pos_, true));
+    if (PeekKeyword("ON")) {
+      return SyntaxError("system privileges apply to the whole server: no ON clause");
+    }
+    ARROW_RETURN_NOT_OK(ExpectKeyword(grant ? "TO" : "FROM"));
+    ARROW_ASSIGN_OR_RAISE(cmd.grantees, ParseGranteeList());
+    if (grant && PeekKeyword("WITH")) {
+      ++pos_;
+      ARROW_RETURN_NOT_OK(ExpectKeyword("ADMIN"));
+      ARROW_RETURN_NOT_OK(ExpectKeyword("OPTION"));
+      cmd.with_admin_option = true;
+    }
+    if (!grant) {
+      if (AcceptKeyword("RESTRICT")) {
+        cmd.cascade = false;
+      } else {
+        AcceptKeyword("CASCADE");
+      }
+    }
+    return cmd;
+  }
+
   arrow::Result<std::vector<std::string>> ParseColumnList() {
     std::vector<std::string> columns;
     ARROW_RETURN_NOT_OK(ExpectSymbol("("));
@@ -419,6 +478,7 @@ class Parser {
       }
     }
 
+    if (!option_for && PeekSystemPrivilege()) return ParseSystemPrivileges(grant, admin_option_for);
     if (!admin_option_for && PeekPrivilege()) {
       ObjectPrivilegeCommand cmd;
       cmd.grant = grant;
@@ -623,6 +683,9 @@ std::string CommandKind(const RbacCommand& command) {
       return c.grant ? "GRANT" : "REVOKE";
     }
     std::string operator()(const ObjectPrivilegeCommand& c) const {
+      return c.grant ? "GRANT" : "REVOKE";
+    }
+    std::string operator()(const SystemPrivilegeCommand& c) const {
       return c.grant ? "GRANT" : "REVOKE";
     }
     std::string operator()(const AlterOwnerCommand& c) const {

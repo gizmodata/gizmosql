@@ -70,6 +70,7 @@
 #include "enterprise/rbac/rbac_ddl.h"
 #include "enterprise/rbac/rbac_duckdb.h"
 #include "enterprise/rbac/rbac_engine.h"
+#include "enterprise/rbac/rbac_enforcement.h"
 #include "enterprise/catalog_permissions/catalog_permissions_handler.h"
 #include "enterprise/enterprise_features.h"
 #endif
@@ -1034,14 +1035,44 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   if (!is_internal && client_session->role != "admin") {
     // Under access control every file and URL is gated, remote ones too.
     const bool strict_gate = client_session->rbac_enabled && !client_session->rbac_superuser;
-    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql, strict_gate)) {
+    // A store user passes for what they hold a system privilege for
+    // (GRANT READ FILESYSTEM TO ...); the plan check then checks it again.
+    std::function<bool(const std::string&)> permitted;
+#ifdef GIZMOSQL_ENTERPRISE
+    if (strict_gate) {
+      if (auto server = GetServer(*client_session)) {
+        if (auto engine = server->GetRbacEngine()) {
+          auto snap = engine->snapshot();
+          gizmosql::enterprise::rbac::Principal who{false, client_session->rbac_user_id,
+                                                    client_session->username, ""};
+          permitted = [snap, who](const std::string& category) {
+            auto privilege = gizmosql::enterprise::rbac::SystemPrivilegeForGatedCategory(category);
+            return privilege && snap->HasSystemPrivilege(who, *privilege);
+          };
+        }
+      }
+    }
+#endif
+    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql, strict_gate, permitted)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Client attempted a gated admin command",
                              {"kind", "sql"}, {"status", "rejected"},
                              {"gated", *gated_category}, {"statement_id", handle},
                              {"sql", logged_sql});
-      const std::string gate_error_msg =
-          gizmosql::ddb::GatedCommandDeniedMessage(*gated_category);
+      std::string gate_error_msg = gizmosql::ddb::GatedCommandDeniedMessage(*gated_category);
+#ifdef GIZMOSQL_ENTERPRISE
+      // Under access control, say which system privilege would allow it.
+      if (strict_gate) {
+        if (auto privilege =
+                gizmosql::enterprise::rbac::SystemPrivilegeForGatedCategory(*gated_category)) {
+          gate_error_msg = "Permission denied: GizmoSQL blocked " + *gated_category +
+                           ", which needs the " +
+                           gizmosql::enterprise::rbac::SystemPrivilegeName(*privilege) +
+                           " system privilege. User " + client_session->username +
+                           " does not hold it (see SHOW GRANTS)";
+        }
+      }
+#endif
 #ifdef GIZMOSQL_ENTERPRISE
       if (auto server = GetServer(*client_session)) {
         if (auto mgr = server->GetInstrumentationManager()) {

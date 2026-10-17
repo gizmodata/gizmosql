@@ -95,4 +95,45 @@ std::string ObjectPath::ToString() const {
   return out;
 }
 
+std::string SystemPrivilegeName(SystemPrivilege privilege) {
+  switch (privilege) {
+    case SystemPrivilege::kManageCatalogs:
+      return "MANAGE CATALOGS";
+    case SystemPrivilege::kManageExtensions:
+      return "MANAGE EXTENSIONS";
+    case SystemPrivilege::kManageSecrets:
+      return "MANAGE SECRETS";
+    case SystemPrivilege::kManageConfig:
+      return "MANAGE CONFIG";
+    case SystemPrivilege::kReadFilesystem:
+      return "READ FILESYSTEM";
+    case SystemPrivilege::kWriteFilesystem:
+      return "WRITE FILESYSTEM";
+    case SystemPrivilege::kExportDatabase:
+      return "EXPORT DATABASE";
+    case SystemPrivilege::kImportDatabase:
+      return "IMPORT DATABASE";
+    case SystemPrivilege::kCheckpoint:
+      return "CHECKPOINT";
+  }
+  return "UNKNOWN";
+}
+
+const std::vector<SystemPrivilege>& AllSystemPrivileges() {
+  static const std::vector<SystemPrivilege> kAll = {
+      SystemPrivilege::kManageCatalogs,  SystemPrivilege::kManageExtensions,
+      SystemPrivilege::kManageSecrets,   SystemPrivilege::kManageConfig,
+      SystemPrivilege::kReadFilesystem,  SystemPrivilege::kWriteFilesystem,
+      SystemPrivilege::kExportDatabase,  SystemPrivilege::kImportDatabase,
+      SystemPrivilege::kCheckpoint};
+  return kAll;
+}
+
+std::optional<SystemPrivilege> SystemPrivilegeFromName(const std::string& name) {
+  for (auto p : AllSystemPrivileges()) {
+    if (SystemPrivilegeName(p) == name) return p;
+  }
+  return std::nullopt;
+}
+
 }  // namespace gizmosql::enterprise::rbac
