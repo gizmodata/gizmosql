@@ -20,7 +20,12 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
 #include <unistd.h>
+#endif
 
 #include "arrow/api.h"
 #include "arrow/flight/sql/client.h"
