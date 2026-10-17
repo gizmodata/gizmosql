@@ -20,6 +20,8 @@
 #include "rbac_policies.h"
 
 #include <algorithm>
+#include <ctime>
+#include <sstream>
 #include <set>
 
 namespace gizmosql::enterprise::rbac {
@@ -260,9 +262,209 @@ arrow::Status RbacEngine::ForgetOwner(const ObjectPath& object) {
 // Statements
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// "8 hours", "30 minutes", "2 days", "45 seconds" -> seconds.
+std::optional<int64_t> ParseDuration(const std::string& text) {
+  std::istringstream in(text);
+  int64_t n = 0;
+  std::string unit, rest;
+  if (!(in >> n) || n <= 0 || !(in >> unit) || (in >> rest)) return std::nullopt;
+  for (auto& ch : unit) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  if (!unit.empty() && unit.back() == 's') unit.pop_back();
+  if (unit == "second") return n;
+  if (unit == "minute") return n * 60;
+  if (unit == "hour") return n * 3600;
+  if (unit == "day") return n * 86400;
+  if (unit == "week") return n * 7 * 86400;
+  if (unit == "month") return n * 30 * 86400;
+  if (unit == "year") return n * 365 * 86400;
+  return std::nullopt;
+}
+
+std::string IsoTime(int64_t seconds) {
+  std::time_t t = static_cast<std::time_t>(seconds);
+  std::tm tm{};
+#ifdef _WIN32
+  gmtime_s(&tm, &t);
+#else
+  gmtime_r(&t, &tm);
+#endif
+  char buf[32];
+  std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+  return buf;
+}
+
+int64_t NowSeconds() {
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+constexpr int64_t kMaxScopedTokenSeconds = 30 * 86400;
+
+}  // namespace
+
+arrow::Result<CommandResult> RbacEngine::ExecuteScopedToken(const ScopedTokenCommand& c,
+                                                            const Principal& actor) {
+  auto snap = snapshot();
+  auto privilege_list = [](const std::vector<Privilege>& ps) {
+    std::vector<std::string> names;
+    for (auto p : ps) names.push_back(PrivilegeName(p));
+    return Join(names);
+  };
+  if (c.kind == ScopedTokenCommand::Kind::kShow) {
+    CommandResult result;
+    result.column_names = {"name", "user", "allows", "catalogs", "expires_at", "minted_under"};
+    for (const auto& t : snap->scoped_tokens()) {
+      if (!actor.superuser && t.user_id != actor.user_id) continue;
+      const auto* user = snap->FindUserById(t.user_id);
+      const auto* parent = t.parent_id.empty() ? nullptr : snap->FindScopedToken(t.parent_id);
+      result.rows.push_back({t.name, user ? user->name : t.user_id, privilege_list(t.privileges),
+                             t.catalogs.empty() ? "(any)" : Join(t.catalogs), IsoTime(t.expires_at),
+                             parent ? parent->name : ""});
+    }
+    return result;
+  }
+  // Whose token: your own, or (the administrator) the user named.
+  const UserRecord* user = nullptr;
+  if (actor.superuser) {
+    if (!c.for_user) {
+      return AccessControlError("the administrator names the user: " + CommandKind(c) + " " +
+                                c.name + " FOR USER name ...");
+    }
+    user = snap->FindUserByName(*c.for_user);
+    if (!user) return AccessControlError("user " + *c.for_user + " does not exist");
+  } else {
+    user = snap->FindUserById(actor.user_id);
+    if (!user) return AccessControlError("user " + actor.user_name + " does not exist");
+    if (c.for_user && !IdentifiersEqual(*c.for_user, user->name)) {
+      return AccessControlError(actor.scope ? "a scoped token mints tokens only for the user it "
+                                              "belongs to"
+                                            : "users mint scoped tokens only for yourself; the "
+                                              "administrator mints them for others");
+    }
+  }
+  const ScopedTokenRecord* existing = nullptr;
+  for (const auto& t : snap->scoped_tokens()) {
+    if (t.user_id == user->id && IdentifiersEqual(t.name, c.name)) existing = &t;
+  }
+
+  if (c.kind == ScopedTokenCommand::Kind::kDrop) {
+    if (!existing) {
+      return AccessControlError("user " + user->name + " has no scoped token named " + c.name);
+    }
+    // The token and every token minted under it.
+    std::set<std::string> doomed{existing->id};
+    for (bool grew = true; grew;) {
+      grew = false;
+      for (const auto& t : snap->scoped_tokens()) {
+        if (!t.parent_id.empty() && doomed.count(t.parent_id) && doomed.insert(t.id).second) grew = true;
+      }
+    }
+    ARROW_RETURN_NOT_OK(store_->Mutate([&](StoreTransaction& txn, const Snapshot&) {
+      for (const auto& id : doomed) ARROW_RETURN_NOT_OK(txn.DeleteScopedToken(id));
+      return arrow::Status::OK();
+    }));
+    {
+    ARROW_ASSIGN_OR_RAISE(auto fresh, store_->Load());
+    Publish(std::move(fresh));
+  }
+    return Message("Scoped token " + existing->name + " of user " + user->name + " revoked" +
+                   (doomed.size() > 1 ? " with " + std::to_string(doomed.size() - 1) +
+                                            " token(s) minted under it"
+                                      : ""));
+  }
+
+  // CREATE
+  if (existing) {
+    return AccessControlError("user " + user->name + " already has a scoped token named " + c.name);
+  }
+  int64_t seconds = 3600;
+  if (c.valid_for) {
+    auto parsed = ParseDuration(*c.valid_for);
+    if (!parsed) {
+      return AccessControlError("VALID FOR takes a duration such as '8 hours', '30 minutes' or "
+                                "'7 days'");
+    }
+    seconds = *parsed;
+  }
+  if (seconds > kMaxScopedTokenSeconds) {
+    return AccessControlError("a scoped token is valid for at most 30 days");
+  }
+  ScopedTokenRecord token;
+  token.id = StoreTransaction::NewId();
+  token.name = c.name;
+  token.user_id = user->id;
+  token.privileges = c.privileges;
+  token.catalogs = c.catalogs;
+  token.expires_at = NowSeconds() + seconds;
+  token.created_by = actor.superuser ? "" : actor.user_id;
+  if (actor.scope) {
+    // Minted under a scoped token: never more than it.
+    const auto& parent = *actor.scope;
+    for (auto p : token.privileges) {
+      if (!parent.privileges.count(p)) {
+        return AccessControlError("a token minted under scoped token " + parent.name +
+                                  " cannot allow " + PrivilegeName(p));
+      }
+    }
+    if (!parent.catalogs.empty()) {
+      if (token.catalogs.empty()) token.catalogs = parent.catalogs;
+      for (const auto& cat : token.catalogs) {
+        bool inside = false;
+        for (const auto& pc : parent.catalogs) inside = inside || IdentifiersEqual(pc, cat);
+        if (!inside) {
+          return AccessControlError("a token minted under scoped token " + parent.name +
+                                    " cannot reach catalog " + cat);
+        }
+      }
+    }
+    if (token.expires_at > parent.expires_at) {
+      if (c.valid_for) {
+        return AccessControlError("a token minted under scoped token " + parent.name +
+                                  " cannot outlast it (it expires " + IsoTime(parent.expires_at) +
+                                  ")");
+      }
+      token.expires_at = parent.expires_at;
+    }
+    token.parent_id = parent.id;
+  }
+  ARROW_RETURN_NOT_OK(store_->Mutate([&](StoreTransaction& txn, const Snapshot& now) {
+    for (const auto& t : now.scoped_tokens()) {
+      if (t.user_id == user->id && IdentifiersEqual(t.name, c.name)) {
+        return AccessControlError("user " + user->name + " already has a scoped token named " +
+                                  c.name);
+      }
+    }
+    return txn.InsertScopedToken(token);
+  }));
+  {
+    ARROW_ASSIGN_OR_RAISE(auto fresh, store_->Load());
+    Publish(std::move(fresh));
+  }
+  CommandResult result;
+  result.column_names = {"name", "user", "allows", "catalogs", "expires_at"};
+  result.rows.push_back({token.name, user->name, privilege_list(token.privileges),
+                         token.catalogs.empty() ? "(any)" : Join(token.catalogs),
+                         IsoTime(token.expires_at)});
+  result.minted = CommandResult::MintedToken{token.id, user->name, token.expires_at};
+  return result;
+}
+
 arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
                                                  const Principal& actor,
                                                  ObjectResolver& resolver) {
+  // A scoped token may read its grants, narrow itself and mint narrower
+  // tokens; it never changes access control.
+  if (actor.scope && !std::holds_alternative<ShowGrantsCommand>(command) &&
+      !std::holds_alternative<SetRoleCommand>(command) &&
+      !std::holds_alternative<ScopedTokenCommand>(command)) {
+    return AccessControlError("GizmoSQL blocked " + CommandKind(command) +
+                              ": a scoped token cannot change access control");
+  }
+  if (const auto* c = std::get_if<ScopedTokenCommand>(&command)) return ExecuteScopedToken(*c, actor);
+
   // SHOW GRANTS is a read; everything else changes the store.
   if (const auto* show = std::get_if<ShowGrantsCommand>(&command)) {
     auto snap = snapshot();

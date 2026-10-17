@@ -773,6 +773,9 @@ TEST_F(InteractiveClientFixture, SqlProcessorIsUpdateStatement) {
   EXPECT_TRUE(SqlProcessor::IsUpdateStatement("USE my_catalog"));
   EXPECT_FALSE(SqlProcessor::IsUpdateStatement("SELECT * FROM t"));
   EXPECT_FALSE(SqlProcessor::IsUpdateStatement("  SELECT 1"));
+  // It returns the token, so the shell shows its result.
+  EXPECT_FALSE(SqlProcessor::IsUpdateStatement("create scoped  token t ALLOW SELECT"));
+  EXPECT_TRUE(SqlProcessor::IsUpdateStatement("CREATE SCOPED_TOKENS_TABLE (x INT)"));
   EXPECT_FALSE(SqlProcessor::IsUpdateStatement("WITH cte AS (SELECT 1) SELECT * FROM cte"));
 }
 

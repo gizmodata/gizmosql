@@ -113,6 +113,8 @@ class StoreTransaction {
                                    const std::string& tenant_id);
   arrow::Status SetCatalogTenant(const std::string& catalog, const std::string& tenant_id);
   arrow::Status InsertGroupMapping(const GroupMappingRecord& mapping);
+  arrow::Status InsertScopedToken(const ScopedTokenRecord& token);
+  arrow::Status DeleteScopedToken(const std::string& token_id);
   arrow::Status DeleteGroupMapping(const std::string& mapping_id);
   arrow::Status UpsertRowPolicy(const RowPolicyRecord& policy);
   arrow::Status DeleteRowPolicy(const std::string& policy_id);

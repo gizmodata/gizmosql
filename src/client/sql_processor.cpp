@@ -18,6 +18,7 @@
 #include "sql_processor.hpp"
 
 #include <algorithm>
+#include <sstream>
 #include <cctype>
 
 namespace gizmosql::client {
@@ -127,6 +128,15 @@ bool SqlProcessor::IsUpdateStatement(const std::string& sql) {
   // Convert first 10 chars to uppercase for prefix matching
   std::string prefix = trimmed.substr(0, 10);
   std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::toupper);
+
+  // CREATE SCOPED TOKEN returns the new token: show it like a query's result.
+  {
+    std::istringstream words(trimmed.substr(0, 64));
+    std::string w1, w2, w3;
+    words >> w1 >> w2 >> w3;
+    for (auto* w : {&w1, &w2, &w3}) std::transform(w->begin(), w->end(), w->begin(), ::toupper);
+    if (w1 == "CREATE" && w2 == "SCOPED" && w3 == "TOKEN") return false;
+  }
 
   return prefix.find("INSERT") == 0 ||
          prefix.find("UPDATE") == 0 ||

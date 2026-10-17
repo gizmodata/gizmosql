@@ -1215,6 +1215,16 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
         }
         return arrow::Status::Invalid(message);
       }
+      if (executed->minted) {
+        // The token itself goes back once, to the caller; the store keeps only
+        // its record.
+        auto signed_token = server->MintScopedToken(executed->minted->user_name,
+                                                    executed->minted->token_id,
+                                                    executed->minted->expires_at);
+        if (!signed_token.ok()) return signed_token.status();
+        executed->column_names.push_back("token");
+        for (auto& row : executed->rows) row.push_back(*signed_token);
+      }
       if (executed->active_role_id) {
         if (!rbac_state) return arrow::Status::Invalid("GizmoSQL access control: no session state");
         const auto* role = engine->snapshot()->FindRoleById(*executed->active_role_id);

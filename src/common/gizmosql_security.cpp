@@ -272,7 +272,13 @@ std::string CreateGizmoSQLJWT(
     const std::string& auth_method, const std::string& secret_key,
     const std::string& instance_id,
     const std::optional<std::string>& catalog_access_json,
-    const std::optional<std::string>& identity_json) {
+    const std::optional<std::string>& identity_json,
+    const std::optional<std::string>& scope_id,
+    std::optional<int64_t> expires_at) {
+  auto expiry = std::chrono::system_clock::now() + std::chrono::seconds{kJWTExpiration};
+  if (expires_at) {
+    expiry = std::min(expiry, std::chrono::system_clock::time_point{std::chrono::seconds{*expires_at}});
+  }
   auto builder =
       jwt::create()
           .set_issuer(std::string(kServerJWTIssuer))
@@ -280,8 +286,7 @@ std::string CreateGizmoSQLJWT(
           .set_id("gizmosql-server-" +
                   boost::uuids::to_string(boost::uuids::random_generator()()))
           .set_issued_at(std::chrono::system_clock::now())
-          .set_expires_at(std::chrono::system_clock::now() +
-                          std::chrono::seconds{kJWTExpiration})
+          .set_expires_at(expiry)
           .set_payload_claim("sub", jwt::claim(username))
           .set_payload_claim("role", jwt::claim(role))
           .set_payload_claim("auth_method", jwt::claim(auth_method))
@@ -289,6 +294,8 @@ std::string CreateGizmoSQLJWT(
           .set_payload_claim(
               "session_id",
               jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())));
+
+  if (scope_id.has_value()) builder.set_payload_claim("scope_id", jwt::claim(*scope_id));
 
   // The identity provider's groups (propagated from the bootstrap token).
   if (identity_json.has_value()) {
@@ -308,6 +315,46 @@ std::string CreateGizmoSQLJWT(
   }
 
   return builder.sign(jwt::algorithm::hs256{secret_key});
+}
+
+std::string CreateScopedTokenJWT(const std::string& username, const std::string& secret_key,
+                                 const std::string& instance_id, const std::string& scope_id,
+                                 int64_t expires_at) {
+  return jwt::create()
+      .set_issuer(std::string(kServerJWTIssuer))
+      .set_type("JWT")
+      .set_id("gizmosql-scoped-" + boost::uuids::to_string(boost::uuids::random_generator()()))
+      .set_issued_at(std::chrono::system_clock::now())
+      .set_expires_at(std::chrono::system_clock::time_point{std::chrono::seconds{expires_at}})
+      .set_payload_claim("sub", jwt::claim(username))
+      .set_payload_claim("role", jwt::claim(std::string("user")))
+      .set_payload_claim("auth_method", jwt::claim(std::string("ScopedToken")))
+      .set_payload_claim("instance_id", jwt::claim(instance_id))
+      .set_payload_claim("session_id",
+                         jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
+      .set_payload_claim("scope_id", jwt::claim(scope_id))
+      .sign(jwt::algorithm::hs256{secret_key});
+}
+
+std::optional<BasicAuthServerMiddlewareFactory::ScopedLogin>
+BasicAuthServerMiddlewareFactory::VerifyScopedToken(const std::string& token) const {
+  try {
+    auto decoded = jwt::decode(token);
+    if (!decoded.has_payload_claim("scope_id") || !decoded.has_issuer() ||
+        decoded.get_issuer() != kServerJWTIssuer) {
+      return std::nullopt;
+    }
+    jwt::verify()
+        .allow_algorithm(jwt::algorithm::hs256{secret_key_})
+        .with_issuer(std::string(kServerJWTIssuer))
+        .verify(decoded);
+    return ScopedLogin{decoded.get_subject(), decoded.get_payload_claim("scope_id").as_string(),
+                       std::chrono::duration_cast<std::chrono::seconds>(
+                           decoded.get_expires_at().time_since_epoch())
+                           .count()};
+  } catch (const std::exception&) {
+    return std::nullopt;  // not a scoped token of this server (or expired): the usual paths decide
+  }
 }
 
 std::optional<std::string> IdentityClaimJson(
@@ -358,14 +405,18 @@ BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username
                                                      const std::string& secret_key,
                                                      const std::string& instance_id,
                                                      std::optional<std::string> catalog_access_json,
-                                                     std::optional<std::string> identity_json)
+                                                     std::optional<std::string> identity_json,
+                                                     std::optional<std::string> scope_id,
+                                                     std::optional<int64_t> expires_at)
     : username_(username),
       role_(role),
       auth_method_(auth_method),
       secret_key_(secret_key),
       instance_id_(instance_id),
       catalog_access_json_(std::move(catalog_access_json)),
-      identity_json_(std::move(identity_json)) {}
+      identity_json_(std::move(identity_json)),
+      scope_id_(std::move(scope_id)),
+      expires_at_(expires_at) {}
 
 void BasicAuthServerMiddleware::SendingHeaders(flight::AddCallHeaders* outgoing_headers) {
   auto token = CreateJWTToken();
@@ -380,7 +431,7 @@ std::string BasicAuthServerMiddleware::name() const {
 
 std::string BasicAuthServerMiddleware::CreateJWTToken() const {
   return CreateGizmoSQLJWT(username_, role_, auth_method_, secret_key_, instance_id_,
-                           catalog_access_json_, identity_json_);
+                           catalog_access_json_, identity_json_, scope_id_, expires_at_);
 }
 
 void BasicAuthServerMiddlewareFactory::SetTokenAuthorizedEmails(
@@ -583,6 +634,15 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
     }
     // If the username is "token" - it is assumed that the user is using token auth - use the password field as the bootstrap token
     else {
+      // A scoped token this server (or its cluster, sharing the secret) minted:
+      // a new session limited by the store record it names. Works without an
+      // identity provider configured.
+      if (auto scoped = VerifyScopedToken(password)) {
+        *middleware = std::make_shared<BasicAuthServerMiddleware>(
+            scoped->username, "user", "ScopedToken", secret_key_, instance_id_, std::nullopt,
+            std::nullopt, scoped->scope_id, scoped->expires_at);
+        return Status::OK();
+      }
       if (!token_auth_enabled_) {
         return MakeFlightError(flight::FlightStatusCode::Unauthenticated,
                                "Token auth is not enabled on the server");
@@ -987,6 +1047,10 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").as_string();
       tl_request_ctx.auth_method = decoded_jwt.get_payload_claim("auth_method").as_string();
       tl_request_ctx.catalog_access = ParseCatalogAccessClaim(decoded_jwt);
+      tl_request_ctx.scope_id.reset();
+      if (decoded_jwt.has_payload_claim("scope_id")) {
+        tl_request_ctx.scope_id = decoded_jwt.get_payload_claim("scope_id").as_string();
+      }
       tl_request_ctx.idp_issuer.reset();
       tl_request_ctx.idp_groups.reset();
       if (decoded_jwt.has_payload_claim("idp")) {

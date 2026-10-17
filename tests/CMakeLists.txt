@@ -114,6 +114,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_rbac_audit_chain.cpp
             integration/test_rbac_set_role.cpp
             integration/test_rbac_group_mapping.cpp
+            integration/test_rbac_scoped_tokens.cpp
     )
 endif()
 

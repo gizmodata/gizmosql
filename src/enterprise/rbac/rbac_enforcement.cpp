@@ -17,6 +17,7 @@
 
 #include "rbac_enforcement.h"
 
+#include <chrono>
 #include <set>
 #include <unordered_set>
 
@@ -260,7 +261,28 @@ std::string DefinitionHashOf(dd::CreateInfo& info) {
   return view.query ? ViewDefinitionHash(*view.query) : "";
 }
 
+// What a scoped token allows, for refusals: "only SELECT, INSERT only on catalog x".
+std::string ScopeLimits(const TokenScope& scope) {
+  std::vector<std::string> verbs;
+  for (auto p : {Privilege::kSelect, Privilege::kInsert, Privilege::kUpdate, Privilege::kDelete}) {
+    if (scope.privileges.count(p)) verbs.push_back(PrivilegeName(p));
+  }
+  std::string text = "allows only ";
+  for (size_t i = 0; i < verbs.size(); ++i) text += (i ? ", " : "") + verbs[i];
+  if (!scope.catalogs.empty()) {
+    text += scope.catalogs.size() == 1 ? ", only on catalog " : ", only on catalogs ";
+    for (size_t i = 0; i < scope.catalogs.size(); ++i) text += (i ? ", " : "") + scope.catalogs[i];
+  }
+  return text;
+}
+
 [[noreturn]] void Deny(const Principal& who, const std::string& what) {
+  if (who.scope) {
+    throw dd::PermissionException("GizmoSQL blocked this statement: " + what +
+                                  ". This session logged in with scoped token " + who.scope->name +
+                                  " of user " + who.user_name + ", which " +
+                                  ScopeLimits(*who.scope));
+  }
   if (!who.active_role_name.empty()) {
     throw dd::PermissionException(
         "GizmoSQL blocked this statement: " + what + ". This session acts with role " +
@@ -901,6 +923,16 @@ class PlanChecker {
 // A session whose SET ROLE role was revoked acts with nothing until it picks
 // another one: say so rather than refusing every object.
 void RequireActiveRole(const Snapshot& snapshot, const Principal& principal) {
+  if (principal.scope) {
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+    if (now >= principal.scope->expires_at) {
+      throw dd::PermissionException("GizmoSQL blocked this statement: scoped token " +
+                                    principal.scope->name + " of user " + principal.user_name +
+                                    " has expired");
+    }
+  }
   if (snapshot.HoldsActiveRole(principal)) return;
   const RoleRecord* role = snapshot.FindRoleById(principal.active_role_id);
   throw dd::PermissionException("GizmoSQL blocked this statement: user " + principal.user_name +

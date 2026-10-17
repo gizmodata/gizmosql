@@ -33,6 +33,8 @@ struct RequestCtx
     // The login token's identity provider and groups ("idp" claim).
     std::optional<std::string> idp_issuer;
     std::optional<std::vector<std::string>> idp_groups;
+    // A scoped token's store record ("scope_id" claim).
+    std::optional<std::string> scope_id;
     // instance_id claim of the bearer token (the instance that issued it).
     std::optional<std::string> token_instance_id;
 };

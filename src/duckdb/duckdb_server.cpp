@@ -1238,6 +1238,12 @@ class DuckDBFlightSqlServer::Impl {
     new_session->TouchSqlActivity();
 
 #ifdef GIZMOSQL_ENTERPRISE
+    // A scoped token means nothing without access control to limit it.
+    if (tl_request_ctx.scope_id && !rbac_engine_) {
+      return flight::MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                                     "GizmoSQL access control is not enabled on this server, so "
+                                     "scoped tokens are not accepted");
+    }
     // Role-based access control: the administrator is the superuser; anyone
     // else must be a store user that exists and is enabled. Grants then come
     // only from GRANT, so the token's catalog_access claim no longer applies.
@@ -1257,6 +1263,19 @@ class DuckDBFlightSqlServer::Impl {
           new_session->rbac_credential = user->password_hash.value_or("");
         }
         new_session->rbac_tenant_id = snap->TenantOfPrincipal(*principal);
+        if (tl_request_ctx.scope_id) {
+          // A scoped token's session: the token must still stand, and it
+          // limits everything the session does.
+          const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count();
+          if (!snap->ValidScope(*tl_request_ctx.scope_id, principal->user_id, now)) {
+            return flight::MakeFlightError(
+                flight::FlightStatusCode::Unauthenticated,
+                "GizmoSQL access control: this scoped token was revoked or has expired");
+          }
+          new_session->rbac_scope_id = *tl_request_ctx.scope_id;
+        }
         new_session->rbac_idp_issuer = tl_request_ctx.idp_issuer.value_or("");
         new_session->rbac_idp_groups =
             tl_request_ctx.idp_groups.value_or(std::vector<std::string>{});
@@ -1340,6 +1359,18 @@ class DuckDBFlightSqlServer::Impl {
         // Groups from the login token count through CREATE GROUP MAPPING.
         principal.idp_issuer = new_session->rbac_idp_issuer;
         principal.idp_groups = new_session->rbac_idp_groups;
+        if (!new_session->rbac_scope_id.empty()) {
+          principal.scope = rbac_engine_->snapshot()->ValidScope(
+              new_session->rbac_scope_id, new_session->rbac_user_id,
+              std::chrono::duration_cast<std::chrono::seconds>(
+                  std::chrono::system_clock::now().time_since_epoch())
+                  .count());
+          if (!principal.scope) {
+            return flight::MakeFlightError(
+                flight::FlightStatusCode::Unauthenticated,
+                "GizmoSQL access control: this scoped token was revoked or has expired");
+          }
+        }
         enterprise::rbac::AttachRbacSession(*new_session->connection->Get().context, rbac_engine_,
                                             std::move(principal));
         // A tenant's sessions start in the tenant's default catalog.
@@ -1552,7 +1583,13 @@ class DuckDBFlightSqlServer::Impl {
           !session->rbac_tenant_id.empty() &&
           (!snapshot.FindTenantById(session->rbac_tenant_id) ||
            TenantCatalogsKey(snapshot, session->rbac_tenant_id) != session->rbac_tenant_catalogs);
-      const bool stale = !user || !user->enabled || tenant_changed ||
+      const bool scope_gone =
+          !session->rbac_scope_id.empty() &&
+          !snapshot.ValidScope(session->rbac_scope_id, session->rbac_user_id,
+                               std::chrono::duration_cast<std::chrono::seconds>(
+                                   std::chrono::system_clock::now().time_since_epoch())
+                                   .count());
+      const bool stale = !user || !user->enabled || tenant_changed || scope_gone ||
                          user->password_hash.value_or("") != session->rbac_credential;
       if (!stale) {
         if (!previous) continue;
@@ -1583,11 +1620,13 @@ class DuckDBFlightSqlServer::Impl {
                              {"reason", !user ? "user dropped"
                                         : !user->enabled ? "user disabled"
                                         : tenant_changed ? "tenant's catalogs changed"
+                                        : scope_gone     ? "scoped token revoked or expired"
                                                          : "password changed"});
     }
   }
 #endif
   std::shared_ptr<enterprise::rbac::RbacEngine> GetRbacEngine() const { return rbac_engine_; }
+  DuckDBFlightSqlServer::ScopedTokenMinter scoped_token_minter_;
 
   // The catalogs a tenant may see, as one comparable string.
   static std::string TenantCatalogsKey(const enterprise::rbac::Snapshot& snapshot,
@@ -1602,6 +1641,17 @@ class DuckDBFlightSqlServer::Impl {
 
   // Flag every session of an access-control user for termination and interrupt
   // its running statement; the next request on it is refused.
+  void SetScopedTokenMinter(DuckDBFlightSqlServer::ScopedTokenMinter minter) {
+    scoped_token_minter_ = std::move(minter);
+  }
+  arrow::Result<std::string> MintScopedToken(const std::string& user, const std::string& scope_id,
+                                             int64_t expires_at) {
+    if (!scoped_token_minter_) {
+      return Status::Invalid("GizmoSQL access control: this server cannot sign scoped tokens");
+    }
+    return scoped_token_minter_(user, scope_id, expires_at, instance_id_);
+  }
+
   int TerminateRbacUserSessions(const std::string& user_id) {
     if (user_id.empty()) return 0;
     int ended = 0;
@@ -3300,6 +3350,16 @@ void DuckDBFlightSqlServer::SetRbacEngine(std::shared_ptr<enterprise::rbac::Rbac
 
 std::shared_ptr<enterprise::rbac::RbacEngine> DuckDBFlightSqlServer::GetRbacEngine() const {
   return impl_->GetRbacEngine();
+}
+
+void DuckDBFlightSqlServer::SetScopedTokenMinter(ScopedTokenMinter minter) {
+  impl_->SetScopedTokenMinter(std::move(minter));
+}
+
+arrow::Result<std::string> DuckDBFlightSqlServer::MintScopedToken(const std::string& user,
+                                                                  const std::string& scope_id,
+                                                                  int64_t expires_at) {
+  return impl_->MintScopedToken(user, scope_id, expires_at);
 }
 
 int DuckDBFlightSqlServer::TerminateRbacUserSessions(const std::string& user_id) {

@@ -295,6 +295,11 @@ arrow::Status RbacStore::InitializeSchema() {
       "CREATE TABLE IF NOT EXISTS " + T("group_mappings") +
           " (mapping_id VARCHAR PRIMARY KEY, issuer VARCHAR NOT NULL, group_name VARCHAR NOT "
           "NULL, role_id VARCHAR NOT NULL, UNIQUE (issuer, group_name, role_id))",
+      "CREATE TABLE IF NOT EXISTS " + T("scoped_tokens") +
+          " (token_id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, name_key VARCHAR NOT NULL, "
+          "user_id VARCHAR NOT NULL, parent_id VARCHAR NOT NULL, privileges VARCHAR NOT NULL, "
+          "catalogs VARCHAR NOT NULL, expires_at VARCHAR NOT NULL, created_by VARCHAR NOT NULL, "
+          "UNIQUE (user_id, name_key))",
       "CREATE TABLE IF NOT EXISTS " + T("user_attributes") +
           " (user_id VARCHAR NOT NULL, attribute VARCHAR NOT NULL, value VARCHAR NOT NULL, "
           "PRIMARY KEY (user_id, attribute))",
@@ -504,11 +509,31 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
         {GetString(*gm, 0, r), GetString(*gm, 1, r), GetString(*gm, 2, r), GetString(*gm, 3, r)});
   }
 
+  std::vector<ScopedTokenRecord> scoped_tokens;
+  ARROW_ASSIGN_OR_RAISE(auto st, Run(conn, "SELECT token_id, name, user_id, parent_id, privileges, "
+                                               "catalogs, expires_at, created_by FROM " +
+                                               T("scoped_tokens") + " ORDER BY user_id, name_key"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*st); ++r) {
+    ScopedTokenRecord t;
+    t.id = GetString(*st, 0, r);
+    t.name = GetString(*st, 1, r);
+    t.user_id = GetString(*st, 2, r);
+    t.parent_id = GetString(*st, 3, r);
+    for (const auto& p : FromJson(GetString(*st, 4, r))) {
+      if (auto privilege = PrivilegeFrom(p)) t.privileges.push_back(*privilege);
+    }
+    t.catalogs = FromJson(GetString(*st, 5, r));
+    t.expires_at = std::stoll(GetString(*st, 6, r));
+    t.created_by = GetString(*st, 7, r);
+    scoped_tokens.push_back(std::move(t));
+  }
+
   return std::make_shared<const Snapshot>(
       version, std::move(users), std::move(roles), std::move(memberships), std::move(grants),
       std::move(owners), std::move(system_privileges), std::move(row_policies),
       std::move(masking_policies), std::move(mask_bindings), std::move(tenants),
-      std::move(principal_tenants), std::move(catalog_tenants), std::move(group_mappings));
+      std::move(principal_tenants), std::move(catalog_tenants), std::move(group_mappings),
+      std::move(scoped_tokens));
 }
 
 arrow::Status RbacStore::Mutate(
@@ -637,6 +662,22 @@ arrow::Status StoreTransaction::SetCatalogTenant(const std::string& catalog,
       .status();
 }
 
+arrow::Status StoreTransaction::InsertScopedToken(const ScopedTokenRecord& t) {
+  std::vector<std::string> privileges;
+  for (auto p : t.privileges) privileges.push_back(PrivilegeName(p));
+  return Run(conn_, "INSERT INTO " + T("scoped_tokens") +
+                        " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             {Text(t.id), Text(t.name), Text(FoldIdentifier(t.name)), Text(t.user_id),
+              Text(t.parent_id), Text(ToJson(privileges)), Text(ToJson(t.catalogs)),
+              Text(std::to_string(t.expires_at)), Text(t.created_by)})
+      .status();
+}
+
+arrow::Status StoreTransaction::DeleteScopedToken(const std::string& token_id) {
+  return Run(conn_, "DELETE FROM " + T("scoped_tokens") + " WHERE token_id = $1", {Text(token_id)})
+      .status();
+}
+
 arrow::Status StoreTransaction::InsertGroupMapping(const GroupMappingRecord& m) {
   return Run(conn_, "INSERT INTO " + T("group_mappings") + " VALUES ($1, $2, $3, $4)",
              {Text(m.id), Text(m.issuer), Text(m.group), Text(m.role_id)})
@@ -706,6 +747,9 @@ arrow::Status StoreTransaction::DeleteUser(const std::string& user_id) {
                           {Text(user_id)})
                           .status());
   ARROW_RETURN_NOT_OK(SetPrincipalTenant(PrincipalKind::kUser, user_id, ""));
+  ARROW_RETURN_NOT_OK(
+      Run(conn_, "DELETE FROM " + T("scoped_tokens") + " WHERE user_id = $1", {Text(user_id)})
+          .status());
   return Run(conn_, "DELETE FROM " + T("users") + " WHERE user_id = $1", {Text(user_id)})
       .status();
 }

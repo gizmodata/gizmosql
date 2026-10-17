@@ -798,6 +798,13 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                          << "). Users, roles and grants come from the store; token "
                             "catalog_access claims are ignored";
       duckdb_server->SetRbacEngine(std::move(rbac_engine));
+      // CREATE SCOPED TOKEN signs with the server's key.
+      duckdb_server->SetScopedTokenMinter(
+          [secret_key](const std::string& user, const std::string& scope_id, int64_t expires_at,
+                       const std::string& instance_id) {
+            return gizmosql::CreateScopedTokenJWT(user, secret_key, instance_id, scope_id,
+                                                  expires_at);
+          });
       // Access-control audit records form a hash chain from here on.
       gizmosql::StartAuditChain(gizmosql::AuditChainKeyFromEnvironment());
     }

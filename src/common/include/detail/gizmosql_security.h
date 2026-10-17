@@ -55,7 +55,16 @@ std::string CreateGizmoSQLJWT(
     const std::string& auth_method, const std::string& secret_key,
     const std::string& instance_id,
     const std::optional<std::string>& catalog_access_json = std::nullopt,
-    const std::optional<std::string>& identity_json = std::nullopt);
+    const std::optional<std::string>& identity_json = std::nullopt,
+    const std::optional<std::string>& scope_id = std::nullopt,
+    std::optional<int64_t> expires_at = std::nullopt);
+
+// A scoped token (CREATE SCOPED TOKEN) for `username`: a GizmoSQL token whose
+// "scope_id" names the store record that limits it. A program logs in with it
+// as the password of user "token", like a login token from an identity provider.
+std::string CreateScopedTokenJWT(const std::string& username, const std::string& secret_key,
+                                 const std::string& instance_id, const std::string& scope_id,
+                                 int64_t expires_at);
 
 // The login token's identity provider and groups, as the JSON object GizmoSQL
 // carries in its own token's "idp" claim ({"iss": ..., "groups": [...]});
@@ -94,7 +103,9 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
                             const std::string& secret_key,
                             const std::string& instance_id,
                             std::optional<std::string> catalog_access_json = std::nullopt,
-                            std::optional<std::string> identity_json = std::nullopt);
+                            std::optional<std::string> identity_json = std::nullopt,
+                            std::optional<std::string> scope_id = std::nullopt,
+                            std::optional<int64_t> expires_at = std::nullopt);
 
   const jwt::decoded_jwt<jwt::traits::kazuho_picojson> GetJWT();
   const std::string GetUsername() const;
@@ -114,6 +125,8 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
   std::string instance_id_;
   std::optional<std::string> catalog_access_json_;
   std::optional<std::string> identity_json_;
+  std::optional<std::string> scope_id_;
+  std::optional<int64_t> expires_at_;
 
   std::string CreateJWTToken() const;
 };
@@ -186,6 +199,15 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
 #ifdef GIZMOSQL_ENTERPRISE
   std::shared_ptr<gizmosql::enterprise::JwksManager> jwks_manager_;
 #endif
+
+  // A scoped token (CREATE SCOPED TOKEN) signed with this server's key, still
+  // valid; nullopt for anything else.
+  struct ScopedLogin {
+    std::string username;
+    std::string scope_id;
+    int64_t expires_at;
+  };
+  std::optional<ScopedLogin> VerifyScopedToken(const std::string& token) const;
 
   arrow::Result<jwt::decoded_jwt<jwt::traits::kazuho_picojson>>
   VerifyAndDecodeBootstrapToken(const std::string& token,

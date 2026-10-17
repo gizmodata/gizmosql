@@ -82,6 +82,13 @@ struct CommandResult {
   std::vector<std::string> terminate_user_ids;
   // SET ROLE: the session's new active role (empty: all roles).
   std::optional<std::string> active_role_id;
+  // CREATE SCOPED TOKEN: the token to sign and hand back (a "token" column).
+  struct MintedToken {
+    std::string token_id;
+    std::string user_name;
+    int64_t expires_at = 0;
+  };
+  std::optional<MintedToken> minted;
 };
 
 class RbacEngine {
@@ -137,6 +144,8 @@ class RbacEngine {
   void SetSnapshotListener(SnapshotListener listener);
 
  private:
+  arrow::Result<CommandResult> ExecuteScopedToken(const ScopedTokenCommand& command,
+                                                  const Principal& actor);
   explicit RbacEngine(Options options) : options_(std::move(options)) {}
   void PollLoop();
   void Publish(std::shared_ptr<const Snapshot> snapshot);

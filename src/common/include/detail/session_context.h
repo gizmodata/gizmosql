@@ -187,6 +187,8 @@ struct ClientSession {
   // A tenant's user (empty: system scope), and the catalogs it was given at
   // session start (folded, joined); the session ends when they change.
   std::string rbac_tenant_id;
+  // Logged in with a scoped token: its store record (empty: none).
+  std::string rbac_scope_id;
   // The login token's identity provider and groups (CREATE GROUP MAPPING).
   std::string rbac_idp_issuer;
   std::vector<std::string> rbac_idp_groups;

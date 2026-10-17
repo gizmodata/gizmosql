@@ -67,7 +67,8 @@ Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<R
                    std::vector<TenantRecord> tenants,
                    std::vector<PrincipalTenantRecord> principal_tenants,
                    std::vector<CatalogTenantRecord> catalog_tenants,
-                   std::vector<GroupMappingRecord> group_mappings)
+                   std::vector<GroupMappingRecord> group_mappings,
+                   std::vector<ScopedTokenRecord> scoped_tokens)
     : version_(version),
       users_(std::move(users)),
       roles_(std::move(roles)),
@@ -81,7 +82,8 @@ Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<R
       tenants_(std::move(tenants)),
       principal_tenants_(std::move(principal_tenants)),
       catalog_tenants_(std::move(catalog_tenants)),
-      group_mappings_(std::move(group_mappings)) {
+      group_mappings_(std::move(group_mappings)),
+      scoped_tokens_(std::move(scoped_tokens)) {
   for (size_t i = 0; i < users_.size(); ++i) {
     user_by_key_[FoldIdentifier(users_[i].name)] = i;
     user_by_id_[users_[i].id] = i;
@@ -174,6 +176,28 @@ std::set<std::string> Snapshot::RolesOf(const Principal& principal) const {
   return active;
 }
 
+const ScopedTokenRecord* Snapshot::FindScopedToken(const std::string& id) const {
+  for (const auto& t : scoped_tokens_) {
+    if (t.id == id) return &t;
+  }
+  return nullptr;
+}
+
+std::optional<TokenScope> Snapshot::ValidScope(const std::string& token_id,
+                                               const std::string& user_id, int64_t now) const {
+  const ScopedTokenRecord* token = FindScopedToken(token_id);
+  if (!token || token->user_id != user_id || token->expires_at <= now) return std::nullopt;
+  // Every token it was minted under must still be there (a bounded walk).
+  const ScopedTokenRecord* up = token;
+  for (int depth = 0; !up->parent_id.empty(); ++depth) {
+    up = FindScopedToken(up->parent_id);
+    if (!up || depth > 64 || up->expires_at <= now) return std::nullopt;
+  }
+  TokenScope scope{token->id, token->name, {}, token->catalogs, token->expires_at};
+  scope.privileges.insert(token->privileges.begin(), token->privileges.end());
+  return scope;
+}
+
 bool Snapshot::HoldsActiveRole(const Principal& principal) const {
   if (principal.active_role_id.empty() || principal.superuser || principal.is_role()) return true;
   return HeldRoleIds(principal).count(principal.active_role_id) > 0;
@@ -231,6 +255,19 @@ bool Snapshot::GrantCovers(const ObjectGrantRecord& grant, const AccessRequest& 
 
 AccessDecision Snapshot::Check(const Principal& principal, const AccessRequest& request) const {
   if (principal.superuser) return {true, "superuser", "superuser"};
+  // A scoped token narrows everything below, the owner's rights included.
+  if (principal.scope) {
+    if (!principal.scope->privileges.count(request.privilege)) {
+      return {false, "scoped token: privilege not allowed", ""};
+    }
+    if (!principal.scope->catalogs.empty() && !IdentifiersEqual(request.object.catalog, "temp")) {
+      bool reachable = false;
+      for (const auto& c : principal.scope->catalogs) {
+        reachable = reachable || IdentifiersEqual(c, request.object.catalog);
+      }
+      if (!reachable) return {false, "scoped token: catalog not allowed", ""};
+    }
+  }
   const auto roles = RolesOf(principal);
   if (roles.empty()) {
     return {false, principal.is_role() ? "unknown role" : "unknown or disabled user", ""};
@@ -379,6 +416,7 @@ bool Snapshot::LostRightsSince(const Snapshot& before, const Principal& principa
 
 bool Snapshot::HasSystemPrivilege(const Principal& principal, SystemPrivilege privilege) const {
   if (principal.superuser) return true;
+  if (principal.scope) return false;  // a scoped token holds none
   const auto roles = RolesOf(principal);
   for (const auto& r : system_privileges_) {
     if (r.privilege == privilege && roles.count(r.role_id)) return true;

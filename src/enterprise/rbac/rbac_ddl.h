@@ -184,6 +184,20 @@ struct ShowPoliciesCommand {
 // SHOW TENANTS
 struct ShowTenantsCommand {};
 
+// CREATE SCOPED TOKEN name [FOR USER user] ALLOW SELECT[, INSERT, UPDATE, DELETE]
+//   [ON CATALOG c[, ...]] [VALID FOR '8 hours']
+// DROP SCOPED TOKEN name [FOR USER user]
+// SHOW SCOPED TOKENS
+struct ScopedTokenCommand {
+  enum class Kind { kCreate, kDrop, kShow };
+  Kind kind = Kind::kShow;
+  std::string name;
+  std::optional<std::string> for_user;
+  std::vector<Privilege> privileges;
+  std::vector<std::string> catalogs;
+  std::optional<std::string> valid_for;
+};
+
 // CREATE GROUP MAPPING 'group' [ISSUER 'issuer'] TO ROLE role
 // DROP GROUP MAPPING 'group' [ISSUER 'issuer'] [TO ROLE role]
 // SHOW GROUP MAPPINGS
@@ -220,7 +234,8 @@ using RbacCommand =
                  CreateRowPolicyCommand, DropRowPolicyCommand, CreateMaskingPolicyCommand,
                  DropMaskingPolicyCommand, SetColumnMaskCommand, ShowPoliciesCommand,
                  TenantCommand, CatalogTenantCommand, TenantDefaultCatalogCommand,
-                 ShowTenantsCommand, SetRoleCommand, GroupMappingCommand>;
+                 ShowTenantsCommand, SetRoleCommand, GroupMappingCommand,
+                 ScopedTokenCommand>;
 
 // True when `sql` begins like an access-control statement (GRANT, REVOKE,
 // CREATE/ALTER/DROP USER or ROLE, ALTER TABLE|VIEW ... OWNER TO, SHOW GRANTS).

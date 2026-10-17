@@ -17,6 +17,7 @@
 
 #include "rbac_ddl.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 
@@ -275,6 +276,10 @@ class Parser {
         pos_ += 2;
         return ParseGroupMapping(GroupMappingCommand::Kind::kCreate);
       }
+      if (PeekKeyword("SCOPED") && PeekKeyword("TOKEN", 1)) {
+        pos_ += 2;
+        return ParseScopedToken(ScopedTokenCommand::Kind::kCreate);
+      }
       if (AcceptKeyword("TENANT")) {
         TenantCommand cmd;
         cmd.if_exists = ParseIfNotExists();
@@ -289,6 +294,10 @@ class Parser {
       if (PeekKeyword("GROUP") && PeekKeyword("MAPPING", 1)) {
         pos_ += 2;
         return ParseGroupMapping(GroupMappingCommand::Kind::kDrop);
+      }
+      if (PeekKeyword("SCOPED") && PeekKeyword("TOKEN", 1)) {
+        pos_ += 2;
+        return ParseScopedToken(ScopedTokenCommand::Kind::kDrop);
       }
       if (AcceptKeyword("TENANT")) {
         TenantCommand cmd;
@@ -391,6 +400,10 @@ class Parser {
         pos_ += 2;
         return GroupMappingCommand{};
       }
+      if (PeekKeyword("SCOPED") && PeekKeyword("TOKENS", 1)) {
+        pos_ += 2;
+        return ScopedTokenCommand{};
+      }
       if (PeekKeyword("MASKING") && PeekKeyword("POLICIES", 1)) {
         pos_ += 2;
         ShowPoliciesCommand cmd;
@@ -401,6 +414,56 @@ class Parser {
       return ParseShowGrants();
     }
     return SyntaxError("not an access-control statement");
+  }
+
+  arrow::Result<RbacCommand> ParseScopedToken(ScopedTokenCommand::Kind kind) {
+    ScopedTokenCommand cmd;
+    cmd.kind = kind;
+    ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a token name"));
+    if (AcceptKeyword("FOR")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("USER"));
+      ARROW_ASSIGN_OR_RAISE(auto user, ParsePrincipalName("a user name"));
+      cmd.for_user = std::move(user);
+    }
+    if (kind == ScopedTokenCommand::Kind::kDrop) return cmd;
+    ARROW_RETURN_NOT_OK(ExpectKeyword("ALLOW"));
+    do {
+      Privilege p;
+      if (AcceptKeyword("SELECT")) {
+        p = Privilege::kSelect;
+      } else if (AcceptKeyword("INSERT")) {
+        p = Privilege::kInsert;
+      } else if (AcceptKeyword("UPDATE")) {
+        p = Privilege::kUpdate;
+      } else if (AcceptKeyword("DELETE")) {
+        p = Privilege::kDelete;
+      } else {
+        return SyntaxError("a scoped token allows SELECT, INSERT, UPDATE or DELETE, not '" +
+                           Describe(Peek()) + "'");
+      }
+      if (std::find(cmd.privileges.begin(), cmd.privileges.end(), p) == cmd.privileges.end()) {
+        cmd.privileges.push_back(p);
+      }
+    } while (PeekSymbol(",") && (++pos_, true));
+    if (AcceptKeyword("ON")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("CATALOG"));
+      do {
+        ARROW_ASSIGN_OR_RAISE(auto catalog, ParseIdentifier("a catalog name"));
+        cmd.catalogs.push_back(std::move(catalog));
+      } while (PeekSymbol(",") && (++pos_, true));
+    }
+    if (AcceptKeyword("VALID")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("FOR"));
+      ARROW_ASSIGN_OR_RAISE(auto valid_for, ParseStringLiteral("a duration such as '8 hours'"));
+      cmd.valid_for = std::move(valid_for);
+    }
+    // FOR USER may also come last.
+    if (!cmd.for_user && AcceptKeyword("FOR")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("USER"));
+      ARROW_ASSIGN_OR_RAISE(auto user, ParsePrincipalName("a user name"));
+      cmd.for_user = std::move(user);
+    }
+    return cmd;
   }
 
   arrow::Result<RbacCommand> ParseGroupMapping(GroupMappingCommand::Kind kind) {
@@ -950,6 +1013,11 @@ bool LooksLikeRbacStatement(const std::string& sql) {
     return true;
   }
   if (first == "SHOW" && second == "GROUP" && words.size() > 2 && words[2] == "MAPPINGS") return true;
+  if ((first == "CREATE" || first == "DROP") && second == "SCOPED" && words.size() > 2 &&
+      words[2] == "TOKEN") {
+    return true;
+  }
+  if (first == "SHOW" && second == "SCOPED" && words.size() > 2 && words[2] == "TOKENS") return true;
   if (first == "CREATE" || first == "DROP") return second == "USER" || second == "ROLE";
   if (first == "ALTER") {
     if (second == "USER") return true;
@@ -1034,6 +1102,11 @@ std::string CommandKind(const RbacCommand& command) {
     std::string operator()(const TenantDefaultCatalogCommand&) const { return "ALTER TENANT"; }
     std::string operator()(const ShowTenantsCommand&) const { return "SHOW TENANTS"; }
     std::string operator()(const SetRoleCommand&) const { return "SET ROLE"; }
+    std::string operator()(const ScopedTokenCommand& c) const {
+      return c.kind == ScopedTokenCommand::Kind::kCreate ? "CREATE SCOPED TOKEN"
+             : c.kind == ScopedTokenCommand::Kind::kDrop ? "DROP SCOPED TOKEN"
+                                                         : "SHOW SCOPED TOKENS";
+    }
     std::string operator()(const GroupMappingCommand& c) const {
       return c.kind == GroupMappingCommand::Kind::kCreate ? "CREATE GROUP MAPPING"
              : c.kind == GroupMappingCommand::Kind::kDrop ? "DROP GROUP MAPPING"

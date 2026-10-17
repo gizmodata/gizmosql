@@ -143,6 +143,47 @@ stops statements that relied on it; a change of groups at the identity provider
 applies from the user's next login. Mapped roles can be made active with
 `SET ROLE`. Only the administrator manages mappings.
 
+## Scoped tokens for agents and automation
+
+A user can mint a token for a program (an AI agent, a nightly job) that may only
+ever do less than the user:
+
+```sql
+CREATE SCOPED TOKEN nightly_report ALLOW SELECT ON CATALOG shared VALID FOR '8 hours';
+```
+
+```text
+name,user,allows,catalogs,expires_at,token
+nightly_report,sam,SELECT,shared,2026-10-17T11:05:24Z,eyJhbGciOi...
+```
+
+`ALLOW` takes `SELECT`, `INSERT`, `UPDATE` and `DELETE`; `ON CATALOG` (one or
+more) limits where; `VALID FOR` takes a duration such as `'30 minutes'`, `'8
+hours'` or `'7 days'` (default one hour, at most 30 days). The token is shown
+once; the store keeps only its record. The program logs in with user name
+`token` and the scoped token as the password, as with a login token from an
+identity provider (this works without one configured):
+
+```bash
+GIZMOSQL_PASSWORD="$SCOPED_TOKEN" gizmosql_client -h db.example.com -u token \
+  -c "SELECT * FROM sales"
+```
+
+The session has the user's rights cut down to what the token allows. A refusal
+says so (`This session logged in with scoped token nightly_report of user sam,
+which allows only SELECT, only on catalog shared`). A scoped token never creates
+or drops objects, holds no system privileges and cannot change access control. A
+grant taken from the user is taken from the token at once. A session started with
+a scoped token can mint tokens that are narrower still (no other verbs or
+catalogs, no later expiry).
+
+`SHOW SCOPED TOKENS` lists a user's tokens (the administrator sees everyone's,
+never the tokens themselves). `DROP SCOPED TOKEN nightly_report` revokes a token
+and every token minted under it, and ends their sessions on every node. The
+administrator mints and drops tokens for a user with `FOR USER name`. Dropping
+or disabling the user ends their tokens too. A token is signed with the server's
+secret key, so on a cluster every node must share it (`--secret-key`).
+
 ## Owners
 
 Whoever creates a table, view or schema **owns** it, and may read, change and drop

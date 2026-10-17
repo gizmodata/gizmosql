@@ -107,6 +107,29 @@ struct GroupMappingRecord {
   std::string role_id;
 };
 
+// CREATE SCOPED TOKEN: a token a user mints for a program, allowed only some
+// verbs on some catalogs until it expires, and never more than the user. A
+// token minted under another (parent_id) is narrower still and dies with it.
+struct ScopedTokenRecord {
+  std::string id;
+  std::string name;
+  std::string user_id;
+  std::string parent_id;               // empty: minted by a user or the administrator
+  std::vector<Privilege> privileges;   // SELECT, INSERT, UPDATE, DELETE
+  std::vector<std::string> catalogs;   // empty: any the user can reach
+  int64_t expires_at = 0;              // seconds since the epoch
+  std::string created_by;              // user id; empty: the administrator
+};
+
+// What a session that logged in with a scoped token may do at most.
+struct TokenScope {
+  std::string id;
+  std::string name;
+  std::set<Privilege> privileges;
+  std::vector<std::string> catalogs;
+  int64_t expires_at = 0;
+};
+
 // The two roles every tenant has.
 constexpr const char* kTenantPublicSuffix = "/PUBLIC";
 constexpr const char* kTenantAdminSuffix = "/tenant_admin";
@@ -179,6 +202,8 @@ struct Principal {
   // (CREATE GROUP MAPPING turns them into roles).
   std::string idp_issuer;
   std::vector<std::string> idp_groups;
+  // Logged in with a scoped token: never more than this.
+  std::optional<TokenScope> scope;
 
   static Principal Superuser(std::string name) { return {true, "", std::move(name), ""}; }
   static Principal Role(std::string id, std::string name) {
@@ -214,7 +239,8 @@ class Snapshot {
            std::vector<TenantRecord> tenants = {},
            std::vector<PrincipalTenantRecord> principal_tenants = {},
            std::vector<CatalogTenantRecord> catalog_tenants = {},
-           std::vector<GroupMappingRecord> group_mappings = {});
+           std::vector<GroupMappingRecord> group_mappings = {},
+           std::vector<ScopedTokenRecord> scoped_tokens = {});
 
   int64_t version() const { return version_; }
 
@@ -234,6 +260,12 @@ class Snapshot {
   const std::vector<TenantRecord>& tenants() const { return tenants_; }
   const std::vector<CatalogTenantRecord>& catalog_tenants() const { return catalog_tenants_; }
   const std::vector<GroupMappingRecord>& group_mappings() const { return group_mappings_; }
+  const std::vector<ScopedTokenRecord>& scoped_tokens() const { return scoped_tokens_; }
+  const ScopedTokenRecord* FindScopedToken(const std::string& id) const;
+  // The scope of a token that still stands for `user_id` at `now` (its user's
+  // own, unexpired, and every token it was minted under still there).
+  std::optional<TokenScope> ValidScope(const std::string& token_id, const std::string& user_id,
+                                       int64_t now) const;
   const TenantRecord* FindTenantByName(const std::string& name) const;
   const TenantRecord* FindTenantById(const std::string& id) const;
   // "" for a system-scope user, role or catalog.
@@ -338,6 +370,7 @@ class Snapshot {
   std::vector<PrincipalTenantRecord> principal_tenants_;
   std::vector<CatalogTenantRecord> catalog_tenants_;
   std::vector<GroupMappingRecord> group_mappings_;
+  std::vector<ScopedTokenRecord> scoped_tokens_;
   std::map<std::string, size_t> user_by_key_, user_by_id_, role_by_key_, role_by_id_;
   std::map<std::string, std::vector<const ObjectGrantRecord*>> grants_by_role_;
 };

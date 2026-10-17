@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds the role for that session; users are never created from a token, mapped
   tenant roles apply only within the tenant, and dropping a mapping stops the
   statements that relied on it.
+  Scoped tokens for agents and automation: `CREATE SCOPED TOKEN name ALLOW SELECT[,
+  INSERT, UPDATE, DELETE] [ON CATALOG c, ...] [VALID FOR '8 hours'] [FOR USER u]`
+  returns a signed token a program logs in with (user `token`); its session can
+  only do less than the user (no DDL, no system privileges, no access-control
+  changes). Tokens minted under a scoped token are narrower again, and `DROP SCOPED
+  TOKEN` revokes a token with everything minted under it, ending their sessions on
+  every node. `SHOW SCOPED TOKENS` lists them without the tokens. `gizmosql_client`
+  shows the result of `CREATE SCOPED TOKEN` instead of a row count.
 
 ### Fixed
 - **`KILL SESSION` ran twice through Flight SQL `Execute`.** GizmoSQL's own commands
