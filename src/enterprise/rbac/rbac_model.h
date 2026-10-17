@@ -114,11 +114,11 @@ struct ScopedTokenRecord {
   std::string id;
   std::string name;
   std::string user_id;
-  std::string parent_id;               // empty: minted by a user or the administrator
-  std::vector<Privilege> privileges;   // SELECT, INSERT, UPDATE, DELETE
-  std::vector<std::string> catalogs;   // empty: any the user can reach
-  int64_t expires_at = 0;              // seconds since the epoch
-  std::string created_by;              // user id; empty: the administrator
+  std::string parent_id;              // empty: minted by a user or the administrator
+  std::vector<Privilege> privileges;  // SELECT, INSERT, UPDATE, DELETE
+  std::vector<std::string> catalogs;  // empty: any the user can reach
+  int64_t expires_at = 0;             // seconds since the epoch
+  std::string created_by;             // user id; empty: the administrator
 };
 
 // What a session that logged in with a scoped token may do at most.
@@ -141,7 +141,7 @@ struct RowPolicyRecord {
   ObjectPath table;
   bool permissive = true;
   std::vector<std::string> role_ids;  // empty: every role
-  std::string predicate;             // SQL, as written
+  std::string predicate;              // SQL, as written
 };
 
 // CREATE MASKING POLICY name AS (parameter type) RETURNS type -> body
@@ -223,15 +223,15 @@ struct AccessRequest {
 
 struct AccessDecision {
   bool allowed = false;
-  std::string reason;            // which grant satisfied it, or what is missing
-  std::string satisfying_role;   // role (or "owner") whose grant allowed it
+  std::string reason;           // which grant satisfied it, or what is missing
+  std::string satisfying_role;  // role (or "owner") whose grant allowed it
 };
 
 class Snapshot {
  public:
   Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<RoleRecord> roles,
-           std::vector<MembershipRecord> memberships, std::vector<ObjectGrantRecord> grants,
-           std::vector<OwnerRecord> owners,
+           std::vector<MembershipRecord> memberships,
+           std::vector<ObjectGrantRecord> grants, std::vector<OwnerRecord> owners,
            std::vector<SystemPrivilegeRecord> system_privileges = {},
            std::vector<RowPolicyRecord> row_policies = {},
            std::vector<MaskingPolicyRecord> masking_policies = {},
@@ -253,19 +253,27 @@ class Snapshot {
   const std::vector<MembershipRecord>& memberships() const { return memberships_; }
   const std::vector<ObjectGrantRecord>& grants() const { return grants_; }
   const std::vector<OwnerRecord>& owners() const { return owners_; }
-  const std::vector<SystemPrivilegeRecord>& system_privileges() const { return system_privileges_; }
+  const std::vector<SystemPrivilegeRecord>& system_privileges() const {
+    return system_privileges_;
+  }
   const std::vector<RowPolicyRecord>& row_policies() const { return row_policies_; }
-  const std::vector<MaskingPolicyRecord>& masking_policies() const { return masking_policies_; }
+  const std::vector<MaskingPolicyRecord>& masking_policies() const {
+    return masking_policies_;
+  }
   const std::vector<MaskBindingRecord>& mask_bindings() const { return mask_bindings_; }
   const std::vector<TenantRecord>& tenants() const { return tenants_; }
-  const std::vector<CatalogTenantRecord>& catalog_tenants() const { return catalog_tenants_; }
-  const std::vector<GroupMappingRecord>& group_mappings() const { return group_mappings_; }
+  const std::vector<CatalogTenantRecord>& catalog_tenants() const {
+    return catalog_tenants_;
+  }
+  const std::vector<GroupMappingRecord>& group_mappings() const {
+    return group_mappings_;
+  }
   const std::vector<ScopedTokenRecord>& scoped_tokens() const { return scoped_tokens_; }
   const ScopedTokenRecord* FindScopedToken(const std::string& id) const;
   // The scope of a token that still stands for `user_id` at `now` (its user's
   // own, unexpired, and every token it was minted under still there).
-  std::optional<TokenScope> ValidScope(const std::string& token_id, const std::string& user_id,
-                                       int64_t now) const;
+  std::optional<TokenScope> ValidScope(const std::string& token_id,
+                                       const std::string& user_id, int64_t now) const;
   const TenantRecord* FindTenantByName(const std::string& name) const;
   const TenantRecord* FindTenantById(const std::string& id) const;
   // "" for a system-scope user, role or catalog.
@@ -283,8 +291,8 @@ class Snapshot {
   const MaskingPolicyRecord* FindMaskingPolicyById(const std::string& id) const;
   // Row policies on the table, and of those the ones that apply to the principal.
   std::vector<const RowPolicyRecord*> RowPoliciesOn(const ObjectPath& table) const;
-  std::vector<const RowPolicyRecord*> ApplicableRowPolicies(const Principal& principal,
-                                                             const ObjectPath& table) const;
+  std::vector<const RowPolicyRecord*> ApplicableRowPolicies(
+      const Principal& principal, const ObjectPath& table) const;
   // Masked columns of the table the principal is not exempt from: column -> policy.
   std::vector<std::pair<std::string, const MaskingPolicyRecord*>> ApplicableMasks(
       const Principal& principal, const ObjectPath& table) const;
@@ -293,7 +301,8 @@ class Snapshot {
   // Always true for the administrator.
   bool HasSystemPrivilege(const Principal& principal, SystemPrivilege privilege) const;
   // May it grant and revoke it (it holds it WITH ADMIN OPTION)?
-  bool CanGrantSystemPrivilege(const Principal& principal, SystemPrivilege privilege) const;
+  bool CanGrantSystemPrivilege(const Principal& principal,
+                               SystemPrivilege privilege) const;
 
   // Every role the user holds: PUBLIC, direct roles, and roles those roles
   // were granted, transitively.
@@ -301,7 +310,8 @@ class Snapshot {
   // Every role `role_id` holds, itself included.
   std::set<std::string> RoleClosure(const std::string& role_id) const;
   // Would granting `role_id` to role `member_role_id` create a cycle?
-  bool WouldCreateCycle(const std::string& role_id, const std::string& member_role_id) const;
+  bool WouldCreateCycle(const std::string& role_id,
+                        const std::string& member_role_id) const;
 
   const OwnerRecord* FindOwner(const ObjectPath& object) const;
 

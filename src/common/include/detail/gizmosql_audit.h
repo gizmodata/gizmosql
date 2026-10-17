@@ -65,11 +65,13 @@ struct AuditChainReport {
 // lines are skipped. `key`: GIZMOSQL_AUDIT_CHAIN_KEY of the server that wrote
 // it (empty for an unkeyed chain). `partial`: the log may start inside a
 // chain (rotated logs), so a chain need not begin at sequence 1.
-AuditChainReport VerifyAuditLog(std::istream& in, const std::string& key, bool partial = false);
+AuditChainReport VerifyAuditLog(std::istream& in, const std::string& key,
+                                bool partial = false);
 
 }  // namespace gizmosql
 
 // Session-aware audit record (see GIZMOSQL_LOGKV_SESSION).
-#define GIZMOSQL_AUDIT_SESSION(SEV, SESSION, MSG, ...)                                       \
-  ::gizmosql::LogAuditRecord(::arrow::util::ArrowLogLevel::ARROW_##SEV, __FILE__, __LINE__, \
-                             MSG, ::gizmosql::FieldList{SESSION_KV_FIELDS(SESSION), __VA_ARGS__})
+#define GIZMOSQL_AUDIT_SESSION(SEV, SESSION, MSG, ...)                    \
+  ::gizmosql::LogAuditRecord(                                             \
+      ::arrow::util::ArrowLogLevel::ARROW_##SEV, __FILE__, __LINE__, MSG, \
+      ::gizmosql::FieldList{SESSION_KV_FIELDS(SESSION), __VA_ARGS__})

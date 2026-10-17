@@ -88,7 +88,8 @@ class Client {
     }
     return arrow::ConcatenateTables(tables);
   }
-  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(const std::string& sql) {
+  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(
+      const std::string& sql) {
     return client_->Prepare(Options(), sql);
   }
   arrow::Result<int64_t> ExecutePrepared(arrow::flight::sql::PreparedStatement& stmt) {
@@ -127,7 +128,8 @@ class RbacViewsFixture : public gizmosql::testing::ServerTestFixture<RbacViewsFi
         // for a view made before access control was turned on.
         .init_sql_commands =
             "CREATE SCHEMA IF NOT EXISTS legacy; "
-            "CREATE OR REPLACE TABLE legacy.base AS SELECT 1 AS id, 'legacy-secret' AS s; "
+            "CREATE OR REPLACE TABLE legacy.base AS SELECT 1 AS id, 'legacy-secret' AS "
+            "s; "
             "CREATE OR REPLACE VIEW legacy.v AS SELECT id, s FROM legacy.base;",
         .allow_cross_instance_tokens = true,
         .rbac_store_uri = "memory",
@@ -138,7 +140,8 @@ class RbacViewsFixture : public gizmosql::testing::ServerTestFixture<RbacViewsFi
   void SetUp() override {
     if (!RbacLicensed()) GTEST_SKIP() << "license does not include RBAC";
 #if !GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
-    GTEST_SKIP() << "this DuckDB has no view-binding hook; views read with the caller's rights";
+    GTEST_SKIP()
+        << "this DuckDB has no view-binding hook; views read with the caller's rights";
 #endif
     ASSERT_TRUE(IsServerReady()) << "RBAC test server did not start";
     admin_ = std::make_unique<Client>(GetPort(), "admin_user", "admin", 1);
@@ -146,8 +149,10 @@ class RbacViewsFixture : public gizmosql::testing::ServerTestFixture<RbacViewsFi
     if (!seeded) {
       const std::string parquet = ParquetPath();
       for (const std::string& sql : {
-               std::string("CREATE TABLE raw_orders (id INT, amount INT, customer VARCHAR, ssn VARCHAR)"),
-               std::string("INSERT INTO raw_orders VALUES (1, 10, 'ann', '111'), (2, 20, 'bob', '222'), "
+               std::string("CREATE TABLE raw_orders (id INT, amount INT, customer "
+                           "VARCHAR, ssn VARCHAR)"),
+               std::string("INSERT INTO raw_orders VALUES (1, 10, 'ann', '111'), (2, 20, "
+                           "'bob', '222'), "
                            "(3, 30, 'cara', '333')"),
                std::string("CREATE TABLE secrets (id INT, value VARCHAR)"),
                std::string("INSERT INTO secrets VALUES (1, 'top-secret-value')"),
@@ -155,15 +160,21 @@ class RbacViewsFixture : public gizmosql::testing::ServerTestFixture<RbacViewsFi
                std::string("INSERT INTO allowed VALUES ('ann')"),
                "COPY (SELECT 42 AS answer) TO '" + parquet + "' (FORMAT parquet)",
                std::string("CREATE SCHEMA curated"),
-               std::string("CREATE VIEW curated.orders_v AS SELECT id, amount, customer FROM main.raw_orders"),
-               std::string("CREATE VIEW curated.ssn_v AS SELECT id, ssn FROM main.raw_orders"),
-               std::string("CREATE VIEW curated.nested_v AS SELECT id, amount FROM curated.orders_v"),
+               std::string("CREATE VIEW curated.orders_v AS SELECT id, amount, customer "
+                           "FROM main.raw_orders"),
+               std::string(
+                   "CREATE VIEW curated.ssn_v AS SELECT id, ssn FROM main.raw_orders"),
+               std::string("CREATE VIEW curated.nested_v AS SELECT id, amount FROM "
+                           "curated.orders_v"),
                // `allowed` is unqualified on purpose: a session's temporary
                // table of that name would be found first.
-               std::string("CREATE VIEW curated.tenant_v AS SELECT id, customer FROM main.raw_orders "
+               std::string("CREATE VIEW curated.tenant_v AS SELECT id, customer FROM "
+                           "main.raw_orders "
                            "WHERE customer IN (SELECT tenant FROM allowed)"),
-               "CREATE VIEW curated.file_v AS SELECT * FROM read_parquet('" + parquet + "')",
-               std::string("CREATE ROLE analyst"), std::string("CREATE ROLE builder"),
+               "CREATE VIEW curated.file_v AS SELECT * FROM read_parquet('" + parquet +
+                   "')",
+               std::string("CREATE ROLE analyst"),
+               std::string("CREATE ROLE builder"),
                std::string("CREATE ROLE publisher"),
                std::string("GRANT SELECT ON curated.orders_v TO analyst"),
                std::string("GRANT SELECT ON curated.nested_v TO analyst"),
@@ -172,8 +183,10 @@ class RbacViewsFixture : public gizmosql::testing::ServerTestFixture<RbacViewsFi
                std::string("GRANT SELECT (id) ON curated.ssn_v TO analyst"),
                std::string("GRANT CREATE VIEW ON SCHEMA main TO builder"),
                std::string("GRANT SELECT (id, amount) ON main.raw_orders TO builder"),
-               std::string("CREATE USER ann"), std::string("CREATE USER bob"),
-               std::string("CREATE USER dan"), std::string("GRANT analyst TO ann"),
+               std::string("CREATE USER ann"),
+               std::string("CREATE USER bob"),
+               std::string("CREATE USER dan"),
+               std::string("GRANT analyst TO ann"),
                std::string("GRANT builder TO bob"),
            }) {
         auto st = admin_->Run(sql).status();
@@ -187,7 +200,8 @@ class RbacViewsFixture : public gizmosql::testing::ServerTestFixture<RbacViewsFi
   }
 
   // The statement must be refused by the access-control check, mentioning `why`.
-  static std::string ExpectBlocked(Client& who, const std::string& sql, const std::string& why) {
+  static std::string ExpectBlocked(Client& who, const std::string& sql,
+                                   const std::string& why) {
     auto st = who.Run(sql).status();
     EXPECT_FALSE(st.ok()) << "NOT BLOCKED: " << sql;
     EXPECT_NE(st.ToString().find("GizmoSQL blocked"), std::string::npos)
@@ -196,12 +210,16 @@ class RbacViewsFixture : public gizmosql::testing::ServerTestFixture<RbacViewsFi
         << sql << " -> expected '" << why << "' in: " << st.ToString();
     return st.ToString();
   }
-  static std::shared_ptr<arrow::Table> ExpectAllowed(Client& who, const std::string& sql) {
+  static std::shared_ptr<arrow::Table> ExpectAllowed(Client& who,
+                                                     const std::string& sql) {
     auto result = who.Run(sql);
-    EXPECT_TRUE(result.ok()) << "WRONGLY BLOCKED: " << sql << " -> " << result.status().ToString();
+    EXPECT_TRUE(result.ok()) << "WRONGLY BLOCKED: " << sql << " -> "
+                             << result.status().ToString();
     return result.ok() ? *result : nullptr;
   }
-  static int64_t Rows(const std::shared_ptr<arrow::Table>& t) { return t ? t->num_rows() : -1; }
+  static int64_t Rows(const std::shared_ptr<arrow::Table>& t) {
+    return t ? t->num_rows() : -1;
+  }
 
   std::unique_ptr<Client> admin_, ann_, bob_, dan_;
 };
@@ -214,21 +232,28 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacViewsFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacViewsFixture>::server_ready_{false};
+std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacViewsFixture>::server_ready_{
+    false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacViewsFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacViewsFixture>::config_{};
 
 TEST_F(RbacViewsFixture, AnAdministratorsViewPublishesWhatItSelects) {
   EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT * FROM curated.orders_v")), 3);
-  EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT customer, sum(amount) FROM curated.orders_v GROUP BY 1")), 3);
+  EXPECT_EQ(Rows(ExpectAllowed(
+                *ann_, "SELECT customer, sum(amount) FROM curated.orders_v GROUP BY 1")),
+            3);
   // BI tools wrap everything in a subquery.
-  EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT * FROM (SELECT * FROM curated.orders_v) t LIMIT 100")), 3);
+  EXPECT_EQ(Rows(ExpectAllowed(
+                *ann_, "SELECT * FROM (SELECT * FROM curated.orders_v) t LIMIT 100")),
+            3);
   ExpectBlocked(*ann_, "SELECT * FROM raw_orders", "no SELECT privilege on table");
 }
 
 TEST_F(RbacViewsFixture, TheCallerStillNeedsSelectOnTheView) {
   ExpectBlocked(*dan_, "SELECT * FROM curated.orders_v", "no SELECT privilege on view");
-  ExpectBlocked(*dan_, "SELECT * FROM (SELECT id FROM curated.orders_v) t", "no SELECT privilege on view");
+  ExpectBlocked(*dan_, "SELECT * FROM (SELECT id FROM curated.orders_v) t",
+                "no SELECT privilege on view");
   EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT id FROM curated.orders_v")), 3);
 }
 
@@ -253,24 +278,39 @@ TEST_F(RbacViewsFixture, ColumnGrantsOnAViewCoverEveryUseOfAColumn) {
   ExpectBlocked(*ann_, "SELECT id FROM curated.ssn_v ORDER BY ssn", kSsn);
   ExpectBlocked(*ann_, "SELECT id, length(ssn) FROM curated.ssn_v", kSsn);
   ExpectBlocked(*ann_, "SELECT * FROM (SELECT ssn FROM curated.ssn_v) t", kSsn);
-  ExpectBlocked(*ann_, "SELECT id FROM curated.ssn_v UNION ALL SELECT ssn::INT FROM curated.ssn_v", kSsn);
-  ExpectBlocked(*ann_, "SELECT a.id FROM curated.ssn_v a JOIN curated.ssn_v b ON a.ssn = b.ssn", kSsn);
+  ExpectBlocked(
+      *ann_, "SELECT id FROM curated.ssn_v UNION ALL SELECT ssn::INT FROM curated.ssn_v",
+      kSsn);
+  ExpectBlocked(*ann_,
+                "SELECT a.id FROM curated.ssn_v a JOIN curated.ssn_v b ON a.ssn = b.ssn",
+                kSsn);
   ExpectBlocked(*ann_, "SELECT max(ssn) OVER () FROM curated.ssn_v", kSsn);
   // Renaming the view's columns in FROM does not rename the grant: "id" here
   // is the view's ssn column.
   ExpectBlocked(*ann_, "SELECT id FROM curated.ssn_v AS x(other, id)", kSsn);
-  EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT renamed FROM curated.ssn_v AS x(renamed)")), 3);
+  EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT renamed FROM curated.ssn_v AS x(renamed)")),
+            3);
 }
 
 TEST_F(RbacViewsFixture, ADirectReferenceBesideAViewIsCheckedAgainstTheCaller) {
   const char* kRaw = "no SELECT privilege on table";
-  ExpectBlocked(*ann_, "SELECT * FROM curated.orders_v v JOIN raw_orders r USING (id)", kRaw);
-  ExpectBlocked(*ann_, "SELECT (SELECT max(ssn) FROM raw_orders), * FROM curated.orders_v", kRaw);
-  ExpectBlocked(*ann_, "SELECT * FROM curated.orders_v WHERE id IN (SELECT id FROM secrets)", kRaw);
-  ExpectBlocked(*ann_, "WITH r AS (SELECT * FROM raw_orders) SELECT * FROM curated.orders_v, r", kRaw);
-  ExpectBlocked(*ann_, "SELECT * FROM curated.orders_v UNION ALL SELECT id, amount, ssn FROM raw_orders", kRaw);
-  EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT * FROM curated.orders_v v JOIN curated.nested_v n USING (id)")),
-            3);
+  ExpectBlocked(*ann_, "SELECT * FROM curated.orders_v v JOIN raw_orders r USING (id)",
+                kRaw);
+  ExpectBlocked(
+      *ann_, "SELECT (SELECT max(ssn) FROM raw_orders), * FROM curated.orders_v", kRaw);
+  ExpectBlocked(
+      *ann_, "SELECT * FROM curated.orders_v WHERE id IN (SELECT id FROM secrets)", kRaw);
+  ExpectBlocked(*ann_,
+                "WITH r AS (SELECT * FROM raw_orders) SELECT * FROM curated.orders_v, r",
+                kRaw);
+  ExpectBlocked(
+      *ann_,
+      "SELECT * FROM curated.orders_v UNION ALL SELECT id, amount, ssn FROM raw_orders",
+      kRaw);
+  EXPECT_EQ(
+      Rows(ExpectAllowed(
+          *ann_, "SELECT * FROM curated.orders_v v JOIN curated.nested_v n USING (id)")),
+      3);
 }
 
 TEST_F(RbacViewsFixture, AViewCannotReachWhatItsOwnerCannot) {
@@ -282,7 +322,8 @@ TEST_F(RbacViewsFixture, AViewCannotReachWhatItsOwnerCannot) {
   const char* kOwner = "its owner lacks a privilege on an object the view reads";
   ExpectBlocked(*bob_, "SELECT * FROM main.bob_ssn", kOwner);
   auto message = ExpectBlocked(*bob_, "SELECT * FROM main.bob_secret", kOwner);
-  EXPECT_EQ(message.find("secrets"), std::string::npos) << "the refusal named what the view reads: " << message;
+  EXPECT_EQ(message.find("secrets"), std::string::npos)
+      << "the refusal named what the view reads: " << message;
 
   // Granting the view does not lend the reader more than the owner has.
   ExpectAllowed(*admin_, "GRANT SELECT ON main.bob_ok TO analyst");
@@ -305,7 +346,8 @@ TEST_F(RbacViewsFixture, TheOwnersCurrentRightsApply) {
   ExpectBlocked(*ann_, "SELECT * FROM main.bob_now", "its owner lacks a privilege");
   auto st = ann_->ExecutePrepared(**prepared).status();
   ASSERT_FALSE(st.ok()) << "a statement prepared before the REVOKE still ran";
-  EXPECT_NE(st.ToString().find("its owner lacks a privilege"), std::string::npos) << st.ToString();
+  EXPECT_NE(st.ToString().find("its owner lacks a privilege"), std::string::npos)
+      << st.ToString();
   ExpectAllowed(*admin_, "GRANT SELECT (amount) ON main.raw_orders TO builder");
   EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT * FROM main.bob_now")), 3);
 }
@@ -315,14 +357,16 @@ TEST_F(RbacViewsFixture, ADisabledOwnerClosesTheView) {
   ExpectAllowed(*admin_, "GRANT SELECT ON main.bob_disabled TO analyst");
   EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT * FROM main.bob_disabled")), 3);
   ExpectAllowed(*admin_, "ALTER USER bob DISABLE");
-  ExpectBlocked(*ann_, "SELECT * FROM main.bob_disabled", "its owner is disabled or was dropped");
+  ExpectBlocked(*ann_, "SELECT * FROM main.bob_disabled",
+                "its owner is disabled or was dropped");
   ExpectAllowed(*admin_, "ALTER USER bob ENABLE");
   EXPECT_EQ(Rows(ExpectAllowed(*ann_, "SELECT * FROM main.bob_disabled")), 3);
 }
 
 TEST_F(RbacViewsFixture, AViewWithoutAnOwnerReadsWithTheCallersRights) {
   ExpectAllowed(*admin_, "GRANT SELECT ON legacy.v TO analyst");
-  ExpectBlocked(*ann_, "SELECT * FROM legacy.v", "which has no owner, so it reads with your rights");
+  ExpectBlocked(*ann_, "SELECT * FROM legacy.v",
+                "which has no owner, so it reads with your rights");
   // The fix for a view made before access control: give it an owner.
   ExpectAllowed(*admin_, "GRANT SELECT ON legacy.base TO publisher");
   ExpectAllowed(*admin_, "ALTER VIEW legacy.v OWNER TO publisher");
@@ -341,15 +385,20 @@ TEST_F(RbacViewsFixture, ASessionsTemporaryObjectsCannotStandInForWhatAViewReads
   Client ann_t(GetPort(), "ann", "user", 20);
   auto t = ExpectAllowed(ann_t, "SELECT customer FROM curated.tenant_v");
   EXPECT_EQ(Rows(t), 1);  // the view's own list allows ann only
-  ExpectAllowed(ann_t, "CREATE TEMP TABLE allowed AS SELECT 'bob' AS tenant UNION ALL SELECT 'cara'");
-  EXPECT_EQ(Rows(ExpectAllowed(ann_t, "SELECT * FROM allowed")), 2);  // her own table is hers to read
-  ExpectBlocked(ann_t, "SELECT customer FROM curated.tenant_v", "cannot read a temporary table of this session");
+  ExpectAllowed(
+      ann_t,
+      "CREATE TEMP TABLE allowed AS SELECT 'bob' AS tenant UNION ALL SELECT 'cara'");
+  EXPECT_EQ(Rows(ExpectAllowed(ann_t, "SELECT * FROM allowed")),
+            2);  // her own table is hers to read
+  ExpectBlocked(ann_t, "SELECT customer FROM curated.tenant_v",
+                "cannot read a temporary table of this session");
   ExpectAllowed(ann_t, "DROP TABLE temp.main.allowed");
   EXPECT_EQ(Rows(ExpectAllowed(ann_t, "SELECT customer FROM curated.tenant_v")), 1);
 
   Client ann_v(GetPort(), "ann", "user", 21);
   ExpectAllowed(ann_v, "CREATE TEMP VIEW allowed AS SELECT 'bob' AS tenant");
-  ExpectBlocked(ann_v, "SELECT customer FROM curated.tenant_v", "cannot read a temporary view of this session");
+  ExpectBlocked(ann_v, "SELECT customer FROM curated.tenant_v",
+                "cannot read a temporary view of this session");
 }
 
 TEST_F(RbacViewsFixture, SessionMacrosAndVariablesAreRefused) {
@@ -357,7 +406,8 @@ TEST_F(RbacViewsFixture, SessionMacrosAndVariablesAreRefused) {
   // view: it could make an administrator's view compute something else.
   ExpectBlocked(*ann_, "CREATE TEMP MACRO lower(x) AS (SELECT max(value) FROM secrets)",
                 "creating macros needs an administrator");
-  ExpectBlocked(*ann_, "CREATE TEMP TYPE mood AS ENUM ('a', 'b')", "creating types needs an administrator");
+  ExpectBlocked(*ann_, "CREATE TEMP TYPE mood AS ENUM ('a', 'b')",
+                "creating types needs an administrator");
   // SET VARIABLE runs a query of its own, and getvariable() hands the value to
   // any view that asks.
   ExpectBlocked(*ann_, "SET VARIABLE leak = (SELECT max(value) FROM secrets)",
@@ -395,9 +445,12 @@ TEST_F(RbacViewsFixture, ARefusalIsAlwaysRecorded) {
   ::testing::internal::CaptureStderr();
   ExpectAllowed(*ann_, "SELECT id FROM curated.nested_v");
   const std::string allowed = ::testing::internal::GetCapturedStderr();
-  EXPECT_NE(allowed.find("Access control allowed a statement"), std::string::npos) << allowed;
-  EXPECT_NE(allowed.find("SELECT on view rbac_views_test.curated.nested_v (id)"), std::string::npos)
+  EXPECT_NE(allowed.find("Access control allowed a statement"), std::string::npos)
       << allowed;
-  EXPECT_NE(allowed.find("as the owner of view rbac_views_test.curated.nested_v"), std::string::npos)
+  EXPECT_NE(allowed.find("SELECT on view rbac_views_test.curated.nested_v (id)"),
+            std::string::npos)
+      << allowed;
+  EXPECT_NE(allowed.find("as the owner of view rbac_views_test.curated.nested_v"),
+            std::string::npos)
       << allowed;
 }

@@ -59,7 +59,8 @@ class RbacViewsUnit : public ::testing::Test {
       ASSERT_TRUE(done.ok()) << sql << " -> " << done.status().ToString();
     }
     joe_ = std::make_unique<duckdb::Connection>(*db_);
-    AttachRbacSession(*joe_->context, engine_, engine_->PrincipalForUser("joe").ValueOrDie());
+    AttachRbacSession(*joe_->context, engine_,
+                      engine_->PrincipalForUser("joe").ValueOrDie());
   }
 
   ObjectPath ViewPath() { return {"memory", {"main"}, "v"}; }
@@ -67,8 +68,8 @@ class RbacViewsUnit : public ::testing::Test {
   std::string CurrentHash() {
     std::string hash;
     admin_->context->RunFunctionInTransaction([&] {
-      auto& view = duckdb::Catalog::GetEntry<duckdb::ViewCatalogEntry>(*admin_->context, "memory",
-                                                                       "main", "v");
+      auto& view = duckdb::Catalog::GetEntry<duckdb::ViewCatalogEntry>(
+          *admin_->context, "memory", "main", "v");
       hash = ViewDefinitionHash(view.GetQuery());
     });
     return hash;
@@ -89,8 +90,10 @@ TEST_F(RbacViewsUnit, AnOwnerRecordAppliesOnlyToTheDefinitionItWasRecordedFor) {
   EXPECT_NE(r->GetError().find("which has no owner"), std::string::npos) << r->GetError();
 
   // A record left by some earlier view of this name does not apply.
-  ASSERT_TRUE(engine_->RecordOwner(ViewPath(), ObjectType::kView, Principal::Superuser("admin"),
-                                   "0000000000000000000000000000000000000000000000000000000000000000")
+  ASSERT_TRUE(engine_
+                  ->RecordOwner(
+                      ViewPath(), ObjectType::kView, Principal::Superuser("admin"),
+                      "0000000000000000000000000000000000000000000000000000000000000000")
                   .ok());
   r = joe_->Query("SELECT * FROM v");
   ASSERT_TRUE(r->HasError()) << "a stale owner record applied to a different view";
@@ -99,14 +102,20 @@ TEST_F(RbacViewsUnit, AnOwnerRecordAppliesOnlyToTheDefinitionItWasRecordedFor) {
   // The record for this definition does.
   const std::string hash = CurrentHash();
   ASSERT_EQ(hash.size(), 64u);
-  ASSERT_TRUE(engine_->RecordOwner(ViewPath(), ObjectType::kView, Principal::Superuser("admin"), hash).ok());
+  ASSERT_TRUE(engine_
+                  ->RecordOwner(ViewPath(), ObjectType::kView,
+                                Principal::Superuser("admin"), hash)
+                  .ok());
   r = joe_->Query("SELECT * FROM v");
   ASSERT_FALSE(r->HasError()) << r->GetError();
-  EXPECT_EQ(gizmosql::ddb::compat::ResultValue(*r, /*column=*/0, /*row=*/0).ToString(), "TOP");
+  EXPECT_EQ(gizmosql::ddb::compat::ResultValue(*r, /*column=*/0, /*row=*/0).ToString(),
+            "TOP");
 
   // Replacing the view without recording its owner (as a statement whose
   // owner record failed to save would) takes the owner's rights away again.
-  ASSERT_FALSE(admin_->Query("CREATE OR REPLACE VIEW v AS SELECT s || '!' AS s FROM secret")->HasError());
+  ASSERT_FALSE(
+      admin_->Query("CREATE OR REPLACE VIEW v AS SELECT s || '!' AS s FROM secret")
+          ->HasError());
   EXPECT_NE(CurrentHash(), hash);
   r = joe_->Query("SELECT * FROM v");
   ASSERT_TRUE(r->HasError()) << "the old owner record applied to the replaced view";
@@ -114,8 +123,10 @@ TEST_F(RbacViewsUnit, AnOwnerRecordAppliesOnlyToTheDefinitionItWasRecordedFor) {
 }
 
 TEST_F(RbacViewsUnit, AViewNeverRunsUnchecked) {
-  ASSERT_TRUE(
-      engine_->RecordOwner(ViewPath(), ObjectType::kView, Principal::Superuser("admin"), CurrentHash()).ok());
+  ASSERT_TRUE(engine_
+                  ->RecordOwner(ViewPath(), ObjectType::kView,
+                                Principal::Superuser("admin"), CurrentHash())
+                  .ok());
   ASSERT_FALSE(joe_->Query("SELECT * FROM v")->HasError());
 
   // With the optimizer off, the check (and the removal of the view's marker)

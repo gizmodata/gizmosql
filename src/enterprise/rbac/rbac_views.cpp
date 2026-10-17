@@ -60,22 +60,28 @@ dd::vector<dd::ColumnBinding> ViewMarker::GetColumnBindings() {
 
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
 dd::TableIndex ViewMarker::GetRootIndex() { return children[0]->GetRootIndex(); }
-dd::vector<dd::TableIndex> ViewMarker::GetTableIndex() const { return children[0]->GetTableIndex(); }
+dd::vector<dd::TableIndex> ViewMarker::GetTableIndex() const {
+  return children[0]->GetTableIndex();
+}
 #elif GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
 dd::idx_t ViewMarker::GetRootIndex() { return children[0]->GetRootIndex(); }
-dd::vector<dd::idx_t> ViewMarker::GetTableIndex() const { return children[0]->GetTableIndex(); }
+dd::vector<dd::idx_t> ViewMarker::GetTableIndex() const {
+  return children[0]->GetTableIndex();
+}
 #else
-dd::vector<dd::idx_t> ViewMarker::GetTableIndex() const { return children[0]->GetTableIndex(); }
+dd::vector<dd::idx_t> ViewMarker::GetTableIndex() const {
+  return children[0]->GetTableIndex();
+}
 #endif
 
 void ViewMarker::ResolveTypes() { types = children[0]->types; }
 
-dd::PhysicalOperator& ViewMarker::CreatePlan(dd::ClientContext&, dd::PhysicalPlanGenerator&) {
+dd::PhysicalOperator& ViewMarker::CreatePlan(dd::ClientContext&,
+                                             dd::PhysicalPlanGenerator&) {
   // The access check removes every marker before the plan is optimized; a
   // marker reaching execution means the check did not run on this plan.
-  throw dd::PermissionException(
-      "GizmoSQL blocked this statement: the view " + view.ToString() +
-      " was not checked against your grants");
+  throw dd::PermissionException("GizmoSQL blocked this statement: the view " +
+                                view.ToString() + " was not checked against your grants");
 }
 
 namespace {
@@ -85,10 +91,12 @@ void OnViewBound(dd::ClientContext& context, dd::ViewCatalogEntry& view,
                  dd::unique_ptr<dd::LogicalOperator>& plan) {
   if (!plan) return;
   auto state = context.registered_state->Get<RbacSessionState>(kRbacSessionStateName);
-  if (!state || state->unchecked()) return;  // only access-controlled statements carry markers
+  if (!state || state->unchecked())
+    return;  // only access-controlled statements carry markers
   ObjectPath path = PathOfEntry(view);
   const bool temporary = view.temporary || IdentifiersEqual(path.catalog, TEMP_CATALOG);
-  plan = dd::make_uniq<ViewMarker>(std::move(path), temporary, ViewDefinitionHash(view.GetQuery()),
+  plan = dd::make_uniq<ViewMarker>(std::move(path), temporary,
+                                   ViewDefinitionHash(view.GetQuery()),
                                    ViewColumnNames(view), std::move(plan));
 }
 #endif
@@ -150,9 +158,10 @@ void CollectColumnRefs(const dd::Expression& expr, dd::column_binding_set_t& use
 void CollectUses(dd::LogicalOperator& op, const dd::LogicalOperator* skip,
                  dd::column_binding_set_t& used) {
   if (&op == skip) return;
-  dd::LogicalOperatorVisitor::EnumerateExpressions(op, [&](dd::unique_ptr<dd::Expression>* e) {
-    if (e && *e) CollectColumnRefs(**e, used);
-  });
+  dd::LogicalOperatorVisitor::EnumerateExpressions(
+      op, [&](dd::unique_ptr<dd::Expression>* e) {
+        if (e && *e) CollectColumnRefs(**e, used);
+      });
   const bool positional = !PassesColumnsThrough(op);
   for (auto& child : op.children) {
     if (!child) continue;
@@ -172,11 +181,14 @@ void FindMarkers(dd::LogicalOperator& op, std::vector<ViewMarker*>& markers) {
 
 }  // namespace
 
-bool UsesChildColumnsByPosition(const dd::LogicalOperator& op) { return !PassesColumnsThrough(op); }
+bool UsesChildColumnsByPosition(const dd::LogicalOperator& op) {
+  return !PassesColumnsThrough(op);
+}
 
 dd::vector<dd::ColumnBinding> ResultColumns(dd::LogicalOperator& plan) {
   dd::LogicalOperator* root = &plan;
-  while ((root->type == OpType::LOGICAL_PREPARE || root->type == OpType::LOGICAL_EXECUTE ||
+  while ((root->type == OpType::LOGICAL_PREPARE ||
+          root->type == OpType::LOGICAL_EXECUTE ||
           root->type == OpType::LOGICAL_EXPLAIN) &&
          !root->children.empty() && root->children[0]) {
     root = root->children[0].get();
@@ -184,7 +196,8 @@ dd::vector<dd::ColumnBinding> ResultColumns(dd::LogicalOperator& plan) {
   // Operators that only pass on (or compute) columns of the plan: their
   // bindings are real. Anything else reports a placeholder binding.
   if (root->type == OpType::LOGICAL_GET || root->type == OpType::LOGICAL_PROJECTION ||
-      root->type == OpType::LOGICAL_AGGREGATE_AND_GROUP_BY || PassesColumnsThrough(*root)) {
+      root->type == OpType::LOGICAL_AGGREGATE_AND_GROUP_BY ||
+      PassesColumnsThrough(*root)) {
     return root->GetColumnBindings();
   }
   return {};
@@ -208,7 +221,8 @@ std::unordered_map<const ViewMarker*, std::vector<std::string>> ViewColumnsUsed(
     std::vector<std::string> columns;
     try {
       dd::column_binding_set_t used;
-      for (const auto& b : ResultColumns(plan)) used.insert(b);  // what the statement returns
+      for (const auto& b : ResultColumns(plan))
+        used.insert(b);  // what the statement returns
       CollectUses(plan, marker, used);
       const auto bindings = marker->GetColumnBindings();
       if (bindings.size() != marker->column_names.size()) {

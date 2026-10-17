@@ -60,8 +60,14 @@ struct CreateUserCommand {
 };
 
 struct AlterUserCommand {
-  enum class Action { kSetPassword, kClearPassword, kEnable, kDisable, kSetAttribute,
-                      kUnsetAttribute };
+  enum class Action {
+    kSetPassword,
+    kClearPassword,
+    kEnable,
+    kDisable,
+    kSetAttribute,
+    kUnsetAttribute
+  };
   std::string name;
   Action action;
   std::string password;   // kSetPassword

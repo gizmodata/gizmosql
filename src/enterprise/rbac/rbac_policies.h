@@ -57,18 +57,21 @@ struct PolicyContext {
 // policy may use (no subqueries, parameters, variables, settings or windows),
 // context functions with a constant argument. A masking body may refer to its
 // parameter and nothing else of the table.
-arrow::Status ValidatePolicySql(const std::string& sql, const std::string& mask_parameter = "");
+arrow::Status ValidatePolicySql(const std::string& sql,
+                                const std::string& mask_parameter = "");
 
 // The policy SQL parsed, with context functions replaced by literals for
 // `context` and (for a masking body) the parameter by `parameter_value`.
 arrow::Result<duckdb::unique_ptr<duckdb::ParsedExpression>> PreparePolicyExpression(
-    const std::string& sql, const PolicyContext& context, const std::string& mask_parameter = "",
+    const std::string& sql, const PolicyContext& context,
+    const std::string& mask_parameter = "",
     const duckdb::ParsedExpression* parameter_value = nullptr);
 
 // Rewrite a store user's checked plan for the row and masking policies that
 // apply to them. Throws a PermissionException for a statement it cannot
 // rewrite safely.
 void ApplyPolicies(duckdb::ClientContext& context, const Snapshot& snapshot,
-                   const Principal& principal, duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
+                   const Principal& principal,
+                   duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
 
 }  // namespace gizmosql::enterprise::rbac

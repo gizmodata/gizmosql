@@ -51,9 +51,8 @@ namespace gizmosql {
 /// Create a GizmoSQL-issued JWT token with the given claims.
 /// Used by both Basic Auth (core) and OAuth code exchange (enterprise) to issue session tokens.
 std::string CreateGizmoSQLJWT(
-    const std::string& username, const std::string& role,
-    const std::string& auth_method, const std::string& secret_key,
-    const std::string& instance_id,
+    const std::string& username, const std::string& role, const std::string& auth_method,
+    const std::string& secret_key, const std::string& instance_id,
     const std::optional<std::string>& catalog_access_json = std::nullopt,
     const std::optional<std::string>& identity_json = std::nullopt,
     const std::optional<std::string>& scope_id = std::nullopt,
@@ -62,9 +61,10 @@ std::string CreateGizmoSQLJWT(
 // A scoped token (CREATE SCOPED TOKEN) for `username`: a GizmoSQL token whose
 // "scope_id" names the store record that limits it. A program logs in with it
 // as the password of user "token", like a login token from an identity provider.
-std::string CreateScopedTokenJWT(const std::string& username, const std::string& secret_key,
-                                 const std::string& instance_id, const std::string& scope_id,
-                                 int64_t expires_at);
+std::string CreateScopedTokenJWT(const std::string& username,
+                                 const std::string& secret_key,
+                                 const std::string& instance_id,
+                                 const std::string& scope_id, int64_t expires_at);
 
 // The login token's identity provider and groups, as the JSON object GizmoSQL
 // carries in its own token's "idp" claim ({"iss": ..., "groups": [...]});
@@ -99,8 +99,7 @@ class SecurityUtilities {
 class BasicAuthServerMiddleware : public flight::ServerMiddleware {
  public:
   BasicAuthServerMiddleware(const std::string& username, const std::string& role,
-                            const std::string& auth_method,
-                            const std::string& secret_key,
+                            const std::string& auth_method, const std::string& secret_key,
                             const std::string& instance_id,
                             std::optional<std::string> catalog_access_json = std::nullopt,
                             std::optional<std::string> identity_json = std::nullopt,
@@ -155,15 +154,17 @@ class BasicAuthServerMiddlewareFactory : public flight::ServerMiddlewareFactory 
   /// Accepts a comma-separated string of patterns with wildcard support.
   void SetTokenAuthorizedEmails(const std::string& patterns);
 
-#ifdef GIZMOSQL_ENTERPRISE
   /// Password login for users other than the administrator (Enterprise
   /// role-based access control): returns true when `username` / `password`
-  /// belong to an enabled user of the access-control store.
+  /// belong to an enabled user of the access-control store. Never set in
+  /// other builds.
   using PasswordAuthenticator =
       std::function<bool(const std::string& username, const std::string& password)>;
   void SetPasswordAuthenticator(PasswordAuthenticator authenticator) {
     password_authenticator_ = std::move(authenticator);
   }
+
+#ifdef GIZMOSQL_ENTERPRISE
 
   /// Set the JWKS manager for validating externally-issued tokens via JWKS.
   void SetJwksManager(std::shared_ptr<gizmosql::enterprise::JwksManager> manager) {

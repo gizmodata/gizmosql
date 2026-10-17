@@ -74,8 +74,9 @@ bool IdentifiersEqual(const std::string& a, const std::string& b) {
 }
 
 std::string QuoteIdentifierIfNeeded(const std::string& identifier) {
-  bool plain = !identifier.empty() &&
-               (std::isalpha(static_cast<unsigned char>(identifier[0])) || identifier[0] == '_');
+  bool plain =
+      !identifier.empty() &&
+      (std::isalpha(static_cast<unsigned char>(identifier[0])) || identifier[0] == '_');
   for (char c : identifier) {
     if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) plain = false;
   }
@@ -121,10 +122,10 @@ std::string SystemPrivilegeName(SystemPrivilege privilege) {
 
 const std::vector<SystemPrivilege>& AllSystemPrivileges() {
   static const std::vector<SystemPrivilege> kAll = {
-      SystemPrivilege::kManageCatalogs,  SystemPrivilege::kManageExtensions,
-      SystemPrivilege::kManageSecrets,   SystemPrivilege::kManageConfig,
-      SystemPrivilege::kReadFilesystem,  SystemPrivilege::kWriteFilesystem,
-      SystemPrivilege::kExportDatabase,  SystemPrivilege::kImportDatabase,
+      SystemPrivilege::kManageCatalogs, SystemPrivilege::kManageExtensions,
+      SystemPrivilege::kManageSecrets,  SystemPrivilege::kManageConfig,
+      SystemPrivilege::kReadFilesystem, SystemPrivilege::kWriteFilesystem,
+      SystemPrivilege::kExportDatabase, SystemPrivilege::kImportDatabase,
       SystemPrivilege::kCheckpoint};
   return kAll;
 }
@@ -137,8 +138,10 @@ std::optional<SystemPrivilege> SystemPrivilegeFromName(const std::string& name) 
 }
 
 std::string HiddenObjectMessage(const std::string& user_name) {
-  return "GizmoSQL blocked this statement: it names a catalog, schema, table or view that does not "
-         "exist, or that user " + user_name + " cannot see";
+  return "GizmoSQL blocked this statement: it names a catalog, schema, table or view "
+         "that does not "
+         "exist, or that user " +
+         user_name + " cannot see";
 }
 
 }  // namespace gizmosql::enterprise::rbac

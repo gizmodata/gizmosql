@@ -71,7 +71,8 @@ class Client {
     co.headers.push_back(header_);
     return co;
   }
-  arrow::Result<std::shared_ptr<arrow::Table>> Fetch(arrow::Result<std::unique_ptr<arrow::flight::FlightInfo>> info_result) {
+  arrow::Result<std::shared_ptr<arrow::Table>> Fetch(
+      arrow::Result<std::unique_ptr<arrow::flight::FlightInfo>> info_result) {
     auto co = Options();
     ARROW_ASSIGN_OR_RAISE(auto info, std::move(info_result));
     std::vector<std::shared_ptr<arrow::Table>> tables;
@@ -89,9 +90,12 @@ class Client {
   arrow::Result<std::shared_ptr<arrow::Table>> Run(const std::string& sql) {
     return Fetch(client_->Execute(Options(), sql));
   }
-  arrow::Result<std::shared_ptr<arrow::Table>> Catalogs() { return Fetch(client_->GetCatalogs(Options())); }
+  arrow::Result<std::shared_ptr<arrow::Table>> Catalogs() {
+    return Fetch(client_->GetCatalogs(Options()));
+  }
   arrow::Result<std::shared_ptr<arrow::Table>> Tables() {
-    return Fetch(client_->GetTables(Options(), nullptr, nullptr, nullptr, false, nullptr));
+    return Fetch(
+        client_->GetTables(Options(), nullptr, nullptr, nullptr, false, nullptr));
   }
 
  private:
@@ -100,7 +104,9 @@ class Client {
 };
 
 // Every value in the table, as text.
-std::string AllText(const std::shared_ptr<arrow::Table>& t) { return t ? t->ToString() : ""; }
+std::string AllText(const std::shared_ptr<arrow::Table>& t) {
+  return t ? t->ToString() : "";
+}
 
 std::set<std::string> Column(const std::shared_ptr<arrow::Table>& t, int col = 0) {
   std::set<std::string> out;
@@ -111,7 +117,8 @@ std::set<std::string> Column(const std::shared_ptr<arrow::Table>& t, int col = 0
   return out;
 }
 
-class RbacTenantsFixture : public gizmosql::testing::ServerTestFixture<RbacTenantsFixture> {
+class RbacTenantsFixture
+    : public gizmosql::testing::ServerTestFixture<RbacTenantsFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -136,27 +143,35 @@ class RbacTenantsFixture : public gizmosql::testing::ServerTestFixture<RbacTenan
     if (!seeded) {
       for (const char* sql : {
                "CREATE TABLE shared_default AS SELECT 'default-secret' AS s",
-               "ATTACH ':memory:' AS acme_db", "ATTACH ':memory:' AS beta_db",
+               "ATTACH ':memory:' AS acme_db",
+               "ATTACH ':memory:' AS beta_db",
                "CREATE TABLE acme_db.main.orders AS SELECT 1 AS id, 'acme-order' AS note",
-               "CREATE TABLE beta_db.main.secrets AS SELECT 1 AS id, 'beta-secret' AS hush",
-               "CREATE VIEW beta_db.main.secrets_view AS SELECT hush FROM beta_db.main.secrets",
+               "CREATE TABLE beta_db.main.secrets AS SELECT 1 AS id, 'beta-secret' AS "
+               "hush",
+               "CREATE VIEW beta_db.main.secrets_view AS SELECT hush FROM "
+               "beta_db.main.secrets",
                "CREATE TABLE beta_db.main.secrets_keyed (id INT PRIMARY KEY)",
                "CREATE INDEX secrets_idx ON beta_db.main.secrets (hush)",
-               "CREATE TENANT acme", "CREATE TENANT beta",
-               "ALTER CATALOG acme_db SET TENANT acme", "ALTER CATALOG beta_db SET TENANT beta",
+               "CREATE TENANT acme",
+               "CREATE TENANT beta",
+               "ALTER CATALOG acme_db SET TENANT acme",
+               "ALTER CATALOG beta_db SET TENANT beta",
                "ALTER TENANT acme SET DEFAULT CATALOG acme_db",
-               "CREATE USER acme/boss", "GRANT acme/tenant_admin TO acme/boss",
-               "CREATE USER beta/bea", "GRANT beta/tenant_admin TO beta/bea",
+               "CREATE USER acme/boss",
+               "GRANT acme/tenant_admin TO acme/boss",
+               "CREATE USER beta/bea",
+               "GRANT beta/tenant_admin TO beta/bea",
            }) {
         auto st = admin_->Run(sql).status();
         ASSERT_TRUE(st.ok()) << sql << " -> " << st.ToString();
       }
       Client boss(GetPort(), "acme/boss", "user", 2);
-      for (const char* sql : {"CREATE USER acme/joe", "CREATE ROLE acme/readers",
-                              "GRANT SELECT ON acme_db.main.orders TO acme/readers",
-                              "GRANT acme/readers TO acme/joe", "CREATE ROLE acme/builders",
-                              "GRANT CREATE VIEW ON SCHEMA acme_db.main TO acme/builders",
-                              "GRANT acme/builders TO acme/joe"}) {
+      for (const char* sql :
+           {"CREATE USER acme/joe", "CREATE ROLE acme/readers",
+            "GRANT SELECT ON acme_db.main.orders TO acme/readers",
+            "GRANT acme/readers TO acme/joe", "CREATE ROLE acme/builders",
+            "GRANT CREATE VIEW ON SCHEMA acme_db.main TO acme/builders",
+            "GRANT acme/builders TO acme/joe"}) {
         auto st = boss.Run(sql).status();
         ASSERT_TRUE(st.ok()) << sql << " -> " << st.ToString();
       }
@@ -184,9 +199,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacTenantsFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacTenantsFixture>::server_ready_{false};
+std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacTenantsFixture>::server_ready_{
+    false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacTenantsFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacTenantsFixture>::config_{};
 
 TEST_F(RbacTenantsFixture, ATenantsUsersWorkInTheirOwnCatalogs) {
   // The default catalog is the tenant's, so unqualified names work.
@@ -196,7 +213,8 @@ TEST_F(RbacTenantsFixture, ATenantsUsersWorkInTheirOwnCatalogs) {
   ASSERT_TRUE(joe_->Run("SELECT note FROM acme_db.main.orders").ok());
   // The tenant admin may create in the tenant's catalog and share it.
   ASSERT_EQ(Error(*boss_, "CREATE TABLE acme_db.main.made_by_boss AS SELECT 7 AS x"), "");
-  ASSERT_EQ(Error(*boss_, "GRANT SELECT ON acme_db.main.made_by_boss TO acme/readers"), "");
+  ASSERT_EQ(Error(*boss_, "GRANT SELECT ON acme_db.main.made_by_boss TO acme/readers"),
+            "");
   EXPECT_EQ(Error(*joe_, "SELECT x FROM made_by_boss"), "");
 }
 
@@ -205,15 +223,18 @@ TEST_F(RbacTenantsFixture, AnotherTenantsCatalogLooksExactlyLikeAMissingOne) {
   const std::string missing = Error(*joe_, "SELECT * FROM no_such_db.main.t");
   ASSERT_NE(missing, "");
   ASSERT_NE(missing.find("GizmoSQL blocked"), std::string::npos) << missing;
-  for (const char* sql : {"SELECT * FROM beta_db.main.secrets", "SELECT * FROM beta_db.secrets",
-                          "SELECT hush FROM beta_db.main.secrets",
-                          "SELECT no_such_column FROM beta_db.main.secrets",
-                          "SELECT * FROM beta_db.main.no_such_table",
-                          "SELECT * FROM rbac_tenants_test.main.shared_default",
-                          "SELECT * FROM shared_default", "SELECT * FROM secrets", "USE beta_db",
-                          "CREATE TABLE beta_db.main.planted AS SELECT 1",
-                          "DROP TABLE beta_db.main.secrets", "INSERT INTO beta_db.main.secrets VALUES (2, 'x')"}) {
-    EXPECT_EQ(Error(*joe_, sql), missing) << sql << " told joe more than a missing catalog would";
+  for (const char* sql :
+       {"SELECT * FROM beta_db.main.secrets", "SELECT * FROM beta_db.secrets",
+        "SELECT hush FROM beta_db.main.secrets",
+        "SELECT no_such_column FROM beta_db.main.secrets",
+        "SELECT * FROM beta_db.main.no_such_table",
+        "SELECT * FROM rbac_tenants_test.main.shared_default",
+        "SELECT * FROM shared_default", "SELECT * FROM secrets", "USE beta_db",
+        "CREATE TABLE beta_db.main.planted AS SELECT 1",
+        "DROP TABLE beta_db.main.secrets",
+        "INSERT INTO beta_db.main.secrets VALUES (2, 'x')"}) {
+    EXPECT_EQ(Error(*joe_, sql), missing)
+        << sql << " told joe more than a missing catalog would";
   }
   // Nothing in an error ever names the other tenant's objects.
   for (const char* sql : {"SELECT * FROM secretz", "SELECT * FROM beta_db.main.secretz",
@@ -225,18 +246,23 @@ TEST_F(RbacTenantsFixture, AnotherTenantsCatalogLooksExactlyLikeAMissingOne) {
 }
 
 TEST_F(RbacTenantsFixture, MetadataShowsOnlyTheTenantsCatalogs) {
-  for (const char* sql : {"SELECT database_name FROM duckdb_databases()", "SHOW DATABASES",
-                          "SELECT * FROM duckdb_tables()", "SELECT * FROM information_schema.tables",
-                          "SELECT * FROM information_schema.schemata",
-                          "SELECT * FROM duckdb_columns()", "SHOW ALL TABLES"}) {
+  for (const char* sql :
+       {"SELECT database_name FROM duckdb_databases()", "SHOW DATABASES",
+        "SELECT * FROM duckdb_tables()", "SELECT * FROM information_schema.tables",
+        "SELECT * FROM information_schema.schemata", "SELECT * FROM duckdb_columns()",
+        "SHOW ALL TABLES"}) {
     auto t = joe_->Run(sql);
     ASSERT_TRUE(t.ok()) << sql << ": " << t.status().ToString();
     const std::string text = AllText(*t);
-    EXPECT_EQ(text.find("beta_db"), std::string::npos) << sql << " listed another tenant's catalog";
-    EXPECT_EQ(text.find("secrets"), std::string::npos) << sql << " listed another tenant's table";
-    EXPECT_EQ(text.find("shared_default"), std::string::npos) << sql << " listed the shared default catalog";
+    EXPECT_EQ(text.find("beta_db"), std::string::npos)
+        << sql << " listed another tenant's catalog";
+    EXPECT_EQ(text.find("secrets"), std::string::npos)
+        << sql << " listed another tenant's table";
+    EXPECT_EQ(text.find("shared_default"), std::string::npos)
+        << sql << " listed the shared default catalog";
   }
-  auto databases = joe_->Run("SELECT database_name FROM duckdb_databases() WHERE NOT internal");
+  auto databases =
+      joe_->Run("SELECT database_name FROM duckdb_databases() WHERE NOT internal");
   ASSERT_TRUE(databases.ok());
   // GizmoSQL's helper catalog (views for JDBC metadata calls) is listed too.
   EXPECT_EQ(Column(*databases), (std::set<std::string>{"_gizmosql_system", "acme_db"}));
@@ -247,36 +273,49 @@ TEST_F(RbacTenantsFixture, MetadataShowsOnlyTheTenantsCatalogs) {
   auto tables = joe_->Tables();
   ASSERT_TRUE(tables.ok()) << tables.status().ToString();
   EXPECT_EQ(AllText(*tables).find("secrets"), std::string::npos);
-  EXPECT_NE(AllText(*tables).find("orders"), std::string::npos) << "its own tables are listed";
+  EXPECT_NE(AllText(*tables).find("orders"), std::string::npos)
+      << "its own tables are listed";
 }
 
 TEST_F(RbacTenantsFixture, MetadataCannotBeReachedAnotherWay) {
   // Joe's own views over the metadata functions, and GizmoSQL's helper views,
   // list only what joe could list directly.
   for (const char* sql : {
-           "CREATE OR REPLACE VIEW acme_db.main.all_views AS SELECT * FROM duckdb_views()",
-           "CREATE OR REPLACE VIEW acme_db.main.all_tables AS SELECT * FROM duckdb_tables()",
-           "CREATE OR REPLACE VIEW acme_db.main.all_info AS SELECT * FROM information_schema.tables",
+           "CREATE OR REPLACE VIEW acme_db.main.all_views AS SELECT * FROM "
+           "duckdb_views()",
+           "CREATE OR REPLACE VIEW acme_db.main.all_tables AS SELECT * FROM "
+           "duckdb_tables()",
+           "CREATE OR REPLACE VIEW acme_db.main.all_info AS SELECT * FROM "
+           "information_schema.tables",
            "CREATE OR REPLACE VIEW acme_db.main.all_defs AS "
            "SELECT * FROM _gizmosql_system.main.gizmosql_view_definition",
        }) {
     ASSERT_EQ(Error(*joe_, sql), "") << sql;
   }
   for (const char* sql : {
-           "SELECT * FROM acme_db.main.all_views", "SELECT * FROM acme_db.main.all_tables",
-           "SELECT * FROM acme_db.main.all_info", "SELECT * FROM acme_db.main.all_defs",
+           "SELECT * FROM acme_db.main.all_views",
+           "SELECT * FROM acme_db.main.all_tables",
+           "SELECT * FROM acme_db.main.all_info",
+           "SELECT * FROM acme_db.main.all_defs",
            "SELECT * FROM _gizmosql_system.main.gizmosql_view_definition",
            "SELECT * FROM _gizmosql_system.main.gizmosql_index_info",
            "SELECT * FROM _gizmosql_system.gizmosql_view_definition",
            "WITH x AS (SELECT * FROM duckdb_tables()) SELECT * FROM x",
-           "SELECT * FROM duckdb_tables ()", "SELECT * FROM \"duckdb_views\"()",
-           "SELECT * FROM duckdb_indexes()", "SELECT * FROM duckdb_constraints()",
-           "SELECT * FROM duckdb_schemas()", "SELECT * FROM pragma_database_size()",
+           "SELECT * FROM duckdb_tables ()",
+           "SELECT * FROM \"duckdb_views\"()",
+           "SELECT * FROM duckdb_indexes()",
+           "SELECT * FROM duckdb_constraints()",
+           "SELECT * FROM duckdb_schemas()",
+           "SELECT * FROM pragma_database_size()",
            "SELECT database_name, count(*) FROM duckdb_columns() GROUP BY ALL",
-           "FROM duckdb_views() SELECT sql", "SHOW TABLES", "SHOW ALL TABLES",
-           "SELECT * FROM information_schema.columns", "SELECT * FROM information_schema.views",
+           "FROM duckdb_views() SELECT sql",
+           "SHOW TABLES",
+           "SHOW ALL TABLES",
+           "SELECT * FROM information_schema.columns",
+           "SELECT * FROM information_schema.views",
            "SELECT * FROM information_schema.table_constraints",
-           "SELECT * FROM pg_catalog.pg_class", "SELECT * FROM pg_catalog.pg_namespace",
+           "SELECT * FROM pg_catalog.pg_class",
+           "SELECT * FROM pg_catalog.pg_namespace",
        }) {
     auto t = joe_->Run(sql);
     if (!t.ok()) {
@@ -286,9 +325,12 @@ TEST_F(RbacTenantsFixture, MetadataCannotBeReachedAnotherWay) {
       continue;
     }
     const std::string text = AllText(*t);
-    EXPECT_EQ(text.find("beta_db"), std::string::npos) << sql << " listed another tenant's catalog";
-    EXPECT_EQ(text.find("secrets"), std::string::npos) << sql << " listed another tenant's objects";
-    EXPECT_EQ(text.find("hush"), std::string::npos) << sql << " listed another tenant's columns";
+    EXPECT_EQ(text.find("beta_db"), std::string::npos)
+        << sql << " listed another tenant's catalog";
+    EXPECT_EQ(text.find("secrets"), std::string::npos)
+        << sql << " listed another tenant's objects";
+    EXPECT_EQ(text.find("hush"), std::string::npos)
+        << sql << " listed another tenant's columns";
   }
   // Positive twins: joe's own objects are there.
   auto own = joe_->Run("SELECT table_name FROM acme_db.main.all_tables");
@@ -298,20 +340,23 @@ TEST_F(RbacTenantsFixture, MetadataCannotBeReachedAnotherWay) {
   ASSERT_TRUE(own_defs.ok()) << own_defs.status().ToString();
   EXPECT_TRUE(Column(*own_defs).count("all_views"));
   // The administrator still sees everything through the same views.
-  auto all = admin_->Run("SELECT \"TABLE_NAME\" FROM _gizmosql_system.main.gizmosql_view_definition");
+  auto all = admin_->Run(
+      "SELECT \"TABLE_NAME\" FROM _gizmosql_system.main.gizmosql_view_definition");
   ASSERT_TRUE(all.ok());
   EXPECT_TRUE(Column(*all).count("secrets_view"));
 
   // Naming the other tenant's objects inside a metadata call or a setting.
   const std::string missing = Error(*joe_, "SELECT * FROM no_such_db.main.t");
-  for (const char* sql : {"SELECT * FROM pragma_table_info('beta_db.main.secrets')",
-                          "PRAGMA table_info('beta_db.main.secrets')",
-                          "SELECT * FROM pragma_show('beta_db.main.secrets')",
-                          "DESCRIBE beta_db.main.secrets", "SUMMARIZE beta_db.main.secrets",
-                          "SET search_path = 'beta_db.main'", "SET schema = 'beta_db.main'",
-                          "SET search_path = 'acme_db.main,\"beta_db\".main'", "USE beta_db",
-                          "USE beta_db.main"}) {
-    EXPECT_EQ(Error(*joe_, sql), missing) << sql << " told joe more than a missing catalog would";
+  for (const char* sql :
+       {"SELECT * FROM pragma_table_info('beta_db.main.secrets')",
+        "PRAGMA table_info('beta_db.main.secrets')",
+        "SELECT * FROM pragma_show('beta_db.main.secrets')",
+        "DESCRIBE beta_db.main.secrets", "SUMMARIZE beta_db.main.secrets",
+        "SET search_path = 'beta_db.main'", "SET schema = 'beta_db.main'",
+        "SET search_path = 'acme_db.main,\"beta_db\".main'", "USE beta_db",
+        "USE beta_db.main"}) {
+    EXPECT_EQ(Error(*joe_, sql), missing)
+        << sql << " told joe more than a missing catalog would";
   }
   // Positive twins.
   EXPECT_EQ(Error(*joe_, "SELECT * FROM pragma_table_info('acme_db.main.orders')"), "");
@@ -321,26 +366,37 @@ TEST_F(RbacTenantsFixture, MetadataCannotBeReachedAnotherWay) {
 }
 
 TEST_F(RbacTenantsFixture, NothingCrossesATenant) {
-  for (const auto& [who, sql, why] : std::vector<std::tuple<Client*, std::string, std::string>>{
+  for (const auto& [who, sql, why] :
+       std::vector<std::tuple<Client*, std::string, std::string>>{
            // a tenant admin manages only its own tenant's principals
-           {boss_.get(), "CREATE USER beta/sneak", "only administrators manage users and roles"},
-           {boss_.get(), "CREATE USER plain_name", "only administrators manage users and roles"},
-           {boss_.get(), "CREATE ROLE beta/r", "only administrators manage users and roles"},
-           {boss_.get(), "DROP USER beta/bea", "only administrators manage users and roles"},
-           {boss_.get(), "ALTER USER beta/bea DISABLE", "only administrators manage users and roles"},
+           {boss_.get(), "CREATE USER beta/sneak",
+            "only administrators manage users and roles"},
+           {boss_.get(), "CREATE USER plain_name",
+            "only administrators manage users and roles"},
+           {boss_.get(), "CREATE ROLE beta/r",
+            "only administrators manage users and roles"},
+           {boss_.get(), "DROP USER beta/bea",
+            "only administrators manage users and roles"},
+           {boss_.get(), "ALTER USER beta/bea DISABLE",
+            "only administrators manage users and roles"},
            // its roles hold privileges only on its catalogs
-           {boss_.get(), "GRANT SELECT ON beta_db.main.secrets TO acme/readers", "only on that tenant's catalogs"},
-           {admin_.get(), "GRANT SELECT ON beta_db.main.secrets TO acme/readers", "only on that tenant's catalogs"},
+           {boss_.get(), "GRANT SELECT ON beta_db.main.secrets TO acme/readers",
+            "only on that tenant's catalogs"},
+           {admin_.get(), "GRANT SELECT ON beta_db.main.secrets TO acme/readers",
+            "only on that tenant's catalogs"},
            {admin_.get(), "GRANT SELECT ON SCHEMA rbac_tenants_test.main TO acme/readers",
             "only on that tenant's catalogs"},
            // roles never cross
-           {boss_.get(), "GRANT beta/tenant_admin TO acme/joe", "may not grant or revoke role"},
-           {admin_.get(), "GRANT beta/tenant_admin TO acme/joe", "roles never cross tenants"},
+           {boss_.get(), "GRANT beta/tenant_admin TO acme/joe",
+            "may not grant or revoke role"},
+           {admin_.get(), "GRANT beta/tenant_admin TO acme/joe",
+            "roles never cross tenants"},
            {admin_.get(), "GRANT acme/readers TO beta/bea", "roles never cross tenants"},
            // no system privileges for a tenant
            {admin_.get(), "GRANT READ FILESYSTEM TO acme/readers", "cannot hold them"},
            // tenants and catalogs are the administrator's
-           {boss_.get(), "ALTER CATALOG beta_db SET TENANT acme", "only administrators manage tenants"},
+           {boss_.get(), "ALTER CATALOG beta_db SET TENANT acme",
+            "only administrators manage tenants"},
            {boss_.get(), "CREATE TENANT gamma", "only administrators manage tenants"},
            {admin_.get(), "ALTER CATALOG beta_db SET TENANT acme", "UNSET TENANT first"},
            {admin_.get(), "CREATE USER nosuch/x", "tenant nosuch does not exist"},
@@ -352,12 +408,16 @@ TEST_F(RbacTenantsFixture, NothingCrossesATenant) {
   }
   // A view in acme's catalog over beta's, even the administrator's, does not
   // let acme read beta.
-  ASSERT_EQ(AdminError("CREATE OR REPLACE VIEW acme_db.main.peek AS SELECT * FROM beta_db.main.secrets"), "");
+  ASSERT_EQ(AdminError("CREATE OR REPLACE VIEW acme_db.main.peek AS SELECT * FROM "
+                       "beta_db.main.secrets"),
+            "");
   ASSERT_EQ(AdminError("GRANT SELECT ON acme_db.main.peek TO acme/readers"), "");
-  EXPECT_EQ(Error(*joe_, "SELECT * FROM acme_db.main.peek"), Error(*joe_, "SELECT * FROM no_such_db.main.t"));
+  EXPECT_EQ(Error(*joe_, "SELECT * FROM acme_db.main.peek"),
+            Error(*joe_, "SELECT * FROM no_such_db.main.t"));
   ASSERT_EQ(AdminError("DROP VIEW acme_db.main.peek"), "");
   // bea, beta's admin, sees none of acme either.
-  EXPECT_EQ(Error(*bea_, "SELECT * FROM acme_db.main.orders"), Error(*bea_, "SELECT * FROM no_such_db.main.t"));
+  EXPECT_EQ(Error(*bea_, "SELECT * FROM acme_db.main.orders"),
+            Error(*bea_, "SELECT * FROM no_such_db.main.t"));
 }
 
 TEST_F(RbacTenantsFixture, ShowTenants) {
@@ -383,10 +443,12 @@ TEST_F(RbacTenantsFixture, ChangingATenantsCatalogsEndsItsSessions) {
   Client joe(GetPort(), "acme/joe", "user", 30);
   ASSERT_TRUE(joe.Run("SELECT 1").ok());
   ASSERT_EQ(AdminError("ALTER CATALOG acme_extra SET TENANT acme"), "");
-  EXPECT_FALSE(joe.Run("SELECT 1").ok()) << "a session kept the old view of its tenant's catalogs";
+  EXPECT_FALSE(joe.Run("SELECT 1").ok())
+      << "a session kept the old view of its tenant's catalogs";
   Client fresh(GetPort(), "acme/joe", "user", 31);
   auto t = fresh.Run("SELECT database_name FROM duckdb_databases() WHERE NOT internal");
   ASSERT_TRUE(t.ok()) << t.status().ToString();
-  EXPECT_EQ(Column(*t), (std::set<std::string>{"_gizmosql_system", "acme_db", "acme_extra"}));
+  EXPECT_EQ(Column(*t),
+            (std::set<std::string>{"_gizmosql_system", "acme_db", "acme_extra"}));
   ASSERT_EQ(AdminError("ALTER CATALOG acme_extra UNSET TENANT"), "");
 }

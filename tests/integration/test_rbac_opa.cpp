@@ -52,8 +52,10 @@ class FakeOpa {
   FakeOpa() {
     server_.Post("/v1/data/gizmosql/allow", [this](const httplib::Request& req,
                                                    httplib::Response& res) {
-      const auto body = nlohmann::json::parse(req.body, nullptr, /*allow_exceptions=*/false);
-      const auto input = body.is_object() && body.contains("input") ? body["input"] : nlohmann::json();
+      const auto body =
+          nlohmann::json::parse(req.body, nullptr, /*allow_exceptions=*/false);
+      const auto input =
+          body.is_object() && body.contains("input") ? body["input"] : nlohmann::json();
       {
         std::lock_guard<std::mutex> lock(mu_);
         if (input.value("action", "") == "statement") {
@@ -166,7 +168,7 @@ class RbacOpaFixture : public gizmosql::testing::ServerTestFixture<RbacOpaFixtur
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     Opa();  // listening before the server starts
-    // Read when the server starts; cleared in SetUp so no other suite sees it.
+            // Read when the server starts; cleared in SetUp so no other suite sees it.
 #ifdef _WIN32
     _putenv_s("GIZMOSQL_RBAC_OPA_URL", "http://127.0.0.1:31822/v1/data/gizmosql/allow");
     _putenv_s("GIZMOSQL_RBAC_OPA_TIMEOUT_MS", "800");
@@ -202,13 +204,13 @@ class RbacOpaFixture : public gizmosql::testing::ServerTestFixture<RbacOpaFixtur
     admin_ = std::make_unique<Client>(GetPort(), "admin_user", "admin", 1);
     static bool seeded = false;
     if (!seeded) {
-      for (const char* sql : {"CREATE TABLE orders AS SELECT 1 AS id, 10 AS amount",
-                              "CREATE TABLE payroll AS SELECT 1 AS id, 5000 AS salary",
-                              "CREATE TABLE secrets AS SELECT 1 AS id", "CREATE ROLE reader",
-                              "GRANT SELECT ON orders TO reader", "GRANT SELECT ON payroll TO reader",
-                              "CREATE USER ann", "CREATE USER hr_bot", "CREATE USER mallory",
-                              "GRANT reader TO ann", "GRANT reader TO hr_bot",
-                              "GRANT reader TO mallory"}) {
+      for (const char* sql :
+           {"CREATE TABLE orders AS SELECT 1 AS id, 10 AS amount",
+            "CREATE TABLE payroll AS SELECT 1 AS id, 5000 AS salary",
+            "CREATE TABLE secrets AS SELECT 1 AS id", "CREATE ROLE reader",
+            "GRANT SELECT ON orders TO reader", "GRANT SELECT ON payroll TO reader",
+            "CREATE USER ann", "CREATE USER hr_bot", "CREATE USER mallory",
+            "GRANT reader TO ann", "GRANT reader TO hr_bot", "GRANT reader TO mallory"}) {
         ASSERT_EQ(admin_->Error(sql), "") << sql;
       }
       seeded = true;
@@ -227,9 +229,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacOpaFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacOpaFixture>::server_ready_{false};
+std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacOpaFixture>::server_ready_{
+    false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacOpaFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacOpaFixture>::config_{};
 
 TEST_F(RbacOpaFixture, TheServiceSeesWhatAnAllowedStatementTouches) {
   Client ann(GetPort(), "ann", "user", next_session_++);
@@ -250,7 +254,8 @@ TEST_F(RbacOpaFixture, TheServiceSeesWhatAnAllowedStatementTouches) {
 TEST_F(RbacOpaFixture, TheServiceCanRefuseWhatGrantsAllow) {
   Client ann(GetPort(), "ann", "user", next_session_++);
   const auto error = ann.Error("SELECT * FROM payroll");
-  EXPECT_NE(error.find("the access policy service denied it"), std::string::npos) << error;
+  EXPECT_NE(error.find("the access policy service denied it"), std::string::npos)
+      << error;
   // Positive twin: the service allows hr_bot.
   Client hr(GetPort(), "hr_bot", "user", next_session_++);
   EXPECT_EQ(hr.Error("SELECT * FROM payroll"), "");
@@ -261,16 +266,19 @@ TEST_F(RbacOpaFixture, TheServiceNeverAllowsWhatGrantsRefuse) {
   const int before = Opa().statements();
   const auto error = ann.Error("SELECT * FROM secrets");
   EXPECT_NE(error.find("no SELECT privilege on table"), std::string::npos) << error;
-  EXPECT_EQ(Opa().statements(), before) << "a statement the grants refused was sent to the service";
+  EXPECT_EQ(Opa().statements(), before)
+      << "a statement the grants refused was sent to the service";
 }
 
 TEST_F(RbacOpaFixture, NoAnswerMeansNo) {
   Client ann(GetPort(), "ann", "user", next_session_++);
   ASSERT_EQ(ann.Error("SELECT * FROM orders"), "");
-  for (auto mode : {FakeOpa::Mode::kError500, FakeOpa::Mode::kNotABool, FakeOpa::Mode::kSlow}) {
+  for (auto mode :
+       {FakeOpa::Mode::kError500, FakeOpa::Mode::kNotABool, FakeOpa::Mode::kSlow}) {
     Opa().SetMode(mode);
     const auto error = ann.Error("SELECT * FROM orders");
-    EXPECT_NE(error.find("could not get an answer from the access policy service"), std::string::npos)
+    EXPECT_NE(error.find("could not get an answer from the access policy service"),
+              std::string::npos)
         << static_cast<int>(mode) << " -> " << error;
   }
   // The administrator is not held up by the service (a way in when it is down).
@@ -282,7 +290,9 @@ TEST_F(RbacOpaFixture, NoAnswerMeansNo) {
 TEST_F(RbacOpaFixture, TheServiceCanRefuseASession) {
   Client mallory(GetPort(), "mallory", "user", next_session_++);
   const auto error = mallory.Error("SELECT 1");
-  EXPECT_NE(error.find("the access policy service refused the session"), std::string::npos) << error;
+  EXPECT_NE(error.find("the access policy service refused the session"),
+            std::string::npos)
+      << error;
   Client ann(GetPort(), "ann", "user", next_session_++);
   EXPECT_EQ(ann.Error("SELECT 1"), "");
 }

@@ -402,12 +402,14 @@ int main(int argc, char** argv) {
       std::cerr << "Cannot read " << path << "\n";
       return 1;
     }
-    const auto report = gizmosql::VerifyAuditLog(
-        in, gizmosql::AuditChainKeyFromEnvironment(),
-        /*partial=*/vm.count("verify-audit-log-partial") > 0);
+    const auto report =
+        gizmosql::VerifyAuditLog(in, gizmosql::AuditChainKeyFromEnvironment(),
+                                 /*partial=*/vm.count("verify-audit-log-partial") > 0);
     for (const auto& chain : report.chains) std::cout << "chain " << chain << "\n";
-    for (const auto& problem : report.problems) std::cout << "PROBLEM: " << problem << "\n";
-    if (report.records == 0) std::cout << "PROBLEM: no access-control audit records found\n";
+    for (const auto& problem : report.problems)
+      std::cout << "PROBLEM: " << problem << "\n";
+    if (report.records == 0)
+      std::cout << "PROBLEM: no access-control audit records found\n";
     std::cout << report.records << " audit records, "
               << (report.ok() ? "intact" : "NOT intact") << "\n";
     return report.ok() ? 0 : 1;
@@ -623,7 +625,8 @@ int main(int argc, char** argv) {
     set_env("GIZMOSQL_RBAC_OPA_URL", vm["rbac-opa-url"].as<std::string>());
   }
   if (vm["rbac-opa-timeout-ms"].as<int>() > 0) {
-    set_env("GIZMOSQL_RBAC_OPA_TIMEOUT_MS", std::to_string(vm["rbac-opa-timeout-ms"].as<int>()));
+    set_env("GIZMOSQL_RBAC_OPA_TIMEOUT_MS",
+            std::to_string(vm["rbac-opa-timeout-ms"].as<int>()));
   }
 
   std::string cluster_id =

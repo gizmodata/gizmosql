@@ -120,14 +120,16 @@ class RbacSessionState : public duckdb::ClientContextState {
       duckdb::ClientContext& context, duckdb::BindPreparedStatementCallbackInfo& info,
       duckdb::RebindQueryInfo current_rebind) override;
 #else
-  duckdb::RebindQueryInfo OnExecutePrepared(duckdb::ClientContext& context,
-                                            duckdb::PreparedStatementCallbackInfo& info,
-                                            duckdb::RebindQueryInfo current_rebind) override;
+  duckdb::RebindQueryInfo OnExecutePrepared(
+      duckdb::ClientContext& context, duckdb::PreparedStatementCallbackInfo& info,
+      duckdb::RebindQueryInfo current_rebind) override;
 #endif
-  void QueryEnd(duckdb::ClientContext& context, duckdb::optional_ptr<duckdb::ErrorData> error) override;
+  void QueryEnd(duckdb::ClientContext& context,
+                duckdb::optional_ptr<duckdb::ErrorData> error) override;
 
  private:
-  duckdb::RebindQueryInfo RebindIfGrantsChanged(const duckdb::PreparedStatementData& prepared);
+  duckdb::RebindQueryInfo RebindIfGrantsChanged(
+      const duckdb::PreparedStatementData& prepared);
 
   std::weak_ptr<RbacEngine> engine_;
   mutable std::mutex principal_mutex_;
@@ -157,7 +159,8 @@ class RbacSessionState : public duckdb::ClientContextState {
 // one of its categories ("ATTACH", "read_csv() (files and URLs)", ...), if any.
 // Categories with none (query(), passthrough SQL, grammar settings, ...) stay
 // the administrator's.
-std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(const std::string& category);
+std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(
+    const std::string& category);
 
 // Record what a statement that ran successfully created or dropped.
 void ApplyOwnership(RbacEngine& engine, const Principal& principal,

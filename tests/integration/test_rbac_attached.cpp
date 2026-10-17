@@ -51,7 +51,7 @@ std::string MintToken(const std::string& username, const std::string& role,
 }
 
 arrow::Status RunAs(int port, const std::string& user, const std::string& role,
-                  const std::string& session, const std::string& sql) {
+                    const std::string& session, const std::string& sql) {
   ARROW_ASSIGN_OR_RAISE(auto loc, arrow::flight::Location::ForGrpcTcp("127.0.0.1", port));
   ARROW_ASSIGN_OR_RAISE(auto client, arrow::flight::FlightClient::Connect(loc, {}));
   arrow::flight::FlightCallOptions co;
@@ -68,7 +68,8 @@ arrow::Status RunAs(int port, const std::string& user, const std::string& role,
 
 // The first column of the result, as strings.
 arrow::Result<std::vector<std::string>> ValuesAs(int port, const std::string& user,
-                                                 const std::string& role, const std::string& session,
+                                                 const std::string& role,
+                                                 const std::string& session,
                                                  const std::string& sql) {
   ARROW_ASSIGN_OR_RAISE(auto loc, arrow::flight::Location::ForGrpcTcp("127.0.0.1", port));
   ARROW_ASSIGN_OR_RAISE(auto client, arrow::flight::FlightClient::Connect(loc, {}));
@@ -88,7 +89,8 @@ arrow::Result<std::vector<std::string>> ValuesAs(int port, const std::string& us
   return values;
 }
 
-class RbacAttachedFixture : public gizmosql::testing::ServerTestFixture<RbacAttachedFixture> {
+class RbacAttachedFixture
+    : public gizmosql::testing::ServerTestFixture<RbacAttachedFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -129,9 +131,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacAttachedFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacAttachedFixture>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacAttachedFixture>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacAttachedFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacAttachedFixture>::config_{};
 
 TEST_F(RbacAttachedFixture, GrantsApplyToDuckLakeTables) {
   if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsRbacAvailable()) {
@@ -145,8 +149,8 @@ TEST_F(RbacAttachedFixture, GrantsApplyToDuckLakeTables) {
 
   (void)Admin("INSTALL ducklake");  // already installed is fine
   ASSERT_OK(Admin("LOAD ducklake"));
-  ASSERT_OK(Admin("ATTACH 'ducklake:" + (dir / "meta.ducklake").string() + "' AS lake (DATA_PATH '" +
-                  (dir / "data").string() + "/')"));
+  ASSERT_OK(Admin("ATTACH 'ducklake:" + (dir / "meta.ducklake").string() +
+                  "' AS lake (DATA_PATH '" + (dir / "data").string() + "/')"));
   ASSERT_OK(Admin("CREATE TABLE lake.main.events AS SELECT 1 AS id, 'payload' AS body"));
   ASSERT_OK(Admin("CREATE TABLE lake.main.hidden AS SELECT 1 AS id"));
   ASSERT_OK(Admin("CREATE ROLE lake_reader"));
@@ -157,7 +161,8 @@ TEST_F(RbacAttachedFixture, GrantsApplyToDuckLakeTables) {
   ASSERT_OK(User("SELECT id FROM lake.main.events"));
   ASSERT_OK(User("SELECT count(*) FROM lake.events"));
   ExpectBlocked("SELECT body FROM lake.main.events", "no SELECT on column(s) body");
-  ExpectBlocked("SELECT * FROM lake.main.hidden", "no SELECT privilege on table lake.main.hidden");
+  ExpectBlocked("SELECT * FROM lake.main.hidden",
+                "no SELECT privilege on table lake.main.hidden");
   ExpectBlocked("INSERT INTO lake.main.events VALUES (2, 'x')", "no INSERT privilege");
   // Time travel reads the same table: same check.
   ExpectBlocked("SELECT body FROM lake.main.events AT (VERSION => 1)", "body");
@@ -168,16 +173,21 @@ TEST_F(RbacAttachedFixture, GrantsApplyToDuckLakeTables) {
   ExpectBlocked("SELECT * FROM lake.main.hidden_v", "no SELECT privilege on view");
   ASSERT_OK(Admin("GRANT SELECT ON lake.main.hidden_v TO lake_reader"));
   ASSERT_OK(User("SELECT * FROM lake.main.hidden_v"));
-  ExpectBlocked("SELECT * FROM lake.main.hidden", "no SELECT privilege on table lake.main.hidden");
+  ExpectBlocked("SELECT * FROM lake.main.hidden",
+                "no SELECT privilege on table lake.main.hidden");
 #endif
 
   // Row and masking policies apply to DuckLake tables as well.
-  ASSERT_OK(Admin("CREATE TABLE lake.main.governed AS SELECT * FROM (VALUES (1, 'EU', 'a@x'), "
-                  "(2, 'US', 'b@x')) t(id, region, email)"));
+  ASSERT_OK(
+      Admin("CREATE TABLE lake.main.governed AS SELECT * FROM (VALUES (1, 'EU', 'a@x'), "
+            "(2, 'US', 'b@x')) t(id, region, email)"));
   ASSERT_OK(Admin("GRANT SELECT ON lake.main.governed TO lake_reader"));
-  ASSERT_OK(Admin("CREATE ROW POLICY eu_only ON lake.main.governed USING (region = 'EU')"));
-  ASSERT_OK(Admin("CREATE MASKING POLICY lake_mask AS (val VARCHAR) RETURNS VARCHAR -> 'masked'"));
-  ASSERT_OK(Admin("ALTER TABLE lake.main.governed MODIFY COLUMN email SET MASKING POLICY lake_mask"));
+  ASSERT_OK(
+      Admin("CREATE ROW POLICY eu_only ON lake.main.governed USING (region = 'EU')"));
+  ASSERT_OK(Admin(
+      "CREATE MASKING POLICY lake_mask AS (val VARCHAR) RETURNS VARCHAR -> 'masked'"));
+  ASSERT_OK(Admin(
+      "ALTER TABLE lake.main.governed MODIFY COLUMN email SET MASKING POLICY lake_mask"));
   auto user_values = [&](const std::string& sql) {
     return ValuesAs(GetPort(), "lake_user", "user", kUserSession, sql);
   };
@@ -185,10 +195,12 @@ TEST_F(RbacAttachedFixture, GrantsApplyToDuckLakeTables) {
   EXPECT_EQ(ids, std::vector<std::string>{"1"});
   ASSERT_OK_AND_ASSIGN(auto emails, user_values("SELECT email FROM lake.main.governed"));
   EXPECT_EQ(emails, std::vector<std::string>{"masked"});
-  ASSERT_OK_AND_ASSIGN(auto oracle,
-                       user_values("SELECT count(*) FROM lake.main.governed WHERE email = 'a@x'"));
+  ASSERT_OK_AND_ASSIGN(
+      auto oracle,
+      user_values("SELECT count(*) FROM lake.main.governed WHERE email = 'a@x'"));
   EXPECT_EQ(oracle, std::vector<std::string>{"0"});
-  ASSERT_OK(Admin("ALTER TABLE lake.main.governed MODIFY COLUMN email UNSET MASKING POLICY"));
+  ASSERT_OK(
+      Admin("ALTER TABLE lake.main.governed MODIFY COLUMN email UNSET MASKING POLICY"));
   ASSERT_OK(Admin("DROP ROW POLICY eu_only ON lake.main.governed"));
   std::filesystem::remove_all(dir);
 }
@@ -202,8 +214,10 @@ TEST_F(RbacAttachedFixture, GrantsApplyToPostgresTables) {
   ASSERT_TRUE(IsServerReady());
   ASSERT_OK(Admin("LOAD postgres"));
   ASSERT_OK(Admin(std::string("ATTACH '") + pg + "' AS pgc (TYPE postgres)"));
-  ASSERT_OK(Admin("CALL postgres_execute('pgc', 'DROP TABLE IF EXISTS public.rbac_pg_t')"));
-  ASSERT_OK(Admin("CREATE TABLE pgc.public.rbac_pg_t AS SELECT 1 AS id, 'pg-secret' AS s"));
+  ASSERT_OK(
+      Admin("CALL postgres_execute('pgc', 'DROP TABLE IF EXISTS public.rbac_pg_t')"));
+  ASSERT_OK(
+      Admin("CREATE TABLE pgc.public.rbac_pg_t AS SELECT 1 AS id, 'pg-secret' AS s"));
   ASSERT_OK(Admin("CREATE ROLE IF NOT EXISTS lake_reader"));
   ASSERT_OK(Admin("CREATE USER IF NOT EXISTS lake_user"));
   ASSERT_OK(Admin("GRANT lake_reader TO lake_user"));
@@ -214,6 +228,7 @@ TEST_F(RbacAttachedFixture, GrantsApplyToPostgresTables) {
   // The pass-through function runs SQL in PostgreSQL directly: refused.
   auto st = User("SELECT * FROM postgres_query('pgc', 'SELECT s FROM public.rbac_pg_t')");
   EXPECT_FALSE(st.ok()) << "postgres_query was allowed";
-  ASSERT_OK(Admin("CALL postgres_execute('pgc', 'DROP TABLE IF EXISTS public.rbac_pg_t')"));
+  ASSERT_OK(
+      Admin("CALL postgres_execute('pgc', 'DROP TABLE IF EXISTS public.rbac_pg_t')"));
   ASSERT_OK(Admin("DETACH pgc"));
 }

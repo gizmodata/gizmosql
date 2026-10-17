@@ -2115,6 +2115,22 @@ jobs:
           restore-keys: |
             ios-deps-v5-${{ runner.os }}-${{ hashFiles('third_party/Arrow_CMakeLists.txt.in', 'third_party/patch_arrow.cmake', 'third_party/patch_grpc.cmake', 'third_party/JWTCPP_CMakeLists.txt.in', 'third_party/SQLite_CMakeLists.txt.in', 'third_party/gflags_CMakeLists.txt.in', 'third_party/httplib_CMakeLists.txt.in', 'third_party/replxx_CMakeLists.txt.in') }}-
 
+      - name: Drop a DuckDB build tree restored for another recipe
+        # The restore prefix leaves out the DuckDB recipe so Arrow, gRPC and the
+        # other heavy deps stay warm. But a DuckDB tree built from another recipe
+        # (patch_duckdb.cmake, the extension pins, the iOS script) is then rebuilt
+        # in place, which re-runs DuckDB's configure on half-stale state; its
+        # extensions lost their OpenSSL include paths that way. Build DuckDB cold
+        # instead, as the run that made the cache did.
+        if: steps.ios-deps-cache.outputs.cache-hit != 'true'
+        run: |
+          rm -rf ios/build/ios-arm64/third_party/src/duckdb_project \
+                 ios/build/ios-arm64/third_party/src/duckdb_project-build \
+                 ios/build/ios-arm64/third_party/src/duckdb_project-stamp \
+                 ios/build/ios-arm64/third_party/src/duckdb_project-tmp \
+                 ios/build/ios-arm64/third_party/duckdb \
+                 ios/build/ios-arm64/CMakeFiles/gizmosqlserver.dir
+
       - name: Build iOS static libraries
         run: |
           # Some macOS runner images export SDKROOT/iOS deployment target

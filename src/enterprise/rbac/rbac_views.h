@@ -46,7 +46,8 @@ namespace gizmosql::enterprise::rbac {
 class ViewMarker : public duckdb::LogicalExtensionOperator {
  public:
   ViewMarker(ObjectPath view, bool temporary, std::string definition_hash,
-             std::vector<std::string> column_names, duckdb::unique_ptr<duckdb::LogicalOperator> plan);
+             std::vector<std::string> column_names,
+             duckdb::unique_ptr<duckdb::LogicalOperator> plan);
 
   ObjectPath view;
   bool temporary;

@@ -410,19 +410,25 @@ TEST(AdminCommandGuard, ExternalResourceFunctionsAreGated) {
             "destroy_external_resource()");
   EXPECT_EQ(Category("SELECT * FROM create_external_resource('t', 'n')"),
             "create_external_resource()");
-  EXPECT_EQ(Category("CALL register_external_resource_type('t', create_function := 'read_csv')"),
-            "register_external_resource_type()");
+  EXPECT_EQ(
+      Category(
+          "CALL register_external_resource_type('t', create_function := 'read_csv')"),
+      "register_external_resource_type()");
   EXPECT_EQ(Category("SELECT * FROM register_external_resource('t', 'n', {})"),
             "register_external_resource()");
   EXPECT_EQ(Category("CALL deregister_external_resource('t', 'n')"),
             "deregister_external_resource()");
   // Nesting, case and PREPARE do not get it past the gate.
-  EXPECT_TRUE(Gated("SELECT * FROM (SELECT * FROM DESTROY_EXTERNAL_RESOURCE('query', 'SELECT 1')) x"));
-  EXPECT_TRUE(Gated("WITH c AS (SELECT * FROM destroy_external_resource('query', 'SELECT 1')) "
-                    "SELECT * FROM c"));
-  EXPECT_TRUE(Gated("SELECT 1 WHERE EXISTS "
-                    "(SELECT * FROM destroy_external_resource('query', 'SELECT 1'))"));
-  EXPECT_TRUE(Gated("PREPARE p AS SELECT * FROM destroy_external_resource('query', 'SELECT 1')"));
+  EXPECT_TRUE(Gated(
+      "SELECT * FROM (SELECT * FROM DESTROY_EXTERNAL_RESOURCE('query', 'SELECT 1')) x"));
+  EXPECT_TRUE(
+      Gated("WITH c AS (SELECT * FROM destroy_external_resource('query', 'SELECT 1')) "
+            "SELECT * FROM c"));
+  EXPECT_TRUE(
+      Gated("SELECT 1 WHERE EXISTS "
+            "(SELECT * FROM destroy_external_resource('query', 'SELECT 1'))"));
+  EXPECT_TRUE(
+      Gated("PREPARE p AS SELECT * FROM destroy_external_resource('query', 'SELECT 1')"));
   EXPECT_FALSE(Gated("SELECT 'destroy_external_resource' AS s"));
 }
 
@@ -440,12 +446,16 @@ TEST(AdminCommandGuard, ExternalResourceMetadataIsGated) {
 // one lets its owner load their own native code. These parse as LOAD
 // statements; the category names what the user actually typed.
 TEST(AdminCommandGuard, ExtensionRepositoryStatementsAreGated) {
-  EXPECT_EQ(Category("CREATE EXTENSION REPOSITORY r WITH PREFIX 'https://example.invalid/ext' "
-                     "USING PUBLIC KEY 'k'"),
-            "CREATE EXTENSION REPOSITORY");
-  EXPECT_EQ(Category("CREATE OR REPLACE EXTENSION REPOSITORY r PREFIX 'https://example.invalid/x'"),
-            "CREATE EXTENSION REPOSITORY");
-  EXPECT_EQ(Category("DROP EXTENSION REPOSITORY IF EXISTS r"), "DROP EXTENSION REPOSITORY");
+  EXPECT_EQ(
+      Category("CREATE EXTENSION REPOSITORY r WITH PREFIX 'https://example.invalid/ext' "
+               "USING PUBLIC KEY 'k'"),
+      "CREATE EXTENSION REPOSITORY");
+  EXPECT_EQ(
+      Category(
+          "CREATE OR REPLACE EXTENSION REPOSITORY r PREFIX 'https://example.invalid/x'"),
+      "CREATE EXTENSION REPOSITORY");
+  EXPECT_EQ(Category("DROP EXTENSION REPOSITORY IF EXISTS r"),
+            "DROP EXTENSION REPOSITORY");
   EXPECT_EQ(Category("INSTALL AND LOAD httpfs"), "INSTALL extension");
 }
 
@@ -456,10 +466,12 @@ TEST(AdminCommandGuard, ExtensionRepositoryStatementsAreGated) {
 TEST(AdminCommandGuard, GrammarSwitchingSettingsAreGatedInAnyScope) {
   EXPECT_EQ(Category("SET current_dialect = 'other'"), "SET current_dialect");
   EXPECT_EQ(Category("SET SESSION current_dialect = 'other'"), "SET current_dialect");
-  EXPECT_EQ(Category("SET active_grammar_extensions = ['x']"), "SET active_grammar_extensions");
+  EXPECT_EQ(Category("SET active_grammar_extensions = ['x']"),
+            "SET active_grammar_extensions");
   EXPECT_EQ(Category("SET SESSION active_grammar_extensions = ['x']"),
             "SET active_grammar_extensions");
-  EXPECT_EQ(Category("SET SESSION enable_legacy_parser = true"), "SET enable_legacy_parser");
+  EXPECT_EQ(Category("SET SESSION enable_legacy_parser = true"),
+            "SET enable_legacy_parser");
   // EXPLAIN ANALYZE runs the wrapped SET (DuckDB does not PREPARE a SET).
   EXPECT_TRUE(Gated("EXPLAIN ANALYZE SET SESSION current_dialect = 'other'"));
   // Going back to the built-in grammar is harmless.
@@ -646,7 +658,8 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForDuckDB2Commands) {
            std::string("SELECT * FROM duckdb_external_resources()"),
            std::string("SET SESSION current_dialect = 'other'"),
            std::string("SET allow_extension_repositories = 'allowed'"),
-           std::string("CREATE EXTENSION REPOSITORY r WITH PREFIX 'https://example.invalid/x'"),
+           std::string(
+               "CREATE EXTENSION REPOSITORY r WITH PREFIX 'https://example.invalid/x'"),
        }) {
     auto st = ExecAs(GetPort(), analyst, sql);
     EXPECT_FALSE(st.ok()) << "non-admin should be rejected for: " << sql;
@@ -654,7 +667,8 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForDuckDB2Commands) {
         << "rejection should come from the admin gate for: " << sql
         << " (got: " << st.ToString() << ")";
     EXPECT_EQ(st.ToString().find(kMarker), std::string::npos)
-        << "the engine ran the callback SQL for: " << sql << " (got: " << st.ToString() << ")";
+        << "the engine ran the callback SQL for: " << sql << " (got: " << st.ToString()
+        << ")";
   }
 }
 #endif

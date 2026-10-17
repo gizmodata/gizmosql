@@ -780,18 +780,22 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 #ifdef GIZMOSQL_ENTERPRISE
     if (!rbac_store_uri.empty()) {
       if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsRbacAvailable()) {
-        return arrow::Status::Invalid(gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
-            "Role-based access control (--rbac-store-uri)"));
+        return arrow::Status::Invalid(
+            gizmosql::enterprise::EnterpriseFeatures::GetLicenseRequiredError(
+                "Role-based access control (--rbac-store-uri)"));
       }
       gizmosql::enterprise::rbac::RbacEngine::Options rbac_options;
       rbac_options.store_uri = rbac_store_uri;
       rbac_options.administrator_name = username;
       rbac_options.policy_service_url = SafeGetEnvVarValue("GIZMOSQL_RBAC_OPA_URL");
-      if (const auto timeout = SafeGetEnvVarValue("GIZMOSQL_RBAC_OPA_TIMEOUT_MS"); !timeout.empty()) {
+      if (const auto timeout = SafeGetEnvVarValue("GIZMOSQL_RBAC_OPA_TIMEOUT_MS");
+          !timeout.empty()) {
         try {
-          rbac_options.policy_service_timeout = std::chrono::milliseconds(std::stoll(timeout));
+          rbac_options.policy_service_timeout =
+              std::chrono::milliseconds(std::stoll(timeout));
         } catch (const std::exception&) {
-          return arrow::Status::Invalid("GIZMOSQL_RBAC_OPA_TIMEOUT_MS must be a number of milliseconds");
+          return arrow::Status::Invalid(
+              "GIZMOSQL_RBAC_OPA_TIMEOUT_MS must be a number of milliseconds");
         }
       }
       ARROW_ASSIGN_OR_RAISE(auto rbac_engine,
@@ -820,8 +824,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
       duckdb_server->SetRbacEngine(std::move(rbac_engine));
       // CREATE SCOPED TOKEN signs with the server's key.
       duckdb_server->SetScopedTokenMinter(
-          [secret_key](const std::string& user, const std::string& scope_id, int64_t expires_at,
-                       const std::string& instance_id) {
+          [secret_key](const std::string& user, const std::string& scope_id,
+                       int64_t expires_at, const std::string& instance_id) {
             return gizmosql::CreateScopedTokenJWT(user, secret_key, instance_id, scope_id,
                                                   expires_at);
           });
@@ -831,7 +835,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
 #else
     if (!rbac_store_uri.empty()) {
       return arrow::Status::Invalid(
-          "Role-based access control (--rbac-store-uri) is a GizmoSQL Enterprise feature");
+          "Role-based access control (--rbac-store-uri) is a GizmoSQL Enterprise "
+          "feature");
     }
 #endif
     if (reject_unknown_sessions) {

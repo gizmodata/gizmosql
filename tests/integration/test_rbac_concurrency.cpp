@@ -48,16 +48,16 @@ using arrow::flight::sql::FlightSqlClient;
 namespace {
 
 constexpr int kClients = 10;
-constexpr int kRounds = 3;     // passes over the 22 queries per client
-constexpr int kTrials = 3;     // medians over this many measurements per mode
+constexpr int kRounds = 3;  // passes over the 22 queries per client
+constexpr int kTrials = 3;  // medians over this many measurements per mode
 
 std::string ScaleFactor() {
   const char* sf = std::getenv("GIZMOSQL_TEST_CONCURRENCY_SF");
   return sf && *sf ? sf : "0.1";
 }
 
-std::string Token(const std::string& user, const std::string& role, const std::string& session,
-                  const std::string& instance) {
+std::string Token(const std::string& user, const std::string& role,
+                  const std::string& session, const std::string& instance) {
   return jwt::create()
       .set_issuer("gizmosql")
       .set_type("JWT")
@@ -81,7 +81,8 @@ std::string SessionId(int server, int n) {
 
 class Client {
  public:
-  Client(int port, const std::string& user, const std::string& role, const std::string& session) {
+  Client(int port, const std::string& user, const std::string& role,
+         const std::string& session) {
     header_ = {"authorization", "Bearer " + Token(user, role, session, "concurrency")};
     auto loc = arrow::flight::Location::ForGrpcTcp("127.0.0.1", port).ValueOrDie();
     client_ = std::make_unique<FlightSqlClient>(
@@ -191,9 +192,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<BaselineServer>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<BaselineServer>::server_ready_{false};
+std::atomic<bool> gizmosql::testing::ServerTestFixture<BaselineServer>::server_ready_{
+    false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<BaselineServer>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<BaselineServer>::config_{};
 template <>
 std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
     gizmosql::testing::ServerTestFixture<RbacServer>::server_{};
@@ -202,7 +205,8 @@ std::thread gizmosql::testing::ServerTestFixture<RbacServer>::server_thread_{};
 template <>
 std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacServer>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacServer>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacServer>::config_{};
 
 class RbacConcurrency : public ::testing::Test {
  protected:
@@ -223,10 +227,11 @@ class RbacConcurrency : public ::testing::Test {
     if (rbac) {
       // A row policy on the largest table (it keeps every row, so results
       // match the baseline) and a mask: the policy rewrite runs too.
-      for (const char* sql : {"CREATE ROLE bench", "GRANT SELECT ON SCHEMA main TO bench",
-                              "CREATE ROW POLICY bench_rows ON lineitem TO bench USING (l_orderkey > 0)",
-                              "CREATE MASKING POLICY bench_mask AS (val VARCHAR) RETURNS VARCHAR -> 'x'",
-                              "ALTER TABLE nation MODIFY COLUMN n_comment SET MASKING POLICY bench_mask"}) {
+      for (const char* sql :
+           {"CREATE ROLE bench", "GRANT SELECT ON SCHEMA main TO bench",
+            "CREATE ROW POLICY bench_rows ON lineitem TO bench USING (l_orderkey > 0)",
+            "CREATE MASKING POLICY bench_mask AS (val VARCHAR) RETURNS VARCHAR -> 'x'",
+            "ALTER TABLE nation MODIFY COLUMN n_comment SET MASKING POLICY bench_mask"}) {
         EXPECT_GE(admin.Rows(sql, &error), 0) << sql << ": " << error;
       }
       for (int i = 0; i <= kClients; ++i) {
@@ -240,16 +245,19 @@ class RbacConcurrency : public ::testing::Test {
 
   // `clients` clients at once, each with its own session, run every query
   // kRounds times. Returns seconds; checks every result's row count.
-  static double Run(int port, bool rbac, int clients, const std::vector<std::string>& queries,
+  static double Run(int port, bool rbac, int clients,
+                    const std::vector<std::string>& queries,
                     const std::vector<int64_t>& expected, int session_base) {
     std::vector<std::unique_ptr<Client>> sessions;
     for (int c = 0; c < clients; ++c) {
       // Baseline clients are token users too (role "user"), so both servers
       // take the same path except for access control itself.
-      sessions.push_back(std::make_unique<Client>(port, rbac ? "bench" + std::to_string(c) : "bench",
-                                                  "user", SessionId(port, session_base + c)));
+      sessions.push_back(
+          std::make_unique<Client>(port, rbac ? "bench" + std::to_string(c) : "bench",
+                                   "user", SessionId(port, session_base + c)));
       std::string error;
-      EXPECT_EQ(sessions.back()->Rows("SELECT 1", &error), 1) << error;  // session up before timing
+      EXPECT_EQ(sessions.back()->Rows("SELECT 1", &error), 1)
+          << error;  // session up before timing
     }
     std::atomic<int> wrong{0};
     std::mutex log_mutex;
@@ -264,8 +272,9 @@ class RbacConcurrency : public ::testing::Test {
             if (rows != expected[q]) {
               ++wrong;
               std::lock_guard<std::mutex> lock(log_mutex);
-              std::cerr << (rbac ? "rbac" : "baseline") << " client " << c << " q" << q + 1 << ": "
-                        << rows << " rows, expected " << expected[q] << " " << error << "\n";
+              std::cerr << (rbac ? "rbac" : "baseline") << " client " << c << " q"
+                        << q + 1 << ": " << rows << " rows, expected " << expected[q]
+                        << " " << error << "\n";
             }
           }
         }
@@ -274,7 +283,8 @@ class RbacConcurrency : public ::testing::Test {
     for (auto& t : threads) t.join();
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    EXPECT_EQ(wrong.load(), 0) << (rbac ? "access control" : "baseline") << " returned wrong results";
+    EXPECT_EQ(wrong.load(), 0) << (rbac ? "access control" : "baseline")
+                               << " returned wrong results";
     return seconds;
   }
 
@@ -313,22 +323,25 @@ TEST_F(RbacConcurrency, AccessControlDoesNotCostConcurrency) {
     const int sessions = 100 + trial * 20;
     base_single.push_back(Run(base_port, false, 1, queries, expected, sessions));
     rbac_single.push_back(Run(rbac_port, true, 1, queries, expected, sessions));
-    base_multi.push_back(Run(base_port, false, kClients, queries, expected, sessions + 1));
+    base_multi.push_back(
+        Run(base_port, false, kClients, queries, expected, sessions + 1));
     rbac_multi.push_back(Run(rbac_port, true, kClients, queries, expected, sessions + 1));
   }
   const Measurement base{Median(base_single), Median(base_multi)};
   const Measurement rbac{Median(rbac_single), Median(rbac_multi)};
 
-  std::cerr << std::fixed << std::setprecision(2) << "\n=== Concurrency, TPC-H SF " << ScaleFactor()
-            << ", " << kClients << " clients x " << kRounds << " passes, median of " << kTrials
-            << " ===\n"
-            << "               1 client (s)   " << kClients << " clients (s)   scaling (x)\n"
-            << "baseline       " << std::setw(10) << base.single_s << std::setw(16) << base.multi_s
-            << std::setw(14) << base.Scaling() << "\n"
-            << "access control " << std::setw(10) << rbac.single_s << std::setw(16) << rbac.multi_s
-            << std::setw(14) << rbac.Scaling() << "\n"
-            << "overhead       " << std::setw(9) << (rbac.single_s / base.single_s - 1) * 100 << "%"
-            << std::setw(15) << (rbac.multi_s / base.multi_s - 1) * 100 << "%\n";
+  std::cerr << std::fixed << std::setprecision(2) << "\n=== Concurrency, TPC-H SF "
+            << ScaleFactor() << ", " << kClients << " clients x " << kRounds
+            << " passes, median of " << kTrials << " ===\n"
+            << "               1 client (s)   " << kClients
+            << " clients (s)   scaling (x)\n"
+            << "baseline       " << std::setw(10) << base.single_s << std::setw(16)
+            << base.multi_s << std::setw(14) << base.Scaling() << "\n"
+            << "access control " << std::setw(10) << rbac.single_s << std::setw(16)
+            << rbac.multi_s << std::setw(14) << rbac.Scaling() << "\n"
+            << "overhead       " << std::setw(9)
+            << (rbac.single_s / base.single_s - 1) * 100 << "%" << std::setw(15)
+            << (rbac.multi_s / base.multi_s - 1) * 100 << "%\n";
 
   // A shared lock or anything else that serializes sessions shows up as the
   // concurrent run slowing down far more than the single-client one, and as

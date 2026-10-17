@@ -108,13 +108,13 @@ arrow::Result<std::vector<Token>> Tokenize(const std::string& sql) {
                                         : "unterminated string literal");
       }
       if (quote == '"' && value.empty()) return SyntaxError("empty quoted identifier");
-      tokens.push_back(
-          {quote == '"' ? TokenType::kQuotedIdentifier : TokenType::kString, value, start});
+      tokens.push_back({quote == '"' ? TokenType::kQuotedIdentifier : TokenType::kString,
+                        value, start});
     } else if (std::isdigit(c)) {
       // Not part of any access-control statement, but tokenized so trailing
       // SQL gets the "one statement at a time" error rather than a lexer one.
-      while (pos < sql.size() && (std::isalnum(static_cast<unsigned char>(sql[pos])) ||
-                                  sql[pos] == '.')) {
+      while (pos < sql.size() &&
+             (std::isalnum(static_cast<unsigned char>(sql[pos])) || sql[pos] == '.')) {
         ++pos;
       }
       tokens.push_back({TokenType::kNumber, sql.substr(start, pos - start), start});
@@ -182,8 +182,8 @@ class Parser {
   }
   arrow::Status ExpectKeyword(const char* keyword) {
     if (AcceptKeyword(keyword)) return arrow::Status::OK();
-    return SyntaxError(std::string("expected ") + keyword + " but found '" + Describe(Peek()) +
-                       "'");
+    return SyntaxError(std::string("expected ") + keyword + " but found '" +
+                       Describe(Peek()) + "'");
   }
   arrow::Status ExpectSymbol(const char* symbol) {
     if (PeekSymbol(symbol)) {
@@ -207,7 +207,8 @@ class Parser {
       ++pos_;
       return t.text;
     }
-    return SyntaxError(std::string("expected ") + what + " but found '" + Describe(t) + "'");
+    return SyntaxError(std::string("expected ") + what + " but found '" + Describe(t) +
+                       "'");
   }
 
   // A user or role name: name, or tenant/name for a tenant's users and roles.
@@ -237,8 +238,8 @@ class Parser {
       ++pos_;
       return t.text;
     }
-    return SyntaxError(std::string("expected ") + what + " as a quoted string but found '" +
-                       Describe(t) + "'");
+    return SyntaxError(std::string("expected ") + what +
+                       " as a quoted string but found '" + Describe(t) + "'");
   }
 
   bool ParseIfNotExists() {
@@ -271,7 +272,9 @@ class Parser {
         pos_ += 2;
         return ParseCreateMaskingPolicy(or_replace);
       }
-      if (or_replace) return SyntaxError("expected ROW POLICY or MASKING POLICY after CREATE OR REPLACE");
+      if (or_replace)
+        return SyntaxError(
+            "expected ROW POLICY or MASKING POLICY after CREATE OR REPLACE");
       if (PeekKeyword("GROUP") && PeekKeyword("MAPPING", 1)) {
         pos_ += 2;
         return ParseGroupMapping(GroupMappingCommand::Kind::kCreate);
@@ -323,10 +326,12 @@ class Parser {
         return cmd;
       }
       const bool is_user = PeekKeyword("USER");
-      if (!is_user && !PeekKeyword("ROLE")) return SyntaxError("expected USER or ROLE after DROP");
+      if (!is_user && !PeekKeyword("ROLE"))
+        return SyntaxError("expected USER or ROLE after DROP");
       ++pos_;
       const bool if_exists = ParseIfExists();
-      ARROW_ASSIGN_OR_RAISE(auto name, ParsePrincipalName(is_user ? "a user name" : "a role name"));
+      ARROW_ASSIGN_OR_RAISE(auto name,
+                            ParsePrincipalName(is_user ? "a user name" : "a role name"));
       if (is_user) return DropUserCommand{std::move(name), if_exists};
       return DropRoleCommand{std::move(name), if_exists};
     }
@@ -438,10 +443,12 @@ class Parser {
       } else if (AcceptKeyword("DELETE")) {
         p = Privilege::kDelete;
       } else {
-        return SyntaxError("a scoped token allows SELECT, INSERT, UPDATE or DELETE, not '" +
-                           Describe(Peek()) + "'");
+        return SyntaxError(
+            "a scoped token allows SELECT, INSERT, UPDATE or DELETE, not '" +
+            Describe(Peek()) + "'");
       }
-      if (std::find(cmd.privileges.begin(), cmd.privileges.end(), p) == cmd.privileges.end()) {
+      if (std::find(cmd.privileges.begin(), cmd.privileges.end(), p) ==
+          cmd.privileges.end()) {
         cmd.privileges.push_back(p);
       }
     } while (PeekSymbol(",") && (++pos_, true));
@@ -454,7 +461,8 @@ class Parser {
     }
     if (AcceptKeyword("VALID")) {
       ARROW_RETURN_NOT_OK(ExpectKeyword("FOR"));
-      ARROW_ASSIGN_OR_RAISE(auto valid_for, ParseStringLiteral("a duration such as '8 hours'"));
+      ARROW_ASSIGN_OR_RAISE(auto valid_for,
+                            ParseStringLiteral("a duration such as '8 hours'"));
       cmd.valid_for = std::move(valid_for);
     }
     // FOR USER may also come last.
@@ -529,8 +537,10 @@ class Parser {
       cmd.action = AlterUserCommand::Action::kUnsetAttribute;
       ARROW_ASSIGN_OR_RAISE(cmd.attribute, ParseIdentifier("an attribute name"));
     } else {
-      return SyntaxError("expected PASSWORD, ENABLE, DISABLE, SET ATTRIBUTE or UNSET ATTRIBUTE "
-                         "after ALTER USER " + cmd.name);
+      return SyntaxError(
+          "expected PASSWORD, ENABLE, DISABLE, SET ATTRIBUTE or UNSET ATTRIBUTE "
+          "after ALTER USER " +
+          cmd.name);
     }
     return cmd;
   }
@@ -579,7 +589,8 @@ class Parser {
       } while (PeekSymbol(",") && (++pos_, true));
     }
     ARROW_RETURN_NOT_OK(ExpectKeyword("USING"));
-    ARROW_ASSIGN_OR_RAISE(cmd.predicate, ParseParenthesizedSql("the policy's USING predicate"));
+    ARROW_ASSIGN_OR_RAISE(cmd.predicate,
+                          ParseParenthesizedSql("the policy's USING predicate"));
     return cmd;
   }
 
@@ -598,27 +609,32 @@ class Parser {
       if (PeekSymbol(")") && --depth == 0) break;
       ++pos_;
     }
-    if (!PeekSymbol(")")) return SyntaxError("unbalanced parentheses in the parameter list");
+    if (!PeekSymbol(")"))
+      return SyntaxError("unbalanced parentheses in the parameter list");
     cmd.parameter_type = Trim(sql_.substr(type_start, Peek().offset - type_start));
     ++pos_;
     ARROW_RETURN_NOT_OK(ExpectKeyword("RETURNS"));
     // The return type runs to "->".
     const size_t ret_start = Peek().offset;
-    while (Peek().type != TokenType::kEnd && !(PeekSymbol("-") && Peek(1).text == ">")) ++pos_;
-    if (Peek().type == TokenType::kEnd) return SyntaxError("expected -> before the policy body");
+    while (Peek().type != TokenType::kEnd && !(PeekSymbol("-") && Peek(1).text == ">"))
+      ++pos_;
+    if (Peek().type == TokenType::kEnd)
+      return SyntaxError("expected -> before the policy body");
     cmd.return_type = Trim(sql_.substr(ret_start, Peek().offset - ret_start));
     pos_ += 2;
     // The body is the rest of the statement (a trailing ";" is not part of it).
     const size_t body_start = Peek().offset;
     size_t body_end = sql_.size();
     size_t last = tokens_.size() - 1;  // kEnd
-    if (last > 0 && tokens_[last - 1].type == TokenType::kSymbol && tokens_[last - 1].text == ";") {
+    if (last > 0 && tokens_[last - 1].type == TokenType::kSymbol &&
+        tokens_[last - 1].text == ";") {
       body_end = tokens_[last - 1].offset;
       last -= 1;
     }
     cmd.body = Trim(sql_.substr(body_start, body_end - body_start));
     if (cmd.parameter_type.empty() || cmd.return_type.empty() || cmd.body.empty()) {
-      return SyntaxError("a masking policy needs a parameter type, a return type and a body");
+      return SyntaxError(
+          "a masking policy needs a parameter type, a return type and a body");
     }
     pos_ = last;  // the body was taken whole
     return cmd;
@@ -659,7 +675,8 @@ class Parser {
   arrow::Result<RbacCommand> ParseAlterOwner(bool is_view) {
     AlterOwnerCommand cmd;
     cmd.is_view = is_view;
-    ARROW_ASSIGN_OR_RAISE(cmd.target, ParseQualifiedName(is_view ? "a view name" : "a table name"));
+    ARROW_ASSIGN_OR_RAISE(cmd.target,
+                          ParseQualifiedName(is_view ? "a view name" : "a table name"));
     if (!(PeekKeyword("OWNER") && PeekKeyword("TO", 1))) {
       return SyntaxError(std::string("GizmoSQL only handles ALTER ") +
                          (is_view ? "VIEW" : "TABLE") + " ... OWNER TO here");
@@ -713,7 +730,8 @@ class Parser {
     if (PeekKeyword("UPDATE")) return std::make_pair(Privilege::kUpdate, size_t{1});
     if (PeekKeyword("DELETE")) return std::make_pair(Privilege::kDelete, size_t{1});
     if (PeekKeyword("ALL")) {
-      return std::make_pair(Privilege::kAll, size_t{PeekKeyword("PRIVILEGES", 1) ? 2u : 1u});
+      return std::make_pair(Privilege::kAll,
+                            size_t{PeekKeyword("PRIVILEGES", 1) ? 2u : 1u});
     }
     struct Phrase {
       const char* verb;
@@ -740,7 +758,8 @@ class Parser {
 
   // A system privilege phrase starting here: its privilege and length.
   std::optional<std::pair<SystemPrivilege, size_t>> PeekSystemPrivilege() const {
-    if (PeekKeyword("CHECKPOINT")) return std::make_pair(SystemPrivilege::kCheckpoint, size_t{1});
+    if (PeekKeyword("CHECKPOINT"))
+      return std::make_pair(SystemPrivilege::kCheckpoint, size_t{1});
     struct Phrase {
       const char* first;
       const char* second;
@@ -771,7 +790,8 @@ class Parser {
     do {
       auto found = PeekSystemPrivilege();
       if (!found) {
-        return SyntaxError("expected a system privilege but found '" + Describe(Peek()) + "'");
+        return SyntaxError("expected a system privilege but found '" + Describe(Peek()) +
+                           "'");
       }
       cmd.privileges.push_back(found->first);
       pos_ += found->second;
@@ -816,13 +836,15 @@ class Parser {
       if (PeekKeyword("GRANT") && PeekKeyword("OPTION", 1) && PeekKeyword("FOR", 2)) {
         pos_ += 3;
         option_for = true;
-      } else if (PeekKeyword("ADMIN") && PeekKeyword("OPTION", 1) && PeekKeyword("FOR", 2)) {
+      } else if (PeekKeyword("ADMIN") && PeekKeyword("OPTION", 1) &&
+                 PeekKeyword("FOR", 2)) {
         pos_ += 3;
         admin_option_for = true;
       }
     }
 
-    if (!option_for && PeekSystemPrivilege()) return ParseSystemPrivileges(grant, admin_option_for);
+    if (!option_for && PeekSystemPrivilege())
+      return ParseSystemPrivileges(grant, admin_option_for);
     if (!admin_option_for && PeekPrivilege()) {
       ObjectPrivilegeCommand cmd;
       cmd.grant = grant;
@@ -895,10 +917,11 @@ class Parser {
       cmd.roles.push_back(std::move(role));
     } while (PeekSymbol(",") && (++pos_, true));
     if (PeekKeyword("ON")) {
-      return SyntaxError("'" + cmd.roles.front() +
-                         "' is not a privilege. Privileges are SELECT, INSERT, UPDATE, DELETE, "
-                         "ALL, CREATE TABLE, CREATE VIEW, CREATE SCHEMA, DROP TABLE, DROP VIEW, "
-                         "DROP SCHEMA, ALTER TABLE and ALTER VIEW");
+      return SyntaxError(
+          "'" + cmd.roles.front() +
+          "' is not a privilege. Privileges are SELECT, INSERT, UPDATE, DELETE, "
+          "ALL, CREATE TABLE, CREATE VIEW, CREATE SCHEMA, DROP TABLE, DROP VIEW, "
+          "DROP SCHEMA, ALTER TABLE and ALTER VIEW");
     }
     ARROW_RETURN_NOT_OK(ExpectKeyword(grant ? "TO" : "FROM"));
     ARROW_ASSIGN_OR_RAISE(cmd.grantees, ParseGranteeList());
@@ -925,8 +948,9 @@ class Parser {
         case Privilege::kAlterTable:
         case Privilege::kAlterView:
           if (cmd.scope == GrantScope::kObject) {
-            return SyntaxError(PrivilegeName(item.privilege) +
-                               " is granted ON SCHEMA or ON CATALOG, not on a single object");
+            return SyntaxError(
+                PrivilegeName(item.privilege) +
+                " is granted ON SCHEMA or ON CATALOG, not on a single object");
           }
           break;
         case Privilege::kCreateSchema:
@@ -957,7 +981,8 @@ std::vector<std::string> LeadingWords(const std::string& sql, size_t count) {
     const size_t start = pos;
     while (pos < sql.size() && IsWordChar(static_cast<unsigned char>(sql[pos]))) ++pos;
     std::string word = sql.substr(start, pos - start);
-    for (auto& c : word) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (auto& c : word)
+      c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     words.push_back(std::move(word));
   }
   return words;
@@ -1012,12 +1037,14 @@ bool LooksLikeRbacStatement(const std::string& sql) {
       words[2] == "MAPPING") {
     return true;
   }
-  if (first == "SHOW" && second == "GROUP" && words.size() > 2 && words[2] == "MAPPINGS") return true;
+  if (first == "SHOW" && second == "GROUP" && words.size() > 2 && words[2] == "MAPPINGS")
+    return true;
   if ((first == "CREATE" || first == "DROP") && second == "SCOPED" && words.size() > 2 &&
       words[2] == "TOKEN") {
     return true;
   }
-  if (first == "SHOW" && second == "SCOPED" && words.size() > 2 && words[2] == "TOKENS") return true;
+  if (first == "SHOW" && second == "SCOPED" && words.size() > 2 && words[2] == "TOKENS")
+    return true;
   if (first == "CREATE" || first == "DROP") return second == "USER" || second == "ROLE";
   if (first == "ALTER") {
     if (second == "USER") return true;
@@ -1029,8 +1056,8 @@ bool LooksLikeRbacStatement(const std::string& sql) {
       const auto& t = *tokens;
       size_t i = 2;
       // Skip the (possibly dotted) name.
-      if (i < t.size() && (t[i].type == TokenType::kWord ||
-                           t[i].type == TokenType::kQuotedIdentifier)) {
+      if (i < t.size() &&
+          (t[i].type == TokenType::kWord || t[i].type == TokenType::kQuotedIdentifier)) {
         ++i;
         while (i + 1 < t.size() && t[i].type == TokenType::kSymbol && t[i].text == "." &&
                (t[i + 1].type == TokenType::kWord ||
@@ -1038,8 +1065,9 @@ bool LooksLikeRbacStatement(const std::string& sql) {
           i += 2;
         }
       }
-      if (i + 1 < t.size() && t[i].type == TokenType::kWord && KeywordEquals(t[i].text, "OWNER") &&
-          t[i + 1].type == TokenType::kWord && KeywordEquals(t[i + 1].text, "TO")) {
+      if (i + 1 < t.size() && t[i].type == TokenType::kWord &&
+          KeywordEquals(t[i].text, "OWNER") && t[i + 1].type == TokenType::kWord &&
+          KeywordEquals(t[i + 1].text, "TO")) {
         return true;
       }
       // ALTER TABLE t MODIFY [COLUMN] c SET | UNSET MASKING POLICY
@@ -1047,7 +1075,8 @@ bool LooksLikeRbacStatement(const std::string& sql) {
           KeywordEquals(t[i].text, "MODIFY")) {
         for (size_t j = i + 1; j + 1 < t.size(); ++j) {
           if (t[j].type == TokenType::kWord && KeywordEquals(t[j].text, "MASKING") &&
-              t[j + 1].type == TokenType::kWord && KeywordEquals(t[j + 1].text, "POLICY")) {
+              t[j + 1].type == TokenType::kWord &&
+              KeywordEquals(t[j + 1].text, "POLICY")) {
             return true;
           }
         }
@@ -1086,12 +1115,18 @@ std::string CommandKind(const RbacCommand& command) {
       return c.is_view ? "ALTER VIEW OWNER" : "ALTER TABLE OWNER";
     }
     std::string operator()(const ShowGrantsCommand&) const { return "SHOW GRANTS"; }
-    std::string operator()(const CreateRowPolicyCommand&) const { return "CREATE ROW POLICY"; }
-    std::string operator()(const DropRowPolicyCommand&) const { return "DROP ROW POLICY"; }
+    std::string operator()(const CreateRowPolicyCommand&) const {
+      return "CREATE ROW POLICY";
+    }
+    std::string operator()(const DropRowPolicyCommand&) const {
+      return "DROP ROW POLICY";
+    }
     std::string operator()(const CreateMaskingPolicyCommand&) const {
       return "CREATE MASKING POLICY";
     }
-    std::string operator()(const DropMaskingPolicyCommand&) const { return "DROP MASKING POLICY"; }
+    std::string operator()(const DropMaskingPolicyCommand&) const {
+      return "DROP MASKING POLICY";
+    }
     std::string operator()(const SetColumnMaskCommand& c) const {
       return c.policy ? "SET MASKING POLICY" : "UNSET MASKING POLICY";
     }
@@ -1099,7 +1134,9 @@ std::string CommandKind(const RbacCommand& command) {
       return c.create ? "CREATE TENANT" : "DROP TENANT";
     }
     std::string operator()(const CatalogTenantCommand&) const { return "ALTER CATALOG"; }
-    std::string operator()(const TenantDefaultCatalogCommand&) const { return "ALTER TENANT"; }
+    std::string operator()(const TenantDefaultCatalogCommand&) const {
+      return "ALTER TENANT";
+    }
     std::string operator()(const ShowTenantsCommand&) const { return "SHOW TENANTS"; }
     std::string operator()(const SetRoleCommand&) const { return "SET ROLE"; }
     std::string operator()(const ScopedTokenCommand& c) const {

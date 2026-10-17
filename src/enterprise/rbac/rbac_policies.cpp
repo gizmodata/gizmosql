@@ -132,17 +132,20 @@ dd::unique_ptr<dd::ParsedExpression> NullConstant() {
 // The constant string argument of a context function, or nullopt.
 std::optional<std::string> ConstantStringArgument(const dd::FunctionExpression& fe) {
   const auto args = Arguments(fe);
-  if (args.size() != 1 || args[0]->GetExpressionClass() != dd::ExpressionClass::CONSTANT) {
+  if (args.size() != 1 ||
+      args[0]->GetExpressionClass() != dd::ExpressionClass::CONSTANT) {
     return std::nullopt;
   }
   const auto value = compat::ConstantValue(args[0]->Cast<dd::ConstantExpression>());
-  if (value.IsNull() || value.type().id() != dd::LogicalTypeId::VARCHAR) return std::nullopt;
+  if (value.IsNull() || value.type().id() != dd::LogicalTypeId::VARCHAR)
+    return std::nullopt;
   return value.GetValue<std::string>();
 }
 
 // Context functions: names a policy may call, all resolved by GizmoSQL.
 bool IsUserFunction(const std::string& n) {
-  return n == "gizmosql_user" || n == "current_user" || n == "session_user" || n == "user";
+  return n == "gizmosql_user" || n == "current_user" || n == "session_user" ||
+         n == "user";
 }
 bool IsContextFunction(const std::string& n) {
   return IsUserFunction(n) || n == "is_role_active" || n == "session_attribute";
@@ -152,8 +155,8 @@ bool IsContextFunction(const std::string& n) {
 // reaches outside the row.
 bool IsForbiddenFunction(const std::string& n) {
   static const std::unordered_set<std::string> kNames = {
-      "getvariable", "current_setting", "query", "query_table", "current_role", "gizmosql_role",
-      "nextval", "currval", "setseed"};
+      "getvariable",   "current_setting", "query",   "query_table", "current_role",
+      "gizmosql_role", "nextval",         "currval", "setseed"};
   return kNames.count(n) > 0;
 }
 
@@ -162,7 +165,8 @@ arrow::Status Invalid(const std::string& what) {
 }
 
 // Check one parsed policy expression (recursively).
-arrow::Status CheckShape(const dd::ParsedExpression& expr, const std::string& mask_parameter) {
+arrow::Status CheckShape(const dd::ParsedExpression& expr,
+                         const std::string& mask_parameter) {
   switch (expr.GetExpressionClass()) {
     case dd::ExpressionClass::SUBQUERY:
       return Invalid("a policy cannot contain a subquery");
@@ -181,7 +185,8 @@ arrow::Status CheckShape(const dd::ParsedExpression& expr, const std::string& ma
         return Invalid("a policy cannot call " + name + "()");
       }
       if (IsContextFunction(name)) {
-        if (HasSchema(fe)) return Invalid("context functions are called without a schema");
+        if (HasSchema(fe))
+          return Invalid("context functions are called without a schema");
         if (IsUserFunction(name)) {
           if (!Arguments(fe).empty()) return Invalid(name + "() takes no arguments");
           return arrow::Status::OK();
@@ -195,7 +200,8 @@ arrow::Status CheckShape(const dd::ParsedExpression& expr, const std::string& ma
     }
     case dd::ExpressionClass::COLUMN_REF: {
       const auto names = ColumnNames(expr.Cast<dd::ColumnRefExpression>());
-      if (names.size() == 1 && IsUserFunction(Lower(names[0]))) return arrow::Status::OK();
+      if (names.size() == 1 && IsUserFunction(Lower(names[0])))
+        return arrow::Status::OK();
       if (!mask_parameter.empty() &&
           !(names.size() == 1 && IdentifiersEqual(names[0], mask_parameter))) {
         return Invalid("a masking policy may read only its parameter " + mask_parameter);
@@ -206,9 +212,10 @@ arrow::Status CheckShape(const dd::ParsedExpression& expr, const std::string& ma
       break;
   }
   arrow::Status status = arrow::Status::OK();
-  dd::ParsedExpressionIterator::EnumerateChildren(expr, [&](const dd::ParsedExpression& child) {
-    if (status.ok()) status = CheckShape(child, mask_parameter);
-  });
+  dd::ParsedExpressionIterator::EnumerateChildren(
+      expr, [&](const dd::ParsedExpression& child) {
+        if (status.ok()) status = CheckShape(child, mask_parameter);
+      });
   return status;
 }
 
@@ -226,7 +233,8 @@ arrow::Result<dd::unique_ptr<dd::ParsedExpression>> ParseOne(const std::string& 
 
 // Replace context functions (and a masking parameter) inside `expr`.
 void Substitute(dd::unique_ptr<dd::ParsedExpression>& expr, const PolicyContext& context,
-                const std::string& mask_parameter, const dd::ParsedExpression* parameter_value) {
+                const std::string& mask_parameter,
+                const dd::ParsedExpression* parameter_value) {
   if (expr->GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
     const auto& fe = expr->Cast<dd::FunctionExpression>();
     const std::string name = FunctionName(fe);
@@ -235,7 +243,8 @@ void Substitute(dd::unique_ptr<dd::ParsedExpression>& expr, const PolicyContext&
       return;
     }
     if (name == "is_role_active") {
-      expr = BoolConstant(context.role_names.count(FoldIdentifier(*ConstantStringArgument(fe))) > 0);
+      expr = BoolConstant(
+          context.role_names.count(FoldIdentifier(*ConstantStringArgument(fe))) > 0);
       return;
     }
     if (name == "session_attribute") {
@@ -250,7 +259,8 @@ void Substitute(dd::unique_ptr<dd::ParsedExpression>& expr, const PolicyContext&
       expr = StringConstant(context.user_name);
       return;
     }
-    if (parameter_value && names.size() == 1 && IdentifiersEqual(names[0], mask_parameter)) {
+    if (parameter_value && names.size() == 1 &&
+        IdentifiersEqual(names[0], mask_parameter)) {
       expr = parameter_value->Copy();
       return;
     }
@@ -278,15 +288,16 @@ void CheckBound(const dd::Expression& expr) {
       Refuse("a row or masking policy on a table it reads calls " + name + "()");
     }
   }
-  dd::ExpressionIterator::EnumerateChildren(expr,
-                                            [](const dd::Expression& child) { CheckBound(child); });
+  dd::ExpressionIterator::EnumerateChildren(
+      expr, [](const dd::Expression& child) { CheckBound(child); });
 }
 
 // ---- the plan rewrite --------------------------------------------------------
 
 class PolicyRewriter {
  public:
-  PolicyRewriter(dd::ClientContext& context, const Snapshot& snapshot, const Principal& principal)
+  PolicyRewriter(dd::ClientContext& context, const Snapshot& snapshot,
+                 const Principal& principal)
       : context_(context),
         snapshot_(snapshot),
         principal_(principal),
@@ -298,7 +309,8 @@ class PolicyRewriter {
     if (masks_.empty()) return;
     SubstituteMasks(*plan);
     for (const auto& b : ResultColumns(*plan)) {
-      if (masks_.count(b)) Refuse("a masked column is returned in a way GizmoSQL cannot mask");
+      if (masks_.count(b))
+        Refuse("a masked column is returned in a way GizmoSQL cannot mask");
     }
     CheckPositionalUse(*plan);
   }
@@ -314,7 +326,8 @@ class PolicyRewriter {
     if (IdentifiersEqual(path.catalog, TEMP_CATALOG)) return;
     if (Governed(path)) {
       Refuse(std::string(verb) + " on " + path.ToString() +
-             ", which has row or masking policies, is not available under access control yet");
+             ", which has row or masking policies, is not available under access control "
+             "yet");
     }
   }
 
@@ -337,7 +350,8 @@ class PolicyRewriter {
         auto& del = op->Cast<dd::LogicalDelete>();
         const ObjectPath path = PathOfEntry(del.table);
         if (del.return_chunk && !snapshot_.ApplicableMasks(principal_, path).empty()) {
-          Refuse("DELETE ... RETURNING on " + path.ToString() + ", which has masked columns");
+          Refuse("DELETE ... RETURNING on " + path.ToString() +
+                 ", which has masked columns");
         }
         break;
       }
@@ -355,9 +369,9 @@ class PolicyRewriter {
   // built on them, however the statement reaches them.
   void RestrictMetadataRows(dd::unique_ptr<dd::LogicalOperator>& op) {
     static const std::unordered_set<std::string> kCatalogListing = {
-        "duckdb_databases", "duckdb_tables",    "duckdb_views",    "duckdb_columns",
-        "duckdb_constraints", "duckdb_functions", "duckdb_indexes", "duckdb_schemas",
-        "duckdb_sequences", "duckdb_types",     "pragma_database_size"};
+        "duckdb_databases",   "duckdb_tables",    "duckdb_views",        "duckdb_columns",
+        "duckdb_constraints", "duckdb_functions", "duckdb_indexes",      "duckdb_schemas",
+        "duckdb_sequences",   "duckdb_types",     "pragma_database_size"};
     auto& get = op->Cast<dd::LogicalGet>();
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
     const std::string function = Lower(compat::Str(get.function.GetName()));
@@ -403,7 +417,8 @@ class PolicyRewriter {
     for (const auto& db : dd::DatabaseManager::Get(context_).GetDatabases()) {
       const std::string name = compat::Str(db->GetName());
       if (snapshot_.CatalogVisible(principal_, name)) {
-        in_children.push_back(dd::make_uniq<dd::BoundConstantExpression>(dd::Value(name)));
+        in_children.push_back(
+            dd::make_uniq<dd::BoundConstantExpression>(dd::Value(name)));
       }
     }
     dd::unique_ptr<dd::Expression> predicate;
@@ -453,8 +468,8 @@ class PolicyRewriter {
       names.push_back(col.Name());
       types.push_back(col.Type());
     }
-    binder->bind_context.AddBaseTable(get.table_index, dd::Identifier(alias), names, types,
-                                      column_ids, *table);
+    binder->bind_context.AddBaseTable(get.table_index, dd::Identifier(alias), names,
+                                      types, column_ids, *table);
 #else
     dd::vector<std::string> names;
     dd::vector<dd::LogicalType> types;
@@ -462,11 +477,14 @@ class PolicyRewriter {
       names.push_back(col.Name());
       types.push_back(col.Type());
     }
-    binder->bind_context.AddBaseTable(get.table_index, alias, names, types, column_ids, *table);
+    binder->bind_context.AddBaseTable(get.table_index, alias, names, types, column_ids,
+                                      *table);
 #endif
-    auto bind = [&](dd::unique_ptr<dd::ParsedExpression> parsed, const dd::LogicalType& type) {
+    auto bind = [&](dd::unique_ptr<dd::ParsedExpression> parsed,
+                    const dd::LogicalType& type) {
       dd::WhereBinder where_binder(*binder, context_);
-      where_binder.target_type = type;  // a mask keeps its column's type; a predicate is BOOLEAN
+      where_binder.target_type =
+          type;  // a mask keeps its column's type; a predicate is BOOLEAN
       auto bound = where_binder.Bind(parsed);
       bound = dd::BoundCastExpression::AddCastToType(context_, std::move(bound), type);
       CheckBound(*bound);
@@ -475,7 +493,8 @@ class PolicyRewriter {
 
     // Masks: only for columns this scan reads.
     for (const auto& [column, policy] : masks) {
-      if (!policy) Refuse("a masking policy on " + path.ToString() + "." + column + " is missing");
+      if (!policy)
+        Refuse("a masking policy on " + path.ToString() + "." + column + " is missing");
       dd::idx_t logical = dd::DConstants::INVALID_INDEX;
       dd::LogicalType column_type;
       for (auto& col : table->GetColumns().Logical()) {
@@ -485,7 +504,8 @@ class PolicyRewriter {
         }
       }
       if (logical == dd::DConstants::INVALID_INDEX) {
-        Refuse("the masked column " + column + " of " + path.ToString() + " no longer exists");
+        Refuse("the masked column " + column + " of " + path.ToString() +
+               " no longer exists");
       }
       std::optional<size_t> position;
       for (size_t p = 0; p < original_columns; ++p) {
@@ -496,12 +516,13 @@ class PolicyRewriter {
       }
       if (!position) continue;  // not read by this statement
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-      auto parameter = dd::make_uniq<dd::ColumnRefExpression>(dd::Identifier(column), dd::Identifier(alias));
+      auto parameter = dd::make_uniq<dd::ColumnRefExpression>(dd::Identifier(column),
+                                                              dd::Identifier(alias));
 #else
       auto parameter = dd::make_uniq<dd::ColumnRefExpression>(column, alias);
 #endif
-      auto parsed = PreparePolicyExpression(policy->body, policy_context_, policy->parameter,
-                                            parameter.get());
+      auto parsed = PreparePolicyExpression(policy->body, policy_context_,
+                                            policy->parameter, parameter.get());
       if (!parsed.ok()) Refuse(parsed.status().message());
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
       const dd::ColumnBinding binding(get.table_index, dd::ProjectionIndex(*position));
@@ -528,14 +549,15 @@ class PolicyRewriter {
     } else {
       dd::vector<dd::unique_ptr<dd::ParsedExpression>> children;
       for (auto& p : permissive) children.push_back(std::move(p));
-      predicate = dd::make_uniq<dd::ConjunctionExpression>(dd::ExpressionType::CONJUNCTION_OR,
-                                                           std::move(children));
+      predicate = dd::make_uniq<dd::ConjunctionExpression>(
+          dd::ExpressionType::CONJUNCTION_OR, std::move(children));
     }
     for (auto& r : restrictive) {
-      predicate = dd::make_uniq<dd::ConjunctionExpression>(dd::ExpressionType::CONJUNCTION_AND,
-                                                           std::move(predicate), std::move(r));
+      predicate = dd::make_uniq<dd::ConjunctionExpression>(
+          dd::ExpressionType::CONJUNCTION_AND, std::move(predicate), std::move(r));
     }
-    auto filter = dd::make_uniq<dd::LogicalFilter>(bind(std::move(predicate), dd::LogicalType::BOOLEAN));
+    auto filter = dd::make_uniq<dd::LogicalFilter>(
+        bind(std::move(predicate), dd::LogicalType::BOOLEAN));
     if (column_ids.size() > original_columns) {
       // Columns the policy needed but the statement did not: keep them inside.
       for (size_t i = 0; i < original_columns; ++i) {
@@ -555,9 +577,10 @@ class PolicyRewriter {
   // the real values) becomes the mask.
   void SubstituteMasks(dd::LogicalOperator& op) {
     if (!policy_filters_.count(&op)) {
-      dd::LogicalOperatorVisitor::EnumerateExpressions(op, [&](dd::unique_ptr<dd::Expression>* e) {
-        if (e && *e) SubstituteExpression(*e);
-      });
+      dd::LogicalOperatorVisitor::EnumerateExpressions(
+          op, [&](dd::unique_ptr<dd::Expression>* e) {
+            if (e && *e) SubstituteExpression(*e);
+          });
     }
     for (auto& child : op.children) {
       if (child) SubstituteMasks(*child);
@@ -580,7 +603,8 @@ class PolicyRewriter {
       }
     }
     dd::ExpressionIterator::EnumerateChildren(
-        *expr, [&](dd::unique_ptr<dd::Expression>& child) { SubstituteExpression(child); });
+        *expr,
+        [&](dd::unique_ptr<dd::Expression>& child) { SubstituteExpression(child); });
   }
 
   // An operator that takes its child's columns by position (not through
@@ -590,7 +614,8 @@ class PolicyRewriter {
       for (auto& child : op.children) {
         if (!child) continue;
         for (const auto& b : child->GetColumnBindings()) {
-          if (masks_.count(b)) Refuse("a masked column is used in a way GizmoSQL cannot mask");
+          if (masks_.count(b))
+            Refuse("a masked column is used in a way GizmoSQL cannot mask");
         }
       }
     }
@@ -614,27 +639,31 @@ PolicyContext PolicyContext::For(const Snapshot& snapshot, const Principal& prin
   PolicyContext context;
   context.user_name = principal.user_name;
   for (const auto& id : snapshot.RolesOf(principal)) {
-    if (const auto* role = snapshot.FindRoleById(id)) context.role_names.insert(FoldIdentifier(role->name));
+    if (const auto* role = snapshot.FindRoleById(id))
+      context.role_names.insert(FoldIdentifier(role->name));
   }
-  if (const auto* user = snapshot.FindUserById(principal.user_id)) context.attributes = user->attributes;
+  if (const auto* user = snapshot.FindUserById(principal.user_id))
+    context.attributes = user->attributes;
   return context;
 }
 
-arrow::Status ValidatePolicySql(const std::string& sql, const std::string& mask_parameter) {
+arrow::Status ValidatePolicySql(const std::string& sql,
+                                const std::string& mask_parameter) {
   ARROW_ASSIGN_OR_RAISE(auto parsed, ParseOne(sql));
   return CheckShape(*parsed, mask_parameter);
 }
 
 arrow::Result<dd::unique_ptr<dd::ParsedExpression>> PreparePolicyExpression(
-    const std::string& sql, const PolicyContext& context, const std::string& mask_parameter,
-    const dd::ParsedExpression* parameter_value) {
+    const std::string& sql, const PolicyContext& context,
+    const std::string& mask_parameter, const dd::ParsedExpression* parameter_value) {
   ARROW_ASSIGN_OR_RAISE(auto parsed, ParseOne(sql));
   ARROW_RETURN_NOT_OK(CheckShape(*parsed, mask_parameter));
   Substitute(parsed, context, mask_parameter, parameter_value);
   return parsed;
 }
 
-void ApplyPolicies(dd::ClientContext& context, const Snapshot& snapshot, const Principal& principal,
+void ApplyPolicies(dd::ClientContext& context, const Snapshot& snapshot,
+                   const Principal& principal,
                    dd::unique_ptr<dd::LogicalOperator>& plan) {
   if (!plan || principal.superuser) return;
   if (snapshot.row_policies().empty() && snapshot.mask_bindings().empty() &&

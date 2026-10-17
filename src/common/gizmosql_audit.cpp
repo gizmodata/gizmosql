@@ -85,8 +85,8 @@ std::string Canonical(const std::string& prev, std::string_view msg,
   out.append(msg.data(), msg.size());
   out += '\n';
   for (const auto& [key, value] : fields) {
-    out += std::to_string(key.size()) + ':' + key + std::to_string(value.size()) + ':' + value +
-           '\n';
+    out += std::to_string(key.size()) + ':' + key + std::to_string(value.size()) + ':' +
+           value + '\n';
   }
   return out;
 }
@@ -108,7 +108,8 @@ std::string NewChainId() {
   unsigned char bytes[8];
   if (RAND_bytes(bytes, sizeof(bytes)) != 1) {
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    for (size_t i = 0; i < sizeof(bytes); ++i) bytes[i] = static_cast<unsigned char>(now >> (8 * i));
+    for (size_t i = 0; i < sizeof(bytes); ++i)
+      bytes[i] = static_cast<unsigned char>(now >> (8 * i));
   }
   return Hex(bytes, sizeof(bytes));
 }
@@ -196,12 +197,14 @@ AuditChainReport VerifyAuditLog(std::istream& in, const std::string& key, bool p
   while (std::getline(in, text)) {
     ++line_number;
     if (text.empty() || text[0] != '{') continue;
-    nlohmann::json record = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
+    nlohmann::json record =
+        nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
     if (record.is_discarded() || !record.is_object() || !record.contains(kHash)) continue;
     const auto where = "line " + std::to_string(line_number);
-    if (!record.contains(kChain) || !record[kChain].is_string() || !record.contains(kSeq) ||
-        !record[kSeq].is_number_integer()) {
-      report.problems.push_back(where + ": an audit record without its chain id or sequence");
+    if (!record.contains(kChain) || !record[kChain].is_string() ||
+        !record.contains(kSeq) || !record[kSeq].is_number_integer()) {
+      report.problems.push_back(where +
+                                ": an audit record without its chain id or sequence");
       continue;
     }
     const auto chain = record[kChain].get<std::string>();
@@ -220,17 +223,18 @@ AuditChainReport VerifyAuditLog(std::istream& in, const std::string& key, bool p
     int64_t expected = records.begin()->first;
     if (expected != 1 && !partial) {
       report.problems.push_back("chain " + chain + " starts at sequence " +
-                                std::to_string(expected) + ": its first records are missing");
+                                std::to_string(expected) +
+                                ": its first records are missing");
     }
     for (auto& [seq, entry] : records) {
       auto& [line, record] = entry;
-      const auto where = "line " + std::to_string(line) + " (chain " + chain + ", sequence " +
-                         std::to_string(seq) + ")";
+      const auto where = "line " + std::to_string(line) + " (chain " + chain +
+                         ", sequence " + std::to_string(seq) + ")";
       ++report.records;
       if (seq != expected) {
-        report.problems.push_back(where + ": sequence " + std::to_string(expected) +
-                                  (seq - expected > 1 ? " to " + std::to_string(seq - 1) : "") +
-                                  " is missing");
+        report.problems.push_back(
+            where + ": sequence " + std::to_string(expected) +
+            (seq - expected > 1 ? " to " + std::to_string(seq - 1) : "") + " is missing");
       }
       expected = seq + 1;
       const std::string claimed_prev = record.value(kPrev, "");
@@ -243,7 +247,8 @@ AuditChainReport VerifyAuditLog(std::istream& in, const std::string& key, bool p
       if (!key.empty() && alg != "hmac-sha256") {
         report.problems.push_back(where + ": not sealed with the key");
       } else if (key.empty() && alg == "hmac-sha256") {
-        report.problems.push_back(where + ": sealed with a key; pass GIZMOSQL_AUDIT_CHAIN_KEY to check it");
+        report.problems.push_back(
+            where + ": sealed with a key; pass GIZMOSQL_AUDIT_CHAIN_KEY to check it");
       }
       std::map<std::string, std::string> covered;
       bool complete = true;
@@ -268,7 +273,8 @@ AuditChainReport VerifyAuditLog(std::istream& in, const std::string& key, bool p
       }
       prev = claimed;
     }
-    report.chains.push_back(chain + ": sequence " + std::to_string(records.begin()->first) + " to " +
+    report.chains.push_back(chain + ": sequence " +
+                            std::to_string(records.begin()->first) + " to " +
                             std::to_string(records.rbegin()->first));
   }
   return report;

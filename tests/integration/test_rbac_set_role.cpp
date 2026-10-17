@@ -87,10 +87,12 @@ class Client {
   arrow::Result<std::shared_ptr<arrow::Table>> Run(const std::string& sql) {
     return Fetch(client_->Execute(Options(), sql));
   }
-  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(const std::string& sql) {
+  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(
+      const std::string& sql) {
     return client_->Prepare(Options(), sql);
   }
-  arrow::Result<std::shared_ptr<arrow::Table>> ExecutePrepared(arrow::flight::sql::PreparedStatement& stmt) {
+  arrow::Result<std::shared_ptr<arrow::Table>> ExecutePrepared(
+      arrow::flight::sql::PreparedStatement& stmt) {
     return Fetch(stmt.Execute(Options()));
   }
 
@@ -110,7 +112,8 @@ std::set<std::string> Column(const std::shared_ptr<arrow::Table>& t, int col = 0
   return out;
 }
 
-class RbacSetRoleFixture : public gizmosql::testing::ServerTestFixture<RbacSetRoleFixture> {
+class RbacSetRoleFixture
+    : public gizmosql::testing::ServerTestFixture<RbacSetRoleFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -134,15 +137,25 @@ class RbacSetRoleFixture : public gizmosql::testing::ServerTestFixture<RbacSetRo
     static bool seeded = false;
     if (!seeded) {
       for (const char* sql : {
-               "CREATE TABLE t_a AS SELECT 'a' AS v", "CREATE TABLE t_b AS SELECT 'b' AS v",
+               "CREATE TABLE t_a AS SELECT 'a' AS v",
+               "CREATE TABLE t_b AS SELECT 'b' AS v",
                "CREATE TABLE t_pub AS SELECT 'pub' AS v",
                "CREATE TABLE t_rows AS SELECT * FROM (VALUES (1), (2)) t(id)",
-               "CREATE ROLE ra", "CREATE ROLE rb", "CREATE ROLE rc", "CREATE ROLE spare",
-               "GRANT SELECT ON t_a TO ra", "GRANT SELECT ON t_b TO rb", "GRANT ra TO rc",
-               "GRANT SELECT ON t_pub TO PUBLIC", "GRANT SELECT ON t_rows TO ra, rb",
+               "CREATE ROLE ra",
+               "CREATE ROLE rb",
+               "CREATE ROLE rc",
+               "CREATE ROLE spare",
+               "GRANT SELECT ON t_a TO ra",
+               "GRANT SELECT ON t_b TO rb",
+               "GRANT ra TO rc",
+               "GRANT SELECT ON t_pub TO PUBLIC",
+               "GRANT SELECT ON t_rows TO ra, rb",
                "CREATE ROW POLICY only_rb ON t_rows USING (is_role_active('rb'))",
-               "CREATE USER sam", "GRANT ra, rb, rc TO sam",
-               "CREATE TENANT acme", "CREATE USER acme/ann", "CREATE ROLE acme/r",
+               "CREATE USER sam",
+               "GRANT ra, rb, rc TO sam",
+               "CREATE TENANT acme",
+               "CREATE USER acme/ann",
+               "CREATE ROLE acme/r",
                "GRANT acme/r TO acme/ann",
            }) {
         auto st = admin_->Run(sql).status();
@@ -153,7 +166,9 @@ class RbacSetRoleFixture : public gizmosql::testing::ServerTestFixture<RbacSetRo
     sam_ = std::make_unique<Client>(GetPort(), "sam", "user", next_session_++);
   }
 
-  std::string Error(Client& who, const std::string& sql) { return ErrorOf(who.Run(sql).status()); }
+  std::string Error(Client& who, const std::string& sql) {
+    return ErrorOf(who.Run(sql).status());
+  }
   void ExpectReads(Client& who, const std::string& table) {
     EXPECT_EQ(Error(who, "SELECT * FROM " + table), "") << "could not read " << table;
   }
@@ -175,9 +190,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacSetRoleFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacSetRoleFixture>::server_ready_{false};
+std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacSetRoleFixture>::server_ready_{
+    false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacSetRoleFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacSetRoleFixture>::config_{};
 
 TEST_F(RbacSetRoleFixture, SetRoleNarrowsAndResetRoleRestores) {
   // All roles by default.
@@ -188,7 +205,8 @@ TEST_F(RbacSetRoleFixture, SetRoleNarrowsAndResetRoleRestores) {
   ExpectRefused(*sam_, "t_b");
   // The refusal says the session narrowed itself.
   const auto why = Error(*sam_, "SELECT * FROM t_b");
-  EXPECT_NE(why.find("acts with role ra only (SET ROLE); RESET ROLE"), std::string::npos) << why;
+  EXPECT_NE(why.find("acts with role ra only (SET ROLE); RESET ROLE"), std::string::npos)
+      << why;
   ExpectReads(*sam_, "t_pub");  // PUBLIC still applies
   // SHOW GRANTS shows what the session acts with.
   auto grants = sam_->Run("SHOW GRANTS");
@@ -218,12 +236,14 @@ TEST_F(RbacSetRoleFixture, OnlyARoleTheUserHolds) {
   EXPECT_NE(not_held.find("does not hold role spare"), std::string::npos) << not_held;
   // A role that does not exist reads the same.
   const auto missing = Error(*sam_, "SET ROLE no_such_role");
-  EXPECT_NE(missing.find("does not hold role no_such_role"), std::string::npos) << missing;
+  EXPECT_NE(missing.find("does not hold role no_such_role"), std::string::npos)
+      << missing;
   // A refused SET ROLE changes nothing.
   ExpectReads(*sam_, "t_b");
   // The administrator has nothing to narrow to.
   const auto admin = Error(*admin_, "SET ROLE ra");
-  EXPECT_NE(admin.find("the administrator holds every right"), std::string::npos) << admin;
+  EXPECT_NE(admin.find("the administrator holds every right"), std::string::npos)
+      << admin;
 }
 
 TEST_F(RbacSetRoleFixture, RevokingTheActiveRoleLeavesNothingUntilAnotherIsSet) {
@@ -248,8 +268,10 @@ TEST_F(RbacSetRoleFixture, PreparedStatementsFollowTheActiveRole) {
   ASSERT_TRUE(sam_->ExecutePrepared(**read_b).ok());
   ASSERT_EQ(Error(*sam_, "SET ROLE ra"), "");
   auto narrowed = sam_->ExecutePrepared(**read_b);
-  ASSERT_FALSE(narrowed.ok()) << "a statement prepared before SET ROLE kept the wider rights";
-  EXPECT_NE(narrowed.status().ToString().find("no SELECT privilege on table"), std::string::npos)
+  ASSERT_FALSE(narrowed.ok())
+      << "a statement prepared before SET ROLE kept the wider rights";
+  EXPECT_NE(narrowed.status().ToString().find("no SELECT privilege on table"),
+            std::string::npos)
       << narrowed.status().ToString();
   EXPECT_TRUE(sam_->ExecutePrepared(**read_a).ok());  // positive twin
   ASSERT_EQ(Error(*sam_, "RESET ROLE"), "");
@@ -263,7 +285,8 @@ TEST_F(RbacSetRoleFixture, PoliciesSeeTheActiveRole) {
   ASSERT_EQ(Error(*sam_, "SET ROLE ra"), "");
   auto narrowed = sam_->Run("SELECT count(*) FROM t_rows");
   ASSERT_TRUE(narrowed.ok()) << narrowed.status().ToString();
-  EXPECT_EQ(Column(*narrowed), (std::set<std::string>{"0"})) << "is_role_active('rb') was true";
+  EXPECT_EQ(Column(*narrowed), (std::set<std::string>{"0"}))
+      << "is_role_active('rb') was true";
   ASSERT_EQ(Error(*sam_, "SET ROLE rb"), "");
   auto rb = sam_->Run("SELECT count(*) FROM t_rows");
   ASSERT_TRUE(rb.ok()) << rb.status().ToString();

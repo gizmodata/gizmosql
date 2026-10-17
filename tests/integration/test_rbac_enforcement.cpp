@@ -84,13 +84,15 @@ class Client {
     }
     return arrow::ConcatenateTables(tables);
   }
-  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(const std::string& sql) {
+  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(
+      const std::string& sql) {
     return client_->Prepare(Options(), sql);
   }
   arrow::Status ExecutePrepared(arrow::flight::sql::PreparedStatement& stmt) {
     return ExecutePreparedRows(stmt).status();
   }
-  arrow::Result<int64_t> ExecutePreparedRows(arrow::flight::sql::PreparedStatement& stmt) {
+  arrow::Result<int64_t> ExecutePreparedRows(
+      arrow::flight::sql::PreparedStatement& stmt) {
     auto co = Options();
     ARROW_ASSIGN_OR_RAISE(auto info, stmt.Execute(co));
     int64_t rows = 0;
@@ -121,7 +123,8 @@ class Client {
   std::unique_ptr<FlightSqlClient> client_;
 };
 
-class RbacEnforcementFixture : public gizmosql::testing::ServerTestFixture<RbacEnforcementFixture> {
+class RbacEnforcementFixture
+    : public gizmosql::testing::ServerTestFixture<RbacEnforcementFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -149,15 +152,23 @@ class RbacEnforcementFixture : public gizmosql::testing::ServerTestFixture<RbacE
                "INSERT INTO customers VALUES (1, 'ann@x', '111'), (2, 'bob@x', '222')",
                "CREATE TABLE secrets (id INT, value VARCHAR)",
                "INSERT INTO secrets VALUES (1, 'top-secret-value')",
-               "CREATE VIEW orders_over_secrets AS SELECT o.id, s.value FROM orders o JOIN secrets s USING (id)",
-               "CREATE ROLE reader", "CREATE ROLE colreader", "CREATE ROLE writer",
+               "CREATE VIEW orders_over_secrets AS SELECT o.id, s.value FROM orders o "
+               "JOIN secrets s USING (id)",
+               "CREATE ROLE reader",
+               "CREATE ROLE colreader",
+               "CREATE ROLE writer",
                "CREATE ROLE builder",
                "GRANT SELECT ON orders TO reader",
                "GRANT SELECT (id) ON customers TO colreader",
                "GRANT INSERT, UPDATE, DELETE ON orders TO writer",
                "GRANT CREATE TABLE, CREATE VIEW ON SCHEMA main TO builder",
-               "CREATE USER joe", "CREATE USER eve", "CREATE USER wanda", "CREATE USER bob",
-               "GRANT reader, colreader TO joe", "GRANT writer TO wanda", "GRANT builder TO bob",
+               "CREATE USER joe",
+               "CREATE USER eve",
+               "CREATE USER wanda",
+               "CREATE USER bob",
+               "GRANT reader, colreader TO joe",
+               "GRANT writer TO wanda",
+               "GRANT builder TO bob",
            }) {
         auto st = admin_->Run(sql).status();
         ASSERT_TRUE(st.ok()) << sql << " -> " << st.ToString();
@@ -171,7 +182,8 @@ class RbacEnforcementFixture : public gizmosql::testing::ServerTestFixture<RbacE
   }
 
   // The statement must be refused by the access-control check, mentioning `why`.
-  static void ExpectBlocked(Client& who, const std::string& sql, const std::string& why = "") {
+  static void ExpectBlocked(Client& who, const std::string& sql,
+                            const std::string& why = "") {
     auto st = who.Run(sql).status();
     ASSERT_FALSE(st.ok()) << "NOT BLOCKED: " << sql;
     EXPECT_NE(st.ToString().find("GizmoSQL blocked"), std::string::npos)
@@ -181,9 +193,11 @@ class RbacEnforcementFixture : public gizmosql::testing::ServerTestFixture<RbacE
           << sql << " -> expected '" << why << "' in: " << st.ToString();
     }
   }
-  static std::shared_ptr<arrow::Table> ExpectAllowed(Client& who, const std::string& sql) {
+  static std::shared_ptr<arrow::Table> ExpectAllowed(Client& who,
+                                                     const std::string& sql) {
     auto result = who.Run(sql);
-    EXPECT_TRUE(result.ok()) << "WRONGLY BLOCKED: " << sql << " -> " << result.status().ToString();
+    EXPECT_TRUE(result.ok()) << "WRONGLY BLOCKED: " << sql << " -> "
+                             << result.status().ToString();
     return result.ok() ? *result : nullptr;
   }
 
@@ -196,11 +210,14 @@ template <>
 std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
     gizmosql::testing::ServerTestFixture<RbacEnforcementFixture>::server_{};
 template <>
-std::thread gizmosql::testing::ServerTestFixture<RbacEnforcementFixture>::server_thread_{};
+std::thread
+    gizmosql::testing::ServerTestFixture<RbacEnforcementFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacEnforcementFixture>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacEnforcementFixture>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacEnforcementFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacEnforcementFixture>::config_{};
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -211,7 +228,8 @@ TEST_F(RbacEnforcementFixture, GrantedReadsWork) {
   ASSERT_TRUE(t);
   EXPECT_EQ(t->num_rows(), 2);
   ExpectAllowed(*joe_, "SELECT id FROM customers");
-  ExpectAllowed(*joe_, "SELECT count(*) FROM customers");  // any column grant allows count(*)
+  ExpectAllowed(*joe_,
+                "SELECT count(*) FROM customers");  // any column grant allows count(*)
   ExpectAllowed(*joe_, "SELECT o.id, c.id FROM orders o JOIN customers c ON o.id = c.id");
   ExpectAllowed(*joe_, "SELECT * FROM range(3)");
   ExpectAllowed(*joe_, "SELECT table_name FROM information_schema.tables");
@@ -239,18 +257,25 @@ TEST_F(RbacEnforcementFixture, ColumnGrantsCoverEveryUseOfAColumn) {
 
 TEST_F(RbacEnforcementFixture, IndirectReadsAreChecked) {
   const char* kSecret = "no SELECT privilege on table";
-  ExpectBlocked(*joe_, "SELECT o.id FROM orders o JOIN secrets s ON o.id = s.id", kSecret);
-  ExpectBlocked(*joe_, "SELECT * FROM orders WHERE id IN (SELECT id FROM secrets)", kSecret);
-  ExpectBlocked(*joe_, "SELECT * FROM orders WHERE EXISTS (SELECT 1 FROM secrets)", kSecret);
+  ExpectBlocked(*joe_, "SELECT o.id FROM orders o JOIN secrets s ON o.id = s.id",
+                kSecret);
+  ExpectBlocked(*joe_, "SELECT * FROM orders WHERE id IN (SELECT id FROM secrets)",
+                kSecret);
+  ExpectBlocked(*joe_, "SELECT * FROM orders WHERE EXISTS (SELECT 1 FROM secrets)",
+                kSecret);
   ExpectBlocked(*joe_, "SELECT (SELECT value FROM secrets LIMIT 1) AS v", kSecret);
   ExpectBlocked(*joe_, "WITH x AS (SELECT * FROM secrets) SELECT * FROM x", kSecret);
-  ExpectBlocked(*joe_, "WITH x AS MATERIALIZED (SELECT * FROM secrets) SELECT * FROM x", kSecret);
+  ExpectBlocked(*joe_, "WITH x AS MATERIALIZED (SELECT * FROM secrets) SELECT * FROM x",
+                kSecret);
   ExpectBlocked(*joe_, "SELECT id FROM orders UNION ALL SELECT id FROM secrets", kSecret);
   ExpectBlocked(*joe_, "SELECT id FROM orders EXCEPT SELECT id FROM secrets", kSecret);
+  ExpectBlocked(
+      *joe_,
+      "SELECT * FROM orders o, LATERAL (SELECT ssn FROM customers c WHERE c.id = o.id)",
+      "ssn");
   ExpectBlocked(*joe_,
-                "SELECT * FROM orders o, LATERAL (SELECT ssn FROM customers c WHERE c.id = o.id)",
-                "ssn");
-  ExpectBlocked(*joe_, "WITH RECURSIVE r(n) AS (SELECT id FROM secrets UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT * FROM r",
+                "WITH RECURSIVE r(n) AS (SELECT id FROM secrets UNION ALL SELECT n + 1 "
+                "FROM r WHERE n < 3) SELECT * FROM r",
                 kSecret);
   // SQL from a string is bound inside DuckDB before any check: refused up front.
   ExpectBlocked(*joe_, "SELECT * FROM query('SELECT * FROM secrets')", "query()");
@@ -286,10 +311,12 @@ static std::shared_ptr<arrow::RecordBatch> IntParameter(int32_t value) {
   arrow::Int32Builder builder;
   (void)builder.Append(value);
   auto array = builder.Finish().ValueOrDie();
-  return arrow::RecordBatch::Make(arrow::schema({arrow::field("p", arrow::int32())}), 1, {array});
+  return arrow::RecordBatch::Make(arrow::schema({arrow::field("p", arrow::int32())}), 1,
+                                  {array});
 }
 
-TEST_F(RbacEnforcementFixture, PreparedStatementsWithParametersAreCheckedWhenPreparedAndRun) {
+TEST_F(RbacEnforcementFixture,
+       PreparedStatementsWithParametersAreCheckedWhenPreparedAndRun) {
   const char* kSecret = "no SELECT privilege on table";
   // Positive twin: a granted table, read with a bound parameter.
   auto ok = joe_->Prepare("SELECT * FROM orders WHERE id = ?");
@@ -302,7 +329,8 @@ TEST_F(RbacEnforcementFixture, PreparedStatementsWithParametersAreCheckedWhenPre
   // its columns are described.
   auto denied = joe_->Prepare("SELECT value FROM secrets WHERE id = ?");
   ASSERT_FALSE(denied.ok()) << "NOT BLOCKED";
-  EXPECT_NE(denied.status().ToString().find(kSecret), std::string::npos) << denied.status().ToString();
+  EXPECT_NE(denied.status().ToString().find(kSecret), std::string::npos)
+      << denied.status().ToString();
   // A parameter whose type DuckDB can only learn from the value: no plan when
   // prepared, so the run's plan is the one checked.
   auto open_type = joe_->Prepare("SELECT value FROM secrets WHERE ? IS NOT NULL");
@@ -332,16 +360,16 @@ TEST_F(RbacEnforcementFixture, StoreUsersCanBrowseMetadata) {
   auto schemas = joe_->MetadataRows(joe_->flight().GetDbSchemas(co, nullptr, nullptr));
   ASSERT_TRUE(schemas.ok()) << schemas.status().ToString();
   EXPECT_GE(*schemas, 1);
-  auto tables = joe_->MetadataRows(
-      joe_->flight().GetTables(co, nullptr, nullptr, nullptr, /*include_schema=*/false, nullptr));
+  auto tables = joe_->MetadataRows(joe_->flight().GetTables(
+      co, nullptr, nullptr, nullptr, /*include_schema=*/false, nullptr));
   ASSERT_TRUE(tables.ok()) << tables.status().ToString();
   EXPECT_GE(*tables, 1);
-  auto with_schema = joe_->MetadataRows(
-      joe_->flight().GetTables(co, nullptr, nullptr, nullptr, /*include_schema=*/true, nullptr));
+  auto with_schema = joe_->MetadataRows(joe_->flight().GetTables(
+      co, nullptr, nullptr, nullptr, /*include_schema=*/true, nullptr));
   ASSERT_TRUE(with_schema.ok()) << with_schema.status().ToString();
   const std::string orders = "orders";
-  auto filtered = joe_->MetadataRows(
-      joe_->flight().GetTables(co, nullptr, nullptr, &orders, /*include_schema=*/true, nullptr));
+  auto filtered = joe_->MetadataRows(joe_->flight().GetTables(
+      co, nullptr, nullptr, &orders, /*include_schema=*/true, nullptr));
   ASSERT_TRUE(filtered.ok()) << filtered.status().ToString();
   EXPECT_EQ(*filtered, 1);
 }
@@ -373,10 +401,13 @@ TEST_F(RbacEnforcementFixture, TheCheckCannotBeSwitchedOff) {
 TEST_F(RbacEnforcementFixture, TableFunctionsAreAllowListed) {
   // Remote files are refused before DuckDB binds them (binding already reaches
   // the network), so no request leaves the server on the user's behalf.
-  ExpectBlocked(*joe_, "SELECT * FROM read_parquet('s3://bucket/x.parquet')", "files and URLs");
-  ExpectBlocked(*joe_, "SELECT * FROM read_csv('https://example.invalid/x.csv')", "files and URLs");
+  ExpectBlocked(*joe_, "SELECT * FROM read_parquet('s3://bucket/x.parquet')",
+                "files and URLs");
+  ExpectBlocked(*joe_, "SELECT * FROM read_csv('https://example.invalid/x.csv')",
+                "files and URLs");
   ExpectBlocked(*joe_, "SELECT * FROM 'https://example.invalid/x.parquet'");
-  ExpectBlocked(*joe_, "COPY (SELECT * FROM orders) TO 's3://bucket/out.parquet'", "files and URLs");
+  ExpectBlocked(*joe_, "COPY (SELECT * FROM orders) TO 's3://bucket/out.parquet'",
+                "files and URLs");
   ExpectAllowed(*joe_, "SELECT * FROM generate_series(1, 3)");
   ExpectAllowed(*joe_, "SELECT * FROM duckdb_tables()");
 }
@@ -392,7 +423,7 @@ TEST_F(RbacEnforcementFixture, WritesNeedTheirOwnPrivilege) {
   // wanda may write but not read.
   ExpectAllowed(*wanda_, "INSERT INTO orders VALUES (3, 30, 'cat')");
   // SET amount = amount reads amount, so it needs SELECT on it (as in Postgres).
-  ExpectBlocked(*wanda_, "UPDATE orders SET amount = amount", "no SELECT"); 
+  ExpectBlocked(*wanda_, "UPDATE orders SET amount = amount", "no SELECT");
   ExpectBlocked(*wanda_, "SELECT * FROM orders", "no SELECT");
 }
 
@@ -400,10 +431,13 @@ TEST_F(RbacEnforcementFixture, WritesThatReadNeedSelect) {
   // Filtering rows by a column reads it (as in Postgres).
   ExpectBlocked(*wanda_, "DELETE FROM orders WHERE customer = 'ann'", "no SELECT");
   ExpectBlocked(*wanda_, "UPDATE orders SET amount = 1 RETURNING *", "no SELECT");
-  ExpectBlocked(*wanda_, "INSERT INTO orders VALUES (5, 5, 'e') RETURNING id", "no SELECT");
-  ExpectBlocked(*wanda_, "INSERT INTO orders SELECT id, 0, value FROM secrets", "no SELECT");
-  ExpectBlocked(*joe_, "MERGE INTO orders USING (SELECT 1 AS id) s ON orders.id = s.id "
-                       "WHEN MATCHED THEN DELETE");
+  ExpectBlocked(*wanda_, "INSERT INTO orders VALUES (5, 5, 'e') RETURNING id",
+                "no SELECT");
+  ExpectBlocked(*wanda_, "INSERT INTO orders SELECT id, 0, value FROM secrets",
+                "no SELECT");
+  ExpectBlocked(*joe_,
+                "MERGE INTO orders USING (SELECT 1 AS id) s ON orders.id = s.id "
+                "WHEN MATCHED THEN DELETE");
   // Positive twin: an unfiltered bulk write needs no SELECT.
   ExpectAllowed(*wanda_, "UPDATE orders SET amount = 0");
 }
@@ -412,7 +446,8 @@ TEST_F(RbacEnforcementFixture, WritesThatReadNeedSelect) {
 TEST_F(RbacEnforcementFixture, DmlInsideACteIsAWrite) {
   ExpectBlocked(*joe_, "WITH d AS (DELETE FROM orders RETURNING *) SELECT * FROM d",
                 "no DELETE privilege");
-  ExpectBlocked(*eve_, "WITH i AS (INSERT INTO orders VALUES (7, 7, 'g') RETURNING *) SELECT 1",
+  ExpectBlocked(*eve_,
+                "WITH i AS (INSERT INTO orders VALUES (7, 7, 'g') RETURNING *) SELECT 1",
                 "no INSERT privilege");
 }
 #endif
@@ -422,7 +457,8 @@ TEST_F(RbacEnforcementFixture, DmlInsideACteIsAWrite) {
 // ---------------------------------------------------------------------------
 
 TEST_F(RbacEnforcementFixture, CreatingNeedsThePrivilegeAndMakesTheCreatorOwner) {
-  ExpectBlocked(*eve_, "CREATE TABLE eve_table (x INT)", "no CREATE TABLE privilege on schema");
+  ExpectBlocked(*eve_, "CREATE TABLE eve_table (x INT)",
+                "no CREATE TABLE privilege on schema");
   ExpectBlocked(*eve_, "CREATE VIEW eve_view AS SELECT 1", "no CREATE VIEW privilege");
   ExpectAllowed(*bob_, "CREATE TABLE bob_table (x INT)");
   ExpectAllowed(*bob_, "INSERT INTO bob_table VALUES (1)");
@@ -441,7 +477,9 @@ TEST_F(RbacEnforcementFixture, RevokingStopsAStatementThatIsRunning) {
   Client rob(GetPort(), "rob", "user", 30);
   Client rob_runner(GetPort(), "rob", "user", 31);
   auto running = std::async(std::launch::async, [&] {
-    return rob_runner.Run("SELECT sum(o.id * r.range) FROM orders o, range(1000000000000) r").status();
+    return rob_runner
+        .Run("SELECT sum(o.id * r.range) FROM orders o, range(1000000000000) r")
+        .status();
   });
   // If the test fails while the statement still runs, end it so the test can.
   struct EndIfStillRunning {
@@ -458,7 +496,8 @@ TEST_F(RbacEnforcementFixture, RevokingStopsAStatementThatIsRunning) {
   // Gaining a right leaves it running...
   ExpectAllowed(*admin_, "GRANT SELECT (id) ON customers TO runner");
   ASSERT_EQ(running.wait_for(std::chrono::seconds(2)), std::future_status::timeout)
-      << "the statement stopped on a GRANT: " << (running.valid() ? running.get().ToString() : "");
+      << "the statement stopped on a GRANT: "
+      << (running.valid() ? running.get().ToString() : "");
   // ...losing one stops it.
   ExpectAllowed(*admin_, "REVOKE SELECT ON orders FROM runner");
   ASSERT_EQ(running.wait_for(std::chrono::seconds(30)), std::future_status::ready)
@@ -482,14 +521,16 @@ TEST_F(RbacEnforcementFixture, AnOwnerSharesWhatItCreated) {
   // Not on what bob does not own.
   auto st = bob_->Run("GRANT SELECT ON secrets TO builder").status();
   ASSERT_FALSE(st.ok());
-  EXPECT_NE(st.ToString().find("may not grant SELECT"), std::string::npos) << st.ToString();
+  EXPECT_NE(st.ToString().find("may not grant SELECT"), std::string::npos)
+      << st.ToString();
   ExpectAllowed(*bob_, "REVOKE SELECT (id) ON bob_shared FROM reader");
   ExpectBlocked(*joe_, "SELECT id FROM bob_shared", "no SELECT");
 }
 
 TEST_F(RbacEnforcementFixture, ASchemasCreatorOwnsIt) {
   ExpectAllowed(*admin_, "CREATE ROLE IF NOT EXISTS schema_maker");
-  ExpectAllowed(*admin_, "GRANT CREATE SCHEMA ON CATALOG rbac_enforce_test TO schema_maker");
+  ExpectAllowed(*admin_,
+                "GRANT CREATE SCHEMA ON CATALOG rbac_enforce_test TO schema_maker");
   ExpectAllowed(*admin_, "GRANT schema_maker TO bob");
   ExpectBlocked(*joe_, "CREATE SCHEMA joes", "no CREATE SCHEMA privilege");
   ExpectAllowed(*bob_, "CREATE SCHEMA bobs");
@@ -497,9 +538,10 @@ TEST_F(RbacEnforcementFixture, ASchemasCreatorOwnsIt) {
   ExpectAllowed(*bob_, "CREATE TABLE bobs.t AS SELECT 1 AS x");
   ExpectAllowed(*bob_, "SELECT * FROM bobs.t");
   // However the schema is named, another user may not drop it.
-  for (const char* sql : {"DROP SCHEMA bobs CASCADE", "DROP SCHEMA IF EXISTS bobs CASCADE",
-                          "DROP SCHEMA BOBS CASCADE", "DROP SCHEMA rbac_enforce_test.bobs CASCADE",
-                          "DROP SCHEMA IF EXISTS rbac_enforce_test.bobs CASCADE"}) {
+  for (const char* sql :
+       {"DROP SCHEMA bobs CASCADE", "DROP SCHEMA IF EXISTS bobs CASCADE",
+        "DROP SCHEMA BOBS CASCADE", "DROP SCHEMA rbac_enforce_test.bobs CASCADE",
+        "DROP SCHEMA IF EXISTS rbac_enforce_test.bobs CASCADE"}) {
     ExpectBlocked(*joe_, sql, "may not drop schema");
   }
   ExpectAllowed(*bob_, "SELECT * FROM bobs.t");  // still there
@@ -509,18 +551,21 @@ TEST_F(RbacEnforcementFixture, ASchemasCreatorOwnsIt) {
 }
 
 TEST_F(RbacEnforcementFixture, DropIfExistsOfAnotherOwnersObjectIsRefused) {
-  for (const char* sql : {"DROP TABLE IF EXISTS orders", "DROP TABLE IF EXISTS main.ORDERS",
-                          "DROP TABLE IF EXISTS rbac_enforce_test.main.orders",
-                          "DROP VIEW IF EXISTS orders_over_secrets", "DROP SCHEMA IF EXISTS main CASCADE"}) {
+  for (const char* sql :
+       {"DROP TABLE IF EXISTS orders", "DROP TABLE IF EXISTS main.ORDERS",
+        "DROP TABLE IF EXISTS rbac_enforce_test.main.orders",
+        "DROP VIEW IF EXISTS orders_over_secrets",
+        "DROP SCHEMA IF EXISTS main CASCADE"}) {
     ExpectBlocked(*joe_, sql, "may not drop");
   }
-  ExpectAllowed(*joe_, "SELECT count(*) FROM orders");  // still there
+  ExpectAllowed(*joe_, "SELECT count(*) FROM orders");         // still there
   ExpectAllowed(*joe_, "DROP TABLE IF EXISTS no_such_table");  // nothing to drop
 }
 
 TEST_F(RbacEnforcementFixture, ReplacingOrIgnoringAnotherOwnersObject) {
   // bob may create tables but does not own orders.
-  ExpectBlocked(*bob_, "CREATE OR REPLACE TABLE orders AS SELECT 1 AS id", "may not drop table");
+  ExpectBlocked(*bob_, "CREATE OR REPLACE TABLE orders AS SELECT 1 AS id",
+                "may not drop table");
   // IF NOT EXISTS on an existing table changes nothing and grants nothing.
   ExpectAllowed(*bob_, "CREATE TABLE IF NOT EXISTS orders (id INT)");
   ExpectBlocked(*bob_, "SELECT * FROM orders", "no SELECT");
@@ -546,7 +591,8 @@ TEST_F(RbacEnforcementFixture, AdministrativeStatementsStayDenied) {
 // administrator's view publishes what it selects once the view is granted,
 // while the table behind it stays closed.
 TEST_F(RbacEnforcementFixture, ViewsReadWithTheirOwnersRights) {
-  ExpectBlocked(*joe_, "SELECT * FROM orders_over_secrets", "no SELECT privilege on view");
+  ExpectBlocked(*joe_, "SELECT * FROM orders_over_secrets",
+                "no SELECT privilege on view");
   ExpectAllowed(*admin_, "GRANT SELECT ON orders_over_secrets TO reader");
   auto t = ExpectAllowed(*joe_, "SELECT * FROM orders_over_secrets");
   ASSERT_TRUE(t);

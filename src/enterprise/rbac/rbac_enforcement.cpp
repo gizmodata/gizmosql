@@ -78,15 +78,37 @@ using OpType = dd::LogicalOperatorType;
 // Table functions anyone may call under access control: they read no table
 // and no file. Metadata functions list names, not data.
 const std::unordered_set<std::string>& AllowedTableFunctions() {
-  static const std::unordered_set<std::string> kNames = {
-      "range", "generate_series", "unnest", "repeat", "repeat_row", "json_each",
-      "json_tree", "test_all_types", "sql_auto_complete", "duckdb_tables",
-      "duckdb_columns", "duckdb_views", "duckdb_schemas", "duckdb_databases",
-      "duckdb_indexes", "duckdb_constraints", "duckdb_functions", "duckdb_types",
-      "duckdb_keywords", "duckdb_settings", "duckdb_sequences", "duckdb_dependencies",
-      "duckdb_extensions", "duckdb_optimizers", "pragma_table_info", "pragma_show",
-      "pragma_version", "pragma_platform", "pragma_database_size",
-      "pragma_collations", "pragma_user_agent"};
+  static const std::unordered_set<std::string> kNames = {"range",
+                                                         "generate_series",
+                                                         "unnest",
+                                                         "repeat",
+                                                         "repeat_row",
+                                                         "json_each",
+                                                         "json_tree",
+                                                         "test_all_types",
+                                                         "sql_auto_complete",
+                                                         "duckdb_tables",
+                                                         "duckdb_columns",
+                                                         "duckdb_views",
+                                                         "duckdb_schemas",
+                                                         "duckdb_databases",
+                                                         "duckdb_indexes",
+                                                         "duckdb_constraints",
+                                                         "duckdb_functions",
+                                                         "duckdb_types",
+                                                         "duckdb_keywords",
+                                                         "duckdb_settings",
+                                                         "duckdb_sequences",
+                                                         "duckdb_dependencies",
+                                                         "duckdb_extensions",
+                                                         "duckdb_optimizers",
+                                                         "pragma_table_info",
+                                                         "pragma_show",
+                                                         "pragma_version",
+                                                         "pragma_platform",
+                                                         "pragma_database_size",
+                                                         "pragma_collations",
+                                                         "pragma_user_agent"};
   return kNames;
 }
 
@@ -112,8 +134,8 @@ bool IsTempCatalog(const std::string& catalog) {
 // metadata anyone may list, like duckdb_views(), and limited to what the
 // caller may see the same way.
 bool IsGizmoSqlMetadataView(const ObjectPath& view) {
-  return IdentifiersEqual(view.catalog, "_gizmosql_system") && view.schema_path.size() == 1 &&
-         IdentifiersEqual(view.schema_path[0], "main") &&
+  return IdentifiersEqual(view.catalog, "_gizmosql_system") &&
+         view.schema_path.size() == 1 && IdentifiersEqual(view.schema_path[0], "main") &&
          (IdentifiersEqual(view.object_name, "gizmosql_index_info") ||
           IdentifiersEqual(view.object_name, "gizmosql_view_definition"));
 }
@@ -132,7 +154,8 @@ std::vector<std::string> NameParts(const dd::QualifiedName& name) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
   const auto path = compat::Strs(name.Path());
   std::vector<std::string> parts(path.begin(), path.end());
-  if (!parts.empty() && parts.back().empty()) parts.pop_back();  // CREATE SCHEMA has no name
+  if (!parts.empty() && parts.back().empty())
+    parts.pop_back();  // CREATE SCHEMA has no name
   return parts;
 #else
   std::vector<std::string> parts;
@@ -174,7 +197,8 @@ std::vector<std::string> PartsOf(const Info& info) {
 
 // The catalog and schema path a CREATE / DROP SCHEMA names: a lone name is a
 // schema of the session's default catalog, as DuckDB resolves it.
-ObjectPath SchemaTarget(dd::ClientContext& context, const std::vector<std::string>& parts) {
+ObjectPath SchemaTarget(dd::ClientContext& context,
+                        const std::vector<std::string>& parts) {
   ObjectPath target;
   if (parts.size() == 1) {
     target.catalog = compat::Str(dd::DatabaseManager::GetDefaultDatabase(context));
@@ -186,7 +210,8 @@ ObjectPath SchemaTarget(dd::ClientContext& context, const std::vector<std::strin
   return target;
 }
 
-dd::optional_ptr<dd::CatalogEntry> LookUpSchema(dd::ClientContext& context, const ObjectPath& schema) {
+dd::optional_ptr<dd::CatalogEntry> LookUpSchema(dd::ClientContext& context,
+                                                const ObjectPath& schema) {
   if (schema.catalog.empty() || schema.schema_path.empty()) return nullptr;
   try {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
@@ -208,15 +233,16 @@ dd::optional_ptr<dd::CatalogEntry> LookUpSchema(dd::ClientContext& context, cons
 
 // Look an entry up inside the current transaction (the hook runs while the
 // statement is being planned, so no new transaction or lock may be taken).
-dd::optional_ptr<dd::CatalogEntry> LookUp(dd::ClientContext& context, dd::CatalogType type,
+dd::optional_ptr<dd::CatalogEntry> LookUp(dd::ClientContext& context,
+                                          dd::CatalogType type,
                                           const std::vector<std::string>& parts) {
   try {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
     dd::vector<dd::Identifier> path;
     for (const auto& p : parts) path.emplace_back(p);
-    return dd::Catalog::GetEntry(context,
-                                 dd::EntryLookupInfo(type, dd::QualifiedName::FromPath(path)),
-                                 dd::OnEntryNotFound::RETURN_NULL);
+    return dd::Catalog::GetEntry(
+        context, dd::EntryLookupInfo(type, dd::QualifiedName::FromPath(path)),
+        dd::OnEntryNotFound::RETURN_NULL);
 #else
     std::string catalog, schema, name;
     if (parts.size() == 1) {
@@ -231,7 +257,8 @@ dd::optional_ptr<dd::CatalogEntry> LookUp(dd::ClientContext& context, dd::Catalo
     } else {
       return nullptr;
     }
-    return dd::Catalog::GetEntry(context, catalog, schema, dd::EntryLookupInfo(type, name),
+    return dd::Catalog::GetEntry(context, catalog, schema,
+                                 dd::EntryLookupInfo(type, name),
                                  dd::OnEntryNotFound::RETURN_NULL);
 #endif
   } catch (...) {
@@ -266,14 +293,16 @@ std::string DefinitionHashOf(dd::CreateInfo& info) {
 // What a scoped token allows, for refusals: "only SELECT, INSERT only on catalog x".
 std::string ScopeLimits(const TokenScope& scope) {
   std::vector<std::string> verbs;
-  for (auto p : {Privilege::kSelect, Privilege::kInsert, Privilege::kUpdate, Privilege::kDelete}) {
+  for (auto p :
+       {Privilege::kSelect, Privilege::kInsert, Privilege::kUpdate, Privilege::kDelete}) {
     if (scope.privileges.count(p)) verbs.push_back(PrivilegeName(p));
   }
   std::string text = "allows only ";
   for (size_t i = 0; i < verbs.size(); ++i) text += (i ? ", " : "") + verbs[i];
   if (!scope.catalogs.empty()) {
     text += scope.catalogs.size() == 1 ? ", only on catalog " : ", only on catalogs ";
-    for (size_t i = 0; i < scope.catalogs.size(); ++i) text += (i ? ", " : "") + scope.catalogs[i];
+    for (size_t i = 0; i < scope.catalogs.size(); ++i)
+      text += (i ? ", " : "") + scope.catalogs[i];
   }
   return text;
 }
@@ -281,9 +310,9 @@ std::string ScopeLimits(const TokenScope& scope) {
 [[noreturn]] void Deny(const Principal& who, const std::string& what) {
   if (who.scope) {
     throw dd::PermissionException("GizmoSQL blocked this statement: " + what +
-                                  ". This session logged in with scoped token " + who.scope->name +
-                                  " of user " + who.user_name + ", which " +
-                                  ScopeLimits(*who.scope));
+                                  ". This session logged in with scoped token " +
+                                  who.scope->name + " of user " + who.user_name +
+                                  ", which " + ScopeLimits(*who.scope));
   }
   if (!who.active_role_name.empty()) {
     throw dd::PermissionException(
@@ -292,8 +321,9 @@ std::string ScopeLimits(const TokenScope& scope) {
         who.user_name + "'s roles (see SHOW GRANTS)");
   }
   throw dd::PermissionException(
-      "GizmoSQL blocked this statement: " + what + ". Access control on this server lets user " +
-      who.user_name + " do only what their roles are granted (see SHOW GRANTS)");
+      "GizmoSQL blocked this statement: " + what +
+      ". Access control on this server lets user " + who.user_name +
+      " do only what their roles are granted (see SHOW GRANTS)");
 }
 
 // Walks one statement's bound plan and checks every access it makes.
@@ -307,15 +337,16 @@ class PlanChecker {
  public:
   using ViewColumns = std::unordered_map<const ViewMarker*, std::vector<std::string>>;
 
-  PlanChecker(dd::ClientContext& context, const Snapshot& snapshot, const Principal& principal,
-              const ViewColumns& view_columns)
+  PlanChecker(dd::ClientContext& context, const Snapshot& snapshot,
+              const Principal& principal, const ViewColumns& view_columns)
       : context_(context),
         snapshot_(snapshot),
         principal_(principal),
         view_columns_(view_columns),
         rights_{Rights{principal, ""}} {}
 
-  void Visit(dd::LogicalOperator& op, dd::optional_ptr<dd::TableCatalogEntry> dml_target = nullptr) {
+  void Visit(dd::LogicalOperator& op,
+             dd::optional_ptr<dd::TableCatalogEntry> dml_target = nullptr) {
     switch (op.type) {
       // ---- reads ----------------------------------------------------------
       case OpType::LOGICAL_GET:
@@ -366,7 +397,8 @@ class PlanChecker {
         auto& create = op.Cast<dd::LogicalCreate>();
         const size_t before = ownership_.size();
         CheckCreate(*create.info, ObjectType::kView, Privilege::kCreateView);
-        if (ownership_.size() > before) ownership_.back().definition_hash = DefinitionHashOf(*create.info);
+        if (ownership_.size() > before)
+          ownership_.back().definition_hash = DefinitionHashOf(*create.info);
         return;
       }
       case OpType::LOGICAL_CREATE_SCHEMA: {
@@ -522,7 +554,8 @@ class PlanChecker {
   }
 
  private:
-  void VisitChildren(dd::LogicalOperator& op, dd::optional_ptr<dd::TableCatalogEntry> dml_target) {
+  void VisitChildren(dd::LogicalOperator& op,
+                     dd::optional_ptr<dd::TableCatalogEntry> dml_target) {
     for (auto& child : op.children) {
       if (child) Visit(*child, dml_target);
     }
@@ -546,16 +579,19 @@ class PlanChecker {
         return;
       }
       if (!AllowedTableFunctions().count(name)) {
-        Deny(principal_, "the table function " + name + " is not available under access control");
+        Deny(principal_,
+             "the table function " + name + " is not available under access control");
       }
-      if ((name == "pragma_table_info" || name == "pragma_show") && !get.parameters.empty()) {
+      if ((name == "pragma_table_info" || name == "pragma_show") &&
+          !get.parameters.empty()) {
         RequireVisibleTableArgument(get.parameters[0]);
       }
       return;
     }
     std::vector<std::string> columns;
     for (const auto& index : get.GetColumnIds()) {
-      if (index.IsRowIdColumn() || index.IsVirtualColumn() || index.IsEmptyColumn()) continue;
+      if (index.IsRowIdColumn() || index.IsVirtualColumn() || index.IsEmptyColumn())
+        continue;
       const auto& column = table->GetColumn(dd::LogicalIndex(index.GetPrimaryIndex()));
       columns.push_back(compat::Str(column.Name()));
     }
@@ -567,7 +603,8 @@ class PlanChecker {
 
   ObjectPath PathOf(dd::CatalogEntry& entry) { return PathOfEntry(entry); }
 
-  void Require(dd::CatalogEntry& entry, Privilege privilege, std::vector<std::string> columns) {
+  void Require(dd::CatalogEntry& entry, Privilege privilege,
+               std::vector<std::string> columns) {
     RequireObject(PathOf(entry), ObjectTypeOf(entry), privilege, std::move(columns));
   }
 
@@ -581,7 +618,8 @@ class PlanChecker {
     auto check = [&]() {
       if (part.empty()) return;
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-      auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, dd::Identifier(part));
+      auto db =
+          dd::DatabaseManager::Get(context_).GetDatabase(context_, dd::Identifier(part));
 #else
       auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, part);
 #endif
@@ -618,7 +656,8 @@ class PlanChecker {
       // A leading part naming a catalog the user cannot see, whatever DuckDB
       // made of the rest.
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-      auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, dd::Identifier(parts[0]));
+      auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_,
+                                                               dd::Identifier(parts[0]));
 #else
       auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, parts[0]);
 #endif
@@ -644,8 +683,8 @@ class PlanChecker {
       // owner reads (a list of allowed rows, say). Only the caller's own
       // statement may read one.
       if (in_owned_view_) {
-        Deny(principal_, "the view " + owned_view_ + " cannot read a temporary " + TypeWord(type) +
-                             " of this session");
+        Deny(principal_, "the view " + owned_view_ + " cannot read a temporary " +
+                             TypeWord(type) + " of this session");
       }
       return;
     }
@@ -654,7 +693,8 @@ class PlanChecker {
                request.columns);
     {
       std::string schema;
-      for (const auto& part : path.schema_path) schema += (schema.empty() ? "" : ".") + part;
+      for (const auto& part : path.schema_path)
+        schema += (schema.empty() ? "" : ".") + part;
       objects_.push_back({{"catalog", path.catalog},
                           {"schema", schema},
                           {"name", path.object_name},
@@ -668,14 +708,18 @@ class PlanChecker {
       if (decision.allowed) continue;
       if (!rights.owner_of_view.empty()) {
         // Never name what the view reads: the caller may not know it.
-        Deny(principal_, "the view " + rights.owner_of_view +
-                             " cannot be read, because its owner lacks a privilege on an object "
-                             "the view reads");
+        Deny(principal_,
+             "the view " + rights.owner_of_view +
+                 " cannot be read, because its owner lacks a privilege on an object "
+                 "the view reads");
       }
-      std::string what = "user " + principal_.user_name + " has no " + PrivilegeName(privilege) +
-                         " privilege on " + TypeWord(request.type) + " " + path.ToString();
-      if (privilege == Privilege::kSelect && decision.reason.rfind("no SELECT on column", 0) == 0) {
-        what = "user " + principal_.user_name + " has " + decision.reason + " of " + path.ToString();
+      std::string what = "user " + principal_.user_name + " has no " +
+                         PrivilegeName(privilege) + " privilege on " +
+                         TypeWord(request.type) + " " + path.ToString();
+      if (privilege == Privilege::kSelect &&
+          decision.reason.rfind("no SELECT on column", 0) == 0) {
+        what = "user " + principal_.user_name + " has " + decision.reason + " of " +
+               path.ToString();
       }
       if (!unowned_view_.empty()) {
         what += " (read through the view " + unowned_view_ +
@@ -703,12 +747,14 @@ class PlanChecker {
     for (const auto& rights : rights_) {
       if (snapshot_.HasSystemPrivilege(rights.principal, privilege)) continue;
       if (!rights.owner_of_view.empty()) {
-        Deny(principal_, "the view " + rights.owner_of_view +
-                             " cannot be read, because its owner lacks a privilege on an object "
-                             "the view reads");
+        Deny(principal_,
+             "the view " + rights.owner_of_view +
+                 " cannot be read, because its owner lacks a privilege on an object "
+                 "the view reads");
       }
       Deny(principal_, what + " needs the " + SystemPrivilegeName(privilege) +
-                           " privilege, which user " + principal_.user_name + " does not hold");
+                           " privilege, which user " + principal_.user_name +
+                           " does not hold");
     }
   }
 
@@ -725,7 +771,8 @@ class PlanChecker {
     const std::string name = view.view.ToString();
     if (view.temporary) {
       if (in_owned_view_) {
-        Deny(principal_, "the view " + owned_view_ + " cannot read a temporary view of this session");
+        Deny(principal_,
+             "the view " + owned_view_ + " cannot read a temporary view of this session");
       }
       VisitChildren(view, nullptr);  // the session's own view: the caller's rights
       return;
@@ -769,20 +816,23 @@ class PlanChecker {
       case OwnerKind::kUser: {
         const UserRecord* user = snapshot_.FindUserById(owner.owner_id);
         if (!user || !user->enabled) {
-          Deny(principal_, "the view " + view_name +
-                               " cannot be read, because its owner is disabled or was dropped");
+          Deny(principal_,
+               "the view " + view_name +
+                   " cannot be read, because its owner is disabled or was dropped");
         }
         return Principal{false, user->id, user->name, ""};
       }
       case OwnerKind::kRole: {
         const RoleRecord* role = snapshot_.FindRoleById(owner.owner_id);
         if (!role) {
-          Deny(principal_, "the view " + view_name + " cannot be read, because its owner was dropped");
+          Deny(principal_, "the view " + view_name +
+                               " cannot be read, because its owner was dropped");
         }
         return Principal::Role(role->id, role->name);
       }
     }
-    Deny(principal_, "the view " + view_name + " has an owner record that is not understood");
+    Deny(principal_,
+         "the view " + view_name + " has an owner record that is not understood");
   }
 
   void RequireAllColumns(dd::TableCatalogEntry& table) {
@@ -800,11 +850,13 @@ class PlanChecker {
     ObjectPath target;
     dd::optional_ptr<dd::CatalogEntry> existing;
     if (type == ObjectType::kSchema) {
-      if (parts.empty()) Deny(principal_, "the new schema's name could not be determined");
+      if (parts.empty())
+        Deny(principal_, "the new schema's name could not be determined");
       target = SchemaTarget(context_, parts);
       existing = LookUpSchema(context_, target);
     } else {
-      if (parts.size() < 3) Deny(principal_, "the new object's schema could not be determined");
+      if (parts.size() < 3)
+        Deny(principal_, "the new object's schema could not be determined");
       target.catalog = parts[0];
       target.schema_path.assign(parts.begin() + 1, parts.end() - 1);
       target.object_name = parts.back();
@@ -817,10 +869,11 @@ class PlanChecker {
     RequireVisible(target.catalog);
     AccessRequest request{target, type, privilege, {}};
     if (!snapshot_.Check(principal_, request).allowed) {
-      Deny(principal_, "user " + principal_.user_name + " has no " + PrivilegeName(privilege) +
-                           " privilege on " +
-                           (type == ObjectType::kSchema ? "catalog " + target.catalog
-                                                        : "schema " + ContainerOf(target)));
+      Deny(principal_,
+           "user " + principal_.user_name + " has no " + PrivilegeName(privilege) +
+               " privilege on " +
+               (type == ObjectType::kSchema ? "catalog " + target.catalog
+                                            : "schema " + ContainerOf(target)));
     }
     ownership_.push_back({PendingOwnership::Kind::kCreate, target, type});
   }
@@ -842,8 +895,9 @@ class PlanChecker {
                                                               : Privilege::kDropTable;
     AccessRequest request{path, type, privilege, {}};
     if (!snapshot_.Check(principal_, request).allowed) {
-      Deny(principal_, "user " + principal_.user_name + " may not drop " + TypeWord(type) + " " +
-                           path.ToString() + " (only its owner, or a role granted " +
+      Deny(principal_, "user " + principal_.user_name + " may not drop " +
+                           TypeWord(type) + " " + path.ToString() +
+                           " (only its owner, or a role granted " +
                            PrivilegeName(privilege) + ")");
     }
     ownership_.push_back({PendingOwnership::Kind::kDrop, path, type});
@@ -862,7 +916,8 @@ class PlanChecker {
       case dd::CatalogType::SCHEMA_ENTRY: {
         // Found the way DuckDB finds it: the named catalog, or the session's.
         auto entry = LookUpSchema(context_, SchemaTarget(context_, parts));
-        if (!entry) return;  // DROP SCHEMA IF EXISTS of nothing; DuckDB reports a missing schema
+        if (!entry)
+          return;  // DROP SCHEMA IF EXISTS of nothing; DuckDB reports a missing schema
         CheckDropOf(*entry);
         return;
       }
@@ -870,7 +925,8 @@ class PlanChecker {
       case dd::CatalogType::VIEW_ENTRY: {
         // The binder has already qualified the name of an existing object.
         auto entry = LookUp(context_, dd::CatalogType::TABLE_ENTRY, parts);
-        if (!entry) return;  // DROP ... IF EXISTS of nothing; DuckDB reports a missing object
+        if (!entry)
+          return;  // DROP ... IF EXISTS of nothing; DuckDB reports a missing object
         CheckDropOf(*entry);
         return;
       }
@@ -892,7 +948,8 @@ class PlanChecker {
     auto parts = PartsOf(info);
     if (!parts.empty() && IsTempCatalog(parts[0])) return;
     const auto catalog_type = info.GetCatalogType();
-    if (catalog_type != dd::CatalogType::TABLE_ENTRY && catalog_type != dd::CatalogType::VIEW_ENTRY) {
+    if (catalog_type != dd::CatalogType::TABLE_ENTRY &&
+        catalog_type != dd::CatalogType::VIEW_ENTRY) {
       Deny(principal_, "altering this kind of object needs an administrator");
     }
     auto entry = LookUp(context_, dd::CatalogType::TABLE_ENTRY, parts);
@@ -901,14 +958,18 @@ class PlanChecker {
     if (IsTempCatalog(path.catalog)) return;
     RequireVisible(path.catalog);
     const ObjectType type = ObjectTypeOf(*entry);
-    if (info.type == dd::AlterType::ALTER_TABLE || info.type == dd::AlterType::ALTER_VIEW) {
+    if (info.type == dd::AlterType::ALTER_TABLE ||
+        info.type == dd::AlterType::ALTER_VIEW) {
       // A rename moves the object out from under its owner record: owners only.
-      AccessRequest request{path, type,
-                            type == ObjectType::kView ? Privilege::kAlterView : Privilege::kAlterTable,
-                            {}};
+      AccessRequest request{
+          path,
+          type,
+          type == ObjectType::kView ? Privilege::kAlterView : Privilege::kAlterTable,
+          {}};
       if (!snapshot_.Check(principal_, request).allowed) {
-        Deny(principal_, "user " + principal_.user_name + " may not alter " + TypeWord(type) + " " +
-                             path.ToString() + " (only its owner, or a role granted " +
+        Deny(principal_, "user " + principal_.user_name + " may not alter " +
+                             TypeWord(type) + " " + path.ToString() +
+                             " (only its owner, or a role granted " +
                              PrivilegeName(request.privilege) + ")");
       }
       return;
@@ -966,26 +1027,28 @@ void RequireActiveRole(const Snapshot& snapshot, const Principal& principal) {
                          .count();
     if (now >= principal.scope->expires_at) {
       throw dd::PermissionException("GizmoSQL blocked this statement: scoped token " +
-                                    principal.scope->name + " of user " + principal.user_name +
-                                    " has expired");
+                                    principal.scope->name + " of user " +
+                                    principal.user_name + " has expired");
     }
   }
   if (snapshot.HoldsActiveRole(principal)) return;
   const RoleRecord* role = snapshot.FindRoleById(principal.active_role_id);
-  throw dd::PermissionException("GizmoSQL blocked this statement: user " + principal.user_name +
-                                " no longer holds role " +
-                                (role ? role->name : std::string("(dropped)")) +
-                                ", which SET ROLE made active. Run SET ROLE with another role, "
-                                "or RESET ROLE");
+  throw dd::PermissionException(
+      "GizmoSQL blocked this statement: user " + principal.user_name +
+      " no longer holds role " + (role ? role->name : std::string("(dropped)")) +
+      ", which SET ROLE made active. Run SET ROLE with another role, "
+      "or RESET ROLE");
 }
 
-void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalOperator>& plan) {
+void PreOptimize(dd::OptimizerExtensionInput& input,
+                 dd::unique_ptr<dd::LogicalOperator>& plan) {
   auto& context = input.context;
   auto state = context.registered_state->Get<RbacSessionState>(kRbacSessionStateName);
   if (!state) return;  // a GizmoSQL-internal connection
   auto engine = state->engine();
   if (!engine) {
-    throw dd::PermissionException("GizmoSQL blocked this statement: access control is shutting down");
+    throw dd::PermissionException(
+        "GizmoSQL blocked this statement: access control is shutting down");
   }
   auto snapshot = engine->snapshot();
   if (state->unchecked() || !plan) {
@@ -999,17 +1062,19 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
         if (op.type == OpType::LOGICAL_CREATE_TABLE) {
           auto parts = PartsOf(*op.Cast<dd::LogicalCreateTable>().info->base);
           if (parts.size() >= 3 && !IsTempCatalog(parts[0])) {
-            ownership.push_back({PendingOwnership::Kind::kCreate,
-                                 {parts[0], {parts.begin() + 1, parts.end() - 1}, parts.back()},
-                                 ObjectType::kTable});
+            ownership.push_back(
+                {PendingOwnership::Kind::kCreate,
+                 {parts[0], {parts.begin() + 1, parts.end() - 1}, parts.back()},
+                 ObjectType::kTable});
           }
         } else if (op.type == OpType::LOGICAL_CREATE_VIEW) {
           auto parts = PartsOf(*op.Cast<dd::LogicalCreate>().info);
           if (parts.size() >= 3 && !IsTempCatalog(parts[0])) {
-            ownership.push_back({PendingOwnership::Kind::kCreate,
-                                 {parts[0], {parts.begin() + 1, parts.end() - 1}, parts.back()},
-                                 ObjectType::kView,
-                                 DefinitionHashOf(*op.Cast<dd::LogicalCreate>().info)});
+            ownership.push_back(
+                {PendingOwnership::Kind::kCreate,
+                 {parts[0], {parts.begin() + 1, parts.end() - 1}, parts.back()},
+                 ObjectType::kView,
+                 DefinitionHashOf(*op.Cast<dd::LogicalCreate>().info)});
           }
         }
         for (auto& child : op.children) {
@@ -1025,8 +1090,8 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
   }
   const Principal principal = state->principal();
   if (!engine->IsActive(principal)) {
-    throw dd::PermissionException("GizmoSQL blocked this statement: user " + principal.user_name +
-                                  " is disabled or was dropped");
+    throw dd::PermissionException("GizmoSQL blocked this statement: user " +
+                                  principal.user_name + " is disabled or was dropped");
   }
   RequireActiveRole(*snapshot, principal);
   const auto view_columns = ViewColumnsUsed(*plan);
@@ -1043,11 +1108,13 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
       case PolicyService::Decision::kDeny:
         // Not a missing grant: say only who refused.
         throw dd::PermissionException(
-            "GizmoSQL blocked this statement: the access policy service denied it for user " +
+            "GizmoSQL blocked this statement: the access policy service denied it for "
+            "user " +
             principal.user_name);
       case PolicyService::Decision::kNoAnswer:
         throw dd::PermissionException(
-            "GizmoSQL blocked this statement: GizmoSQL could not get an answer from the access "
+            "GizmoSQL blocked this statement: GizmoSQL could not get an answer from the "
+            "access "
             "policy service, and refuses statements until it can");
     }
   }
@@ -1083,11 +1150,14 @@ bool HasParameter(dd::LogicalOperator& op) {
 // statement as soon as it is bound, so a denied one fails when prepared and
 // its result columns are never described; the run's plan is checked again.
 void PostBind(dd::PlannerExtensionInput& input, dd::BoundStatement& statement) {
-  auto state = input.context.registered_state->Get<RbacSessionState>(kRbacSessionStateName);
-  if (!state || state->unchecked() || !statement.plan || !HasParameter(*statement.plan)) return;
+  auto state =
+      input.context.registered_state->Get<RbacSessionState>(kRbacSessionStateName);
+  if (!state || state->unchecked() || !statement.plan || !HasParameter(*statement.plan))
+    return;
   auto engine = state->engine();
   if (!engine) {
-    throw dd::PermissionException("GizmoSQL blocked this statement: access control is shutting down");
+    throw dd::PermissionException(
+        "GizmoSQL blocked this statement: access control is shutting down");
   }
   auto snapshot = engine->snapshot();
   const Principal principal = state->principal();
@@ -1103,7 +1173,8 @@ void PostBind(dd::PlannerExtensionInput& input, dd::BoundStatement& statement) {
 
 // ---------------------------------------------------------------------------
 
-RbacSessionState::RbacSessionState(std::shared_ptr<RbacEngine> engine, Principal principal)
+RbacSessionState::RbacSessionState(std::shared_ptr<RbacEngine> engine,
+                                   Principal principal)
     : engine_(engine), principal_(std::move(principal)) {}
 
 RbacSessionState::BypassScope::BypassScope(dd::ClientContext& context)
@@ -1116,8 +1187,8 @@ RbacSessionState::BypassScope::~BypassScope() {
 }
 
 void RbacSessionState::NoteChecked(int64_t snapshot_version,
-                                   std::vector<PendingOwnership> ownership, bool prepare_only,
-                                   std::vector<std::string> accesses) {
+                                   std::vector<PendingOwnership> ownership,
+                                   bool prepare_only, std::vector<std::string> accesses) {
   std::lock_guard<std::mutex> lock(mutex_);
   last_accesses_ = std::move(accesses);
   ++checked_pending_;
@@ -1153,9 +1224,9 @@ void RbacSessionState::NoteBindChecked() {
   bind_checked_pending_ = true;
 }
 
-dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(dd::ClientContext&,
-                                                        dd::PreparedStatementData& prepared,
-                                                        dd::PreparedStatementMode mode) {
+dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(
+    dd::ClientContext&, dd::PreparedStatementData& prepared,
+    dd::PreparedStatementMode mode) {
   std::lock_guard<std::mutex> lock(mutex_);
   // A statement with parameters that DuckDB prepared without optimizing (it is
   // planned again with the values for each run). It may go ahead when the
@@ -1163,11 +1234,13 @@ dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(dd::ClientContext&,
   // describes no result columns; the run's plan is the one that is enforced.
   const bool bind_checked = bind_checked_pending_;
   bind_checked_pending_ = false;
-  const bool unplanned = prepared.types.size() == 1 && prepared.types[0].id() == dd::LogicalTypeId::UNKNOWN;
-  const bool replanned_on_run = prepared.statement_type != dd::StatementType::PREPARE_STATEMENT &&
-                                (!prepared.properties.bound_all_parameters ||
-                                 prepared.properties.always_require_rebind) &&
-                                (bind_checked || unplanned);
+  const bool unplanned =
+      prepared.types.size() == 1 && prepared.types[0].id() == dd::LogicalTypeId::UNKNOWN;
+  const bool replanned_on_run =
+      prepared.statement_type != dd::StatementType::PREPARE_STATEMENT &&
+      (!prepared.properties.bound_all_parameters ||
+       prepared.properties.always_require_rebind) &&
+      (bind_checked || unplanned);
   // File the plan's ownership changes: applied at QueryEnd when it runs now,
   // or handed to GizmoSQL to apply after a later successful execution.
   const bool prepare_only =
@@ -1179,8 +1252,9 @@ dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(dd::ClientContext&,
   planned_ownership_.clear();
   if (checked_pending_ > 0) {
     --checked_pending_;
-  } else if (!unchecked() && (prepared.statement_type == dd::StatementType::PREPARE_STATEMENT ||
-                              replanned_on_run)) {
+  } else if (!unchecked() &&
+             (prepared.statement_type == dd::StatementType::PREPARE_STATEMENT ||
+              replanned_on_run)) {
     // A statement prepared without optimizing (above): checked on a fresh bind
     // already, and not recorded as checked, so the run's re-plan is checked too.
     // DuckDB 2.x prepares a statement it must re-plan before every run (bound
@@ -1202,7 +1276,8 @@ dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(dd::ClientContext&,
   return dd::RebindQueryInfo::DO_NOT_REBIND;
 }
 
-dd::RebindQueryInfo RbacSessionState::RebindIfGrantsChanged(const dd::PreparedStatementData& prepared) {
+dd::RebindQueryInfo RbacSessionState::RebindIfGrantsChanged(
+    const dd::PreparedStatementData& prepared) {
   if (unchecked()) return dd::RebindQueryInfo::DO_NOT_REBIND;
   auto engine = engine_.lock();
   if (!engine) return dd::RebindQueryInfo::ATTEMPT_TO_REBIND;
@@ -1220,18 +1295,19 @@ dd::RebindQueryInfo RbacSessionState::RebindIfGrantsChanged(const dd::PreparedSt
 
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
 dd::RebindQueryInfo RbacSessionState::OnRebindPreparedStatement(
-    dd::ClientContext&, dd::BindPreparedStatementCallbackInfo& info, dd::RebindQueryInfo) {
+    dd::ClientContext&, dd::BindPreparedStatementCallbackInfo& info,
+    dd::RebindQueryInfo) {
   return RebindIfGrantsChanged(info.prepared_statement);
 }
 #else
-dd::RebindQueryInfo RbacSessionState::OnExecutePrepared(dd::ClientContext&,
-                                                        dd::PreparedStatementCallbackInfo& info,
-                                                        dd::RebindQueryInfo) {
+dd::RebindQueryInfo RbacSessionState::OnExecutePrepared(
+    dd::ClientContext&, dd::PreparedStatementCallbackInfo& info, dd::RebindQueryInfo) {
   return RebindIfGrantsChanged(info.prepared_statement);
 }
 #endif
 
-void RbacSessionState::QueryEnd(dd::ClientContext&, dd::optional_ptr<dd::ErrorData> error) {
+void RbacSessionState::QueryEnd(dd::ClientContext&,
+                                dd::optional_ptr<dd::ErrorData> error) {
   std::vector<PendingOwnership> pending;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1255,21 +1331,26 @@ void ApplyOwnership(RbacEngine& engine, const Principal& principal,
   }
 }
 
-std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(const std::string& category) {
+std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(
+    const std::string& category) {
   auto starts = [&](const char* prefix) { return category.rfind(prefix, 0) == 0; };
   auto ends = [&](const std::string& suffix) {
     return category.size() >= suffix.size() &&
            category.compare(category.size() - suffix.size(), suffix.size(), suffix) == 0;
   };
-  if (category == "ATTACH" || category == "DETACH") return SystemPrivilege::kManageCatalogs;
+  if (category == "ATTACH" || category == "DETACH")
+    return SystemPrivilege::kManageCatalogs;
   if (category == "INSTALL extension" || category == "LOAD extension" ||
-      category == "CREATE EXTENSION REPOSITORY" || category == "DROP EXTENSION REPOSITORY") {
+      category == "CREATE EXTENSION REPOSITORY" ||
+      category == "DROP EXTENSION REPOSITORY") {
     return SystemPrivilege::kManageExtensions;
   }
-  if (category == "CREATE SECRET" || category == "DROP SECRET" || category == "duckdb_secrets()") {
+  if (category == "CREATE SECRET" || category == "DROP SECRET" ||
+      category == "duckdb_secrets()") {
     return SystemPrivilege::kManageSecrets;
   }
-  if (starts("SET GLOBAL ") || starts("RESET GLOBAL ")) return SystemPrivilege::kManageConfig;
+  if (starts("SET GLOBAL ") || starts("RESET GLOBAL "))
+    return SystemPrivilege::kManageConfig;
   if (category == "EXPORT DATABASE") return SystemPrivilege::kExportDatabase;
   if (category == "IMPORT DATABASE") return SystemPrivilege::kImportDatabase;
   if (category == "CHECKPOINT") return SystemPrivilege::kCheckpoint;

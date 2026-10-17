@@ -976,9 +976,12 @@ bool ContainsWordIgnoringCase(const std::string& text, const std::string& word) 
   };
   const std::string t = lower(text), w = lower(word);
   for (size_t at = t.find(w); at != std::string::npos; at = t.find(w, at + 1)) {
-    const bool start = at == 0 || !(std::isalnum(static_cast<unsigned char>(t[at - 1])) || t[at - 1] == '_');
+    const bool start = at == 0 || !(std::isalnum(static_cast<unsigned char>(t[at - 1])) ||
+                                    t[at - 1] == '_');
     const size_t end = at + w.size();
-    const bool stop = end >= t.size() || !(std::isalnum(static_cast<unsigned char>(t[end])) || t[end] == '_');
+    const bool stop =
+        end >= t.size() ||
+        !(std::isalnum(static_cast<unsigned char>(t[end])) || t[end] == '_');
     if (start && stop) return true;
   }
   return false;
@@ -991,13 +994,15 @@ bool ContainsWordIgnoringCase(const std::string& text, const std::string& word) 
 // The session's SET ROLE role, for audit records (empty: all roles).
 std::string ActiveRoleName(const std::shared_ptr<ClientSession>& session) {
   if (!session->connection) return "";
-  auto state = session->connection->Get().context->registered_state
-                   ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
-                       gizmosql::enterprise::rbac::kRbacSessionStateName);
+  auto state =
+      session->connection->Get()
+          .context->registered_state->Get<gizmosql::enterprise::rbac::RbacSessionState>(
+              gizmosql::enterprise::rbac::kRbacSessionStateName);
   return state ? state->active_role_name() : "";
 }
 
-arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session, arrow::Status status) {
+arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session,
+                            arrow::Status status) {
   if (status.ok() || session->rbac_tenant_id.empty()) return status;
   const std::string& message = status.message();
   bool hide = message.find("does not exist") != std::string::npos ||
@@ -1005,7 +1010,8 @@ arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session, arrow
               message.find("system-managed catalog") != std::string::npos;
   if (!hide && session->connection) {
     auto& connection = session->connection->Get();
-    gizmosql::enterprise::rbac::RbacSessionState::BypassScope internal(*connection.context);
+    gizmosql::enterprise::rbac::RbacSessionState::BypassScope internal(
+        *connection.context);
     auto databases = connection.Query("SELECT database_name FROM duckdb_databases()");
     if (!databases->HasError()) {
       const auto rows = gizmosql::ddb::compat::ResultRowCount(*databases);
@@ -1014,7 +1020,8 @@ arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session, arrow
             gizmosql::ddb::compat::ResultValue(*databases, 0, r).ToString();
         bool visible = name == "system" || name == "temp" || name == "_gizmosql_system";
         for (const auto& rule : session->catalog_access) {
-          visible = visible || (rule.access != CatalogAccessLevel::kNone && rule.catalog == name);
+          visible = visible ||
+                    (rule.access != CatalogAccessLevel::kNone && rule.catalog == name);
         }
         hide = !visible && ContainsWordIgnoringCase(message, name);
       }
@@ -1023,7 +1030,8 @@ arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session, arrow
     }
   }
   if (!hide) return status;
-  return arrow::Status::Invalid(gizmosql::enterprise::rbac::HiddenObjectMessage(session->username));
+  return arrow::Status::Invalid(
+      gizmosql::enterprise::rbac::HiddenObjectMessage(session->username));
 }
 
 }  // namespace
@@ -1040,7 +1048,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const bool& log_queries, const std::shared_ptr<arrow::Schema>& override_schema,
     const std::string& flight_method, bool is_internal) {
 #ifdef GIZMOSQL_ENTERPRISE
-  if (!is_internal && (client_session->metrics || !client_session->rbac_tenant_id.empty())) {
+  if (!is_internal &&
+      (client_session->metrics || !client_session->rbac_tenant_id.empty())) {
     const auto start = std::chrono::steady_clock::now();
     auto result = CreateImpl(client_session, handle, sql, log_level, log_queries,
                              override_schema, flight_method, is_internal);
@@ -1107,7 +1116,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   // queries skip the parse entirely (fast path).
   if (!is_internal && client_session->role != "admin") {
     // Under access control every file and URL is gated, remote ones too.
-    const bool strict_gate = client_session->rbac_enabled && !client_session->rbac_superuser;
+    const bool strict_gate =
+        client_session->rbac_enabled && !client_session->rbac_superuser;
     // A store user passes for what they hold a system privilege for
     // (GRANT READ FILESYSTEM TO ...); the plan check then checks it again.
     std::function<bool(const std::string&)> permitted;
@@ -1119,25 +1129,28 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
           gizmosql::enterprise::rbac::Principal who{false, client_session->rbac_user_id,
                                                     client_session->username, ""};
           permitted = [snap, who](const std::string& category) {
-            auto privilege = gizmosql::enterprise::rbac::SystemPrivilegeForGatedCategory(category);
+            auto privilege =
+                gizmosql::enterprise::rbac::SystemPrivilegeForGatedCategory(category);
             return privilege && snap->HasSystemPrivilege(who, *privilege);
           };
         }
       }
     }
 #endif
-    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql, strict_gate, permitted)) {
+    if (auto gated_category =
+            gizmosql::ddb::ClassifyGatedCommand(sql, strict_gate, permitted)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Client attempted a gated admin command",
                              {"kind", "sql"}, {"status", "rejected"},
                              {"gated", *gated_category}, {"statement_id", handle},
                              {"sql", logged_sql});
-      std::string gate_error_msg = gizmosql::ddb::GatedCommandDeniedMessage(*gated_category);
+      std::string gate_error_msg =
+          gizmosql::ddb::GatedCommandDeniedMessage(*gated_category);
 #ifdef GIZMOSQL_ENTERPRISE
       // Under access control, say which system privilege would allow it.
       if (strict_gate) {
-        if (auto privilege =
-                gizmosql::enterprise::rbac::SystemPrivilegeForGatedCategory(*gated_category)) {
+        if (auto privilege = gizmosql::enterprise::rbac::SystemPrivilegeForGatedCategory(
+                *gated_category)) {
           gate_error_msg = "Permission denied: GizmoSQL blocked " + *gated_category +
                            ", which needs the " +
                            gizmosql::enterprise::rbac::SystemPrivilegeName(*privilege) +
@@ -1181,11 +1194,12 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
           " is not available. (Server operators: start GizmoSQL Enterprise with "
           "--rbac-store-uri)");
     } else {
-      std::shared_ptr<InstrumentationManager> rbac_instr_mgr = server->GetInstrumentationManager();
+      std::shared_ptr<InstrumentationManager> rbac_instr_mgr =
+          server->GetInstrumentationManager();
       auto record_failure = [&](const std::string& message) {
         if (rbac_instr_mgr) {
-          StatementInstrumentation(rbac_instr_mgr, handle, client_session->session_id, logged_sql,
-                                   flight_method, is_internal, message);
+          StatementInstrumentation(rbac_instr_mgr, handle, client_session->session_id,
+                                   logged_sql, flight_method, is_internal, message);
         }
       };
       if (!parsed.ok()) {
@@ -1197,21 +1211,22 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
                                   ? rbac::Principal::Superuser(client_session->username)
                                   : rbac::Principal{false, client_session->rbac_user_id,
                                                     client_session->username};
-      auto rbac_state = client_session->connection->Get().context->registered_state
-                            ->Get<rbac::RbacSessionState>(rbac::kRbacSessionStateName);
+      auto rbac_state = client_session->connection->Get()
+                            .context->registered_state->Get<rbac::RbacSessionState>(
+                                rbac::kRbacSessionStateName);
       if (rbac_state && !client_session->rbac_superuser) actor = rbac_state->principal();
       rbac::SessionObjectResolver resolver(client_session->connection->Get());
       auto executed = engine->Execute(*parsed, actor, resolver);
       if (!executed.ok()) {
         const std::string message = executed.status().message();
-        GIZMOSQL_AUDIT_SESSION(WARNING, client_session, "Access-control statement refused",
-                               {"kind", "access_control"}, {"statement", kind},
-                               {"status", "rejected"}, {"error", message},
-                               {"statement_id", handle});
+        GIZMOSQL_AUDIT_SESSION(
+            WARNING, client_session, "Access-control statement refused",
+            {"kind", "access_control"}, {"statement", kind}, {"status", "rejected"},
+            {"error", message}, {"statement_id", handle});
         record_failure(message);
         if (message.find("GizmoSQL blocked") != std::string::npos) {
-          return arrow::flight::MakeFlightError(arrow::flight::FlightStatusCode::Unauthorized,
-                                                message);
+          return arrow::flight::MakeFlightError(
+              arrow::flight::FlightStatusCode::Unauthorized, message);
         }
         return arrow::Status::Invalid(message);
       }
@@ -1226,14 +1241,16 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
         for (auto& row : executed->rows) row.push_back(*signed_token);
       }
       if (executed->active_role_id) {
-        if (!rbac_state) return arrow::Status::Invalid("GizmoSQL access control: no session state");
+        if (!rbac_state)
+          return arrow::Status::Invalid("GizmoSQL access control: no session state");
         const auto* role = engine->snapshot()->FindRoleById(*executed->active_role_id);
         rbac_state->SetActiveRole(*executed->active_role_id, role ? role->name : "");
       }
       for (const auto& user_id : executed->terminate_user_ids) {
         const int ended = server->TerminateRbacUserSessions(user_id);
         if (ended > 0) {
-          GIZMOSQL_AUDIT_SESSION(INFO, client_session, "Ended sessions of an access-control user",
+          GIZMOSQL_AUDIT_SESSION(INFO, client_session,
+                                 "Ended sessions of an access-control user",
                                  {"kind", "access_control"}, {"statement", kind},
                                  {"sessions", std::to_string(ended)});
         }
@@ -1244,7 +1261,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
 
       // The result is a small table of strings.
       arrow::FieldVector fields;
-      for (const auto& name : executed->column_names) fields.push_back(arrow::field(name, arrow::utf8()));
+      for (const auto& name : executed->column_names)
+        fields.push_back(arrow::field(name, arrow::utf8()));
       auto schema = arrow::schema(fields);
       std::vector<std::shared_ptr<arrow::Array>> columns;
       for (size_t c = 0; c < executed->column_names.size(); ++c) {
@@ -1257,9 +1275,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
         columns.push_back(std::move(array));
       }
       // logged_sql, not sql: CREATE / ALTER USER may carry a password.
-      std::shared_ptr<DuckDBStatement> result(new DuckDBStatement(
-          client_session, handle, logged_sql, display_severity, log_queries, schema, is_internal,
-          flight_method));
+      std::shared_ptr<DuckDBStatement> result(
+          new DuckDBStatement(client_session, handle, logged_sql, display_severity,
+                              log_queries, schema, is_internal, flight_method));
       result->is_gizmosql_admin_ = true;
       if (rbac_instr_mgr) {
         result->instrumentation_ = std::make_unique<StatementInstrumentation>(
@@ -1542,20 +1560,20 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     stmt = client_session->connection->Get().Prepare(effective_sql);
 #ifdef GIZMOSQL_ENTERPRISE
     if (!is_internal) {
-      if (auto rbac_state =
-              client_session->connection->Get().context->registered_state
-                  ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
-                      gizmosql::enterprise::rbac::kRbacSessionStateName)) {
+      if (auto rbac_state = client_session->connection->Get()
+                                .context->registered_state
+                                ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
+                                    gizmosql::enterprise::rbac::kRbacSessionStateName)) {
         rbac_prepared_ownership = rbac_state->TakePreparedOwnership();
         // The audit record of what access control allowed this statement.
         const auto accesses = rbac_state->TakeAccesses();
         if (!stmt->HasError() && !rbac_state->unchecked() && !accesses.empty()) {
           std::string objects;
           for (const auto& a : accesses) objects += (objects.empty() ? "" : "; ") + a;
-          GIZMOSQL_AUDIT_SESSION(INFO, client_session, "Access control allowed a statement",
-                                 {"kind", "access_control"}, {"status", "allowed"},
-                                 {"statement_id", handle}, {"objects", objects},
-                                 {"active_role", rbac_state->active_role_name()});
+          GIZMOSQL_AUDIT_SESSION(
+              INFO, client_session, "Access control allowed a statement",
+              {"kind", "access_control"}, {"status", "allowed"}, {"statement_id", handle},
+              {"objects", objects}, {"active_role", rbac_state->active_role_name()});
         }
       }
     }
@@ -1619,10 +1637,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     // An access-control refusal is always recorded, whether or not queries are logged.
     if (client_session->rbac_enabled &&
         error_message.find("GizmoSQL blocked this statement") != std::string::npos) {
-      GIZMOSQL_AUDIT_SESSION(WARNING, client_session, "Access control refused a statement",
-                             {"kind", "access_control"}, {"status", "denied"},
-                             {"statement_id", handle}, {"error", error_message},
-                             {"sql", logged_sql}, {"active_role", ActiveRoleName(client_session)});
+      GIZMOSQL_AUDIT_SESSION(
+          WARNING, client_session, "Access control refused a statement",
+          {"kind", "access_control"}, {"status", "denied"}, {"statement_id", handle},
+          {"error", error_message}, {"sql", logged_sql},
+          {"active_role", ActiveRoleName(client_session)});
     }
 
 #ifdef GIZMOSQL_ENTERPRISE
@@ -2687,12 +2706,14 @@ arrow::Result<int> DuckDBStatement::Execute() {
   auto result = ExecuteWithMetrics();
   // A client-prepared CREATE / DROP took effect: record its ownership change.
   if (result.ok() && !rbac_ownership_.empty()) {
-    if (auto state = client_context_ ? client_context_->registered_state
-                                           ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
-                                               gizmosql::enterprise::rbac::kRbacSessionStateName)
-                                     : nullptr) {
+    if (auto state = client_context_
+                         ? client_context_->registered_state
+                               ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
+                                   gizmosql::enterprise::rbac::kRbacSessionStateName)
+                         : nullptr) {
       if (auto engine = state->engine()) {
-        gizmosql::enterprise::rbac::ApplyOwnership(*engine, state->principal(), rbac_ownership_);
+        gizmosql::enterprise::rbac::ApplyOwnership(*engine, state->principal(),
+                                                   rbac_ownership_);
       }
     }
     rbac_ownership_.clear();

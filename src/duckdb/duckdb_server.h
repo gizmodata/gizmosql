@@ -31,11 +31,13 @@
 #include "admission_controller.h"
 #include "sensitive_path_guard.h"
 
-#ifdef GIZMOSQL_ENTERPRISE
+// Declared in every build: the access-control accessors below take it (the
+// engine itself exists only in Enterprise builds).
 namespace gizmosql::enterprise::rbac {
 class RbacEngine;
 }  // namespace gizmosql::enterprise::rbac
 
+#ifdef GIZMOSQL_ENTERPRISE
 namespace gizmosql::enterprise {
 class MetricsRegistry;
 }
@@ -267,10 +269,11 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   int TerminateRbacUserSessions(const std::string& user_id);
   // Signs scoped tokens (CREATE SCOPED TOKEN); set by the server, which holds
   // the signing key: (user, scope id, expires at, instance id) -> token.
-  using ScopedTokenMinter = std::function<std::string(const std::string&, const std::string&,
-                                                      int64_t, const std::string&)>;
+  using ScopedTokenMinter = std::function<std::string(
+      const std::string&, const std::string&, int64_t, const std::string&)>;
   void SetScopedTokenMinter(ScopedTokenMinter minter);
-  arrow::Result<std::string> MintScopedToken(const std::string& user, const std::string& scope_id,
+  arrow::Result<std::string> MintScopedToken(const std::string& user,
+                                             const std::string& scope_id,
                                              int64_t expires_at);
 
   arrow::Status SetPrintQueries(const ClientSession& client_session,

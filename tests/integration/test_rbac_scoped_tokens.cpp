@@ -68,7 +68,8 @@ class Client {
     auto loc = arrow::flight::Location::ForGrpcTcp("127.0.0.1", port).ValueOrDie();
     flight_ = arrow::flight::FlightClient::Connect(loc, {}).ValueOrDie();
   }
-  static std::unique_ptr<Client> As(int port, const std::string& user, const std::string& role, int n) {
+  static std::unique_ptr<Client> As(int port, const std::string& user,
+                                    const std::string& role, int n) {
     char sid[64];
     std::snprintf(sid, sizeof(sid), "00000000-0000-4000-9100-%012d", n);
     auto c = std::make_unique<Client>(port, "");
@@ -77,7 +78,8 @@ class Client {
   }
   arrow::Result<std::shared_ptr<arrow::Table>> Run(const std::string& sql) {
     if (header_.first.empty()) {
-      ARROW_ASSIGN_OR_RAISE(header_, flight_->AuthenticateBasicToken({}, "token", scoped_token_));
+      ARROW_ASSIGN_OR_RAISE(header_,
+                            flight_->AuthenticateBasicToken({}, "token", scoped_token_));
     }
     if (!client_) client_ = std::make_unique<FlightSqlClient>(std::move(flight_));
     arrow::flight::FlightCallOptions co;
@@ -114,7 +116,8 @@ std::string Cell(const std::shared_ptr<arrow::Table>& t, const std::string& colu
   return c->GetScalar(0).ValueOrDie()->ToString();
 }
 
-class RbacScopedTokensFixture : public gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture> {
+class RbacScopedTokensFixture
+    : public gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -138,14 +141,17 @@ class RbacScopedTokensFixture : public gizmosql::testing::ServerTestFixture<Rbac
     static bool seeded = false;
     if (!seeded) {
       for (const char* sql : {
-               "ATTACH ':memory:' AS sales_db", "ATTACH ':memory:' AS hr_db",
+               "ATTACH ':memory:' AS sales_db",
+               "ATTACH ':memory:' AS hr_db",
                "CREATE TABLE sales_db.main.orders AS SELECT 1 AS id, 10 AS amount",
                "CREATE TABLE hr_db.main.staff AS SELECT 1 AS id, 'x' AS name",
                "CREATE ROLE worker",
                "GRANT SELECT, INSERT, UPDATE, DELETE ON CATALOG sales_db TO worker",
                "GRANT SELECT ON CATALOG hr_db TO worker",
                "GRANT CREATE TABLE ON SCHEMA sales_db.main TO worker",
-               "CREATE USER wes", "GRANT worker TO wes", "CREATE USER ula",
+               "CREATE USER wes",
+               "GRANT worker TO wes",
+               "CREATE USER ula",
            }) {
         auto st = admin_->Run(sql).status();
         ASSERT_TRUE(st.ok()) << sql << " -> " << st.ToString();
@@ -175,14 +181,18 @@ template <>
 std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
     gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture>::server_{};
 template <>
-std::thread gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture>::server_thread_{};
+std::thread
+    gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacScopedTokensFixture>::config_{};
 
 TEST_F(RbacScopedTokensFixture, ATokenDoesOnlyWhatItAllows) {
-  const auto token = Mint(*wes_, "CREATE SCOPED TOKEN reports ALLOW SELECT ON CATALOG sales_db");
+  const auto token =
+      Mint(*wes_, "CREATE SCOPED TOKEN reports ALLOW SELECT ON CATALOG sales_db");
   Client agent(GetPort(), token);
   EXPECT_EQ(agent.Error("SELECT * FROM sales_db.main.orders"), "");
   // wes may write, read hr_db and create tables; the token may not.
@@ -193,7 +203,8 @@ TEST_F(RbacScopedTokensFixture, ATokenDoesOnlyWhatItAllows) {
            {"CREATE TABLE sales_db.main.planted AS SELECT 1", "scoped token reports"},
        }) {
     const auto error = agent.Error(sql);
-    EXPECT_NE(error.find("GizmoSQL blocked"), std::string::npos) << sql << " -> " << error;
+    EXPECT_NE(error.find("GizmoSQL blocked"), std::string::npos)
+        << sql << " -> " << error;
     EXPECT_NE(error.find(why), std::string::npos) << sql << " -> " << error;
   }
   // Positive twins: wes himself.
@@ -204,7 +215,8 @@ TEST_F(RbacScopedTokensFixture, ATokenDoesOnlyWhatItAllows) {
 
 TEST_F(RbacScopedTokensFixture, ATokenNeverDoesMoreThanItsUser) {
   // A token that allows writes on a catalog wes may only read stays read-only there.
-  const auto token = Mint(*wes_, "CREATE SCOPED TOKEN writer ALLOW SELECT, INSERT ON CATALOG hr_db");
+  const auto token =
+      Mint(*wes_, "CREATE SCOPED TOKEN writer ALLOW SELECT, INSERT ON CATALOG hr_db");
   Client agent(GetPort(), token);
   EXPECT_EQ(agent.Error("SELECT * FROM hr_db.main.staff"), "");
   const auto error = agent.Error("INSERT INTO hr_db.main.staff VALUES (2, 'y')");
@@ -218,9 +230,11 @@ TEST_F(RbacScopedTokensFixture, ATokenNeverDoesMoreThanItsUser) {
 
 TEST_F(RbacScopedTokensFixture, ATokenCannotChangeAccessControl) {
   Client agent(GetPort(), Mint(*wes_, "CREATE SCOPED TOKEN quiet ALLOW SELECT"));
-  for (const char* sql : {"GRANT worker TO ula", "CREATE ROLE sneaky", "ALTER USER wes DISABLE"}) {
+  for (const char* sql :
+       {"GRANT worker TO ula", "CREATE ROLE sneaky", "ALTER USER wes DISABLE"}) {
     const auto error = agent.Error(sql);
-    EXPECT_NE(error.find("a scoped token cannot change access control"), std::string::npos)
+    EXPECT_NE(error.find("a scoped token cannot change access control"),
+              std::string::npos)
         << sql << " -> " << error;
   }
   for (const char* sql : {"SET GLOBAL threads = 2", "ATTACH ':memory:' AS planted"}) {
@@ -231,22 +245,28 @@ TEST_F(RbacScopedTokensFixture, ATokenCannotChangeAccessControl) {
 }
 
 TEST_F(RbacScopedTokensFixture, AChildTokenIsNarrowerAndDiesWithItsParent) {
-  const auto parent = Mint(*wes_, "CREATE SCOPED TOKEN parent ALLOW SELECT, INSERT ON CATALOG sales_db, hr_db");
+  const auto parent =
+      Mint(*wes_,
+           "CREATE SCOPED TOKEN parent ALLOW SELECT, INSERT ON CATALOG sales_db, hr_db");
   Client parent_agent(GetPort(), parent);
   // Wider than the parent: refused.
   for (const auto& [sql, why] : std::vector<std::pair<std::string, std::string>>{
            {"CREATE SCOPED TOKEN wider ALLOW SELECT, DELETE", "cannot allow DELETE"},
-           {"CREATE SCOPED TOKEN elsewhere ALLOW SELECT ON CATALOG other_db", "cannot reach catalog other_db"},
-           {"CREATE SCOPED TOKEN longer ALLOW SELECT VALID FOR '30 days'", "cannot outlast"},
+           {"CREATE SCOPED TOKEN elsewhere ALLOW SELECT ON CATALOG other_db",
+            "cannot reach catalog other_db"},
+           {"CREATE SCOPED TOKEN longer ALLOW SELECT VALID FOR '30 days'",
+            "cannot outlast"},
            {"CREATE SCOPED TOKEN other ALLOW SELECT FOR USER ula", "only for the user"},
        }) {
     const auto error = parent_agent.Error(sql);
     EXPECT_NE(error.find(why), std::string::npos) << sql << " -> " << error;
   }
-  const auto child = Mint(parent_agent, "CREATE SCOPED TOKEN child ALLOW SELECT ON CATALOG sales_db");
+  const auto child =
+      Mint(parent_agent, "CREATE SCOPED TOKEN child ALLOW SELECT ON CATALOG sales_db");
   Client child_agent(GetPort(), child);
   EXPECT_EQ(child_agent.Error("SELECT * FROM sales_db.main.orders"), "");
-  EXPECT_NE(child_agent.Error("SELECT * FROM hr_db.main.staff").find("only on catalog sales_db"),
+  EXPECT_NE(child_agent.Error("SELECT * FROM hr_db.main.staff")
+                .find("only on catalog sales_db"),
             std::string::npos);
   // Revoking the parent ends the child's sessions too, and new ones.
   ASSERT_EQ(wes_->Error("DROP SCOPED TOKEN parent"), "");
@@ -260,7 +280,8 @@ TEST_F(RbacScopedTokensFixture, AChildTokenIsNarrowerAndDiesWithItsParent) {
 }
 
 TEST_F(RbacScopedTokensFixture, ExpiryAndBookkeeping) {
-  const auto token = Mint(*wes_, "CREATE SCOPED TOKEN brief ALLOW SELECT VALID FOR '2 seconds'");
+  const auto token =
+      Mint(*wes_, "CREATE SCOPED TOKEN brief ALLOW SELECT VALID FOR '2 seconds'");
   Client agent(GetPort(), token);
   EXPECT_EQ(agent.Error("SELECT 1"), "");
   std::this_thread::sleep_for(std::chrono::seconds(4));
@@ -285,12 +306,18 @@ TEST_F(RbacScopedTokensFixture, ExpiryAndBookkeeping) {
   ASSERT_TRUE(all.ok());
   EXPECT_NE(all->get()->ToString().find("brief"), std::string::npos);
   // Mistakes.
-  for (const auto& [who, sql, why] : std::vector<std::tuple<Client*, std::string, std::string>>{
-           {wes_.get(), "CREATE SCOPED TOKEN brief ALLOW SELECT", "already has a scoped token named brief"},
-           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW SELECT VALID FOR '1 year'", "at most 30 days"},
-           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW SELECT VALID FOR 'soon'", "VALID FOR"},
-           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW CREATE TABLE", "SELECT, INSERT, UPDATE or DELETE"},
-           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW SELECT FOR USER ula", "only for yourself"},
+  for (const auto& [who, sql, why] :
+       std::vector<std::tuple<Client*, std::string, std::string>>{
+           {wes_.get(), "CREATE SCOPED TOKEN brief ALLOW SELECT",
+            "already has a scoped token named brief"},
+           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW SELECT VALID FOR '1 year'",
+            "at most 30 days"},
+           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW SELECT VALID FOR 'soon'",
+            "VALID FOR"},
+           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW CREATE TABLE",
+            "SELECT, INSERT, UPDATE or DELETE"},
+           {wes_.get(), "CREATE SCOPED TOKEN x ALLOW SELECT FOR USER ula",
+            "only for yourself"},
            {admin_.get(), "CREATE SCOPED TOKEN x ALLOW SELECT", "FOR USER"},
            {wes_.get(), "DROP SCOPED TOKEN no_such", "no scoped token named no_such"},
        }) {
@@ -334,10 +361,11 @@ TEST(RbacScopedTokenModel, ATokenStandsOnlyWhileEveryParentDoes) {
     return t;
   };
   auto snapshot = [&](std::vector<ScopedTokenRecord> tokens) {
-    return Snapshot(1, {UserRecord{"u1", "wes", std::nullopt, true, {}}}, {}, {}, {}, {}, {}, {}, {},
-                    {}, {}, {}, {}, {}, std::move(tokens));
+    return Snapshot(1, {UserRecord{"u1", "wes", std::nullopt, true, {}}}, {}, {}, {}, {},
+                    {}, {}, {}, {}, {}, {}, {}, {}, std::move(tokens));
   };
-  const auto whole = snapshot({token("parent", "", now + 100), token("child", "parent", now + 50)});
+  const auto whole =
+      snapshot({token("parent", "", now + 100), token("child", "parent", now + 50)});
   EXPECT_TRUE(whole.ValidScope("child", "u1", now).has_value());
   EXPECT_FALSE(whole.ValidScope("child", "someone-else", now).has_value());
   EXPECT_FALSE(whole.ValidScope("child", "u1", now + 60).has_value()) << "expired";
@@ -345,7 +373,8 @@ TEST(RbacScopedTokenModel, ATokenStandsOnlyWhileEveryParentDoes) {
   EXPECT_FALSE(orphan.ValidScope("child", "u1", now).has_value()) << "its parent is gone";
   const auto stale_parent =
       snapshot({token("parent", "", now - 1), token("child", "parent", now + 50)});
-  EXPECT_FALSE(stale_parent.ValidScope("child", "u1", now).has_value()) << "its parent expired";
+  EXPECT_FALSE(stale_parent.ValidScope("child", "u1", now).has_value())
+      << "its parent expired";
   // A loop of parents (never written by GizmoSQL) ends instead of spinning.
   const auto loop = snapshot({token("a", "b", now + 50), token("b", "a", now + 50)});
   EXPECT_FALSE(loop.ValidScope("a", "u1", now).has_value());

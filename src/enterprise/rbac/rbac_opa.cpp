@@ -27,8 +27,10 @@ PolicyService::PolicyService(std::string url, std::chrono::milliseconds timeout)
     : url_(std::move(url)), timeout_(timeout) {
   // httplib::Client wants scheme://host[:port]; the rest is the path.
   const auto scheme_end = url_.find("://");
-  const std::string after = scheme_end == std::string::npos ? url_ : url_.substr(scheme_end + 3);
-  const std::string scheme = scheme_end == std::string::npos ? "http" : url_.substr(0, scheme_end);
+  const std::string after =
+      scheme_end == std::string::npos ? url_ : url_.substr(scheme_end + 3);
+  const std::string scheme =
+      scheme_end == std::string::npos ? "http" : url_.substr(0, scheme_end);
   const auto slash = after.find('/');
   base_ = scheme + "://" + (slash == std::string::npos ? after : after.substr(0, slash));
   path_ = slash == std::string::npos ? "/" : after.substr(slash);
@@ -44,8 +46,10 @@ PolicyService::Decision PolicyService::Decide(const nlohmann::json& input) const
     const auto body = nlohmann::json{{"input", input}}.dump();
     auto res = client.Post(path_, body, "application/json");
     if (!res || res->status != 200) return Decision::kNoAnswer;
-    const auto reply = nlohmann::json::parse(res->body, nullptr, /*allow_exceptions=*/false);
-    if (!reply.is_object() || !reply.contains("result") || !reply["result"].is_boolean()) {
+    const auto reply =
+        nlohmann::json::parse(res->body, nullptr, /*allow_exceptions=*/false);
+    if (!reply.is_object() || !reply.contains("result") ||
+        !reply["result"].is_boolean()) {
       return Decision::kNoAnswer;
     }
     return reply["result"].get<bool>() ? Decision::kAllow : Decision::kDeny;

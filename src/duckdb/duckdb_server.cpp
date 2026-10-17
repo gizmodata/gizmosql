@@ -523,7 +523,8 @@ void FilterRowsByCatalogVisibility(const std::shared_ptr<ClientSession>& client_
   }
 #ifdef GIZMOSQL_ENTERPRISE
   if (client_session->catalog_access.empty() ||
-      (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable() &&
+      (!gizmosql::enterprise::EnterpriseFeatures::Instance()
+            .IsCatalogPermissionsAvailable() &&
        !gizmosql::enterprise::EnterpriseFeatures::Instance().IsRbacAvailable())) {
     return;
   }
@@ -1075,9 +1076,11 @@ class DuckDBFlightSqlServer::Impl {
 
   // Role-based access control (Enterprise); null when not configured.
   std::shared_ptr<enterprise::rbac::RbacEngine> rbac_engine_;
+#ifdef GIZMOSQL_ENTERPRISE
   // The access-control snapshot the sessions were last compared with.
   std::mutex rbac_seen_mutex_;
   std::shared_ptr<const enterprise::rbac::Snapshot> rbac_seen_snapshot_;
+#endif
 
   static std::optional<std::string> SessionValueToString(
       const flight::SessionOptionValue& v) {
@@ -1240,9 +1243,10 @@ class DuckDBFlightSqlServer::Impl {
 #ifdef GIZMOSQL_ENTERPRISE
     // A scoped token means nothing without access control to limit it.
     if (tl_request_ctx.scope_id && !rbac_engine_) {
-      return flight::MakeFlightError(flight::FlightStatusCode::Unauthenticated,
-                                     "GizmoSQL access control is not enabled on this server, so "
-                                     "scoped tokens are not accepted");
+      return flight::MakeFlightError(
+          flight::FlightStatusCode::Unauthenticated,
+          "GizmoSQL access control is not enabled on this server, so "
+          "scoped tokens are not accepted");
     }
     // Role-based access control: the administrator is the superuser; anyone
     // else must be a store user that exists and is enabled. Grants then come
@@ -1286,10 +1290,11 @@ class DuckDBFlightSqlServer::Impl {
           who.idp_issuer = new_session->rbac_idp_issuer;
           who.idp_groups = new_session->rbac_idp_groups;
           if (!new_session->rbac_scope_id.empty()) {
-            who.scope = snap->ValidScope(new_session->rbac_scope_id, who.user_id,
-                                         std::chrono::duration_cast<std::chrono::seconds>(
-                                             std::chrono::system_clock::now().time_since_epoch())
-                                             .count());
+            who.scope =
+                snap->ValidScope(new_session->rbac_scope_id, who.user_id,
+                                 std::chrono::duration_cast<std::chrono::seconds>(
+                                     std::chrono::system_clock::now().time_since_epoch())
+                                     .count());
           }
           auto input = enterprise::rbac::PolicyInput(*snap, who, "connect");
           input["peer"] = new_session->peer;
@@ -1297,13 +1302,14 @@ class DuckDBFlightSqlServer::Impl {
             case enterprise::rbac::PolicyService::Decision::kAllow:
               break;
             case enterprise::rbac::PolicyService::Decision::kDeny:
-              return flight::MakeFlightError(
-                  flight::FlightStatusCode::Unauthenticated,
-                  "GizmoSQL access control: the access policy service refused the session");
+              return flight::MakeFlightError(flight::FlightStatusCode::Unauthenticated,
+                                             "GizmoSQL access control: the access policy "
+                                             "service refused the session");
             case enterprise::rbac::PolicyService::Decision::kNoAnswer:
               return flight::MakeFlightError(
                   flight::FlightStatusCode::Unauthenticated,
-                  "GizmoSQL access control: GizmoSQL could not get an answer from the access "
+                  "GizmoSQL access control: GizmoSQL could not get an answer from the "
+                  "access "
                   "policy service, and refuses sessions until it can");
           }
         }
@@ -1312,11 +1318,13 @@ class DuckDBFlightSqlServer::Impl {
       if (!new_session->rbac_tenant_id.empty()) {
         // A tenant's user sees its tenant's catalogs and no others: the
         // catalog rules hide the rest everywhere (metadata included).
-        new_session->rbac_tenant_catalogs = TenantCatalogsKey(new_session->rbac_tenant_id);
+        new_session->rbac_tenant_catalogs =
+            TenantCatalogsKey(new_session->rbac_tenant_id);
         auto snap = rbac_engine_->snapshot();
         for (const auto& c : snap->catalog_tenants()) {
           if (c.tenant_id == new_session->rbac_tenant_id) {
-            new_session->catalog_access.push_back({c.catalog, CatalogAccessLevel::kWrite});
+            new_session->catalog_access.push_back(
+                {c.catalog, CatalogAccessLevel::kWrite});
           }
         }
         // A rule that matches nothing, so an empty list still denies.
@@ -1399,23 +1407,24 @@ class DuckDBFlightSqlServer::Impl {
                 "GizmoSQL access control: this scoped token was revoked or has expired");
           }
         }
-        enterprise::rbac::AttachRbacSession(*new_session->connection->Get().context, rbac_engine_,
-                                            std::move(principal));
+        enterprise::rbac::AttachRbacSession(*new_session->connection->Get().context,
+                                            rbac_engine_, std::move(principal));
         // A tenant's sessions start in the tenant's default catalog.
         if (!new_session->rbac_tenant_id.empty()) {
           const auto* tenant =
               rbac_engine_->snapshot()->FindTenantById(new_session->rbac_tenant_id);
           if (tenant && !tenant->default_catalog.empty()) {
             std::string quoted = "\"";
-            for (char ch : tenant->default_catalog) quoted += ch == '"' ? std::string("\"\"") : std::string(1, ch);
+            for (char ch : tenant->default_catalog)
+              quoted += ch == '"' ? std::string("\"\"") : std::string(1, ch);
             quoted += "\"";
             enterprise::rbac::RbacSessionState::BypassScope internal(
                 *new_session->connection->Get().context);
             auto used = new_session->connection->Get().Query("USE " + quoted);
             if (used->HasError()) {
-              GIZMOSQL_AUDIT_SESSION(WARNING, new_session,
-                                     "A tenant's default catalog could not be used",
-                                     {"kind", "access_control"}, {"error", used->GetError()});
+              GIZMOSQL_AUDIT_SESSION(
+                  WARNING, new_session, "A tenant's default catalog could not be used",
+                  {"kind", "access_control"}, {"error", used->GetError()});
             }
           }
         }
@@ -1584,7 +1593,9 @@ class DuckDBFlightSqlServer::Impl {
         rbac_seen_snapshot_ = rbac_engine_->snapshot();
       }
       rbac_engine_->SetSnapshotListener(
-          [this](const enterprise::rbac::Snapshot& snapshot) { EndStaleRbacSessions(snapshot); });
+          [this](const enterprise::rbac::Snapshot& snapshot) {
+            EndStaleRbacSessions(snapshot);
+          });
     }
 #endif
   }
@@ -1607,10 +1618,10 @@ class DuckDBFlightSqlServer::Impl {
     for (auto& [id, session] : client_sessions_) {
       if (!session || session->rbac_user_id.empty() || session->kill_requested) continue;
       const auto* user = snapshot.FindUserById(session->rbac_user_id);
-      const bool tenant_changed =
-          !session->rbac_tenant_id.empty() &&
-          (!snapshot.FindTenantById(session->rbac_tenant_id) ||
-           TenantCatalogsKey(snapshot, session->rbac_tenant_id) != session->rbac_tenant_catalogs);
+      const bool tenant_changed = !session->rbac_tenant_id.empty() &&
+                                  (!snapshot.FindTenantById(session->rbac_tenant_id) ||
+                                   TenantCatalogsKey(snapshot, session->rbac_tenant_id) !=
+                                       session->rbac_tenant_catalogs);
       const bool scope_gone =
           !session->rbac_scope_id.empty() &&
           !snapshot.ValidScope(session->rbac_scope_id, session->rbac_user_id,
@@ -1627,35 +1638,40 @@ class DuckDBFlightSqlServer::Impl {
         // The session's own principal: its SET ROLE role and token groups count.
         enterprise::rbac::Principal who{false, user->id, user->name, ""};
         if (session->connection) {
-          if (auto state = session->connection->Get().context->registered_state
-                               ->Get<enterprise::rbac::RbacSessionState>(
-                                   enterprise::rbac::kRbacSessionStateName)) {
+          if (auto state =
+                  session->connection->Get()
+                      .context->registered_state->Get<enterprise::rbac::RbacSessionState>(
+                          enterprise::rbac::kRbacSessionStateName)) {
             who = state->principal();
           }
         }
         if (snapshot.LostRightsSince(*previous, who) && session->connection) {
           session->connection->Get().Interrupt();
-          GIZMOSQL_AUDIT_SESSION(INFO, session,
-                                 "Stopped any running statement after a user lost access",
-                                 {"kind", "access_control"}, {"reason", "rights revoked"});
+          GIZMOSQL_AUDIT_SESSION(
+              INFO, session, "Stopped any running statement after a user lost access",
+              {"kind", "access_control"}, {"reason", "rights revoked"});
         }
         continue;
       }
       session->kill_requested = true;
       if (session->connection) session->connection->Get().Interrupt();
-      GIZMOSQL_AUDIT_SESSION(INFO, session, "Ended a session after an access-control change",
+      GIZMOSQL_AUDIT_SESSION(INFO, session,
+                             "Ended a session after an access-control change",
                              {"kind", "access_control"},
-                             {"reason", !user ? "user dropped"
+                             {"reason", !user            ? "user dropped"
                                         : !user->enabled ? "user disabled"
                                         : tenant_changed ? "tenant's catalogs changed"
-                                        : scope_gone     ? "scoped token revoked or expired"
-                                                         : "password changed"});
+                                        : scope_gone ? "scoped token revoked or expired"
+                                                     : "password changed"});
     }
   }
 #endif
-  std::shared_ptr<enterprise::rbac::RbacEngine> GetRbacEngine() const { return rbac_engine_; }
+  std::shared_ptr<enterprise::rbac::RbacEngine> GetRbacEngine() const {
+    return rbac_engine_;
+  }
   DuckDBFlightSqlServer::ScopedTokenMinter scoped_token_minter_;
 
+#ifdef GIZMOSQL_ENTERPRISE
   // The catalogs a tenant may see, as one comparable string.
   static std::string TenantCatalogsKey(const enterprise::rbac::Snapshot& snapshot,
                                        const std::string& tenant_id) {
@@ -1666,16 +1682,19 @@ class DuckDBFlightSqlServer::Impl {
   std::string TenantCatalogsKey(const std::string& tenant_id) const {
     return TenantCatalogsKey(*rbac_engine_->snapshot(), tenant_id);
   }
+#endif
 
   // Flag every session of an access-control user for termination and interrupt
   // its running statement; the next request on it is refused.
   void SetScopedTokenMinter(DuckDBFlightSqlServer::ScopedTokenMinter minter) {
     scoped_token_minter_ = std::move(minter);
   }
-  arrow::Result<std::string> MintScopedToken(const std::string& user, const std::string& scope_id,
+  arrow::Result<std::string> MintScopedToken(const std::string& user,
+                                             const std::string& scope_id,
                                              int64_t expires_at) {
     if (!scoped_token_minter_) {
-      return Status::Invalid("GizmoSQL access control: this server cannot sign scoped tokens");
+      return Status::Invalid(
+          "GizmoSQL access control: this server cannot sign scoped tokens");
     }
     return scoped_token_minter_(user, scope_id, expires_at, instance_id_);
   }
@@ -3372,11 +3391,13 @@ void DuckDBFlightSqlServer::SetRejectUnknownSessions(bool reject) {
   impl_->SetRejectUnknownSessions(reject);
 }
 
-void DuckDBFlightSqlServer::SetRbacEngine(std::shared_ptr<enterprise::rbac::RbacEngine> engine) {
+void DuckDBFlightSqlServer::SetRbacEngine(
+    std::shared_ptr<enterprise::rbac::RbacEngine> engine) {
   impl_->SetRbacEngine(std::move(engine));
 }
 
-std::shared_ptr<enterprise::rbac::RbacEngine> DuckDBFlightSqlServer::GetRbacEngine() const {
+std::shared_ptr<enterprise::rbac::RbacEngine> DuckDBFlightSqlServer::GetRbacEngine()
+    const {
   return impl_->GetRbacEngine();
 }
 
@@ -3384,9 +3405,8 @@ void DuckDBFlightSqlServer::SetScopedTokenMinter(ScopedTokenMinter minter) {
   impl_->SetScopedTokenMinter(std::move(minter));
 }
 
-arrow::Result<std::string> DuckDBFlightSqlServer::MintScopedToken(const std::string& user,
-                                                                  const std::string& scope_id,
-                                                                  int64_t expires_at) {
+arrow::Result<std::string> DuckDBFlightSqlServer::MintScopedToken(
+    const std::string& user, const std::string& scope_id, int64_t expires_at) {
   return impl_->MintScopedToken(user, scope_id, expires_at);
 }
 

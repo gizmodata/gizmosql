@@ -119,7 +119,8 @@ bool Mentions(const gizmosql::AuditChainReport& r, const std::string& what) {
   return Problems(r).find(what) != std::string::npos;
 }
 
-class RbacAuditChainFixture : public gizmosql::testing::ServerTestFixture<RbacAuditChainFixture> {
+class RbacAuditChainFixture
+    : public gizmosql::testing::ServerTestFixture<RbacAuditChainFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -139,7 +140,9 @@ class RbacAuditChainFixture : public gizmosql::testing::ServerTestFixture<RbacAu
       GTEST_SKIP() << "license does not include RBAC";
     }
     ASSERT_TRUE(IsServerReady());
-    log_path_ = (std::filesystem::temp_directory_path() / "gizmosql_rbac_audit_chain_test.log").string();
+    log_path_ =
+        (std::filesystem::temp_directory_path() / "gizmosql_rbac_audit_chain_test.log")
+            .string();
     std::filesystem::remove(log_path_);
     // The harness does not install GizmoSQL's logger; write JSON to a file, as
     // a server run with --log-format json --log-file does.
@@ -169,19 +172,20 @@ class RbacAuditChainFixture : public gizmosql::testing::ServerTestFixture<RbacAu
     static bool seeded = false;
     if (!seeded) {
       for (const char* sql : {"CREATE TABLE ledger AS SELECT 1 AS id, 'x' AS v",
-                              "CREATE TABLE vault AS SELECT 1 AS id", "CREATE ROLE clerks",
-                              "GRANT SELECT ON ledger TO clerks", "CREATE USER cleo",
-                              "GRANT clerks TO cleo"}) {
+                              "CREATE TABLE vault AS SELECT 1 AS id",
+                              "CREATE ROLE clerks", "GRANT SELECT ON ledger TO clerks",
+                              "CREATE USER cleo", "GRANT clerks TO cleo"}) {
         auto st = admin.Run(sql);
         EXPECT_TRUE(st.ok()) << sql << " -> " << st.ToString();
       }
       seeded = true;
     }
     Client cleo(GetPort(), "cleo", "user", 2);
-    EXPECT_TRUE(cleo.Run("SELECT * FROM ledger").ok());           // allowed
-    EXPECT_FALSE(cleo.Run("SELECT * FROM vault").ok());           // denied
+    EXPECT_TRUE(cleo.Run("SELECT * FROM ledger").ok());              // allowed
+    EXPECT_FALSE(cleo.Run("SELECT * FROM vault").ok());              // denied
     EXPECT_FALSE(cleo.Run("GRANT SELECT ON vault TO clerks").ok());  // refused statement
-    EXPECT_TRUE(admin.Run("GRANT SELECT ON vault TO clerks").ok());  // access-control statement
+    EXPECT_TRUE(
+        admin.Run("GRANT SELECT ON vault TO clerks").ok());  // access-control statement
     EXPECT_TRUE(admin.Run("REVOKE SELECT ON vault FROM clerks").ok());
     return Log();
   }
@@ -197,9 +201,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacAuditChainFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacAuditChainFixture>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacAuditChainFixture>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacAuditChainFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacAuditChainFixture>::config_{};
 
 TEST_F(RbacAuditChainFixture, TheServersOwnLogVerifies) {
   const auto log = WriteSomeRecords();
@@ -208,9 +214,9 @@ TEST_F(RbacAuditChainFixture, TheServersOwnLogVerifies) {
   EXPECT_GE(report.records, 6);
   ASSERT_EQ(report.chains.size(), 1u);
   // Each kind of record is in the chain.
-  for (const char* what : {"\"status\":\"allowed\"", "\"status\":\"denied\"",
-                           "\"status\":\"rejected\"", "\"status\":\"success\"",
-                           "Access-control audit chain started"}) {
+  for (const char* what :
+       {"\"status\":\"allowed\"", "\"status\":\"denied\"", "\"status\":\"rejected\"",
+        "\"status\":\"success\"", "Access-control audit chain started"}) {
     bool chained = false;
     for (const auto& line : Lines(log)) {
       chained = chained || (line.find(what) != std::string::npos &&
@@ -297,7 +303,8 @@ TEST_F(RbacAuditChainFixture, AChainWithoutTheKeyIsNotAcceptedForOne) {
   auto unkeyed_start = log.rfind("Access-control audit chain started");
   ASSERT_NE(unkeyed_start, std::string::npos);
   const auto line_start = log.rfind('\n', unkeyed_start);
-  const std::string unkeyed = log.substr(line_start == std::string::npos ? 0 : line_start + 1);
+  const std::string unkeyed =
+      log.substr(line_start == std::string::npos ? 0 : line_start + 1);
   EXPECT_TRUE(Verify(unkeyed, "").ok()) << Problems(Verify(unkeyed, ""));
   auto r = Verify(unkeyed, kKey);
   EXPECT_TRUE(Mentions(r, "not sealed with the key")) << Problems(r);
@@ -317,8 +324,8 @@ TEST_F(RbacAuditChainFixture, ConcurrentWritersKeepOneChain) {
   for (int t = 0; t < 8; ++t) {
     threads.emplace_back([t] {
       for (int i = 0; i < 200; ++i) {
-        gizmosql::LogAuditRecord(arrow::util::ArrowLogLevel::ARROW_INFO, __FILE__, __LINE__,
-                                 "Concurrent audit record",
+        gizmosql::LogAuditRecord(arrow::util::ArrowLogLevel::ARROW_INFO, __FILE__,
+                                 __LINE__, "Concurrent audit record",
                                  {{"kind", "access_control"},
                                   {"writer", std::to_string(t)},
                                   {"n", std::to_string(i)}});

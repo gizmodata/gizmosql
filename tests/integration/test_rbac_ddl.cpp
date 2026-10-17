@@ -47,24 +47,25 @@ std::string ParseError(const std::string& sql) {
 // ---------------------------------------------------------------------------
 
 TEST(RbacDdl, RecognizesAccessControlStatements) {
-  for (const char* sql : {"GRANT SELECT ON t TO r", "grant r to u", "REVOKE r FROM u",
-                          "CREATE USER joe", "create role analyst", "DROP USER joe",
-                          "DROP ROLE IF EXISTS r", "ALTER USER joe DISABLE",
-                          "ALTER VIEW v OWNER TO r", "ALTER TABLE a.b.c OWNER TO r",
-                          "SHOW GRANTS", "show grants for joe",
-                          "/* hi */ -- there\n  GRANT r TO u",
-                          "/* nested /* comment */ still */ GRANT r TO u"}) {
+  for (const char* sql :
+       {"GRANT SELECT ON t TO r", "grant r to u", "REVOKE r FROM u", "CREATE USER joe",
+        "create role analyst", "DROP USER joe", "DROP ROLE IF EXISTS r",
+        "ALTER USER joe DISABLE", "ALTER VIEW v OWNER TO r",
+        "ALTER TABLE a.b.c OWNER TO r", "SHOW GRANTS", "show grants for joe",
+        "/* hi */ -- there\n  GRANT r TO u",
+        "/* nested /* comment */ still */ GRANT r TO u"}) {
     EXPECT_TRUE(LooksLikeRbacStatement(sql)) << sql;
   }
 }
 
 TEST(RbacDdl, LeavesEngineStatementsToDuckDB) {
-  for (const char* sql : {"SELECT 1", "CREATE TABLE users (id INT)", "DROP TABLE roles",
-                          "CREATE VIEW grants AS SELECT 1", "ALTER TABLE t ADD COLUMN x INT",
-                          "ALTER TABLE owner RENAME TO x", "ALTER VIEW v RENAME TO w",
-                          "SHOW TABLES", "SHOW users", "DESCRIBE grants", "",
-                          "-- GRANT r TO u\nSELECT 1", "/* GRANT r TO u */ SELECT 1",
-                          "SELECT 'GRANT r TO u'", "CREATE USERS_TABLE AS SELECT 1"}) {
+  for (const char* sql :
+       {"SELECT 1", "CREATE TABLE users (id INT)", "DROP TABLE roles",
+        "CREATE VIEW grants AS SELECT 1", "ALTER TABLE t ADD COLUMN x INT",
+        "ALTER TABLE owner RENAME TO x", "ALTER VIEW v RENAME TO w", "SHOW TABLES",
+        "SHOW users", "DESCRIBE grants", "", "-- GRANT r TO u\nSELECT 1",
+        "/* GRANT r TO u */ SELECT 1", "SELECT 'GRANT r TO u'",
+        "CREATE USERS_TABLE AS SELECT 1"}) {
     EXPECT_FALSE(LooksLikeRbacStatement(sql)) << sql;
   }
 }
@@ -80,7 +81,8 @@ TEST(RbacDdl, CreateUser) {
   EXPECT_EQ(*cmd.password, "it's secret");
   EXPECT_FALSE(cmd.if_not_exists);
 
-  auto token_only = ParseAs<CreateUserCommand>("CREATE USER IF NOT EXISTS \"Joe Smith\";");
+  auto token_only =
+      ParseAs<CreateUserCommand>("CREATE USER IF NOT EXISTS \"Joe Smith\";");
   EXPECT_EQ(token_only.name, "Joe Smith");
   EXPECT_FALSE(token_only.password.has_value());
   EXPECT_TRUE(token_only.if_not_exists);
@@ -104,11 +106,13 @@ TEST(RbacDdl, AlterUser) {
 TEST(RbacDdl, DropAndRoleStatements) {
   EXPECT_TRUE(ParseAs<DropUserCommand>("DROP USER IF EXISTS joe").if_exists);
   EXPECT_EQ(ParseAs<DropRoleCommand>("DROP ROLE analyst").name, "analyst");
-  EXPECT_TRUE(ParseAs<CreateRoleCommand>("CREATE ROLE IF NOT EXISTS analyst").if_not_exists);
+  EXPECT_TRUE(
+      ParseAs<CreateRoleCommand>("CREATE ROLE IF NOT EXISTS analyst").if_not_exists);
 }
 
 TEST(RbacDdl, RoleMembership) {
-  auto cmd = ParseAs<RoleMembershipCommand>("GRANT analyst, reader TO USER joe, ROLE lead");
+  auto cmd =
+      ParseAs<RoleMembershipCommand>("GRANT analyst, reader TO USER joe, ROLE lead");
   EXPECT_TRUE(cmd.grant);
   ASSERT_EQ(cmd.roles.size(), 2u);
   EXPECT_EQ(cmd.roles[1], "reader");
@@ -121,8 +125,10 @@ TEST(RbacDdl, RoleMembership) {
   EXPECT_FALSE(revoke.grant);
   EXPECT_EQ(revoke.grantees[0].kind, GranteeKind::kUnspecified);
 
-  EXPECT_TRUE(ParseAs<RoleMembershipCommand>("GRANT a TO b WITH ADMIN OPTION").with_admin_option);
-  EXPECT_TRUE(ParseAs<RoleMembershipCommand>("REVOKE ADMIN OPTION FOR a FROM b").with_admin_option);
+  EXPECT_TRUE(
+      ParseAs<RoleMembershipCommand>("GRANT a TO b WITH ADMIN OPTION").with_admin_option);
+  EXPECT_TRUE(ParseAs<RoleMembershipCommand>("REVOKE ADMIN OPTION FOR a FROM b")
+                  .with_admin_option);
 }
 
 TEST(RbacDdl, PrincipalsNamedLikeKeywords) {
@@ -167,32 +173,38 @@ TEST(RbacDdl, ObjectNamedTable) {
 }
 
 TEST(RbacDdl, SchemaAndCatalogScopes) {
-  auto schema = ParseAs<ObjectPrivilegeCommand>("GRANT ALL PRIVILEGES ON SCHEMA lake.staging TO loader");
+  auto schema = ParseAs<ObjectPrivilegeCommand>(
+      "GRANT ALL PRIVILEGES ON SCHEMA lake.staging TO loader");
   EXPECT_EQ(schema.scope, GrantScope::kSchema);
   EXPECT_EQ(schema.privileges[0].privilege, Privilege::kAll);
   ASSERT_EQ(schema.target.parts.size(), 2u);
 
-  auto catalog = ParseAs<ObjectPrivilegeCommand>("GRANT CREATE SCHEMA, SELECT ON CATALOG lake TO r");
+  auto catalog =
+      ParseAs<ObjectPrivilegeCommand>("GRANT CREATE SCHEMA, SELECT ON CATALOG lake TO r");
   EXPECT_EQ(catalog.scope, GrantScope::kCatalog);
   EXPECT_EQ(catalog.privileges[0].privilege, Privilege::kCreateSchema);
 
-  auto ddl = ParseAs<ObjectPrivilegeCommand>("GRANT CREATE TABLE, DROP VIEW ON SCHEMA s TO r");
+  auto ddl =
+      ParseAs<ObjectPrivilegeCommand>("GRANT CREATE TABLE, DROP VIEW ON SCHEMA s TO r");
   EXPECT_EQ(ddl.privileges[0].privilege, Privilege::kCreateTable);
   EXPECT_EQ(ddl.privileges[1].privilege, Privilege::kDropView);
 }
 
 TEST(RbacDdl, RevokeForms) {
-  auto revoke = ParseAs<ObjectPrivilegeCommand>("REVOKE SELECT (email) ON users FROM r RESTRICT");
+  auto revoke =
+      ParseAs<ObjectPrivilegeCommand>("REVOKE SELECT (email) ON users FROM r RESTRICT");
   EXPECT_FALSE(revoke.grant);
   EXPECT_FALSE(revoke.cascade);
-  auto option = ParseAs<ObjectPrivilegeCommand>("REVOKE GRANT OPTION FOR SELECT ON t FROM r");
+  auto option =
+      ParseAs<ObjectPrivilegeCommand>("REVOKE GRANT OPTION FOR SELECT ON t FROM r");
   EXPECT_TRUE(option.with_grant_option);
   EXPECT_TRUE(ParseAs<ObjectPrivilegeCommand>("GRANT SELECT ON t TO r WITH GRANT OPTION")
                   .with_grant_option);
 }
 
 TEST(RbacDdl, AlterOwnerAndShowGrants) {
-  auto owner = ParseAs<AlterOwnerCommand>("ALTER VIEW published.daily OWNER TO ROLE data_eng");
+  auto owner =
+      ParseAs<AlterOwnerCommand>("ALTER VIEW published.daily OWNER TO ROLE data_eng");
   EXPECT_TRUE(owner.is_view);
   EXPECT_EQ(owner.new_owner.kind, GranteeKind::kRole);
   EXPECT_FALSE(ParseAs<ShowGrantsCommand>("SHOW GRANTS").principal.has_value());
@@ -206,9 +218,10 @@ TEST(RbacDdl, AlterOwnerAndShowGrants) {
 // ---------------------------------------------------------------------------
 
 TEST(RbacDdl, SecondStatementIsRejected) {
-  for (const char* sql : {"GRANT r TO u; DROP TABLE t", "GRANT r TO u;;",
-                          "CREATE ROLE a; CREATE ROLE b", "GRANT SELECT ON t TO r; SELECT 1",
-                          "SHOW GRANTS; ATTACH 'x.db'", "GRANT r TO u /* ok */ ; -- c\n x"}) {
+  for (const char* sql :
+       {"GRANT r TO u; DROP TABLE t", "GRANT r TO u;;", "CREATE ROLE a; CREATE ROLE b",
+        "GRANT SELECT ON t TO r; SELECT 1", "SHOW GRANTS; ATTACH 'x.db'",
+        "GRANT r TO u /* ok */ ; -- c\n x"}) {
     const std::string error = ParseError(sql);
     EXPECT_NE(error.find("one at a time"), std::string::npos) << sql << " -> " << error;
   }
@@ -222,21 +235,24 @@ TEST(RbacDdl, MalformedInputIsAClearError) {
   EXPECT_NE(ParseError("GRANT SELECT t TO r").find("expected ON"), std::string::npos);
   EXPECT_NE(ParseError("CREATE USER joe PASSWORD unquoted").find("quoted string"),
             std::string::npos);
-  EXPECT_NE(ParseError("CREATE USER 'joe'").find("expected a user name"), std::string::npos);
+  EXPECT_NE(ParseError("CREATE USER 'joe'").find("expected a user name"),
+            std::string::npos);
   EXPECT_NE(ParseError("CREATE USER joe PASSWORD 'x").find("unterminated string"),
             std::string::npos);
   EXPECT_NE(ParseError("GRANT r TO \"u").find("unterminated quoted identifier"),
             std::string::npos);
   EXPECT_NE(ParseError("GRANT r TO u /* never closed").find("unterminated comment"),
             std::string::npos);
-  EXPECT_NE(ParseError("GRANT r TO \"\"").find("empty quoted identifier"), std::string::npos);
+  EXPECT_NE(ParseError("GRANT r TO \"\"").find("empty quoted identifier"),
+            std::string::npos);
   EXPECT_NE(ParseError("GRANT INSERT (a) ON t TO r").find("only supported for SELECT"),
             std::string::npos);
   EXPECT_NE(ParseError("GRANT CREATE TABLE ON t TO r").find("ON SCHEMA or ON CATALOG"),
             std::string::npos);
   EXPECT_NE(ParseError("GRANT CREATE SCHEMA ON SCHEMA s TO r").find("ON CATALOG"),
             std::string::npos);
-  EXPECT_NE(ParseError("GRANT analyst ON t TO r").find("is not a privilege"), std::string::npos);
+  EXPECT_NE(ParseError("GRANT analyst ON t TO r").find("is not a privilege"),
+            std::string::npos);
   EXPECT_NE(ParseError("ALTER TABLE t RENAME TO x").find("OWNER TO"), std::string::npos);
   // Characters outside the grammar (e.g. $-quoting, backslashes) are refused,
   // never skipped.
@@ -268,5 +284,6 @@ TEST(RbacDdl, KeywordsAreCaseInsensitiveButQuotedKeywordsAreNames) {
 TEST(RbacDdl, CommandKinds) {
   EXPECT_EQ(CommandKind(*ParseRbacStatement("GRANT SELECT ON t TO r")), "GRANT");
   EXPECT_EQ(CommandKind(*ParseRbacStatement("REVOKE r FROM u")), "REVOKE");
-  EXPECT_EQ(CommandKind(*ParseRbacStatement("ALTER VIEW v OWNER TO r")), "ALTER VIEW OWNER");
+  EXPECT_EQ(CommandKind(*ParseRbacStatement("ALTER VIEW v OWNER TO r")),
+            "ALTER VIEW OWNER");
 }

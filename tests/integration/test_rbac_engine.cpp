@@ -32,8 +32,8 @@ class FakeResolver : public ObjectResolver {
     Add("lake", {"main"}, "daily", ObjectType::kView, {"day", "total"});
     Add("lake", {"finance", "reports"}, "q3", ObjectType::kTable, {"x"});
   }
-  void Add(const std::string& cat, std::vector<std::string> schema, const std::string& name,
-           ObjectType type, std::vector<std::string> cols) {
+  void Add(const std::string& cat, std::vector<std::string> schema,
+           const std::string& name, ObjectType type, std::vector<std::string> cols) {
     objects_.push_back({{cat, std::move(schema), name}, type, std::move(cols)});
   }
   arrow::Result<ResolvedObject> ResolveObject(const QualifiedName& n) override {
@@ -49,7 +49,9 @@ class FakeResolver : public ObjectResolver {
     p.schema_path.assign(n.parts.begin() + (n.parts.size() > 1 ? 1 : 0), n.parts.end());
     return p;
   }
-  arrow::Result<std::string> ResolveCatalog(const std::string& name) override { return name; }
+  arrow::Result<std::string> ResolveCatalog(const std::string& name) override {
+    return name;
+  }
 
  private:
   std::vector<ResolvedObject> objects_;
@@ -76,7 +78,8 @@ class RbacEngineTest : public ::testing::Test {
     return result.ok() ? *result : CommandResult{};
   }
   // Run SQL and return the error message ("" if it succeeded).
-  std::string Error(const std::string& sql, const Principal& who = Principal::Superuser("admin")) {
+  std::string Error(const std::string& sql,
+                    const Principal& who = Principal::Superuser("admin")) {
     auto parsed = ParseRbacStatement(sql);
     if (!parsed.ok()) return parsed.status().message();
     auto result = engine_->Execute(*parsed, who, resolver_);
@@ -104,14 +107,16 @@ class RbacEngineTest : public ::testing::Test {
 TEST_F(RbacEngineTest, UsersAndRolesShareOneNamespace) {
   Admin("CREATE USER joe WITH PASSWORD 'pw1'");
   Admin("CREATE ROLE analyst");
-  EXPECT_NE(Error("CREATE ROLE JOE").find("a user named JOE already exists"), std::string::npos);
+  EXPECT_NE(Error("CREATE ROLE JOE").find("a user named JOE already exists"),
+            std::string::npos);
   EXPECT_NE(Error("CREATE USER Analyst").find("a role named Analyst already exists"),
             std::string::npos);
   EXPECT_NE(Error("CREATE ROLE public").find("reserved"), std::string::npos);
   EXPECT_NE(Error("DROP ROLE PUBLIC").find("built-in"), std::string::npos);
   // IF NOT EXISTS is a no-op, not an error.
   EXPECT_EQ(Admin("CREATE USER IF NOT EXISTS joe").rows[0][0], "User joe already exists");
-  EXPECT_EQ(Error("DROP USER nobody"), "GizmoSQL access control: user nobody does not exist");
+  EXPECT_EQ(Error("DROP USER nobody"),
+            "GizmoSQL access control: user nobody does not exist");
   EXPECT_EQ(Error("DROP USER IF EXISTS nobody"), "");
 }
 
@@ -148,7 +153,8 @@ TEST_F(RbacEngineTest, PrivilegesGoToRolesNotUsers) {
   Admin("CREATE USER joe");
   EXPECT_NE(Error("GRANT SELECT ON orders TO joe").find("granted to roles, not users"),
             std::string::npos);
-  EXPECT_NE(Error("GRANT SELECT ON orders TO nobody").find("does not exist"), std::string::npos);
+  EXPECT_NE(Error("GRANT SELECT ON orders TO nobody").find("does not exist"),
+            std::string::npos);
   EXPECT_NE(Error("GRANT SELECT ON missing_table TO PUBLIC").find("does not exist"),
             std::string::npos);
 }
@@ -192,7 +198,8 @@ TEST_F(RbacEngineTest, ColumnGrants) {
   Admin("GRANT SELECT (id) ON users TO r");
   EXPECT_TRUE(Can(joe, Privilege::kSelect, "users", {"email", "id"}));
   // A column that does not exist is refused at GRANT time.
-  EXPECT_NE(Error("GRANT SELECT (password) ON users TO r").find("column password does not exist"),
+  EXPECT_NE(Error("GRANT SELECT (password) ON users TO r")
+                .find("column password does not exist"),
             std::string::npos);
   // Revoking one column from a whole-table grant keeps the others.
   Admin("GRANT SELECT ON orders TO r");
@@ -208,7 +215,8 @@ TEST_F(RbacEngineTest, OwnersHoldEveryPrivilegeOnTheirObject) {
   Admin("GRANT eng TO ann");
   auto joe = User("joe");
   auto ann = User("ann");
-  ASSERT_TRUE(engine_->RecordOwner({"lake", {"main"}, "orders"}, ObjectType::kTable, joe).ok());
+  ASSERT_TRUE(
+      engine_->RecordOwner({"lake", {"main"}, "orders"}, ObjectType::kTable, joe).ok());
   EXPECT_TRUE(Can(joe, Privilege::kDelete, "orders"));
   EXPECT_FALSE(Can(ann, Privilege::kSelect, "orders"));
   // Ownership by a role reaches its members; the old owner loses it.
@@ -216,7 +224,8 @@ TEST_F(RbacEngineTest, OwnersHoldEveryPrivilegeOnTheirObject) {
   EXPECT_TRUE(Can(ann, Privilege::kSelect, "orders"));
   EXPECT_FALSE(Can(joe, Privilege::kSelect, "orders"));
   EXPECT_NE(Error("DROP ROLE eng").find("owns"), std::string::npos);
-  EXPECT_NE(Error("ALTER VIEW orders OWNER TO joe").find("is a table"), std::string::npos);
+  EXPECT_NE(Error("ALTER VIEW orders OWNER TO joe").find("is a table"),
+            std::string::npos);
 }
 
 TEST_F(RbacEngineTest, DisabledAndDroppedUsersLoseEverything) {
@@ -240,12 +249,16 @@ TEST_F(RbacEngineTest, DisabledAndDroppedUsersLoseEverything) {
 TEST_F(RbacEngineTest, PasswordLoginFailuresLookAlike) {
   Admin("CREATE USER joe WITH PASSWORD 'correct horse'");
   Admin("CREATE USER token_only");
-  auto ok = engine_->AuthenticatePassword("JOE", "correct horse");  // names are case-insensitive
+  auto ok = engine_->AuthenticatePassword("JOE",
+                                          "correct horse");  // names are case-insensitive
   ASSERT_TRUE(ok.ok());
   EXPECT_EQ(ok->user_name, "joe");
-  const std::string wrong = engine_->AuthenticatePassword("joe", "Correct horse").status().message();
-  const std::string unknown = engine_->AuthenticatePassword("nobody", "x").status().message();
-  const std::string no_password = engine_->AuthenticatePassword("token_only", "").status().message();
+  const std::string wrong =
+      engine_->AuthenticatePassword("joe", "Correct horse").status().message();
+  const std::string unknown =
+      engine_->AuthenticatePassword("nobody", "x").status().message();
+  const std::string no_password =
+      engine_->AuthenticatePassword("token_only", "").status().message();
   EXPECT_EQ(wrong, "GizmoSQL access control: invalid user name or password");
   EXPECT_EQ(unknown, wrong);
   EXPECT_EQ(no_password, wrong);
@@ -269,12 +282,15 @@ TEST_F(RbacEngineTest, OnlyAdministratorsChangeAccessControl) {
   for (const auto& [sql, why] : std::vector<std::pair<std::string, std::string>>{
            {"CREATE ROLE sneaky", "only administrators manage users and roles"},
            {"DROP USER joe", "only administrators manage users and roles"},
-           {"ALTER USER joe WITH PASSWORD 'x'", "only administrators manage users and roles"},
+           {"ALTER USER joe WITH PASSWORD 'x'",
+            "only administrators manage users and roles"},
            {"GRANT analyst TO joe", "may not grant or revoke role analyst"},
            {"REVOKE analyst FROM joe", "may not grant or revoke role analyst"},
-           {"GRANT SELECT ON orders TO analyst", "may not grant SELECT on lake.main.orders"},
+           {"GRANT SELECT ON orders TO analyst",
+            "may not grant SELECT on lake.main.orders"},
            {"ALTER TABLE orders OWNER TO joe", "may not change the owner"}}) {
-    EXPECT_NE(Error(sql, joe).find(why), std::string::npos) << sql << " -> " << Error(sql, joe);
+    EXPECT_NE(Error(sql, joe).find(why), std::string::npos)
+        << sql << " -> " << Error(sql, joe);
   }
   // ... and none of them changed anything.
   EXPECT_FALSE(engine_->snapshot()->FindRoleByName("sneaky"));
@@ -293,13 +309,15 @@ TEST_F(RbacEngineTest, ShowGrants) {
   ASSERT_TRUE(mine.ok());
   bool saw_column_grant = false;
   for (const auto& row : mine->rows) {
-    if (row[0] == "SELECT" && row[2] == "lake.main.users" && row[3] == "email") saw_column_grant = true;
+    if (row[0] == "SELECT" && row[2] == "lake.main.users" && row[3] == "email")
+      saw_column_grant = true;
   }
   EXPECT_TRUE(saw_column_grant);
   // A user may look at their own grants and roles they hold, nobody else's.
   EXPECT_EQ(Error("SHOW GRANTS FOR ROLE analyst", joe), "");
-  EXPECT_NE(Error("SHOW GRANTS FOR USER ann", joe).find("blocked SHOW GRANTS for another user"),
-            std::string::npos);
+  EXPECT_NE(
+      Error("SHOW GRANTS FOR USER ann", joe).find("blocked SHOW GRANTS for another user"),
+      std::string::npos);
   Admin("CREATE ROLE secret_role");
   EXPECT_NE(Error("SHOW GRANTS FOR secret_role", joe).find("which you do not hold"),
             std::string::npos);

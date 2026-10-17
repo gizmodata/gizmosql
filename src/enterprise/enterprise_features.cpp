@@ -86,7 +86,8 @@ bool EnterpriseFeatures::IsMetricsAvailable() const {
 }
 
 bool EnterpriseFeatures::IsRbacAvailable() const {
-  return IsFeatureAvailable(kFeatureRbac) || IsFeatureAvailable(kFeatureCatalogPermissions);
+  return IsFeatureAvailable(kFeatureRbac) ||
+         IsFeatureAvailable(kFeatureCatalogPermissions);
 }
 
 std::string EnterpriseFeatures::GetCopyrightBanner() const {

@@ -51,7 +51,8 @@ TEST(RbacBackstop, UncheckedPlansAreRefusedForStoreUsers) {
     duckdb::vector<duckdb::Value> no_params;
     auto run = prepared->Execute(no_params);
     ASSERT_TRUE(run->HasError()) << "a prepared statement ran unchecked";
-    EXPECT_NE(run->GetError().find("could not be checked"), std::string::npos) << run->GetError();
+    EXPECT_NE(run->GetError().find("could not be checked"), std::string::npos)
+        << run->GetError();
   }
 }
 

@@ -59,19 +59,21 @@ constexpr const char* kIssuer = "https://idp.example.test";
 // A GizmoSQL session token, with the "idp" claim GizmoSQL copies from a
 // login token that lists groups.
 std::string MintToken(const std::string& username, const std::string& role,
-                      const std::string& session_id, const std::vector<std::string>& groups,
-                      const std::string& issuer) {
-  auto builder = jwt::create()
-                     .set_issuer("gizmosql")
-                     .set_type("JWT")
-                     .set_id("rbac-groups-" + session_id)
-                     .set_issued_at(std::chrono::system_clock::now())
-                     .set_expires_at(std::chrono::system_clock::now() + std::chrono::seconds{3600})
-                     .set_payload_claim("sub", jwt::claim(username))
-                     .set_payload_claim("role", jwt::claim(role))
-                     .set_payload_claim("auth_method", jwt::claim(std::string("BootstrapToken")))
-                     .set_payload_claim("instance_id", jwt::claim(std::string("rbac-groups-instance")))
-                     .set_payload_claim("session_id", jwt::claim(session_id));
+                      const std::string& session_id,
+                      const std::vector<std::string>& groups, const std::string& issuer) {
+  auto builder =
+      jwt::create()
+          .set_issuer("gizmosql")
+          .set_type("JWT")
+          .set_id("rbac-groups-" + session_id)
+          .set_issued_at(std::chrono::system_clock::now())
+          .set_expires_at(std::chrono::system_clock::now() + std::chrono::seconds{3600})
+          .set_payload_claim("sub", jwt::claim(username))
+          .set_payload_claim("role", jwt::claim(role))
+          .set_payload_claim("auth_method", jwt::claim(std::string("BootstrapToken")))
+          .set_payload_claim("instance_id",
+                             jwt::claim(std::string("rbac-groups-instance")))
+          .set_payload_claim("session_id", jwt::claim(session_id));
   if (!groups.empty()) {
     picojson::array list;
     for (const auto& g : groups) list.emplace_back(g);
@@ -85,8 +87,9 @@ std::string MintToken(const std::string& username, const std::string& role,
 
 class Client {
  public:
-  Client(int port, const std::string& user, int n, const std::vector<std::string>& groups = {},
-         const std::string& issuer = kIssuer, const std::string& role = "user") {
+  Client(int port, const std::string& user, int n,
+         const std::vector<std::string>& groups = {}, const std::string& issuer = kIssuer,
+         const std::string& role = "user") {
     char sid[64];
     std::snprintf(sid, sizeof(sid), "00000000-0000-4000-8000-%012d", n);
     session_id_ = sid;
@@ -121,7 +124,8 @@ class Client {
 
 std::string ErrorOf(const arrow::Status& st) { return st.ok() ? "" : st.ToString(); }
 
-class RbacGroupMappingFixture : public gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture> {
+class RbacGroupMappingFixture
+    : public gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -141,18 +145,25 @@ class RbacGroupMappingFixture : public gizmosql::testing::ServerTestFixture<Rbac
       GTEST_SKIP() << "license does not include RBAC";
     }
     ASSERT_TRUE(IsServerReady());
-    admin_ = std::make_unique<Client>(GetPort(), "admin_user", 1, std::vector<std::string>{},
-                                      kIssuer, "admin");
+    admin_ = std::make_unique<Client>(GetPort(), "admin_user", 1,
+                                      std::vector<std::string>{}, kIssuer, "admin");
     static bool seeded = false;
     if (!seeded) {
       for (const char* sql : {
                "CREATE TABLE sales AS SELECT 1 AS id, 100 AS amount",
                "CREATE TABLE payroll AS SELECT 1 AS id, 5000 AS salary",
-               "CREATE ROLE analyst", "CREATE ROLE hr", "GRANT SELECT ON sales TO analyst",
-               "GRANT SELECT ON payroll TO hr", "CREATE USER gina", "CREATE USER hank",
-               "CREATE GROUP MAPPING 'okta-analysts' ISSUER 'https://idp.example.test' TO ROLE analyst",
+               "CREATE ROLE analyst",
+               "CREATE ROLE hr",
+               "GRANT SELECT ON sales TO analyst",
+               "GRANT SELECT ON payroll TO hr",
+               "CREATE USER gina",
+               "CREATE USER hank",
+               "CREATE GROUP MAPPING 'okta-analysts' ISSUER 'https://idp.example.test' "
+               "TO ROLE analyst",
                "CREATE GROUP MAPPING 'hr-team' TO ROLE hr",
-               "CREATE TENANT acme", "CREATE USER acme/amy", "CREATE ROLE acme/r",
+               "CREATE TENANT acme",
+               "CREATE USER acme/amy",
+               "CREATE ROLE acme/r",
                "CREATE GROUP MAPPING 'acme-staff' TO ROLE acme/r",
            }) {
         auto st = admin_->Run(sql).status();
@@ -162,7 +173,9 @@ class RbacGroupMappingFixture : public gizmosql::testing::ServerTestFixture<Rbac
     }
   }
 
-  std::string Error(Client& who, const std::string& sql) { return ErrorOf(who.Run(sql).status()); }
+  std::string Error(Client& who, const std::string& sql) {
+    return ErrorOf(who.Run(sql).status());
+  }
   static void ExpectRefused(const std::string& error, const std::string& table) {
     EXPECT_NE(error.find("no SELECT privilege on table"), std::string::npos)
         << table << " -> " << (error.empty() ? "READ ALLOWED" : error);
@@ -178,11 +191,14 @@ template <>
 std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
     gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture>::server_{};
 template <>
-std::thread gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture>::server_thread_{};
+std::thread
+    gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacGroupMappingFixture>::config_{};
 
 TEST_F(RbacGroupMappingFixture, AGroupInTheTokenGivesItsRole) {
   Client gina(GetPort(), "gina", next_session_++, {"okta-analysts", "unrelated"});
@@ -192,7 +208,8 @@ TEST_F(RbacGroupMappingFixture, AGroupInTheTokenGivesItsRole) {
   Client plain(GetPort(), "gina", next_session_++);
   ExpectRefused(Error(plain, "SELECT * FROM sales"), "sales");
   // The group from another issuer does not count for a mapping that names one...
-  Client elsewhere(GetPort(), "gina", next_session_++, {"okta-analysts"}, "https://other.example");
+  Client elsewhere(GetPort(), "gina", next_session_++, {"okta-analysts"},
+                   "https://other.example");
   ExpectRefused(Error(elsewhere, "SELECT * FROM sales"), "sales");
   // ...but does for a mapping that names none.
   Client hr(GetPort(), "hank", next_session_++, {"hr-team"}, "https://other.example");
@@ -217,7 +234,8 @@ TEST_F(RbacGroupMappingFixture, MappedRolesStayInTheirTenant) {
   Client outsider(GetPort(), "gina", next_session_++, {"acme-staff"});
   auto grants = outsider.Run("SHOW GRANTS");
   ASSERT_TRUE(grants.ok()) << grants.status().ToString();
-  EXPECT_EQ(grants->get()->ToString().find("acme/r"), std::string::npos) << grants->get()->ToString();
+  EXPECT_EQ(grants->get()->ToString().find("acme/r"), std::string::npos)
+      << grants->get()->ToString();
   // acme's user does; and a server-wide role mapped to a group it lists does not.
   Client amy(GetPort(), "acme/amy", next_session_++, {"acme-staff", "okta-analysts"});
   EXPECT_EQ(Error(amy, "SET ROLE r"), "");
@@ -227,8 +245,8 @@ TEST_F(RbacGroupMappingFixture, MappedRolesStayInTheirTenant) {
 
 TEST_F(RbacGroupMappingFixture, OnlyTheAdministratorManagesMappings) {
   Client gina(GetPort(), "gina", next_session_++, {"okta-analysts"});
-  for (const char* sql : {"CREATE GROUP MAPPING 'x' TO ROLE analyst", "DROP GROUP MAPPING 'okta-analysts'",
-                          "SHOW GROUP MAPPINGS"}) {
+  for (const char* sql : {"CREATE GROUP MAPPING 'x' TO ROLE analyst",
+                          "DROP GROUP MAPPING 'okta-analysts'", "SHOW GROUP MAPPINGS"}) {
     const auto error = Error(gina, sql);
     EXPECT_NE(error.find("only administrators manage group mappings"), std::string::npos)
         << sql << " -> " << error;
@@ -240,7 +258,8 @@ TEST_F(RbacGroupMappingFixture, OnlyTheAdministratorManagesMappings) {
   EXPECT_NE(text.find("(any)"), std::string::npos) << text;
   // Mistakes are refused with a reason.
   for (const auto& [sql, why] : std::vector<std::pair<std::string, std::string>>{
-           {"CREATE GROUP MAPPING 'okta-analysts' ISSUER 'https://idp.example.test' TO ROLE analyst",
+           {"CREATE GROUP MAPPING 'okta-analysts' ISSUER 'https://idp.example.test' TO "
+            "ROLE analyst",
             "already mapped"},
            {"CREATE GROUP MAPPING 'g' TO ROLE no_such_role", "does not exist"},
            {"CREATE GROUP MAPPING 'g' TO ROLE PUBLIC", "everyone holds PUBLIC already"},
@@ -262,7 +281,9 @@ TEST_F(RbacGroupMappingFixture, DroppingAMappingTakesTheRoleAwayAtOnce) {
   // A statement running on the mapped role is stopped.
   Client runner(GetPort(), "hank", next_session_++, {"temp-group"});
   auto running = std::async(std::launch::async, [&] {
-    return runner.Run("SELECT sum(s.amount * r.range) FROM sales s, range(1000000000000) r").status();
+    return runner
+        .Run("SELECT sum(s.amount * r.range) FROM sales s, range(1000000000000) r")
+        .status();
   });
   struct EndIfStillRunning {
     Client& admin;
@@ -291,7 +312,8 @@ std::pair<std::string, std::vector<std::string>> Parsed(const std::string& json)
   EXPECT_EQ(picojson::parse(v, json), "");
   const auto& obj = v.get<picojson::object>();
   std::vector<std::string> groups;
-  for (const auto& g : obj.at("groups").get<picojson::array>()) groups.push_back(g.get<std::string>());
+  for (const auto& g : obj.at("groups").get<picojson::array>())
+    groups.push_back(g.get<std::string>());
   return {obj.at("iss").get<std::string>(), groups};
 }
 
@@ -303,18 +325,21 @@ TEST(RbacIdentityClaim, ReadsTheGroupsClaim) {
   // No groups: no identity claim.
   EXPECT_FALSE(gizmosql::IdentityClaimJson(decode(base())).has_value());
   // An array (non-strings dropped), or one group as a string.
-  picojson::array groups{picojson::value("a"), picojson::value(3.0), picojson::value("b")};
+  picojson::array groups{picojson::value("a"), picojson::value(3.0),
+                         picojson::value("b")};
   auto list = gizmosql::IdentityClaimJson(
       decode(base().set_payload_claim("groups", jwt::claim(picojson::value(groups)))));
   ASSERT_TRUE(list.has_value());
   EXPECT_EQ(Parsed(*list), (std::pair<std::string, std::vector<std::string>>{
-                             "https://idp.example.test", {"a", "b"}}));
-  auto one = gizmosql::IdentityClaimJson(decode(base().set_payload_claim("groups", jwt::claim(std::string("solo")))));
+                               "https://idp.example.test", {"a", "b"}}));
+  auto one = gizmosql::IdentityClaimJson(
+      decode(base().set_payload_claim("groups", jwt::claim(std::string("solo")))));
   ASSERT_TRUE(one.has_value());
   EXPECT_EQ(Parsed(*one), (std::pair<std::string, std::vector<std::string>>{
-                            "https://idp.example.test", {"solo"}}));
+                              "https://idp.example.test", {"solo"}}));
   // Another claim name, set by the operator.
-  auto roles_claim = base().set_payload_claim("roles", jwt::claim(std::string("from-roles")));
+  auto roles_claim =
+      base().set_payload_claim("roles", jwt::claim(std::string("from-roles")));
   EXPECT_FALSE(gizmosql::IdentityClaimJson(decode(roles_claim)).has_value());
 #ifdef _WIN32
   _putenv_s("GIZMOSQL_TOKEN_GROUPS_CLAIM", "roles");
@@ -372,7 +397,8 @@ IdpKeys& Keys() {
   return keys;
 }
 
-class RbacGroupLoginFixture : public gizmosql::testing::ServerTestFixture<RbacGroupLoginFixture> {
+class RbacGroupLoginFixture
+    : public gizmosql::testing::ServerTestFixture<RbacGroupLoginFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -397,9 +423,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacGroupLoginFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacGroupLoginFixture>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacGroupLoginFixture>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacGroupLoginFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacGroupLoginFixture>::config_{};
 
 TEST_F(RbacGroupLoginFixture, TheLoginTokensGroupsReachTheSession) {
   if (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsRbacAvailable()) {
@@ -407,16 +435,20 @@ TEST_F(RbacGroupLoginFixture, TheLoginTokensGroupsReachTheSession) {
   }
   ASSERT_TRUE(IsServerReady());
   auto connect = [&](const std::string& user, const std::string& password)
-      -> arrow::Result<std::pair<std::unique_ptr<FlightSqlClient>, arrow::flight::FlightCallOptions>> {
-    ARROW_ASSIGN_OR_RAISE(auto loc, arrow::flight::Location::ForGrpcTcp("127.0.0.1", GetPort()));
+      -> arrow::Result<
+          std::pair<std::unique_ptr<FlightSqlClient>, arrow::flight::FlightCallOptions>> {
+    ARROW_ASSIGN_OR_RAISE(auto loc,
+                          arrow::flight::Location::ForGrpcTcp("127.0.0.1", GetPort()));
     ARROW_ASSIGN_OR_RAISE(auto client, arrow::flight::FlightClient::Connect(loc, {}));
-    ARROW_ASSIGN_OR_RAISE(auto bearer, client->AuthenticateBasicToken({}, user, password));
+    ARROW_ASSIGN_OR_RAISE(auto bearer,
+                          client->AuthenticateBasicToken({}, user, password));
     arrow::flight::FlightCallOptions co;
     co.headers.push_back(bearer);
     return std::make_pair(std::make_unique<FlightSqlClient>(std::move(client)), co);
   };
-  auto run = [](std::pair<std::unique_ptr<FlightSqlClient>, arrow::flight::FlightCallOptions>& c,
-                const std::string& sql) -> arrow::Status {
+  auto run =
+      [](std::pair<std::unique_ptr<FlightSqlClient>, arrow::flight::FlightCallOptions>& c,
+         const std::string& sql) -> arrow::Status {
     ARROW_ASSIGN_OR_RAISE(auto info, c.first->Execute(c.second, sql));
     for (const auto& ep : info->endpoints()) {
       ARROW_ASSIGN_OR_RAISE(auto reader, c.first->DoGet(c.second, ep.ticket));
@@ -426,10 +458,11 @@ TEST_F(RbacGroupLoginFixture, TheLoginTokensGroupsReachTheSession) {
     return arrow::Status::OK();
   };
   ASSERT_OK_AND_ASSIGN(auto admin, connect("admin_user", "admin_pass"));
-  for (const char* sql : {"CREATE TABLE sales AS SELECT 1 AS id", "CREATE ROLE analyst",
-                          "GRANT SELECT ON sales TO analyst", "CREATE USER gina",
-                          "CREATE GROUP MAPPING 'okta-analysts' ISSUER 'https://idp.example.test' "
-                          "TO ROLE analyst"}) {
+  for (const char* sql :
+       {"CREATE TABLE sales AS SELECT 1 AS id", "CREATE ROLE analyst",
+        "GRANT SELECT ON sales TO analyst", "CREATE USER gina",
+        "CREATE GROUP MAPPING 'okta-analysts' ISSUER 'https://idp.example.test' "
+        "TO ROLE analyst"}) {
     ASSERT_TRUE(run(admin, sql).ok()) << sql;
   }
   auto login_token = [](const std::vector<std::string>& groups) {
@@ -447,7 +480,8 @@ TEST_F(RbacGroupLoginFixture, TheLoginTokensGroupsReachTheSession) {
         .sign(jwt::algorithm::rs256("", Keys().private_pem, "", ""));
   };
   ASSERT_OK_AND_ASSIGN(auto with_group, connect("token", login_token({"okta-analysts"})));
-  EXPECT_TRUE(run(with_group, "SELECT * FROM sales").ok()) << "the group's role did not apply";
+  EXPECT_TRUE(run(with_group, "SELECT * FROM sales").ok())
+      << "the group's role did not apply";
   ASSERT_OK_AND_ASSIGN(auto without, connect("token", login_token({"other"})));
   const auto refused = run(without, "SELECT * FROM sales");
   ASSERT_FALSE(refused.ok());

@@ -47,13 +47,15 @@ class RbacSystemUnit : public ::testing::Test {
     auto loaded = admin_->Query("LOAD httpfs");
     ASSERT_FALSE(loaded->HasError()) << loaded->GetError();
     ASSERT_FALSE(
-        admin_->Query("COPY (SELECT 7 AS n) TO '" + dir_ + "/f.parquet' (FORMAT parquet)")->HasError());
+        admin_->Query("COPY (SELECT 7 AS n) TO '" + dir_ + "/f.parquet' (FORMAT parquet)")
+            ->HasError());
     for (const char* sql : {"CREATE USER pat", "CREATE ROLE ops", "GRANT ops TO pat",
                             "GRANT SELECT ON main.t TO ops"}) {
       Admin(sql);
     }
     pat_ = std::make_unique<duckdb::Connection>(*db_);
-    AttachRbacSession(*pat_->context, engine_, engine_->PrincipalForUser("pat").ValueOrDie());
+    AttachRbacSession(*pat_->context, engine_,
+                      engine_->PrincipalForUser("pat").ValueOrDie());
   }
   void TearDown() override { std::filesystem::remove_all(dir_); }
 
@@ -95,7 +97,8 @@ TEST_F(RbacSystemUnit, EachStatementFamilyNeedsItsPrivilege) {
   Check("MANAGE CATALOGS", "ATTACH ':memory:' AS pat_scratch");
   Check("MANAGE CATALOGS", "DETACH pat_scratch");
   Check("CHECKPOINT", "CHECKPOINT");
-  Check("MANAGE SECRETS", "CREATE TEMPORARY SECRET pat_s (TYPE s3, KEY_ID 'k', SECRET 'v')");
+  Check("MANAGE SECRETS",
+        "CREATE TEMPORARY SECRET pat_s (TYPE s3, KEY_ID 'k', SECRET 'v')");
   Check("MANAGE SECRETS", "SELECT * FROM duckdb_secrets()");
   Check("MANAGE SECRETS", "DROP SECRET pat_s");
   Check("MANAGE EXTENSIONS", "LOAD parquet");
@@ -104,7 +107,8 @@ TEST_F(RbacSystemUnit, EachStatementFamilyNeedsItsPrivilege) {
 
 TEST_F(RbacSystemUnit, OnePrivilegeDoesNotCoverAnother) {
   Admin("GRANT WRITE FILESYSTEM TO ops");
-  const auto refused =
-      Pat("COPY (SELECT * FROM read_parquet('" + dir_ + "/f.parquet')) TO '" + dir_ + "/o2.csv'");
-  EXPECT_NE(refused.find("needs the READ FILESYSTEM privilege"), std::string::npos) << refused;
+  const auto refused = Pat("COPY (SELECT * FROM read_parquet('" + dir_ +
+                           "/f.parquet')) TO '" + dir_ + "/o2.csv'");
+  EXPECT_NE(refused.find("needs the READ FILESYSTEM privilege"), std::string::npos)
+      << refused;
 }

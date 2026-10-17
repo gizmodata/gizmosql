@@ -27,7 +27,7 @@ class Connection;
 class CatalogEntry;
 class SelectStatement;
 class ViewCatalogEntry;
-}
+}  // namespace duckdb
 
 namespace gizmosql::enterprise::rbac {
 
@@ -36,11 +36,13 @@ namespace gizmosql::enterprise::rbac {
 // whether the first part of a dotted name is a catalog.
 class SessionObjectResolver : public ObjectResolver {
  public:
-  explicit SessionObjectResolver(duckdb::Connection& connection) : connection_(connection) {}
+  explicit SessionObjectResolver(duckdb::Connection& connection)
+      : connection_(connection) {}
   arrow::Result<ResolvedObject> ResolveObject(const QualifiedName& name) override;
   arrow::Result<ObjectPath> ResolveSchema(const QualifiedName& name) override;
   arrow::Result<std::string> ResolveCatalog(const std::string& name) override;
-  arrow::Status CheckRowPredicate(const ResolvedObject& table, const std::string& predicate) override;
+  arrow::Status CheckRowPredicate(const ResolvedObject& table,
+                                  const std::string& predicate) override;
   arrow::Status CheckMaskingPolicy(const MaskingPolicyRecord& policy) override;
   arrow::Status CheckMaskBinding(const ResolvedObject& table, const std::string& column,
                                  const MaskingPolicyRecord& policy) override;

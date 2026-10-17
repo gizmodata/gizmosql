@@ -81,10 +81,12 @@ class Client {
     }
     return arrow::ConcatenateTables(tables);
   }
-  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(const std::string& sql) {
+  arrow::Result<std::shared_ptr<arrow::flight::sql::PreparedStatement>> Prepare(
+      const std::string& sql) {
     return client_->Prepare(Options(), sql);
   }
-  arrow::Result<std::shared_ptr<arrow::Table>> ExecutePrepared(arrow::flight::sql::PreparedStatement& stmt) {
+  arrow::Result<std::shared_ptr<arrow::Table>> ExecutePrepared(
+      arrow::flight::sql::PreparedStatement& stmt) {
     auto co = Options();
     ARROW_ASSIGN_OR_RAISE(auto info, stmt.Execute(co));
     std::vector<std::shared_ptr<arrow::Table>> tables;
@@ -101,7 +103,8 @@ class Client {
   std::unique_ptr<FlightSqlClient> client_;
 };
 
-class RbacPoliciesFixture : public gizmosql::testing::ServerTestFixture<RbacPoliciesFixture> {
+class RbacPoliciesFixture
+    : public gizmosql::testing::ServerTestFixture<RbacPoliciesFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -125,32 +128,50 @@ class RbacPoliciesFixture : public gizmosql::testing::ServerTestFixture<RbacPoli
     static bool seeded = false;
     if (!seeded) {
       for (const char* sql : {
-               "CREATE TABLE emp (id INT, name VARCHAR, region VARCHAR, salary INT, email VARCHAR, "
+               "CREATE TABLE emp (id INT, name VARCHAR, region VARCHAR, salary INT, "
+               "email VARCHAR, "
                "ssn VARCHAR)",
                "INSERT INTO emp VALUES (1, 'ann', 'EU', 100, 'ann@x.com', '111'), "
-               "(2, 'bob', 'US', 200, 'bob@x.com', '222'), (3, 'cat', 'EU', 300, 'cat@x.com', '333'), "
+               "(2, 'bob', 'US', 200, 'bob@x.com', '222'), (3, 'cat', 'EU', 300, "
+               "'cat@x.com', '333'), "
                "(4, 'dan', 'APAC', 400, 'dan@x.com', '444')",
                "CREATE TABLE notes (owner VARCHAR, note VARCHAR)",
-               "INSERT INTO notes VALUES ('ann', 'ann-note'), ('bob', 'bob-note'), ('duckdb', 'nobody')",
+               "INSERT INTO notes VALUES ('ann', 'ann-note'), ('bob', 'bob-note'), "
+               "('duckdb', 'nobody')",
                "CREATE VIEW emp_v AS SELECT * FROM emp",
-               "CREATE ROLE staff", "CREATE ROLE hr", "CREATE ROLE auditors",
-               "GRANT SELECT ON emp TO staff", "GRANT SELECT ON emp TO auditors",
-               "GRANT SELECT ON emp_v TO staff", "GRANT SELECT ON notes TO staff",
-               "GRANT DELETE ON emp TO staff", "GRANT INSERT, UPDATE ON emp TO staff",
+               "CREATE ROLE staff",
+               "CREATE ROLE hr",
+               "CREATE ROLE auditors",
+               "GRANT SELECT ON emp TO staff",
+               "GRANT SELECT ON emp TO auditors",
+               "GRANT SELECT ON emp_v TO staff",
+               "GRANT SELECT ON notes TO staff",
+               "GRANT DELETE ON emp TO staff",
+               "GRANT INSERT, UPDATE ON emp TO staff",
                "GRANT CREATE TABLE ON SCHEMA main TO staff",
-               "CREATE USER ann", "CREATE USER bob", "CREATE USER hal", "CREATE USER dan",
+               "CREATE USER ann",
+               "CREATE USER bob",
+               "CREATE USER hal",
+               "CREATE USER dan",
                "CREATE USER aud",
-               "GRANT staff TO ann", "GRANT staff TO bob", "GRANT staff TO hal", "GRANT hr TO hal",
-               "GRANT staff TO dan", "GRANT auditors TO aud",
+               "GRANT staff TO ann",
+               "GRANT staff TO bob",
+               "GRANT staff TO hal",
+               "GRANT hr TO hal",
+               "GRANT staff TO dan",
+               "GRANT auditors TO aud",
                "ALTER USER ann SET ATTRIBUTE region = 'EU'",
                "ALTER USER bob SET ATTRIBUTE region = 'US'",
                "ALTER USER hal SET ATTRIBUTE region = 'US'",
-               "CREATE ROW POLICY region_rows ON emp TO staff USING (region = session_attribute('region'))",
+               "CREATE ROW POLICY region_rows ON emp TO staff USING (region = "
+               "session_attribute('region'))",
                "CREATE ROW POLICY hr_all ON emp TO hr USING (true)",
-               "CREATE ROW POLICY not_apac ON emp AS RESTRICTIVE USING (region <> 'APAC')",
+               "CREATE ROW POLICY not_apac ON emp AS RESTRICTIVE USING (region <> "
+               "'APAC')",
                "CREATE ROW POLICY own_notes ON notes USING (owner = current_user)",
                "CREATE MASKING POLICY email_mask AS (val VARCHAR) RETURNS VARCHAR -> "
-               "CASE WHEN is_role_active('hr') THEN val ELSE regexp_replace(val, '.+@', '****@') END",
+               "CASE WHEN is_role_active('hr') THEN val ELSE regexp_replace(val, '.+@', "
+               "'****@') END",
                "ALTER TABLE emp MODIFY COLUMN email SET MASKING POLICY email_mask",
                "CREATE MASKING POLICY hide AS (val VARCHAR) RETURNS VARCHAR -> 'XXX'",
                "ALTER TABLE emp MODIFY COLUMN ssn SET MASKING POLICY hide EXEMPT ROLE hr",
@@ -187,7 +208,8 @@ class RbacPoliciesFixture : public gizmosql::testing::ServerTestFixture<RbacPoli
     auto st = who.Run(sql).status();
     ASSERT_FALSE(st.ok()) << "NOT BLOCKED: " << sql;
     EXPECT_NE(st.ToString().find("GizmoSQL blocked"), std::string::npos) << st.ToString();
-    EXPECT_NE(st.ToString().find(why), std::string::npos) << sql << " -> " << st.ToString();
+    EXPECT_NE(st.ToString().find(why), std::string::npos)
+        << sql << " -> " << st.ToString();
   }
   std::string AdminError(const std::string& sql) {
     auto st = admin_->Run(sql).status();
@@ -206,9 +228,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacPoliciesFixture>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacPoliciesFixture>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacPoliciesFixture>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacPoliciesFixture>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacPoliciesFixture>::config_{};
 
 TEST_F(RbacPoliciesFixture, EachUserSeesTheRowsTheirPoliciesAllow) {
   EXPECT_EQ(Values(*ann_, "SELECT id FROM emp"), (S{"1", "3"}));
@@ -234,7 +258,9 @@ TEST_F(RbacPoliciesFixture, NoSpellingOfTheQueryGetsAroundTheFilter) {
            {"SELECT count(*) FROM emp a JOIN emp b ON a.id = b.id", {"2"}},
            {"SELECT count(*) FROM emp a, emp b", {"4"}},
            {"SELECT id FROM emp UNION SELECT id FROM emp", {"1", "3"}},
-           {"SELECT count(*) FROM emp WHERE id IN (SELECT id FROM emp WHERE region = 'US')", {"0"}},
+           {"SELECT count(*) FROM emp WHERE id IN (SELECT id FROM emp WHERE region = "
+            "'US')",
+            {"0"}},
            {"SELECT EXISTS (SELECT 1 FROM emp WHERE name = 'bob')", {"false"}},
            {"SELECT (SELECT max(salary) FROM emp)", {"300"}},
            {"SELECT count(*) FROM emp_v", {"2"}},
@@ -254,7 +280,8 @@ TEST_F(RbacPoliciesFixture, NoSpellingOfTheQueryGetsAroundTheFilter) {
 TEST_F(RbacPoliciesFixture, PreparedStatementsWithParametersAreFilteredAndMasked) {
   // DuckDB plans a statement with parameters again for each run: the policies
   // apply to that plan.
-  auto param = [](const std::shared_ptr<arrow::DataType>& type, const std::string& value) {
+  auto param = [](const std::shared_ptr<arrow::DataType>& type,
+                  const std::string& value) {
     auto scalar = arrow::Scalar::Parse(type, value).ValueOrDie();
     auto array = arrow::MakeArrayFromScalar(*scalar, 1).ValueOrDie();
     return arrow::RecordBatch::Make(arrow::schema({arrow::field("p", type)}), 1, {array});
@@ -310,7 +337,8 @@ TEST_F(RbacPoliciesFixture, AMaskedColumnIsMaskedWhereverItIsUsed) {
   EXPECT_EQ(Values(*ann_, "SELECT max(email) FROM emp"), (S{"****@x.com"}));
   EXPECT_EQ(Values(*ann_, "SELECT upper(ssn) FROM emp"), (S{"XXX", "XXX"}));
   EXPECT_EQ(Values(*ann_, "SELECT ssn FROM (SELECT * FROM emp) t"), (S{"XXX", "XXX"}));
-  EXPECT_EQ(Values(*ann_, "WITH c AS (SELECT ssn FROM emp) SELECT * FROM c"), (S{"XXX", "XXX"}));
+  EXPECT_EQ(Values(*ann_, "WITH c AS (SELECT ssn FROM emp) SELECT * FROM c"),
+            (S{"XXX", "XXX"}));
   EXPECT_EQ(Values(*ann_, "SELECT ssn FROM emp_v"), (S{"XXX", "XXX"}));
   EXPECT_EQ(Values(*ann_, "SELECT ssn FROM emp UNION ALL SELECT ssn FROM emp"),
             (S{"XXX", "XXX", "XXX", "XXX"}));
@@ -330,7 +358,8 @@ TEST_F(RbacPoliciesFixture, WritesToAGovernedTableAreRefused) {
   ExpectBlocked(*ann_, "DELETE FROM emp WHERE id = 1 RETURNING *", "masked columns");
   // DELETE removes only rows the user can see.
   ASSERT_OK_AND_ASSIGN(auto deleted, ann_->Run("DELETE FROM emp WHERE id = 2"));
-  EXPECT_EQ(Values(*admin_, "SELECT count(*) FROM emp"), (S{"4"})) << "a hidden row was deleted";
+  EXPECT_EQ(Values(*admin_, "SELECT count(*) FROM emp"), (S{"4"}))
+      << "a hidden row was deleted";
   // The administrator is not restricted.
   ASSERT_TRUE(admin_->Run("UPDATE emp SET salary = salary WHERE id = 1").ok());
 }
@@ -340,7 +369,9 @@ TEST_F(RbacPoliciesFixture, PolicyChangesReachTheNextStatementAndPreparedOnes) {
   ASSERT_TRUE(prepared.ok());
   ASSERT_OK_AND_ASSIGN(auto before, bob_->ExecutePrepared(**prepared));
   EXPECT_EQ(before->column(0)->GetScalar(0).ValueOrDie()->ToString(), "1");
-  ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY region_rows ON emp TO staff USING (true)"), "");
+  ASSERT_EQ(
+      AdminError("CREATE OR REPLACE ROW POLICY region_rows ON emp TO staff USING (true)"),
+      "");
   ASSERT_OK_AND_ASSIGN(auto after, bob_->ExecutePrepared(**prepared));
   EXPECT_EQ(after->column(0)->GetScalar(0).ValueOrDie()->ToString(), "3");
   ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY region_rows ON emp TO staff USING "
@@ -351,15 +382,21 @@ TEST_F(RbacPoliciesFixture, PolicyChangesReachTheNextStatementAndPreparedOnes) {
 
 TEST_F(RbacPoliciesFixture, PolicySqlIsCheckedWhenItIsCreated) {
   for (const auto& [sql, why] : std::vector<std::pair<std::string, std::string>>{
-           {"CREATE ROW POLICY p1 ON emp USING (id IN (SELECT id FROM notes))", "subquery"},
-           {"CREATE ROW POLICY p2 ON emp USING (region = getvariable('r'))", "getvariable"},
-           {"CREATE ROW POLICY p3 ON emp USING (region = current_setting('threads'))", "current_setting"},
+           {"CREATE ROW POLICY p1 ON emp USING (id IN (SELECT id FROM notes))",
+            "subquery"},
+           {"CREATE ROW POLICY p2 ON emp USING (region = getvariable('r'))",
+            "getvariable"},
+           {"CREATE ROW POLICY p3 ON emp USING (region = current_setting('threads'))",
+            "current_setting"},
            {"CREATE ROW POLICY p4 ON emp USING (no_such_column = 1)", "does not fit"},
-           {"CREATE ROW POLICY p5 ON emp USING (session_attribute(region))", "string constant"},
+           {"CREATE ROW POLICY p5 ON emp USING (session_attribute(region))",
+            "string constant"},
            {"CREATE ROW POLICY p6 ON emp_v USING (true)", "is a view"},
            {"CREATE ROW POLICY region_rows ON emp USING (true)", "already exists"},
-           {"CREATE MASKING POLICY m1 AS (val VARCHAR) RETURNS VARCHAR -> name", "only its parameter"},
-           {"CREATE MASKING POLICY m2 AS (val VARCHAR) RETURNS VARCHAR -> (SELECT 'x')", "subquery"},
+           {"CREATE MASKING POLICY m1 AS (val VARCHAR) RETURNS VARCHAR -> name",
+            "only its parameter"},
+           {"CREATE MASKING POLICY m2 AS (val VARCHAR) RETURNS VARCHAR -> (SELECT 'x')",
+            "subquery"},
            {"DROP MASKING POLICY hide", "unset it there first"},
        }) {
     const auto error = AdminError(sql);
@@ -402,21 +439,27 @@ TEST_F(RbacPoliciesFixture, AnErrorInTheUsersOwnPredicateDoesNotRevealHiddenRows
                   control.ToString().find("dan") != std::string::npos)
           << sql << ": " << control.ToString();
       auto st = ann_->Run(sql).status();
-      EXPECT_EQ(st.ToString().find("bob"), std::string::npos) << sql << " revealed a hidden row: " << st.ToString();
-      EXPECT_EQ(st.ToString().find("dan"), std::string::npos) << sql << " revealed a hidden row: " << st.ToString();
+      EXPECT_EQ(st.ToString().find("bob"), std::string::npos)
+          << sql << " revealed a hidden row: " << st.ToString();
+      EXPECT_EQ(st.ToString().find("dan"), std::string::npos)
+          << sql << " revealed a hidden row: " << st.ToString();
     }
-    const std::string having = "SELECT region FROM " + table +
-                               " GROUP BY region HAVING max(CASE WHEN region <> 'EU' THEN "
-                               "CAST(name AS INTEGER) END) > 0";
+    const std::string having =
+        "SELECT region FROM " + table +
+        " GROUP BY region HAVING max(CASE WHEN region <> 'EU' THEN "
+        "CAST(name AS INTEGER) END) > 0";
     auto st = ann_->Run(having).status();
-    EXPECT_EQ(st.ToString().find("bob"), std::string::npos) << having << ": " << st.ToString();
+    EXPECT_EQ(st.ToString().find("bob"), std::string::npos)
+        << having << ": " << st.ToString();
   }
 }
 
 TEST_F(RbacPoliciesFixture, APolicyChangeStopsAStatementThatIsRunning) {
   Client hal_runner(GetPort(), "hal", "user", 40);
   auto running = std::async(std::launch::async, [&] {
-    return hal_runner.Run("SELECT sum(e.salary * r.range) FROM emp e, range(1000000000000) r").status();
+    return hal_runner
+        .Run("SELECT sum(e.salary * r.range) FROM emp e, range(1000000000000) r")
+        .status();
   });
   struct EndIfStillRunning {
     Client& admin;
@@ -431,14 +474,20 @@ TEST_F(RbacPoliciesFixture, APolicyChangeStopsAStatementThatIsRunning) {
   std::this_thread::sleep_for(std::chrono::seconds(1));
   ASSERT_EQ(running.wait_for(std::chrono::seconds(0)), std::future_status::timeout);
   // A policy that does not concern hal leaves it running...
-  ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY unrelated ON notes TO auditors USING (true)"), "");
+  ASSERT_EQ(
+      AdminError(
+          "CREATE OR REPLACE ROW POLICY unrelated ON notes TO auditors USING (true)"),
+      "");
   ASSERT_EQ(running.wait_for(std::chrono::seconds(2)), std::future_status::timeout);
   // ...one that narrows what he sees stops it.
-  ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY hr_all ON emp TO hr USING (region = 'EU')"), "");
+  ASSERT_EQ(AdminError(
+                "CREATE OR REPLACE ROW POLICY hr_all ON emp TO hr USING (region = 'EU')"),
+            "");
   ASSERT_EQ(running.wait_for(std::chrono::seconds(30)), std::future_status::ready)
       << "a statement kept running after its user's row policy changed";
   EXPECT_FALSE(running.get().ok());
-  ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY hr_all ON emp TO hr USING (true)"), "");
+  ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY hr_all ON emp TO hr USING (true)"),
+            "");
   ASSERT_EQ(AdminError("DROP ROW POLICY unrelated ON notes"), "");
   EXPECT_EQ(Values(*hal_, "SELECT id FROM emp"), (S{"1", "2", "3"}));
 }
@@ -459,7 +508,9 @@ TEST_F(RbacPoliciesFixture, ARowPolicyDecidesOnTheRealValueOfAMaskedColumn) {
   ASSERT_EQ(AdminError("CREATE TABLE IF NOT EXISTS emp3 AS SELECT * FROM emp"), "");
   ASSERT_EQ(AdminError("GRANT SELECT ON emp3 TO staff"), "");
   ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY all3 ON emp3 USING (true)"), "");
-  ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY not333 ON emp3 AS RESTRICTIVE USING (ssn <> '333')"), "");
+  ASSERT_EQ(AdminError("CREATE OR REPLACE ROW POLICY not333 ON emp3 AS RESTRICTIVE USING "
+                       "(ssn <> '333')"),
+            "");
   ASSERT_EQ(AdminError("ALTER TABLE emp3 MODIFY COLUMN ssn SET MASKING POLICY hide"), "");
   EXPECT_EQ(Values(*ann_, "SELECT id FROM emp3"), (S{"1", "2", "4"}));
   EXPECT_EQ(Values(*ann_, "SELECT ssn FROM emp3"), (S{"XXX", "XXX", "XXX"}));

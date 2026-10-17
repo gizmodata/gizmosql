@@ -134,7 +134,8 @@ bool SqlProcessor::IsUpdateStatement(const std::string& sql) {
     std::istringstream words(trimmed.substr(0, 64));
     std::string w1, w2, w3;
     words >> w1 >> w2 >> w3;
-    for (auto* w : {&w1, &w2, &w3}) std::transform(w->begin(), w->end(), w->begin(), ::toupper);
+    for (auto* w : {&w1, &w2, &w3})
+      std::transform(w->begin(), w->end(), w->begin(), ::toupper);
     if (w1 == "CREATE" && w2 == "SCOPED" && w3 == "TOKEN") return false;
   }
 

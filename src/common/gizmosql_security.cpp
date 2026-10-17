@@ -267,17 +267,18 @@ std::string SecurityUtilities::HMAC_SHA256(const std::string& key,
 }
 
 // ----------------------------------------
-std::string CreateGizmoSQLJWT(
-    const std::string& username, const std::string& role,
-    const std::string& auth_method, const std::string& secret_key,
-    const std::string& instance_id,
-    const std::optional<std::string>& catalog_access_json,
-    const std::optional<std::string>& identity_json,
-    const std::optional<std::string>& scope_id,
-    std::optional<int64_t> expires_at) {
+std::string CreateGizmoSQLJWT(const std::string& username, const std::string& role,
+                              const std::string& auth_method,
+                              const std::string& secret_key,
+                              const std::string& instance_id,
+                              const std::optional<std::string>& catalog_access_json,
+                              const std::optional<std::string>& identity_json,
+                              const std::optional<std::string>& scope_id,
+                              std::optional<int64_t> expires_at) {
   auto expiry = std::chrono::system_clock::now() + std::chrono::seconds{kJWTExpiration};
   if (expires_at) {
-    expiry = std::min(expiry, std::chrono::system_clock::time_point{std::chrono::seconds{*expires_at}});
+    expiry = std::min(
+        expiry, std::chrono::system_clock::time_point{std::chrono::seconds{*expires_at}});
   }
   auto builder =
       jwt::create()
@@ -317,21 +318,25 @@ std::string CreateGizmoSQLJWT(
   return builder.sign(jwt::algorithm::hs256{secret_key});
 }
 
-std::string CreateScopedTokenJWT(const std::string& username, const std::string& secret_key,
-                                 const std::string& instance_id, const std::string& scope_id,
-                                 int64_t expires_at) {
+std::string CreateScopedTokenJWT(const std::string& username,
+                                 const std::string& secret_key,
+                                 const std::string& instance_id,
+                                 const std::string& scope_id, int64_t expires_at) {
   return jwt::create()
       .set_issuer(std::string(kServerJWTIssuer))
       .set_type("JWT")
-      .set_id("gizmosql-scoped-" + boost::uuids::to_string(boost::uuids::random_generator()()))
+      .set_id("gizmosql-scoped-" +
+              boost::uuids::to_string(boost::uuids::random_generator()()))
       .set_issued_at(std::chrono::system_clock::now())
-      .set_expires_at(std::chrono::system_clock::time_point{std::chrono::seconds{expires_at}})
+      .set_expires_at(
+          std::chrono::system_clock::time_point{std::chrono::seconds{expires_at}})
       .set_payload_claim("sub", jwt::claim(username))
       .set_payload_claim("role", jwt::claim(std::string("user")))
       .set_payload_claim("auth_method", jwt::claim(std::string("ScopedToken")))
       .set_payload_claim("instance_id", jwt::claim(instance_id))
-      .set_payload_claim("session_id",
-                         jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
+      .set_payload_claim(
+          "session_id",
+          jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())))
       .set_payload_claim("scope_id", jwt::claim(scope_id))
       .sign(jwt::algorithm::hs256{secret_key});
 }
@@ -348,12 +353,14 @@ BasicAuthServerMiddlewareFactory::VerifyScopedToken(const std::string& token) co
         .allow_algorithm(jwt::algorithm::hs256{secret_key_})
         .with_issuer(std::string(kServerJWTIssuer))
         .verify(decoded);
-    return ScopedLogin{decoded.get_subject(), decoded.get_payload_claim("scope_id").as_string(),
+    return ScopedLogin{decoded.get_subject(),
+                       decoded.get_payload_claim("scope_id").as_string(),
                        std::chrono::duration_cast<std::chrono::seconds>(
                            decoded.get_expires_at().time_since_epoch())
                            .count()};
   } catch (const std::exception&) {
-    return std::nullopt;  // not a scoped token of this server (or expired): the usual paths decide
+    return std::
+        nullopt;  // not a scoped token of this server (or expired): the usual paths decide
   }
 }
 
@@ -373,7 +380,8 @@ std::optional<std::string> IdentityClaimJson(
   }
   if (groups.empty()) return std::nullopt;
   picojson::object identity;
-  identity["iss"] = picojson::value(token.has_issuer() ? token.get_issuer() : std::string());
+  identity["iss"] =
+      picojson::value(token.has_issuer() ? token.get_issuer() : std::string());
   identity["groups"] = picojson::value(groups);
   return picojson::value(identity).serialize();
 }
@@ -399,15 +407,12 @@ class DiscoveryMiddleware : public flight::ServerMiddleware {
 };
 
 // ----------------------------------------
-BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username,
-                                                     const std::string& role,
-                                                     const std::string& auth_method,
-                                                     const std::string& secret_key,
-                                                     const std::string& instance_id,
-                                                     std::optional<std::string> catalog_access_json,
-                                                     std::optional<std::string> identity_json,
-                                                     std::optional<std::string> scope_id,
-                                                     std::optional<int64_t> expires_at)
+BasicAuthServerMiddleware::BasicAuthServerMiddleware(
+    const std::string& username, const std::string& role, const std::string& auth_method,
+    const std::string& secret_key, const std::string& instance_id,
+    std::optional<std::string> catalog_access_json,
+    std::optional<std::string> identity_json, std::optional<std::string> scope_id,
+    std::optional<int64_t> expires_at)
     : username_(username),
       role_(role),
       auth_method_(auth_method),
@@ -611,8 +616,8 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       } else if (username != username_ && password_authenticator_ &&
                  password_authenticator_(username, password)) {
         // A user of the access-control store (never under the administrator's name).
-        *middleware = std::make_shared<BasicAuthServerMiddleware>(username, "user", "Basic",
-                                                                  secret_key_, instance_id_);
+        *middleware = std::make_shared<BasicAuthServerMiddleware>(
+            username, "user", "Basic", secret_key_, instance_id_);
         GIZMOSQL_LOGKV_DYNAMIC_AT(
             auth_log_level_, arrow::util::ArrowLogLevel::ARROW_INFO,
             "User: " + username + " (peer " + context.peer() +
@@ -639,8 +644,8 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
       // identity provider configured.
       if (auto scoped = VerifyScopedToken(password)) {
         *middleware = std::make_shared<BasicAuthServerMiddleware>(
-            scoped->username, "user", "ScopedToken", secret_key_, instance_id_, std::nullopt,
-            std::nullopt, scoped->scope_id, scoped->expires_at);
+            scoped->username, "user", "ScopedToken", secret_key_, instance_id_,
+            std::nullopt, std::nullopt, scoped->scope_id, scoped->expires_at);
         return Status::OK();
       }
       if (!token_auth_enabled_) {
@@ -1057,10 +1062,12 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
         const auto idp = decoded_jwt.get_payload_claim("idp").to_json();
         if (idp.is<picojson::object>()) {
           const auto& obj = idp.get<picojson::object>();
-          if (auto it = obj.find("iss"); it != obj.end() && it->second.is<std::string>()) {
+          if (auto it = obj.find("iss");
+              it != obj.end() && it->second.is<std::string>()) {
             tl_request_ctx.idp_issuer = it->second.get<std::string>();
           }
-          if (auto it = obj.find("groups"); it != obj.end() && it->second.is<picojson::array>()) {
+          if (auto it = obj.find("groups");
+              it != obj.end() && it->second.is<picojson::array>()) {
             std::vector<std::string> groups;
             for (const auto& g : it->second.get<picojson::array>()) {
               if (g.is<std::string>()) groups.push_back(g.get<std::string>());

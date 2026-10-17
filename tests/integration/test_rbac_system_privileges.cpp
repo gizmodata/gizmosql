@@ -93,7 +93,8 @@ std::string Dir() {
   return dir;
 }
 
-class RbacSystemPrivileges : public gizmosql::testing::ServerTestFixture<RbacSystemPrivileges> {
+class RbacSystemPrivileges
+    : public gizmosql::testing::ServerTestFixture<RbacSystemPrivileges> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
     return {
@@ -120,10 +121,14 @@ class RbacSystemPrivileges : public gizmosql::testing::ServerTestFixture<RbacSys
                std::string("CREATE TABLE t AS SELECT 1 AS id"),
                std::string("CREATE TABLE hidden AS SELECT 'secret' AS s"),
                "COPY (SELECT 42 AS n) TO '" + Dir() + "/in.parquet' (FORMAT parquet)",
-               std::string("CREATE ROLE fs_reader"), std::string("CREATE ROLE fs_writer"),
-               std::string("CREATE ROLE catalogs"), std::string("CREATE ROLE config"),
-               std::string("CREATE ROLE checkpointer"), std::string("CREATE ROLE secrets"),
-               std::string("CREATE ROLE extensions"), std::string("CREATE ROLE readers"),
+               std::string("CREATE ROLE fs_reader"),
+               std::string("CREATE ROLE fs_writer"),
+               std::string("CREATE ROLE catalogs"),
+               std::string("CREATE ROLE config"),
+               std::string("CREATE ROLE checkpointer"),
+               std::string("CREATE ROLE secrets"),
+               std::string("CREATE ROLE extensions"),
+               std::string("CREATE ROLE readers"),
                std::string("GRANT READ FILESYSTEM TO fs_reader"),
                std::string("GRANT CREATE VIEW ON SCHEMA main TO fs_reader"),
                std::string("GRANT WRITE FILESYSTEM TO fs_writer"),
@@ -133,14 +138,22 @@ class RbacSystemPrivileges : public gizmosql::testing::ServerTestFixture<RbacSys
                std::string("GRANT CHECKPOINT TO checkpointer"),
                std::string("GRANT MANAGE SECRETS TO secrets"),
                std::string("GRANT MANAGE EXTENSIONS TO extensions"),
-               std::string("CREATE USER fay"), std::string("CREATE USER wes"),
-               std::string("CREATE USER cam"), std::string("CREATE USER con"),
-               std::string("CREATE USER kit"), std::string("CREATE USER sam"),
-               std::string("CREATE USER eli"), std::string("CREATE USER nob"),
-               std::string("GRANT fs_reader TO fay"), std::string("GRANT fs_writer TO wes"),
-               std::string("GRANT catalogs TO cam"), std::string("GRANT config TO con"),
-               std::string("GRANT checkpointer TO kit"), std::string("GRANT secrets TO sam"),
-               std::string("GRANT extensions TO eli"), std::string("GRANT readers TO nob"),
+               std::string("CREATE USER fay"),
+               std::string("CREATE USER wes"),
+               std::string("CREATE USER cam"),
+               std::string("CREATE USER con"),
+               std::string("CREATE USER kit"),
+               std::string("CREATE USER sam"),
+               std::string("CREATE USER eli"),
+               std::string("CREATE USER nob"),
+               std::string("GRANT fs_reader TO fay"),
+               std::string("GRANT fs_writer TO wes"),
+               std::string("GRANT catalogs TO cam"),
+               std::string("GRANT config TO con"),
+               std::string("GRANT checkpointer TO kit"),
+               std::string("GRANT secrets TO sam"),
+               std::string("GRANT extensions TO eli"),
+               std::string("GRANT readers TO nob"),
            }) {
         auto st = admin_->Run(sql).status();
         ASSERT_TRUE(st.ok()) << sql << " -> " << st.ToString();
@@ -159,7 +172,8 @@ class RbacSystemPrivileges : public gizmosql::testing::ServerTestFixture<RbacSys
     EXPECT_NE(st.ToString().find(why), std::string::npos)
         << sql << " -> expected '" << why << "' in: " << st.ToString();
   }
-  static std::shared_ptr<arrow::Table> ExpectAllowed(Client& who, const std::string& sql) {
+  static std::shared_ptr<arrow::Table> ExpectAllowed(Client& who,
+                                                     const std::string& sql) {
     auto r = who.Run(sql);
     EXPECT_TRUE(r.ok()) << "WRONGLY BLOCKED: " << sql << " -> " << r.status().ToString();
     return r.ok() ? *r : nullptr;
@@ -176,9 +190,11 @@ std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
 template <>
 std::thread gizmosql::testing::ServerTestFixture<RbacSystemPrivileges>::server_thread_{};
 template <>
-std::atomic<bool> gizmosql::testing::ServerTestFixture<RbacSystemPrivileges>::server_ready_{false};
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RbacSystemPrivileges>::server_ready_{false};
 template <>
-gizmosql::testing::TestServerConfig gizmosql::testing::ServerTestFixture<RbacSystemPrivileges>::config_{};
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RbacSystemPrivileges>::config_{};
 
 TEST_F(RbacSystemPrivileges, ReadFilesystem) {
   auto fay = As("fay", 10);
@@ -196,22 +212,26 @@ TEST_F(RbacSystemPrivileges, ReadFilesystem) {
                 "no SELECT privilege on table");
   // Every gated part of a statement must be covered: the file read is, the
   // ATTACH beside it is not.
-  ExpectBlocked(fay, "SELECT * FROM read_parquet('" + file + "'); ATTACH ':memory:' AS sneaky",
+  ExpectBlocked(fay,
+                "SELECT * FROM read_parquet('" + file + "'); ATTACH ':memory:' AS sneaky",
                 "ATTACH");
   // query() is only for the administrator, and only the gate can see it (DuckDB
   // binds its SQL away): a covered file read next to it, in the same statement
   // or the next one, must not carry it through.
-  ExpectBlocked(fay, "SELECT * FROM read_parquet('" + file + "'), query('SELECT 42 AS x')",
+  ExpectBlocked(fay,
+                "SELECT * FROM read_parquet('" + file + "'), query('SELECT 42 AS x')",
                 "query()");
-  ExpectBlocked(fay, "SELECT * FROM read_parquet('" + file + "'); SELECT * FROM query('SELECT 42')",
-                "query()");
+  ExpectBlocked(
+      fay, "SELECT * FROM read_parquet('" + file + "'); SELECT * FROM query('SELECT 42')",
+      "query()");
 }
 
 TEST_F(RbacSystemPrivileges, AFileViewReadsWithItsOwnersFilesystemPrivilege) {
   auto fay = As("fay", 12);
   auto nob = As("nob", 13);
   const std::string file = Dir() + "/in.parquet";
-  ExpectAllowed(fay, "CREATE VIEW fay_file AS SELECT n FROM read_parquet('" + file + "')");
+  ExpectAllowed(fay,
+                "CREATE VIEW fay_file AS SELECT n FROM read_parquet('" + file + "')");
   ExpectAllowed(*admin_, "GRANT SELECT ON fay_file TO readers");
   ExpectAllowed(nob, "SELECT * FROM fay_file");  // nob has no READ FILESYSTEM himself
   ExpectAllowed(*admin_, "REVOKE READ FILESYSTEM FROM fs_reader");
@@ -228,8 +248,9 @@ TEST_F(RbacSystemPrivileges, WriteFilesystem) {
                 "no SELECT privilege on table");
   ExpectBlocked(nob, "COPY (SELECT 1) TO '" + Dir() + "/nob.csv'", "COPY TO");
   // Writing is not reading: a COPY that reads a file needs READ FILESYSTEM too.
-  ExpectBlocked(wes, "COPY (SELECT * FROM read_parquet('" + Dir() + "/in.parquet')) TO '" + Dir() +
-                         "/wes3.csv'",
+  ExpectBlocked(wes,
+                "COPY (SELECT * FROM read_parquet('" + Dir() + "/in.parquet')) TO '" +
+                    Dir() + "/wes3.csv'",
                 "read_parquet()");
 }
 
@@ -250,7 +271,8 @@ TEST_F(RbacSystemPrivileges, ManageConfig) {
   ExpectAllowed(con, "SET GLOBAL threads = " + value);
   ExpectBlocked(nob, "SET GLOBAL threads = " + value, "SET GLOBAL threads");
   // Not the switches the access check itself depends on.
-  ExpectBlocked(con, "SET GLOBAL disabled_optimizers = 'filter_pushdown'", "disabled_optimizers");
+  ExpectBlocked(con, "SET GLOBAL disabled_optimizers = 'filter_pushdown'",
+                "disabled_optimizers");
 }
 
 TEST_F(RbacSystemPrivileges, Checkpoint) {
@@ -263,8 +285,10 @@ TEST_F(RbacSystemPrivileges, Checkpoint) {
 TEST_F(RbacSystemPrivileges, ManageSecrets) {
   auto sam = As("sam", 60);
   auto nob = As("nob", 61);
-  ExpectAllowed(sam, "CREATE TEMPORARY SECRET sam_secret (TYPE s3, KEY_ID 'k', SECRET 'v')");
-  auto listed = ExpectAllowed(sam, "SELECT name FROM duckdb_secrets() WHERE name = 'sam_secret'");
+  ExpectAllowed(sam,
+                "CREATE TEMPORARY SECRET sam_secret (TYPE s3, KEY_ID 'k', SECRET 'v')");
+  auto listed =
+      ExpectAllowed(sam, "SELECT name FROM duckdb_secrets() WHERE name = 'sam_secret'");
   ASSERT_TRUE(listed);
   EXPECT_EQ(listed->num_rows(), 1);
   ExpectBlocked(nob, "SELECT name FROM duckdb_secrets()", "duckdb_secrets()");
@@ -296,7 +320,8 @@ TEST_F(RbacSystemPrivileges, ARefusalNamesThePrivilegeThatWouldAllowIt) {
   auto nob = As("nob", 80);
   ExpectBlocked(nob, "SELECT * FROM read_parquet('" + Dir() + "/in.parquet')",
                 "needs the READ FILESYSTEM system privilege");
-  ExpectBlocked(nob, "ATTACH ':memory:' AS x", "needs the MANAGE CATALOGS system privilege");
+  ExpectBlocked(nob, "ATTACH ':memory:' AS x",
+                "needs the MANAGE CATALOGS system privilege");
   // What no privilege covers stays the administrator's, and says so.
   ExpectBlocked(nob, "SELECT * FROM query('SELECT 1')", "requires the 'admin' role");
 }

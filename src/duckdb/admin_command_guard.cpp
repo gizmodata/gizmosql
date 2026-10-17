@@ -581,7 +581,8 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
             IsDangerousGlobalSetting(ToLower(Str(ss.name)))) {
           return Gate(verb + Str(ss.name));
         }
-        if (ss.set_type != dd::SetType::RESET && IsGrammarSetting(ToLower(Str(ss.name)))) {
+        if (ss.set_type != dd::SetType::RESET &&
+            IsGrammarSetting(ToLower(Str(ss.name)))) {
           return Gate("SET " + Str(ss.name));
         }
         break;
@@ -594,7 +595,8 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
             call.function->GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
           const std::string fname =
               ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
-          if (fname == "checkpoint" || fname == "force_checkpoint") return Gate("CHECKPOINT");
+          if (fname == "checkpoint" || fname == "force_checkpoint")
+            return Gate("CHECKPOINT");
           if (IsQuackFunction(fname) || AlwaysGatedFunctions().count(fname)) {
             return Gate(fname + "()");
           }

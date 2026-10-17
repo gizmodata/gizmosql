@@ -61,7 +61,8 @@ std::vector<std::string> SchemaPathOf(dd::SchemaCatalogEntry& schema) {
 #endif
 }
 
-dd::optional_ptr<dd::Catalog> CatalogNamed(dd::ClientContext& context, const std::string& name) {
+dd::optional_ptr<dd::Catalog> CatalogNamed(dd::ClientContext& context,
+                                           const std::string& name) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
   return dd::Catalog::GetCatalogEntry(context, dd::Identifier(name));
 #else
@@ -83,7 +84,8 @@ ObjectPath PathOfEntry(dd::CatalogEntry& entry) {
   return path;
 }
 
-arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const QualifiedName& name) {
+arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(
+    const QualifiedName& name) {
   ResolvedObject resolved;
   bool found = false;
   ARROW_RETURN_NOT_OK(InTransaction(connection_, [&]() -> arrow::Status {
@@ -92,10 +94,10 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const Qualifi
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
     dd::vector<dd::Identifier> path;
     for (const auto& part : name.parts) path.emplace_back(part);
-    entry = dd::Catalog::GetEntry(
-        context,
-        dd::EntryLookupInfo(dd::CatalogType::TABLE_ENTRY, dd::QualifiedName::FromPath(path)),
-        dd::OnEntryNotFound::RETURN_NULL);
+    entry = dd::Catalog::GetEntry(context,
+                                  dd::EntryLookupInfo(dd::CatalogType::TABLE_ENTRY,
+                                                      dd::QualifiedName::FromPath(path)),
+                                  dd::OnEntryNotFound::RETURN_NULL);
 #else
     std::string catalog, schema, object;
     switch (name.parts.size()) {
@@ -121,7 +123,8 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const Qualifi
                                   dd::OnEntryNotFound::RETURN_NULL);
 #endif
     if (!entry) return arrow::Status::OK();
-    if (entry->type != dd::CatalogType::TABLE_ENTRY && entry->type != dd::CatalogType::VIEW_ENTRY) {
+    if (entry->type != dd::CatalogType::TABLE_ENTRY &&
+        entry->type != dd::CatalogType::VIEW_ENTRY) {
       return AccessControlError(name.ToString() + " is not a table or view");
     }
     found = true;
@@ -139,7 +142,8 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const Qualifi
     } else {
       resolved.type = ObjectType::kTable;
       auto& table = entry->Cast<dd::TableCatalogEntry>();
-      for (const auto& n : table.GetColumns().GetColumnNames()) resolved.columns.push_back(n);
+      for (const auto& n : table.GetColumns().GetColumnNames())
+        resolved.columns.push_back(n);
     }
     return arrow::Status::OK();
   }));
@@ -149,7 +153,8 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(const Qualifi
   return resolved;
 }
 
-arrow::Result<ObjectPath> SessionObjectResolver::ResolveSchema(const QualifiedName& name) {
+arrow::Result<ObjectPath> SessionObjectResolver::ResolveSchema(
+    const QualifiedName& name) {
   ObjectPath resolved;
   bool found = false;
   ARROW_RETURN_NOT_OK(InTransaction(connection_, [&]() -> arrow::Status {
@@ -191,7 +196,8 @@ arrow::Result<ObjectPath> SessionObjectResolver::ResolveSchema(const QualifiedNa
   return resolved;
 }
 
-arrow::Result<std::string> SessionObjectResolver::ResolveCatalog(const std::string& name) {
+arrow::Result<std::string> SessionObjectResolver::ResolveCatalog(
+    const std::string& name) {
   std::string resolved;
   ARROW_RETURN_NOT_OK(InTransaction(connection_, [&]() -> arrow::Status {
     auto catalog = CatalogNamed(*connection_.context, name);
@@ -212,7 +218,8 @@ PolicyContext TrialContext() {
 }
 
 // Prepare `sql` on the session's connection; the error, if any, as a refusal.
-arrow::Status TryPrepare(dd::Connection& connection, const std::string& sql, const std::string& what) {
+arrow::Status TryPrepare(dd::Connection& connection, const std::string& sql,
+                         const std::string& what) {
   auto prepared = connection.Prepare(sql);
   if (prepared->HasError()) {
     return arrow::Status::Invalid("GizmoSQL access control: " + what + ": " +
@@ -243,12 +250,16 @@ arrow::Status SessionObjectResolver::CheckRowPredicate(const ResolvedObject& tab
                     "the policy does not fit " + table.path.ToString());
 }
 
-arrow::Status SessionObjectResolver::CheckMaskingPolicy(const MaskingPolicyRecord& policy) {
-  ARROW_ASSIGN_OR_RAISE(auto value, ParseSql("CAST(NULL AS " + policy.parameter_type + ")"));
-  ARROW_ASSIGN_OR_RAISE(auto parsed, PreparePolicyExpression(policy.body, TrialContext(),
-                                                             policy.parameter, value.get()));
+arrow::Status SessionObjectResolver::CheckMaskingPolicy(
+    const MaskingPolicyRecord& policy) {
+  ARROW_ASSIGN_OR_RAISE(auto value,
+                        ParseSql("CAST(NULL AS " + policy.parameter_type + ")"));
+  ARROW_ASSIGN_OR_RAISE(
+      auto parsed, PreparePolicyExpression(policy.body, TrialContext(), policy.parameter,
+                                           value.get()));
   return TryPrepare(connection_,
-                    "SELECT CAST((" + compat::Str(parsed->ToString()) + ") AS " + policy.return_type + ")",
+                    "SELECT CAST((" + compat::Str(parsed->ToString()) + ") AS " +
+                        policy.return_type + ")",
                     "the masking policy " + policy.name + " is not valid");
 }
 
@@ -256,20 +267,23 @@ arrow::Status SessionObjectResolver::CheckMaskBinding(const ResolvedObject& tabl
                                                       const std::string& column,
                                                       const MaskingPolicyRecord& policy) {
   const std::string quoted = "\"" + column + "\"";
-  auto probe = connection_.Prepare("SELECT " + quoted + " FROM " + table.path.ToString() + " LIMIT 0");
+  auto probe = connection_.Prepare("SELECT " + quoted + " FROM " + table.path.ToString() +
+                                   " LIMIT 0");
   if (probe->HasError()) {
     return arrow::Status::Invalid("GizmoSQL access control: " + probe->GetError());
   }
   const std::string column_type = probe->GetTypes()[0].ToString();
-  ARROW_ASSIGN_OR_RAISE(auto value, ParseSql("CAST(" + quoted + " AS " + policy.parameter_type + ")"));
-  ARROW_ASSIGN_OR_RAISE(auto parsed, PreparePolicyExpression(policy.body, TrialContext(),
-                                                             policy.parameter, value.get()));
+  ARROW_ASSIGN_OR_RAISE(
+      auto value, ParseSql("CAST(" + quoted + " AS " + policy.parameter_type + ")"));
+  ARROW_ASSIGN_OR_RAISE(
+      auto parsed, PreparePolicyExpression(policy.body, TrialContext(), policy.parameter,
+                                           value.get()));
   return TryPrepare(connection_,
                     "SELECT CAST(CAST((" + compat::Str(parsed->ToString()) + ") AS " +
                         policy.return_type + ") AS " + column_type + ") FROM " +
                         table.path.ToString() + " LIMIT 0",
-                    "masking policy " + policy.name + " does not fit " + table.path.ToString() +
-                        "." + column);
+                    "masking policy " + policy.name + " does not fit " +
+                        table.path.ToString() + "." + column);
 }
 
 std::string ViewDefinitionHash(const dd::SelectStatement& query) {
@@ -298,7 +312,8 @@ std::vector<std::string> ViewColumnNames(const dd::ViewCatalogEntry& view) {
   const auto& bound = info->names;
 #endif
   for (size_t i = 0; i < bound.size(); ++i) {
-    names.push_back(i < view.aliases.size() ? compat::Str(view.aliases[i]) : compat::Str(bound[i]));
+    names.push_back(i < view.aliases.size() ? compat::Str(view.aliases[i])
+                                            : compat::Str(bound[i]));
   }
   return names;
 }

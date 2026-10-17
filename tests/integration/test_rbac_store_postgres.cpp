@@ -44,14 +44,17 @@ class FixedResolver : public ObjectResolver {
   arrow::Result<ObjectPath> ResolveSchema(const QualifiedName& n) override {
     return ObjectPath{"lake", {n.parts.back()}, ""};
   }
-  arrow::Result<std::string> ResolveCatalog(const std::string& name) override { return name; }
+  arrow::Result<std::string> ResolveCatalog(const std::string& name) override {
+    return name;
+  }
 };
 
 class RbacPostgresStoreTest : public ::testing::Test {
  protected:
   void SetUp() override {
     if (!PgUri()) {
-      GTEST_SKIP() << "GIZMOSQL_TEST_RBAC_PG_URI is not set; PostgreSQL store tests not run";
+      GTEST_SKIP()
+          << "GIZMOSQL_TEST_RBAC_PG_URI is not set; PostgreSQL store tests not run";
     }
     // Start from an empty store.
     duckdb::DuckDB db(nullptr);
@@ -66,11 +69,13 @@ class RbacPostgresStoreTest : public ::testing::Test {
     ASSERT_FALSE(attach->HasError())
         << "GIZMOSQL_TEST_RBAC_PG_URI is set but PostgreSQL is unreachable: "
         << attach->GetError();
-    auto drop = conn.Query("CALL postgres_execute('pg', 'DROP SCHEMA IF EXISTS gizmosql_rbac CASCADE')");
+    auto drop = conn.Query(
+        "CALL postgres_execute('pg', 'DROP SCHEMA IF EXISTS gizmosql_rbac CASCADE')");
     ASSERT_FALSE(drop->HasError()) << drop->GetError();
   }
 
-  std::shared_ptr<RbacEngine> NewEngine(std::chrono::milliseconds poll = std::chrono::milliseconds(0)) {
+  std::shared_ptr<RbacEngine> NewEngine(
+      std::chrono::milliseconds poll = std::chrono::milliseconds(0)) {
     RbacEngine::Options options;
     options.store_uri = PgUri();
     options.password_iterations = 1000;
@@ -105,10 +110,12 @@ TEST_F(RbacPostgresStoreTest, ReplicasSeeEachOthersChanges) {
          b->snapshot()->version() < a->snapshot()->version()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
-  ASSERT_NE(b->snapshot()->FindUserByName("joe"), nullptr) << "replica never saw the change";
+  ASSERT_NE(b->snapshot()->FindUserByName("joe"), nullptr)
+      << "replica never saw the change";
   auto joe = b->PrincipalForUser("joe");
   ASSERT_TRUE(joe.ok());
-  AccessRequest req{{"lake", {"main"}, "orders"}, ObjectType::kTable, Privilege::kSelect, {}};
+  AccessRequest req{
+      {"lake", {"main"}, "orders"}, ObjectType::kTable, Privilege::kSelect, {}};
   EXPECT_TRUE(b->snapshot()->Check(*joe, req).allowed);
 
   // A revoke on b reaches a (explicit refresh this time).
@@ -196,7 +203,8 @@ TEST_F(RbacPostgresStoreTest, ConnectionErrorsNeverEchoTheConnectionString) {
   EXPECT_NE(message.find("password authentication failed"), std::string::npos) << message;
 
   // The same with a libpq key=value connection string.
-  options.store_uri = "host=127.0.0.1 port=55432 user=postgres dbname=postgres password=" + secret;
+  options.store_uri =
+      "host=127.0.0.1 port=55432 user=postgres dbname=postgres password=" + secret;
   auto keyvalue = RbacEngine::Create(options);
   ASSERT_FALSE(keyvalue.ok());
   EXPECT_EQ(keyvalue.status().message().find(secret), std::string::npos)

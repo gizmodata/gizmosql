@@ -58,11 +58,11 @@ enum class SystemPrivilege {
   kManageExtensions,  // INSTALL, LOAD, extension repositories
   kManageSecrets,     // CREATE / DROP SECRET, duckdb_secrets()
   kManageConfig,      // SET GLOBAL, instance-wide settings
-  kReadFilesystem,    // read_csv / read_parquet / ..., FROM 'file', COPY FROM: local and remote
-  kWriteFilesystem,   // COPY ... TO a file or URL
-  kExportDatabase,    // EXPORT DATABASE
-  kImportDatabase,    // IMPORT DATABASE
-  kCheckpoint,        // CHECKPOINT, FORCE CHECKPOINT
+  kReadFilesystem,  // read_csv / read_parquet / ..., FROM 'file', COPY FROM: local and remote
+  kWriteFilesystem,  // COPY ... TO a file or URL
+  kExportDatabase,   // EXPORT DATABASE
+  kImportDatabase,   // IMPORT DATABASE
+  kCheckpoint,       // CHECKPOINT, FORCE CHECKPOINT
 };
 
 // "MANAGE CATALOGS", "READ FILESYSTEM", ...
