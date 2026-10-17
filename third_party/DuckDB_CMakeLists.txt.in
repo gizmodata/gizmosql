@@ -33,6 +33,7 @@ ExternalProject_Add(
           # Sanitizer args from the root GIZMOSQL_SANITIZER option (empty unless set).
           ${GIZMOSQL_EP_SANITIZER_ARGS}
           ${GIZMOSQL_EP_DUCKDB_SANITIZER_ARGS}
+          ${GIZMOSQL_EP_DUCKDB_OPENSSL_ARGS}
           "-DDUCKDB_EXTENSION_CONFIGS=${DUCKDB_EXTENSION_CONFIGS}"
           $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DDISABLE_EXTENSION_LOAD=ON>
           $<$<STREQUAL:${CMAKE_SYSTEM_NAME},iOS>:-DGIZMOSQL_IOS=ON>

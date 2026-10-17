@@ -266,6 +266,15 @@ set(GIZMOSQL_SANITIZER_LINK_FLAGS "")
 set(GIZMOSQL_EP_SANITIZER_ARGS "")
 set(GIZMOSQL_EP_ARROW_SANITIZER_ARGS "")
 set(GIZMOSQL_EP_DUCKDB_SANITIZER_ARGS "")
+# iOS: DuckDB's httpfs and postgres_scanner compile against OpenSSL. Point them
+# at the OpenSSL the iOS script cross-builds (3.x, iOS-tagged); otherwise
+# find_package picks up whatever the macOS host has (Homebrew's OpenSSL 4,
+# whose API libpq no longer compiles against).
+set(GIZMOSQL_EP_DUCKDB_OPENSSL_ARGS "")
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND GIZMOSQL_IOS_OPENSSL_ROOT)
+    set(GIZMOSQL_EP_DUCKDB_OPENSSL_ARGS
+        "-DOPENSSL_ROOT_DIR=${GIZMOSQL_IOS_OPENSSL_ROOT};-DOPENSSL_USE_STATIC_LIBS=TRUE")
+endif()
 if(GIZMOSQL_SANITIZER STREQUAL "thread" OR GIZMOSQL_SANITIZER STREQUAL "address")
     if(MSVC)
         message(FATAL_ERROR "GIZMOSQL_SANITIZER requires clang or gcc")
