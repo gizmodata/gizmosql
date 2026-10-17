@@ -886,7 +886,8 @@ if(GIZMOSQL_ENTERPRISE)
             src/enterprise/rbac/rbac_engine.cpp
             src/enterprise/rbac/rbac_duckdb.cpp
             src/enterprise/rbac/rbac_enforcement.cpp
-            src/enterprise/rbac/rbac_views.cpp)
+            src/enterprise/rbac/rbac_views.cpp
+            src/enterprise/rbac/rbac_policies.cpp)
 endif()
 
 # Add a library target

@@ -54,6 +54,7 @@
 #include "admin_command_guard.h"
 #include "duckdb_compat.h"
 #include "rbac_duckdb.h"
+#include "rbac_policies.h"
 #include "rbac_views.h"
 
 namespace gizmosql::enterprise::rbac {
@@ -848,6 +849,8 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
   PlanChecker checker(context, *snapshot, state->principal(), view_columns);
   checker.Visit(*plan);
   RemoveViewMarkers(plan);
+  // Row and masking policies apply to what passed the check.
+  ApplyPolicies(context, *snapshot, state->principal(), plan);
   state->NoteChecked(snapshot->version(), checker.TakeOwnership(),
                      plan->type == OpType::LOGICAL_PREPARE, checker.TakeAccesses());
 }

@@ -165,6 +165,70 @@ ALTER VIEW curated.orders_by_region OWNER TO analyst;  -- a role, a user, ...
     Use views to choose which tables and columns users see; do not rely on them
     to hide rows.
 
+## Row policies
+
+A **row policy** limits which rows of a table a role sees. As soon as a table has
+one, it is *protected*: each store user sees the rows that at least one permissive
+policy applying to them allows, minus any a restrictive policy removes, and no
+rows at all if no permissive policy applies.
+
+```sql
+ALTER USER ann SET ATTRIBUTE region = 'EU';
+
+CREATE ROW POLICY by_region ON sales.main.orders TO analyst
+    USING (region = session_attribute('region'));
+CREATE ROW POLICY everything ON sales.main.orders TO auditor USING (true);
+CREATE ROW POLICY no_test_data ON sales.main.orders AS RESTRICTIVE
+    USING (customer <> 'test');
+
+SHOW ROW POLICIES ON sales.main.orders;
+DROP ROW POLICY everything ON sales.main.orders;
+```
+
+`TO` names the roles a policy applies to (leave it out for every role);
+`CREATE OR REPLACE` changes a policy in place. The predicate is a SQL expression
+over the table's own columns and these context functions, which GizmoSQL fills in
+from the session before DuckDB sees the policy:
+
+| Function | Value |
+|----------|-------|
+| `current_user`, `session_user`, `gizmosql_user()` | the user's name |
+| `is_role_active('role')` | whether the user holds the role |
+| `session_attribute('key')` | the user's attribute (`ALTER USER ... SET ATTRIBUTE`), or NULL |
+
+A policy cannot contain subqueries, parameters or variables, and cannot read
+session settings: nothing a user can change decides what they see. Policies apply
+however a statement reaches the table (subqueries, CTEs, joins, views, prepared
+statements, copies into a new table), and in a view they follow the user reading
+it, not the view's owner. The administrator is not subject to them.
+
+## Column masking
+
+A **masking policy** replaces a column's value for the users it applies to:
+
+```sql
+CREATE MASKING POLICY email_mask AS (val VARCHAR) RETURNS VARCHAR ->
+    CASE WHEN is_role_active('support') THEN val
+         ELSE regexp_replace(val, '.+@', '****@') END;
+ALTER TABLE sales.main.customers MODIFY COLUMN email SET MASKING POLICY email_mask;
+
+CREATE MASKING POLICY hidden AS (val VARCHAR) RETURNS VARCHAR -> '***';
+ALTER TABLE sales.main.customers MODIFY COLUMN tax_id SET MASKING POLICY hidden EXEMPT ROLE finance;
+
+SHOW MASKING POLICIES;
+ALTER TABLE sales.main.customers MODIFY COLUMN tax_id UNSET MASKING POLICY;
+```
+
+The body reads only its parameter and the context functions above. The mask is
+applied where the column is read, so filters, joins, grouping, sorting and copies
+all see the masked value: `WHERE email = 'ann@example.com'` cannot be used to test
+for a real value. Masking a join key makes joins on it stop matching for masked
+users. Row policies decide on the real values of masked columns.
+
+Changing a policy, its roles or a user's attributes applies to the next statement
+(prepared statements too) and stops statements the change affects that are
+running.
+
 ## System privileges
 
 Server-wide operations stay the administrator's unless granted to a role as a
@@ -217,7 +281,11 @@ whether or not queries are logged.
 
 ## Limits of this release
 
-- Only the administrator creates and drops users and roles.
+- Only the administrator creates and drops users and roles, and manages row and
+  masking policies.
+- Store users cannot `INSERT`, `UPDATE` or `MERGE` into a table with row or
+  masking policies yet; `DELETE` removes only rows they can see. Row policies
+  cannot read other tables (mapping tables) yet.
 - A user's privileges are those of all their roles together (there is no `SET ROLE`).
 - Names are not secret: catalog functions such as `duckdb_tables()` and the Flight
   SQL metadata calls list every table and view, including ones a user cannot read.

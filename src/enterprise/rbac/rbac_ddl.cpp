@@ -18,6 +18,7 @@
 #include "rbac_ddl.h"
 
 #include <cctype>
+#include <cstring>
 
 namespace gizmosql::enterprise::rbac {
 
@@ -119,6 +120,11 @@ arrow::Result<std::vector<Token>> Tokenize(const std::string& sql) {
     } else if (c == '.' || c == ',' || c == '(' || c == ')' || c == ';') {
       tokens.push_back({TokenType::kSymbol, std::string(1, static_cast<char>(c)), start});
       ++pos;
+    } else if (std::strchr("=<>!+-*/%|&~^:[]{}", c) != nullptr) {
+      // Operators appear only inside a policy's SQL expression, which is taken
+      // as written and parsed by DuckDB. ($ and \ stay errors: no dollar quoting.)
+      tokens.push_back({TokenType::kSymbol, std::string(1, static_cast<char>(c)), start});
+      ++pos;
     } else {
       return SyntaxError(std::string("unexpected character '") + static_cast<char>(c) +
                          "' at position " + std::to_string(pos + 1));
@@ -139,7 +145,8 @@ bool KeywordEquals(const std::string& word, const char* keyword) {
 
 class Parser {
  public:
-  explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
+  Parser(std::vector<Token> tokens, std::string sql)
+      : tokens_(std::move(tokens)), sql_(std::move(sql)) {}
 
   arrow::Result<RbacCommand> ParseStatement() {
     ARROW_ASSIGN_OR_RAISE(auto command, ParseCommand());
@@ -241,11 +248,41 @@ class Parser {
 
   arrow::Result<RbacCommand> ParseCommand() {
     if (AcceptKeyword("CREATE")) {
+      bool or_replace = false;
+      if (PeekKeyword("OR") && PeekKeyword("REPLACE", 1)) {
+        pos_ += 2;
+        or_replace = true;
+      }
+      if (PeekKeyword("ROW") && PeekKeyword("POLICY", 1)) {
+        pos_ += 2;
+        return ParseCreateRowPolicy(or_replace);
+      }
+      if (PeekKeyword("MASKING") && PeekKeyword("POLICY", 1)) {
+        pos_ += 2;
+        return ParseCreateMaskingPolicy(or_replace);
+      }
+      if (or_replace) return SyntaxError("expected ROW POLICY or MASKING POLICY after CREATE OR REPLACE");
       if (AcceptKeyword("USER")) return ParseCreateUser();
       if (AcceptKeyword("ROLE")) return ParseCreateRole();
       return SyntaxError("expected USER or ROLE after CREATE");
     }
     if (AcceptKeyword("DROP")) {
+      if (PeekKeyword("ROW") && PeekKeyword("POLICY", 1)) {
+        pos_ += 2;
+        DropRowPolicyCommand cmd;
+        cmd.if_exists = ParseIfExists();
+        ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a policy name"));
+        ARROW_RETURN_NOT_OK(ExpectKeyword("ON"));
+        ARROW_ASSIGN_OR_RAISE(cmd.table, ParseQualifiedName("a table name"));
+        return cmd;
+      }
+      if (PeekKeyword("MASKING") && PeekKeyword("POLICY", 1)) {
+        pos_ += 2;
+        DropMaskingPolicyCommand cmd;
+        cmd.if_exists = ParseIfExists();
+        ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a policy name"));
+        return cmd;
+      }
       const bool is_user = PeekKeyword("USER");
       if (!is_user && !PeekKeyword("ROLE")) return SyntaxError("expected USER or ROLE after DROP");
       ++pos_;
@@ -259,6 +296,13 @@ class Parser {
       const bool is_view = PeekKeyword("VIEW");
       if (is_view || PeekKeyword("TABLE")) {
         ++pos_;
+        if (!is_view) {
+          // ALTER TABLE t MODIFY [COLUMN] c SET | UNSET MASKING POLICY ...
+          const size_t at = pos_;
+          auto table = ParseQualifiedName("a table name");
+          if (table.ok() && AcceptKeyword("MODIFY")) return ParseSetColumnMask(*table);
+          pos_ = at;
+        }
         return ParseAlterOwner(is_view);
       }
       return SyntaxError("expected USER, TABLE or VIEW after ALTER");
@@ -266,6 +310,21 @@ class Parser {
     if (AcceptKeyword("GRANT")) return ParseGrantOrRevoke(/*grant=*/true);
     if (AcceptKeyword("REVOKE")) return ParseGrantOrRevoke(/*grant=*/false);
     if (AcceptKeyword("SHOW")) {
+      if (PeekKeyword("ROW") && PeekKeyword("POLICIES", 1)) {
+        pos_ += 2;
+        ShowPoliciesCommand cmd;
+        if (AcceptKeyword("ON")) {
+          ARROW_ASSIGN_OR_RAISE(auto table, ParseQualifiedName("a table name"));
+          cmd.table = std::move(table);
+        }
+        return cmd;
+      }
+      if (PeekKeyword("MASKING") && PeekKeyword("POLICIES", 1)) {
+        pos_ += 2;
+        ShowPoliciesCommand cmd;
+        cmd.masking = true;
+        return cmd;
+      }
       ARROW_RETURN_NOT_OK(ExpectKeyword("GRANTS"));
       return ParseShowGrants();
     }
@@ -306,10 +365,142 @@ class Parser {
       cmd.action = AlterUserCommand::Action::kEnable;
     } else if (AcceptKeyword("DISABLE")) {
       cmd.action = AlterUserCommand::Action::kDisable;
+    } else if (PeekKeyword("SET") && PeekKeyword("ATTRIBUTE", 1)) {
+      pos_ += 2;
+      cmd.action = AlterUserCommand::Action::kSetAttribute;
+      ARROW_ASSIGN_OR_RAISE(cmd.attribute, ParseIdentifier("an attribute name"));
+      ARROW_RETURN_NOT_OK(ExpectSymbol("="));
+      ARROW_ASSIGN_OR_RAISE(cmd.value, ParseStringLiteral("the attribute value"));
+    } else if (PeekKeyword("UNSET") && PeekKeyword("ATTRIBUTE", 1)) {
+      pos_ += 2;
+      cmd.action = AlterUserCommand::Action::kUnsetAttribute;
+      ARROW_ASSIGN_OR_RAISE(cmd.attribute, ParseIdentifier("an attribute name"));
     } else {
-      return SyntaxError("expected PASSWORD, ENABLE or DISABLE after ALTER USER " + cmd.name);
+      return SyntaxError("expected PASSWORD, ENABLE, DISABLE, SET ATTRIBUTE or UNSET ATTRIBUTE "
+                         "after ALTER USER " + cmd.name);
     }
     return cmd;
+  }
+
+  // The SQL text of a parenthesized group starting at the current "(": what is
+  // between the parentheses, as written. Leaves the position after the ")".
+  arrow::Result<std::string> ParseParenthesizedSql(const char* what) {
+    if (!PeekSymbol("(")) {
+      return SyntaxError(std::string("expected ( before ") + what);
+    }
+    const size_t open = Peek().offset;
+    int depth = 0;
+    while (Peek().type != TokenType::kEnd) {
+      if (PeekSymbol("(")) ++depth;
+      if (PeekSymbol(")") && --depth == 0) {
+        const size_t close = Peek().offset;
+        ++pos_;
+        std::string text = sql_.substr(open + 1, close - open - 1);
+        if (text.find_first_not_of(" \t\r\n") == std::string::npos) {
+          return SyntaxError(std::string("empty ") + what);
+        }
+        return text;
+      }
+      ++pos_;
+    }
+    return SyntaxError(std::string("unbalanced parentheses in ") + what);
+  }
+
+  arrow::Result<RbacCommand> ParseCreateRowPolicy(bool or_replace) {
+    CreateRowPolicyCommand cmd;
+    cmd.or_replace = or_replace;
+    ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a policy name"));
+    ARROW_RETURN_NOT_OK(ExpectKeyword("ON"));
+    ARROW_ASSIGN_OR_RAISE(cmd.table, ParseQualifiedName("a table name"));
+    if (AcceptKeyword("AS")) {
+      if (AcceptKeyword("RESTRICTIVE")) {
+        cmd.permissive = false;
+      } else {
+        ARROW_RETURN_NOT_OK(ExpectKeyword("PERMISSIVE"));
+      }
+    }
+    if (AcceptKeyword("TO")) {
+      do {
+        ARROW_ASSIGN_OR_RAISE(auto role, ParseIdentifier("a role name"));
+        cmd.roles.push_back(std::move(role));
+      } while (PeekSymbol(",") && (++pos_, true));
+    }
+    ARROW_RETURN_NOT_OK(ExpectKeyword("USING"));
+    ARROW_ASSIGN_OR_RAISE(cmd.predicate, ParseParenthesizedSql("the policy's USING predicate"));
+    return cmd;
+  }
+
+  arrow::Result<RbacCommand> ParseCreateMaskingPolicy(bool or_replace) {
+    CreateMaskingPolicyCommand cmd;
+    cmd.or_replace = or_replace;
+    ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a policy name"));
+    ARROW_RETURN_NOT_OK(ExpectKeyword("AS"));
+    ARROW_RETURN_NOT_OK(ExpectSymbol("("));
+    ARROW_ASSIGN_OR_RAISE(cmd.parameter, ParseIdentifier("the parameter name"));
+    // The parameter type runs to the matching ")".
+    const size_t type_start = Peek().offset;
+    int depth = 1;
+    while (Peek().type != TokenType::kEnd) {
+      if (PeekSymbol("(")) ++depth;
+      if (PeekSymbol(")") && --depth == 0) break;
+      ++pos_;
+    }
+    if (!PeekSymbol(")")) return SyntaxError("unbalanced parentheses in the parameter list");
+    cmd.parameter_type = Trim(sql_.substr(type_start, Peek().offset - type_start));
+    ++pos_;
+    ARROW_RETURN_NOT_OK(ExpectKeyword("RETURNS"));
+    // The return type runs to "->".
+    const size_t ret_start = Peek().offset;
+    while (Peek().type != TokenType::kEnd && !(PeekSymbol("-") && Peek(1).text == ">")) ++pos_;
+    if (Peek().type == TokenType::kEnd) return SyntaxError("expected -> before the policy body");
+    cmd.return_type = Trim(sql_.substr(ret_start, Peek().offset - ret_start));
+    pos_ += 2;
+    // The body is the rest of the statement (a trailing ";" is not part of it).
+    const size_t body_start = Peek().offset;
+    size_t body_end = sql_.size();
+    size_t last = tokens_.size() - 1;  // kEnd
+    if (last > 0 && tokens_[last - 1].type == TokenType::kSymbol && tokens_[last - 1].text == ";") {
+      body_end = tokens_[last - 1].offset;
+      last -= 1;
+    }
+    cmd.body = Trim(sql_.substr(body_start, body_end - body_start));
+    if (cmd.parameter_type.empty() || cmd.return_type.empty() || cmd.body.empty()) {
+      return SyntaxError("a masking policy needs a parameter type, a return type and a body");
+    }
+    pos_ = last;  // the body was taken whole
+    return cmd;
+  }
+
+  arrow::Result<RbacCommand> ParseSetColumnMask(QualifiedName table) {
+    SetColumnMaskCommand cmd;
+    cmd.table = std::move(table);
+    AcceptKeyword("COLUMN");
+    ARROW_ASSIGN_OR_RAISE(cmd.column, ParseIdentifier("a column name"));
+    if (AcceptKeyword("UNSET")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("MASKING"));
+      ARROW_RETURN_NOT_OK(ExpectKeyword("POLICY"));
+      return cmd;
+    }
+    ARROW_RETURN_NOT_OK(ExpectKeyword("SET"));
+    ARROW_RETURN_NOT_OK(ExpectKeyword("MASKING"));
+    ARROW_RETURN_NOT_OK(ExpectKeyword("POLICY"));
+    ARROW_ASSIGN_OR_RAISE(auto policy, ParseIdentifier("a masking policy name"));
+    cmd.policy = std::move(policy);
+    if (AcceptKeyword("EXEMPT")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("ROLE"));
+      do {
+        ARROW_ASSIGN_OR_RAISE(auto role, ParseIdentifier("a role name"));
+        cmd.exempt_roles.push_back(std::move(role));
+      } while (PeekSymbol(",") && (++pos_, true));
+    }
+    return cmd;
+  }
+
+  static std::string Trim(const std::string& s) {
+    const auto b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return "";
+    const auto e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
   }
 
   arrow::Result<RbacCommand> ParseAlterOwner(bool is_view) {
@@ -599,6 +790,7 @@ class Parser {
   }
 
   std::vector<Token> tokens_;
+  std::string sql_;
   size_t pos_ = 0;
 };
 
@@ -630,12 +822,26 @@ std::string QualifiedName::ToString() const {
 }
 
 bool LooksLikeRbacStatement(const std::string& sql) {
-  const auto words = LeadingWords(sql, 2);
+  const auto words = LeadingWords(sql, 5);
   if (words.empty()) return false;
   const std::string& first = words[0];
   if (first == "GRANT" || first == "REVOKE") return true;
   if (words.size() < 2) return false;
   const std::string& second = words[1];
+  auto is_policy = [&](size_t i) {
+    return words.size() > i + 1 && (words[i] == "ROW" || words[i] == "MASKING") &&
+           words[i + 1] == "POLICY";
+  };
+  if (first == "CREATE" && is_policy(1)) return true;
+  if (first == "CREATE" && second == "OR" && words.size() > 2 && words[2] == "REPLACE" &&
+      is_policy(3)) {
+    return true;
+  }
+  if (first == "DROP" && is_policy(1)) return true;
+  if (first == "SHOW" && words.size() > 2 && (second == "ROW" || second == "MASKING") &&
+      words[2] == "POLICIES") {
+    return true;
+  }
   if (first == "CREATE" || first == "DROP") return second == "USER" || second == "ROLE";
   if (first == "ALTER") {
     if (second == "USER") return true;
@@ -656,9 +862,21 @@ bool LooksLikeRbacStatement(const std::string& sql) {
           i += 2;
         }
       }
-      return i + 1 < t.size() && t[i].type == TokenType::kWord &&
-             KeywordEquals(t[i].text, "OWNER") && t[i + 1].type == TokenType::kWord &&
-             KeywordEquals(t[i + 1].text, "TO");
+      if (i + 1 < t.size() && t[i].type == TokenType::kWord && KeywordEquals(t[i].text, "OWNER") &&
+          t[i + 1].type == TokenType::kWord && KeywordEquals(t[i + 1].text, "TO")) {
+        return true;
+      }
+      // ALTER TABLE t MODIFY [COLUMN] c SET | UNSET MASKING POLICY
+      if (second == "TABLE" && i < t.size() && t[i].type == TokenType::kWord &&
+          KeywordEquals(t[i].text, "MODIFY")) {
+        for (size_t j = i + 1; j + 1 < t.size(); ++j) {
+          if (t[j].type == TokenType::kWord && KeywordEquals(t[j].text, "MASKING") &&
+              t[j + 1].type == TokenType::kWord && KeywordEquals(t[j + 1].text, "POLICY")) {
+            return true;
+          }
+        }
+      }
+      return false;
     }
     return false;
   }
@@ -668,7 +886,7 @@ bool LooksLikeRbacStatement(const std::string& sql) {
 
 arrow::Result<RbacCommand> ParseRbacStatement(const std::string& sql) {
   ARROW_ASSIGN_OR_RAISE(auto tokens, Tokenize(sql));
-  Parser parser(std::move(tokens));
+  Parser parser(std::move(tokens), sql);
   return parser.ParseStatement();
 }
 
@@ -692,6 +910,18 @@ std::string CommandKind(const RbacCommand& command) {
       return c.is_view ? "ALTER VIEW OWNER" : "ALTER TABLE OWNER";
     }
     std::string operator()(const ShowGrantsCommand&) const { return "SHOW GRANTS"; }
+    std::string operator()(const CreateRowPolicyCommand&) const { return "CREATE ROW POLICY"; }
+    std::string operator()(const DropRowPolicyCommand&) const { return "DROP ROW POLICY"; }
+    std::string operator()(const CreateMaskingPolicyCommand&) const {
+      return "CREATE MASKING POLICY";
+    }
+    std::string operator()(const DropMaskingPolicyCommand&) const { return "DROP MASKING POLICY"; }
+    std::string operator()(const SetColumnMaskCommand& c) const {
+      return c.policy ? "SET MASKING POLICY" : "UNSET MASKING POLICY";
+    }
+    std::string operator()(const ShowPoliciesCommand& c) const {
+      return c.masking ? "SHOW MASKING POLICIES" : "SHOW ROW POLICIES";
+    }
   };
   return std::visit(Visitor{}, command);
 }

@@ -58,6 +58,19 @@ class ObjectResolver {
   // catalog.schema[.sub...] or schema (in the session's catalog)
   virtual arrow::Result<ObjectPath> ResolveSchema(const QualifiedName& name) = 0;
   virtual arrow::Result<std::string> ResolveCatalog(const std::string& name) = 0;
+
+  // Policy SQL tried against the real table before it is stored (a dry-run
+  // bind). The defaults accept; GizmoSQL's DuckDB resolver checks.
+  virtual arrow::Status CheckRowPredicate(const ResolvedObject& table, const std::string& predicate) {
+    return arrow::Status::OK();
+  }
+  virtual arrow::Status CheckMaskingPolicy(const MaskingPolicyRecord& policy) {
+    return arrow::Status::OK();
+  }
+  virtual arrow::Status CheckMaskBinding(const ResolvedObject& table, const std::string& column,
+                                         const MaskingPolicyRecord& policy) {
+    return arrow::Status::OK();
+  }
 };
 
 // The result of an access-control statement, returned to the client as a table.

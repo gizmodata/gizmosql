@@ -66,6 +66,28 @@ arrow::Status RunAs(int port, const std::string& user, const std::string& role,
   return arrow::Status::OK();
 }
 
+// The first column of the result, as strings.
+arrow::Result<std::vector<std::string>> ValuesAs(int port, const std::string& user,
+                                                 const std::string& role, const std::string& session,
+                                                 const std::string& sql) {
+  ARROW_ASSIGN_OR_RAISE(auto loc, arrow::flight::Location::ForGrpcTcp("127.0.0.1", port));
+  ARROW_ASSIGN_OR_RAISE(auto client, arrow::flight::FlightClient::Connect(loc, {}));
+  arrow::flight::FlightCallOptions co;
+  co.headers.push_back({"authorization", "Bearer " + MintToken(user, role, session)});
+  FlightSqlClient flight_sql(std::move(client));
+  ARROW_ASSIGN_OR_RAISE(auto info, flight_sql.Execute(co, sql));
+  std::vector<std::string> values;
+  for (const auto& ep : info->endpoints()) {
+    ARROW_ASSIGN_OR_RAISE(auto reader, flight_sql.DoGet(co, ep.ticket));
+    ARROW_ASSIGN_OR_RAISE(auto table, reader->ToTable());
+    for (int64_t r = 0; r < table->num_rows(); ++r) {
+      ARROW_ASSIGN_OR_RAISE(auto scalar, table->column(0)->GetScalar(r));
+      values.push_back(scalar->ToString());
+    }
+  }
+  return values;
+}
+
 class RbacAttachedFixture : public gizmosql::testing::ServerTestFixture<RbacAttachedFixture> {
  public:
   static gizmosql::testing::TestServerConfig GetConfig() {
@@ -149,6 +171,25 @@ TEST_F(RbacAttachedFixture, GrantsApplyToDuckLakeTables) {
   ExpectBlocked("SELECT * FROM lake.main.hidden", "no SELECT privilege on table lake.main.hidden");
 #endif
 
+  // Row and masking policies apply to DuckLake tables as well.
+  ASSERT_OK(Admin("CREATE TABLE lake.main.governed AS SELECT * FROM (VALUES (1, 'EU', 'a@x'), "
+                  "(2, 'US', 'b@x')) t(id, region, email)"));
+  ASSERT_OK(Admin("GRANT SELECT ON lake.main.governed TO lake_reader"));
+  ASSERT_OK(Admin("CREATE ROW POLICY eu_only ON lake.main.governed USING (region = 'EU')"));
+  ASSERT_OK(Admin("CREATE MASKING POLICY lake_mask AS (val VARCHAR) RETURNS VARCHAR -> 'masked'"));
+  ASSERT_OK(Admin("ALTER TABLE lake.main.governed MODIFY COLUMN email SET MASKING POLICY lake_mask"));
+  auto user_values = [&](const std::string& sql) {
+    return ValuesAs(GetPort(), "lake_user", "user", kUserSession, sql);
+  };
+  ASSERT_OK_AND_ASSIGN(auto ids, user_values("SELECT id FROM lake.main.governed"));
+  EXPECT_EQ(ids, std::vector<std::string>{"1"});
+  ASSERT_OK_AND_ASSIGN(auto emails, user_values("SELECT email FROM lake.main.governed"));
+  EXPECT_EQ(emails, std::vector<std::string>{"masked"});
+  ASSERT_OK_AND_ASSIGN(auto oracle,
+                       user_values("SELECT count(*) FROM lake.main.governed WHERE email = 'a@x'"));
+  EXPECT_EQ(oracle, std::vector<std::string>{"0"});
+  ASSERT_OK(Admin("ALTER TABLE lake.main.governed MODIFY COLUMN email UNSET MASKING POLICY"));
+  ASSERT_OK(Admin("DROP ROW POLICY eu_only ON lake.main.governed"));
   std::filesystem::remove_all(dir);
 }
 

@@ -30,6 +30,7 @@
 #include <openssl/evp.h>
 
 #include "duckdb_compat.h"
+#include "rbac_policies.h"
 
 namespace gizmosql::enterprise::rbac {
 
@@ -199,6 +200,76 @@ arrow::Result<std::string> SessionObjectResolver::ResolveCatalog(const std::stri
   }));
   if (resolved.empty()) return AccessControlError("catalog " + name + " does not exist");
   return resolved;
+}
+
+namespace {
+
+// A sample session for trying policy SQL: no roles, no attributes.
+PolicyContext TrialContext() {
+  PolicyContext context;
+  context.user_name = "gizmosql_policy_check";
+  return context;
+}
+
+// Prepare `sql` on the session's connection; the error, if any, as a refusal.
+arrow::Status TryPrepare(dd::Connection& connection, const std::string& sql, const std::string& what) {
+  auto prepared = connection.Prepare(sql);
+  if (prepared->HasError()) {
+    return arrow::Status::Invalid("GizmoSQL access control: " + what + ": " +
+                                  prepared->GetError());
+  }
+  return arrow::Status::OK();
+}
+
+arrow::Result<dd::unique_ptr<dd::ParsedExpression>> ParseSql(const std::string& sql) {
+  try {
+    auto parser = compat::StandaloneParser();
+    auto list = parser.ParseExpressionList(sql);
+    if (list.size() == 1) return std::move(list[0]);
+  } catch (const std::exception& e) {
+    return arrow::Status::Invalid("GizmoSQL access control: " + std::string(e.what()));
+  }
+  return arrow::Status::Invalid("GizmoSQL access control: not one expression: " + sql);
+}
+
+}  // namespace
+
+arrow::Status SessionObjectResolver::CheckRowPredicate(const ResolvedObject& table,
+                                                       const std::string& predicate) {
+  ARROW_ASSIGN_OR_RAISE(auto parsed, PreparePolicyExpression(predicate, TrialContext()));
+  return TryPrepare(connection_,
+                    "SELECT count(*) FROM " + table.path.ToString() + " WHERE (" +
+                        compat::Str(parsed->ToString()) + ")",
+                    "the policy does not fit " + table.path.ToString());
+}
+
+arrow::Status SessionObjectResolver::CheckMaskingPolicy(const MaskingPolicyRecord& policy) {
+  ARROW_ASSIGN_OR_RAISE(auto value, ParseSql("CAST(NULL AS " + policy.parameter_type + ")"));
+  ARROW_ASSIGN_OR_RAISE(auto parsed, PreparePolicyExpression(policy.body, TrialContext(),
+                                                             policy.parameter, value.get()));
+  return TryPrepare(connection_,
+                    "SELECT CAST((" + compat::Str(parsed->ToString()) + ") AS " + policy.return_type + ")",
+                    "the masking policy " + policy.name + " is not valid");
+}
+
+arrow::Status SessionObjectResolver::CheckMaskBinding(const ResolvedObject& table,
+                                                      const std::string& column,
+                                                      const MaskingPolicyRecord& policy) {
+  const std::string quoted = "\"" + column + "\"";
+  auto probe = connection_.Prepare("SELECT " + quoted + " FROM " + table.path.ToString() + " LIMIT 0");
+  if (probe->HasError()) {
+    return arrow::Status::Invalid("GizmoSQL access control: " + probe->GetError());
+  }
+  const std::string column_type = probe->GetTypes()[0].ToString();
+  ARROW_ASSIGN_OR_RAISE(auto value, ParseSql("CAST(" + quoted + " AS " + policy.parameter_type + ")"));
+  ARROW_ASSIGN_OR_RAISE(auto parsed, PreparePolicyExpression(policy.body, TrialContext(),
+                                                             policy.parameter, value.get()));
+  return TryPrepare(connection_,
+                    "SELECT CAST(CAST((" + compat::Str(parsed->ToString()) + ") AS " +
+                        policy.return_type + ") AS " + column_type + ") FROM " +
+                        table.path.ToString() + " LIMIT 0",
+                    "masking policy " + policy.name + " does not fit " + table.path.ToString() +
+                        "." + column);
 }
 
 std::string ViewDefinitionHash(const dd::SelectStatement& query) {

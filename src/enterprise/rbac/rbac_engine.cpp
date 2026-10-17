@@ -17,6 +17,8 @@
 
 #include "rbac_engine.h"
 
+#include "rbac_policies.h"
+
 #include <algorithm>
 #include <set>
 
@@ -424,6 +426,12 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
           user.enabled = false;
           message = "User " + user.name + " disabled";
           break;
+        case AlterUserCommand::Action::kSetAttribute:
+          message = "Attribute " + c->attribute + " set for user " + user.name;
+          return txn.SetUserAttribute(user.id, c->attribute, c->value);
+        case AlterUserCommand::Action::kUnsetAttribute:
+          message = "Attribute " + c->attribute + " removed for user " + user.name;
+          return txn.SetUserAttribute(user.id, c->attribute, std::nullopt);
       }
       return txn.UpdateUser(user);
     }));
@@ -804,6 +812,193 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       return arrow::Status::OK();
     }));
     return with_cascade_note(Join(done, "; "));
+  }
+
+  // ---- row policies --------------------------------------------------------
+  if (std::holds_alternative<CreateRowPolicyCommand>(command) ||
+      std::holds_alternative<DropRowPolicyCommand>(command) ||
+      std::holds_alternative<CreateMaskingPolicyCommand>(command) ||
+      std::holds_alternative<DropMaskingPolicyCommand>(command) ||
+      std::holds_alternative<SetColumnMaskCommand>(command) ||
+      std::holds_alternative<ShowPoliciesCommand>(command)) {
+    if (!actor.superuser) {
+      return AccessControlError("GizmoSQL blocked " + CommandKind(command) +
+                                ": only administrators manage row and masking policies");
+    }
+  }
+  if (const auto* c = std::get_if<CreateRowPolicyCommand>(&command)) {
+    ARROW_ASSIGN_OR_RAISE(auto table, resolver.ResolveObject(c->table));
+    if (table.type != ObjectType::kTable) {
+      return AccessControlError("row policies go on tables; " + table.path.ToString() + " is a view");
+    }
+    ARROW_RETURN_NOT_OK(ValidatePolicySql(c->predicate));
+    ARROW_RETURN_NOT_OK(resolver.CheckRowPredicate(table, c->predicate));
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      RowPolicyRecord record;
+      for (const auto* p : snap.RowPoliciesOn(table.path)) {
+        if (IdentifiersEqual(p->name, c->name)) {
+          if (!c->or_replace) {
+            return AccessControlError("row policy " + c->name + " already exists on " +
+                                      table.path.ToString());
+          }
+          record.id = p->id;
+        }
+      }
+      if (record.id.empty()) record.id = StoreTransaction::NewId();
+      record.name = c->name;
+      record.table = table.path;
+      record.permissive = c->permissive;
+      record.predicate = c->predicate;
+      for (const auto& role_name : c->roles) {
+        const auto* role = snap.FindRoleByName(role_name);
+        if (!role) return AccessControlError("role " + role_name + " does not exist");
+        record.role_ids.push_back(role->id);
+      }
+      message = "Row policy " + c->name + " on " + table.path.ToString() +
+                (c->or_replace ? " created or replaced" : " created");
+      return txn.UpsertRowPolicy(record);
+    }));
+    return Message(message);
+  }
+  if (const auto* c = std::get_if<DropRowPolicyCommand>(&command)) {
+    ARROW_ASSIGN_OR_RAISE(auto table, resolver.ResolveObject(c->table));
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      for (const auto* p : snap.RowPoliciesOn(table.path)) {
+        if (IdentifiersEqual(p->name, c->name)) {
+          message = "Row policy " + p->name + " on " + table.path.ToString() + " dropped";
+          return txn.DeleteRowPolicy(p->id);
+        }
+      }
+      if (c->if_exists) {
+        message = "Row policy " + c->name + " does not exist on " + table.path.ToString();
+        return arrow::Status::OK();
+      }
+      return AccessControlError("row policy " + c->name + " does not exist on " +
+                                table.path.ToString());
+    }));
+    return Message(message);
+  }
+
+  // ---- masking policies ----------------------------------------------------
+  if (const auto* c = std::get_if<CreateMaskingPolicyCommand>(&command)) {
+    ARROW_RETURN_NOT_OK(ValidatePolicySql(c->body, c->parameter));
+    MaskingPolicyRecord candidate{"", c->name, c->parameter, c->parameter_type, c->return_type,
+                                  c->body};
+    ARROW_RETURN_NOT_OK(resolver.CheckMaskingPolicy(candidate));
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      MaskingPolicyRecord record = candidate;
+      if (const auto* existing = snap.FindMaskingPolicyByName(c->name)) {
+        if (!c->or_replace) return AccessControlError("masking policy " + c->name + " already exists");
+        record.id = existing->id;
+      } else {
+        record.id = StoreTransaction::NewId();
+      }
+      message = "Masking policy " + c->name + (c->or_replace ? " created or replaced" : " created");
+      return txn.UpsertMaskingPolicy(record);
+    }));
+    return Message(message);
+  }
+  if (const auto* c = std::get_if<DropMaskingPolicyCommand>(&command)) {
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      const auto* existing = snap.FindMaskingPolicyByName(c->name);
+      if (!existing) {
+        if (c->if_exists) {
+          message = "Masking policy " + c->name + " does not exist";
+          return arrow::Status::OK();
+        }
+        return AccessControlError("masking policy " + c->name + " does not exist");
+      }
+      for (const auto& b : snap.mask_bindings()) {
+        if (b.policy_id == existing->id) {
+          return AccessControlError("masking policy " + existing->name + " masks " +
+                                    b.table.ToString() + "." + b.column +
+                                    "; unset it there first (ALTER TABLE ... MODIFY COLUMN ... "
+                                    "UNSET MASKING POLICY)");
+        }
+      }
+      message = "Masking policy " + existing->name + " dropped";
+      return txn.DeleteMaskingPolicy(existing->id);
+    }));
+    return Message(message);
+  }
+  if (const auto* c = std::get_if<SetColumnMaskCommand>(&command)) {
+    ARROW_ASSIGN_OR_RAISE(auto table, resolver.ResolveObject(c->table));
+    if (table.type != ObjectType::kTable) {
+      return AccessControlError("masking policies go on table columns; " + table.path.ToString() +
+                                " is a view");
+    }
+    auto column = std::find_if(table.columns.begin(), table.columns.end(),
+                               [&](const std::string& t) { return IdentifiersEqual(t, c->column); });
+    if (column == table.columns.end()) {
+      return AccessControlError("column " + c->column + " does not exist in " + table.path.ToString());
+    }
+    const std::string column_name = *column;
+    if (c->policy) {
+      auto snap = snapshot();
+      const auto* policy = snap->FindMaskingPolicyByName(*c->policy);
+      if (!policy) return AccessControlError("masking policy " + *c->policy + " does not exist");
+      ARROW_RETURN_NOT_OK(resolver.CheckMaskBinding(table, column_name, *policy));
+    }
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      MaskBindingRecord binding;
+      binding.table = table.path;
+      binding.column = column_name;
+      if (!c->policy) {
+        message = "Masking policy removed from " + table.path.ToString() + "." + column_name;
+        return txn.SetMaskBinding(binding, /*remove=*/true);
+      }
+      const auto* policy = snap.FindMaskingPolicyByName(*c->policy);
+      if (!policy) return AccessControlError("masking policy " + *c->policy + " does not exist");
+      binding.policy_id = policy->id;
+      for (const auto& role_name : c->exempt_roles) {
+        const auto* role = snap.FindRoleByName(role_name);
+        if (!role) return AccessControlError("role " + role_name + " does not exist");
+        binding.exempt_role_ids.push_back(role->id);
+      }
+      message = table.path.ToString() + "." + column_name + " is masked by " + policy->name;
+      return txn.SetMaskBinding(binding, /*remove=*/false);
+    }));
+    return Message(message);
+  }
+  if (const auto* c = std::get_if<ShowPoliciesCommand>(&command)) {
+    auto snap = snapshot();
+    CommandResult result;
+    auto role_names = [&](const std::vector<std::string>& ids) {
+      std::vector<std::string> names;
+      for (const auto& id : ids) {
+        const auto* role = snap->FindRoleById(id);
+        names.push_back(role ? role->name : id);
+      }
+      return Join(names);
+    };
+    if (c->masking) {
+      result.column_names = {"policy", "parameter", "parameter_type", "return_type", "body",
+                             "masks"};
+      for (const auto& m : snap->masking_policies()) {
+        std::vector<std::string> bound;
+        for (const auto& b : snap->mask_bindings()) {
+          if (b.policy_id == m.id) {
+            bound.push_back(b.table.ToString() + "." + b.column +
+                            (b.exempt_role_ids.empty() ? "" : " (exempt: " + role_names(b.exempt_role_ids) + ")"));
+          }
+        }
+        result.rows.push_back({m.name, m.parameter, m.parameter_type, m.return_type, m.body,
+                               Join(bound, "; ")});
+      }
+      return result;
+    }
+    std::optional<ObjectPath> only;
+    if (c->table) {
+      ARROW_ASSIGN_OR_RAISE(auto table, resolver.ResolveObject(*c->table));
+      only = table.path;
+    }
+    result.column_names = {"policy", "table", "kind", "roles", "using"};
+    for (const auto& p : snap->row_policies()) {
+      if (only && ObjectKey(p.table) != ObjectKey(*only)) continue;
+      result.rows.push_back({p.name, p.table.ToString(), p.permissive ? "PERMISSIVE" : "RESTRICTIVE",
+                             p.role_ids.empty() ? "(all)" : role_names(p.role_ids), p.predicate});
+    }
+    return result;
   }
 
   // ---- ALTER TABLE | VIEW ... OWNER TO -------------------------------------

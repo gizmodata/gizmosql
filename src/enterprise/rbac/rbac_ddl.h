@@ -60,10 +60,13 @@ struct CreateUserCommand {
 };
 
 struct AlterUserCommand {
-  enum class Action { kSetPassword, kClearPassword, kEnable, kDisable };
+  enum class Action { kSetPassword, kClearPassword, kEnable, kDisable, kSetAttribute,
+                      kUnsetAttribute };
   std::string name;
   Action action;
-  std::string password;  // kSetPassword
+  std::string password;   // kSetPassword
+  std::string attribute;  // kSetAttribute / kUnsetAttribute
+  std::string value;      // kSetAttribute
 };
 
 struct DropUserCommand {
@@ -110,6 +113,55 @@ struct SystemPrivilegeCommand {
   bool cascade = true;
 };
 
+// CREATE [OR REPLACE] ROW POLICY name ON table [AS PERMISSIVE | RESTRICTIVE]
+//   [TO role, ...] USING (predicate)
+struct CreateRowPolicyCommand {
+  std::string name;
+  bool or_replace = false;
+  QualifiedName table;
+  bool permissive = true;
+  std::vector<std::string> roles;  // empty: every role
+  std::string predicate;           // the SQL between the parentheses, as written
+};
+
+// DROP ROW POLICY [IF EXISTS] name ON table
+struct DropRowPolicyCommand {
+  std::string name;
+  QualifiedName table;
+  bool if_exists = false;
+};
+
+// CREATE [OR REPLACE] MASKING POLICY name AS (parameter type) RETURNS type -> body
+struct CreateMaskingPolicyCommand {
+  std::string name;
+  bool or_replace = false;
+  std::string parameter;
+  std::string parameter_type;  // as written
+  std::string return_type;     // as written
+  std::string body;            // as written
+};
+
+// DROP MASKING POLICY [IF EXISTS] name
+struct DropMaskingPolicyCommand {
+  std::string name;
+  bool if_exists = false;
+};
+
+// ALTER TABLE t MODIFY [COLUMN] c SET MASKING POLICY p [EXEMPT ROLE r, ...]
+// ALTER TABLE t MODIFY [COLUMN] c UNSET MASKING POLICY
+struct SetColumnMaskCommand {
+  QualifiedName table;
+  std::string column;
+  std::optional<std::string> policy;  // nullopt: UNSET
+  std::vector<std::string> exempt_roles;
+};
+
+// SHOW ROW POLICIES [ON table] | SHOW MASKING POLICIES
+struct ShowPoliciesCommand {
+  bool masking = false;
+  std::optional<QualifiedName> table;
+};
+
 // ALTER TABLE | VIEW obj OWNER TO principal
 struct AlterOwnerCommand {
   bool is_view = false;
@@ -125,7 +177,9 @@ struct ShowGrantsCommand {
 using RbacCommand =
     std::variant<CreateUserCommand, AlterUserCommand, DropUserCommand, CreateRoleCommand,
                  DropRoleCommand, RoleMembershipCommand, ObjectPrivilegeCommand,
-                 SystemPrivilegeCommand, AlterOwnerCommand, ShowGrantsCommand>;
+                 SystemPrivilegeCommand, AlterOwnerCommand, ShowGrantsCommand,
+                 CreateRowPolicyCommand, DropRowPolicyCommand, CreateMaskingPolicyCommand,
+                 DropMaskingPolicyCommand, SetColumnMaskCommand, ShowPoliciesCommand>;
 
 // True when `sql` begins like an access-control statement (GRANT, REVOKE,
 // CREATE/ALTER/DROP USER or ROLE, ALTER TABLE|VIEW ... OWNER TO, SHOW GRANTS).

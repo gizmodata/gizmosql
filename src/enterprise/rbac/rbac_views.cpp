@@ -122,6 +122,8 @@ bool PassesColumnsThrough(const dd::LogicalOperator& op) {
     case OpType::LOGICAL_ASOF_JOIN:
     case OpType::LOGICAL_DEPENDENT_JOIN:
     case OpType::LOGICAL_EXPLAIN:
+    case OpType::LOGICAL_PREPARE:
+    case OpType::LOGICAL_EXECUTE:
     case OpType::LOGICAL_PROJECTION:
     case OpType::LOGICAL_AGGREGATE_AND_GROUP_BY:
       return true;
@@ -170,6 +172,24 @@ void FindMarkers(dd::LogicalOperator& op, std::vector<ViewMarker*>& markers) {
 
 }  // namespace
 
+bool UsesChildColumnsByPosition(const dd::LogicalOperator& op) { return !PassesColumnsThrough(op); }
+
+dd::vector<dd::ColumnBinding> ResultColumns(dd::LogicalOperator& plan) {
+  dd::LogicalOperator* root = &plan;
+  while ((root->type == OpType::LOGICAL_PREPARE || root->type == OpType::LOGICAL_EXECUTE ||
+          root->type == OpType::LOGICAL_EXPLAIN) &&
+         !root->children.empty() && root->children[0]) {
+    root = root->children[0].get();
+  }
+  // Operators that only pass on (or compute) columns of the plan: their
+  // bindings are real. Anything else reports a placeholder binding.
+  if (root->type == OpType::LOGICAL_GET || root->type == OpType::LOGICAL_PROJECTION ||
+      root->type == OpType::LOGICAL_AGGREGATE_AND_GROUP_BY || PassesColumnsThrough(*root)) {
+    return root->GetColumnBindings();
+  }
+  return {};
+}
+
 bool InstallViewHook() {
 #if GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
   dd::gizmosql_bound_view_hook = &OnViewBound;
@@ -188,7 +208,7 @@ std::unordered_map<const ViewMarker*, std::vector<std::string>> ViewColumnsUsed(
     std::vector<std::string> columns;
     try {
       dd::column_binding_set_t used;
-      for (const auto& b : plan.GetColumnBindings()) used.insert(b);  // what the statement returns
+      for (const auto& b : ResultColumns(plan)) used.insert(b);  // what the statement returns
       CollectUses(plan, marker, used);
       const auto bindings = marker->GetColumnBindings();
       if (bindings.size() != marker->column_names.size()) {

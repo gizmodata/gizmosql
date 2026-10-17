@@ -82,6 +82,17 @@ bool InstallViewHook();
 std::unordered_map<const ViewMarker*, std::vector<std::string>> ViewColumnsUsed(
     duckdb::LogicalOperator& plan);
 
+// Does the operator take its children's columns by position (set operations,
+// INSERT, CREATE TABLE AS, ...) rather than through expressions or by passing
+// them on unchanged (filters, joins, projections)?
+bool UsesChildColumnsByPosition(const duckdb::LogicalOperator& op);
+
+// The columns a statement returns: its root's, looking through PREPARE,
+// EXECUTE and EXPLAIN. Empty when the root returns no columns of the plan
+// below it (CREATE TABLE AS, INSERT, ...: they use their child by position,
+// which UsesChildColumnsByPosition covers).
+duckdb::vector<duckdb::ColumnBinding> ResultColumns(duckdb::LogicalOperator& plan);
+
 // Replace every view marker in the plan with the view's own plan.
 void RemoveViewMarkers(duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
 

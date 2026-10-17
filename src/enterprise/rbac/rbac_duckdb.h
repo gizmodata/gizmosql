@@ -40,6 +40,10 @@ class SessionObjectResolver : public ObjectResolver {
   arrow::Result<ResolvedObject> ResolveObject(const QualifiedName& name) override;
   arrow::Result<ObjectPath> ResolveSchema(const QualifiedName& name) override;
   arrow::Result<std::string> ResolveCatalog(const std::string& name) override;
+  arrow::Status CheckRowPredicate(const ResolvedObject& table, const std::string& predicate) override;
+  arrow::Status CheckMaskingPolicy(const MaskingPolicyRecord& policy) override;
+  arrow::Status CheckMaskBinding(const ResolvedObject& table, const std::string& column,
+                                 const MaskingPolicyRecord& policy) override;
 
  private:
   duckdb::Connection& connection_;

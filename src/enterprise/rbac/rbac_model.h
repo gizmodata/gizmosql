@@ -43,6 +43,9 @@ struct UserRecord {
   std::string name;
   std::optional<std::string> password_hash;  // nullopt: no password login
   bool enabled = true;
+  // Set by the administrator (ALTER USER ... SET ATTRIBUTE); row and masking
+  // policies read them with session_attribute('key').
+  std::map<std::string, std::string> attributes;
 };
 
 struct RoleRecord {
@@ -71,6 +74,34 @@ struct ObjectGrantRecord {
   std::vector<std::string> columns;  // SELECT only; empty = every column
   bool grant_option = false;
   std::string granted_by;  // user id of the grantor; empty for the administrator
+};
+
+// CREATE ROW POLICY name ON table [AS PERMISSIVE | RESTRICTIVE] [TO roles] USING (predicate)
+struct RowPolicyRecord {
+  std::string id;
+  std::string name;
+  ObjectPath table;
+  bool permissive = true;
+  std::vector<std::string> role_ids;  // empty: every role
+  std::string predicate;             // SQL, as written
+};
+
+// CREATE MASKING POLICY name AS (parameter type) RETURNS type -> body
+struct MaskingPolicyRecord {
+  std::string id;
+  std::string name;
+  std::string parameter;
+  std::string parameter_type;
+  std::string return_type;
+  std::string body;  // SQL over `parameter`, as written
+};
+
+// ALTER TABLE t MODIFY COLUMN c SET MASKING POLICY p [EXEMPT ROLE r, ...]
+struct MaskBindingRecord {
+  ObjectPath table;
+  std::string column;
+  std::string policy_id;
+  std::vector<std::string> exempt_role_ids;
 };
 
 // A system privilege a role holds (one record per grantor).
@@ -133,7 +164,10 @@ class Snapshot {
   Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<RoleRecord> roles,
            std::vector<MembershipRecord> memberships, std::vector<ObjectGrantRecord> grants,
            std::vector<OwnerRecord> owners,
-           std::vector<SystemPrivilegeRecord> system_privileges = {});
+           std::vector<SystemPrivilegeRecord> system_privileges = {},
+           std::vector<RowPolicyRecord> row_policies = {},
+           std::vector<MaskingPolicyRecord> masking_policies = {},
+           std::vector<MaskBindingRecord> mask_bindings = {});
 
   int64_t version() const { return version_; }
 
@@ -147,6 +181,18 @@ class Snapshot {
   const std::vector<ObjectGrantRecord>& grants() const { return grants_; }
   const std::vector<OwnerRecord>& owners() const { return owners_; }
   const std::vector<SystemPrivilegeRecord>& system_privileges() const { return system_privileges_; }
+  const std::vector<RowPolicyRecord>& row_policies() const { return row_policies_; }
+  const std::vector<MaskingPolicyRecord>& masking_policies() const { return masking_policies_; }
+  const std::vector<MaskBindingRecord>& mask_bindings() const { return mask_bindings_; }
+  const MaskingPolicyRecord* FindMaskingPolicyByName(const std::string& name) const;
+  const MaskingPolicyRecord* FindMaskingPolicyById(const std::string& id) const;
+  // Row policies on the table, and of those the ones that apply to the principal.
+  std::vector<const RowPolicyRecord*> RowPoliciesOn(const ObjectPath& table) const;
+  std::vector<const RowPolicyRecord*> ApplicableRowPolicies(const Principal& principal,
+                                                             const ObjectPath& table) const;
+  // Masked columns of the table the principal is not exempt from: column -> policy.
+  std::vector<std::pair<std::string, const MaskingPolicyRecord*>> ApplicableMasks(
+      const Principal& principal, const ObjectPath& table) const;
 
   // Does the principal hold the system privilege through one of its roles?
   // Always true for the administrator.
@@ -217,6 +263,9 @@ class Snapshot {
   std::vector<ObjectGrantRecord> grants_;
   std::vector<OwnerRecord> owners_;
   std::vector<SystemPrivilegeRecord> system_privileges_;
+  std::vector<RowPolicyRecord> row_policies_;
+  std::vector<MaskingPolicyRecord> masking_policies_;
+  std::vector<MaskBindingRecord> mask_bindings_;
   std::map<std::string, size_t> user_by_key_, user_by_id_, role_by_key_, role_by_id_;
   std::map<std::string, std::vector<const ObjectGrantRecord*>> grants_by_role_;
 };

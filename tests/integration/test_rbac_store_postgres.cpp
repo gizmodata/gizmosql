@@ -98,9 +98,11 @@ TEST_F(RbacPostgresStoreTest, ReplicasSeeEachOthersChanges) {
   ASSERT_TRUE(Run(*a, "GRANT reader TO joe").ok());
   ASSERT_TRUE(Run(*a, "GRANT SELECT ON orders TO reader").ok());
 
-  // b picks the change up by polling, within a few intervals.
+  // b picks the changes up by polling, within a few intervals. (Wait for all
+  // four: a poll can land between them.)
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (std::chrono::steady_clock::now() < deadline && !b->snapshot()->FindUserByName("joe")) {
+  while (std::chrono::steady_clock::now() < deadline &&
+         b->snapshot()->version() < a->snapshot()->version()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   ASSERT_NE(b->snapshot()->FindUserByName("joe"), nullptr) << "replica never saw the change";

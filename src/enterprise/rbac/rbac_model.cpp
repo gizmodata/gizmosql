@@ -60,14 +60,20 @@ std::string ObjectKey(const ObjectPath& path) {
 Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<RoleRecord> roles,
                    std::vector<MembershipRecord> memberships,
                    std::vector<ObjectGrantRecord> grants, std::vector<OwnerRecord> owners,
-                   std::vector<SystemPrivilegeRecord> system_privileges)
+                   std::vector<SystemPrivilegeRecord> system_privileges,
+                   std::vector<RowPolicyRecord> row_policies,
+                   std::vector<MaskingPolicyRecord> masking_policies,
+                   std::vector<MaskBindingRecord> mask_bindings)
     : version_(version),
       users_(std::move(users)),
       roles_(std::move(roles)),
       memberships_(std::move(memberships)),
       grants_(std::move(grants)),
       owners_(std::move(owners)),
-      system_privileges_(std::move(system_privileges)) {
+      system_privileges_(std::move(system_privileges)),
+      row_policies_(std::move(row_policies)),
+      masking_policies_(std::move(masking_policies)),
+      mask_bindings_(std::move(mask_bindings)) {
   for (size_t i = 0; i < users_.size(); ++i) {
     user_by_key_[FoldIdentifier(users_[i].name)] = i;
     user_by_id_[users_[i].id] = i;
@@ -276,7 +282,44 @@ std::set<std::string> Snapshot::RightsOf(const Principal& principal) const {
   return rights;
 }
 
+namespace {
+
+// What the principal's row and masking policies are: any change to them can
+// hide rows or mask columns that a running statement was planned to see.
+std::string PolicyFingerprint(const Snapshot& snap, const Principal& principal) {
+  std::set<std::string> parts;
+  for (const auto& p : snap.row_policies()) {
+    // Any policy makes its table protected (no rows unless one applies); the
+    // ones that apply decide which rows.
+    parts.insert("protected\x1f" + ObjectKey(p.table));
+    for (const auto* applicable : snap.ApplicableRowPolicies(principal, p.table)) {
+      if (applicable->id == p.id) {
+        parts.insert("row\x1f" + ObjectKey(p.table) + "\x1f" + p.id + "\x1f" + p.predicate +
+                     (p.permissive ? "\x1f" "p" : "\x1f" "r"));
+      }
+    }
+  }
+  for (const auto& b : snap.mask_bindings()) {
+    const auto* policy = snap.FindMaskingPolicyById(b.policy_id);
+    bool exempt = true;
+    for (const auto& [column, applicable] : snap.ApplicableMasks(principal, b.table)) {
+      if (IdentifiersEqual(column, b.column)) exempt = false;
+    }
+    parts.insert("mask\x1f" + ObjectKey(b.table) + "\x1f" + FoldIdentifier(b.column) + "\x1f" +
+                 (policy ? policy->body : "") + (exempt ? "\x1f" "exempt" : ""));
+  }
+  if (const auto* user = snap.FindUserById(principal.user_id)) {
+    for (const auto& [k, v] : user->attributes) parts.insert("attr\x1f" + k + "\x1f" + v);
+  }
+  std::string out;
+  for (const auto& p : parts) out += p + "\x1e";
+  return out;
+}
+
+}  // namespace
+
 bool Snapshot::LostRightsSince(const Snapshot& before, const Principal& principal) const {
+  if (PolicyFingerprint(before, principal) != PolicyFingerprint(*this, principal)) return true;
   const auto after = RightsOf(principal);
   static const std::string kOwnerPrefix = "owner\x1f";
   for (const auto& right : before.RightsOf(principal)) {
@@ -309,6 +352,57 @@ bool Snapshot::CanGrantSystemPrivilege(const Principal& principal, SystemPrivile
     if (r.privilege == privilege && r.admin_option && roles.count(r.role_id)) return true;
   }
   return false;
+}
+
+const MaskingPolicyRecord* Snapshot::FindMaskingPolicyByName(const std::string& name) const {
+  for (const auto& m : masking_policies_) {
+    if (IdentifiersEqual(m.name, name)) return &m;
+  }
+  return nullptr;
+}
+
+const MaskingPolicyRecord* Snapshot::FindMaskingPolicyById(const std::string& id) const {
+  for (const auto& m : masking_policies_) {
+    if (m.id == id) return &m;
+  }
+  return nullptr;
+}
+
+std::vector<const RowPolicyRecord*> Snapshot::RowPoliciesOn(const ObjectPath& table) const {
+  std::vector<const RowPolicyRecord*> found;
+  const std::string key = ObjectKey(table);
+  for (const auto& p : row_policies_) {
+    if (ObjectKey(p.table) == key) found.push_back(&p);
+  }
+  return found;
+}
+
+std::vector<const RowPolicyRecord*> Snapshot::ApplicableRowPolicies(const Principal& principal,
+                                                                   const ObjectPath& table) const {
+  std::vector<const RowPolicyRecord*> found;
+  const auto roles = RolesOf(principal);
+  for (const auto* p : RowPoliciesOn(table)) {
+    bool applies = p->role_ids.empty();
+    for (const auto& r : p->role_ids) applies = applies || roles.count(r) > 0;
+    if (applies) found.push_back(p);
+  }
+  return found;
+}
+
+std::vector<std::pair<std::string, const MaskingPolicyRecord*>> Snapshot::ApplicableMasks(
+    const Principal& principal, const ObjectPath& table) const {
+  std::vector<std::pair<std::string, const MaskingPolicyRecord*>> found;
+  const std::string key = ObjectKey(table);
+  const auto roles = RolesOf(principal);
+  for (const auto& b : mask_bindings_) {
+    if (ObjectKey(b.table) != key) continue;
+    bool exempt = false;
+    for (const auto& r : b.exempt_role_ids) exempt = exempt || roles.count(r) > 0;
+    if (exempt) continue;
+    // A binding whose policy is gone masks with nothing: fail closed in the rewrite.
+    found.emplace_back(b.column, FindMaskingPolicyById(b.policy_id));
+  }
+  return found;
 }
 
 // ---------------------------------------------------------------------------

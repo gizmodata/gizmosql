@@ -54,6 +54,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to roles with no `ON` clause and open the matching admin-only statements to
   their holders, checked by the admin command gate and again on the plan; a
   statement runs only if every gated operation in it is covered.
+  Row policies (`CREATE ROW POLICY ... [AS PERMISSIVE | RESTRICTIVE] [TO roles]
+  USING (...)`) and column masking (`CREATE MASKING POLICY`, `ALTER TABLE ... MODIFY
+  COLUMN ... SET MASKING POLICY ... [EXEMPT ROLE ...]`), with user attributes (`ALTER
+  USER ... SET ATTRIBUTE`) and context functions (`current_user`, `is_role_active`,
+  `session_attribute`) that GizmoSQL resolves from the session. A protected table
+  shows no rows unless a permissive policy applies; restrictive ones are AND-ed in.
+  Policies are applied to the checked plan before DuckDB optimizes it, wherever the
+  table is read; masks apply at the source, so filters and joins see the masked
+  value. Writes into a governed table are refused for store users for now (DELETE
+  removes only visible rows); policy predicates cannot contain subqueries.
   This uses a small hook added to DuckDB's binder at build time
   (`third_party/patch_duckdb.cmake`); on the LTS channel (DuckDB 1.4) views read
   with the caller's rights.

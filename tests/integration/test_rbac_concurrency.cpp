@@ -10,7 +10,8 @@
 
 // Access control must not cost concurrency. The same TPC-H workload runs
 // against two servers that differ only in access control: one without it, one
-// where every client is a store user whose statements are checked. For each,
+// where every client is a store user whose statements are checked and rewritten
+// for a row policy and a mask. For each,
 // one client and then many clients run every TPC-H query; the test fails if
 // access control makes the concurrent run much slower, or scales worse with
 // more clients, than the baseline.
@@ -219,7 +220,12 @@ class RbacConcurrency : public ::testing::Test {
     std::string error;
     EXPECT_GE(admin.Rows("CALL dbgen(sf=" + ScaleFactor() + ")", &error), 0) << error;
     if (rbac) {
-      for (const char* sql : {"CREATE ROLE bench", "GRANT SELECT ON SCHEMA main TO bench"}) {
+      // A row policy on the largest table (it keeps every row, so results
+      // match the baseline) and a mask: the policy rewrite runs too.
+      for (const char* sql : {"CREATE ROLE bench", "GRANT SELECT ON SCHEMA main TO bench",
+                              "CREATE ROW POLICY bench_rows ON lineitem TO bench USING (l_orderkey > 0)",
+                              "CREATE MASKING POLICY bench_mask AS (val VARCHAR) RETURNS VARCHAR -> 'x'",
+                              "ALTER TABLE nation MODIFY COLUMN n_comment SET MASKING POLICY bench_mask"}) {
         EXPECT_GE(admin.Rows(sql, &error), 0) << sql << ": " << error;
       }
       for (int i = 0; i <= kClients; ++i) {

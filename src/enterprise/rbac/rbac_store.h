@@ -32,6 +32,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include <arrow/result.h>
@@ -101,6 +102,15 @@ class StoreTransaction {
   arrow::Status UpdateGrant(const ObjectGrantRecord& grant);
   arrow::Status DeleteGrant(const std::string& grant_id);
   arrow::Status UpsertOwner(const OwnerRecord& owner);
+  // nullopt removes the attribute.
+  arrow::Status SetUserAttribute(const std::string& user_id, const std::string& attribute,
+                                 const std::optional<std::string>& value);
+  arrow::Status UpsertRowPolicy(const RowPolicyRecord& policy);
+  arrow::Status DeleteRowPolicy(const std::string& policy_id);
+  arrow::Status UpsertMaskingPolicy(const MaskingPolicyRecord& policy);
+  // Also removes the policy's column bindings.
+  arrow::Status DeleteMaskingPolicy(const std::string& policy_id);
+  arrow::Status SetMaskBinding(const MaskBindingRecord& binding, bool remove);
   // One record per (role, privilege, grantor).
   arrow::Status UpsertSystemPrivilege(const SystemPrivilegeRecord& record);
   arrow::Status DeleteSystemPrivilege(const SystemPrivilegeRecord& record);

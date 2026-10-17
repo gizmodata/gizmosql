@@ -283,6 +283,23 @@ arrow::Status RbacStore::InitializeSchema() {
           "VARCHAR NOT NULL, object_name VARCHAR NOT NULL, object_type VARCHAR NOT NULL, "
           "owner_kind VARCHAR NOT NULL, owner_id VARCHAR NOT NULL, definition_hash VARCHAR NOT "
           "NULL)",
+      "CREATE TABLE IF NOT EXISTS " + T("user_attributes") +
+          " (user_id VARCHAR NOT NULL, attribute VARCHAR NOT NULL, value VARCHAR NOT NULL, "
+          "PRIMARY KEY (user_id, attribute))",
+      "CREATE TABLE IF NOT EXISTS " + T("row_policies") +
+          " (policy_id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, table_key VARCHAR NOT NULL, "
+          "catalog_name VARCHAR NOT NULL, schema_path VARCHAR NOT NULL, object_name VARCHAR NOT "
+          "NULL, permissive BOOLEAN NOT NULL, role_ids VARCHAR NOT NULL, predicate VARCHAR NOT "
+          "NULL)",
+      "CREATE TABLE IF NOT EXISTS " + T("masking_policies") +
+          " (policy_id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, name_key VARCHAR NOT NULL "
+          "UNIQUE, parameter VARCHAR NOT NULL, parameter_type VARCHAR NOT NULL, return_type "
+          "VARCHAR NOT NULL, body VARCHAR NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS " + T("mask_bindings") +
+          " (table_key VARCHAR NOT NULL, column_key VARCHAR NOT NULL, catalog_name VARCHAR NOT "
+          "NULL, schema_path VARCHAR NOT NULL, object_name VARCHAR NOT NULL, column_name VARCHAR "
+          "NOT NULL, policy_id VARCHAR NOT NULL, exempt_role_ids VARCHAR NOT NULL, PRIMARY KEY "
+          "(table_key, column_key))",
       "CREATE TABLE IF NOT EXISTS " + T("system_privileges") +
           " (role_id VARCHAR NOT NULL, privilege VARCHAR NOT NULL, admin_option BOOLEAN NOT NULL, "
           "granted_by VARCHAR NOT NULL, PRIMARY KEY (role_id, privilege, granted_by))",
@@ -335,7 +352,15 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
                                               T("users") + " ORDER BY name_key"));
   for (dd::idx_t r = 0; r < compat::ResultRowCount(*u); ++r) {
     users.push_back({GetString(*u, 0, r), GetString(*u, 1, r), GetOptString(*u, 2, r),
-                     GetBool(*u, 3, r)});
+                     GetBool(*u, 3, r), {}});
+  }
+  ARROW_ASSIGN_OR_RAISE(auto ua, Run(conn, "SELECT user_id, attribute, value FROM " +
+                                               T("user_attributes")));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*ua); ++r) {
+    const std::string id = GetString(*ua, 0, r);
+    for (auto& user : users) {
+      if (user.id == id) user.attributes[GetString(*ua, 1, r)] = GetString(*ua, 2, r);
+    }
   }
 
   std::vector<RoleRecord> roles;
@@ -404,9 +429,43 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
         {GetString(*sp, 0, r), *privilege, GetBool(*sp, 2, r), GetString(*sp, 3, r)});
   }
 
-  return std::make_shared<const Snapshot>(version, std::move(users), std::move(roles),
-                                          std::move(memberships), std::move(grants),
-                                          std::move(owners), std::move(system_privileges));
+  std::vector<RowPolicyRecord> row_policies;
+  ARROW_ASSIGN_OR_RAISE(
+      auto rp, Run(conn, "SELECT policy_id, name, catalog_name, schema_path, object_name, "
+                         "permissive, role_ids, predicate FROM " + T("row_policies") +
+                             " ORDER BY policy_id"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*rp); ++r) {
+    RowPolicyRecord p;
+    p.id = GetString(*rp, 0, r);
+    p.name = GetString(*rp, 1, r);
+    p.table = {GetString(*rp, 2, r), FromJson(GetString(*rp, 3, r)), GetString(*rp, 4, r)};
+    p.permissive = GetBool(*rp, 5, r);
+    p.role_ids = FromJson(GetString(*rp, 6, r));
+    p.predicate = GetString(*rp, 7, r);
+    row_policies.push_back(std::move(p));
+  }
+  std::vector<MaskingPolicyRecord> masking_policies;
+  ARROW_ASSIGN_OR_RAISE(auto mp, Run(conn, "SELECT policy_id, name, parameter, parameter_type, "
+                                           "return_type, body FROM " + T("masking_policies") +
+                                               " ORDER BY name_key"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*mp); ++r) {
+    masking_policies.push_back({GetString(*mp, 0, r), GetString(*mp, 1, r), GetString(*mp, 2, r),
+                                GetString(*mp, 3, r), GetString(*mp, 4, r), GetString(*mp, 5, r)});
+  }
+  std::vector<MaskBindingRecord> mask_bindings;
+  ARROW_ASSIGN_OR_RAISE(auto mb, Run(conn, "SELECT catalog_name, schema_path, object_name, "
+                                           "column_name, policy_id, exempt_role_ids FROM " +
+                                               T("mask_bindings") + " ORDER BY table_key, column_key"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*mb); ++r) {
+    mask_bindings.push_back(
+        {{GetString(*mb, 0, r), FromJson(GetString(*mb, 1, r)), GetString(*mb, 2, r)},
+         GetString(*mb, 3, r), GetString(*mb, 4, r), FromJson(GetString(*mb, 5, r))});
+  }
+
+  return std::make_shared<const Snapshot>(
+      version, std::move(users), std::move(roles), std::move(memberships), std::move(grants),
+      std::move(owners), std::move(system_privileges), std::move(row_policies),
+      std::move(masking_policies), std::move(mask_bindings));
 }
 
 arrow::Status RbacStore::Mutate(
@@ -478,9 +537,73 @@ arrow::Status StoreTransaction::UpdateUser(const UserRecord& user) {
       .status();
 }
 
+arrow::Status StoreTransaction::SetUserAttribute(const std::string& user_id,
+                                                const std::string& attribute,
+                                                const std::optional<std::string>& value) {
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("user_attributes") +
+                                     " WHERE user_id = $1 AND attribute = $2",
+                          {Text(user_id), Text(attribute)})
+                          .status());
+  if (!value) return arrow::Status::OK();
+  return Run(conn_, "INSERT INTO " + T("user_attributes") + " VALUES ($1, $2, $3)",
+             {Text(user_id), Text(attribute), Text(*value)})
+      .status();
+}
+
+arrow::Status StoreTransaction::UpsertRowPolicy(const RowPolicyRecord& p) {
+  ARROW_RETURN_NOT_OK(DeleteRowPolicy(p.id));
+  return Run(conn_, "INSERT INTO " + T("row_policies") +
+                        " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+             {Text(p.id), Text(p.name), Text(ObjectKey(p.table)), Text(p.table.catalog),
+              Text(ToJson(p.table.schema_path)), Text(p.table.object_name), Bool(p.permissive),
+              Text(ToJson(p.role_ids)), Text(p.predicate)})
+      .status();
+}
+
+arrow::Status StoreTransaction::DeleteRowPolicy(const std::string& policy_id) {
+  return Run(conn_, "DELETE FROM " + T("row_policies") + " WHERE policy_id = $1",
+             {Text(policy_id)})
+      .status();
+}
+
+arrow::Status StoreTransaction::UpsertMaskingPolicy(const MaskingPolicyRecord& m) {
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("masking_policies") + " WHERE policy_id = $1",
+                          {Text(m.id)})
+                          .status());
+  return Run(conn_, "INSERT INTO " + T("masking_policies") + " VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             {Text(m.id), Text(m.name), Text(FoldIdentifier(m.name)), Text(m.parameter),
+              Text(m.parameter_type), Text(m.return_type), Text(m.body)})
+      .status();
+}
+
+arrow::Status StoreTransaction::DeleteMaskingPolicy(const std::string& policy_id) {
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("mask_bindings") + " WHERE policy_id = $1",
+                          {Text(policy_id)})
+                          .status());
+  return Run(conn_, "DELETE FROM " + T("masking_policies") + " WHERE policy_id = $1",
+             {Text(policy_id)})
+      .status();
+}
+
+arrow::Status StoreTransaction::SetMaskBinding(const MaskBindingRecord& b, bool remove) {
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("mask_bindings") +
+                                     " WHERE table_key = $1 AND column_key = $2",
+                          {Text(ObjectKey(b.table)), Text(FoldIdentifier(b.column))})
+                          .status());
+  if (remove) return arrow::Status::OK();
+  return Run(conn_, "INSERT INTO " + T("mask_bindings") + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             {Text(ObjectKey(b.table)), Text(FoldIdentifier(b.column)), Text(b.table.catalog),
+              Text(ToJson(b.table.schema_path)), Text(b.table.object_name), Text(b.column),
+              Text(b.policy_id), Text(ToJson(b.exempt_role_ids))})
+      .status();
+}
+
 arrow::Status StoreTransaction::DeleteUser(const std::string& user_id) {
   ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("memberships") +
                                      " WHERE member_kind = 'user' AND member_id = $1",
+                          {Text(user_id)})
+                          .status());
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("user_attributes") + " WHERE user_id = $1",
                           {Text(user_id)})
                           .status());
   return Run(conn_, "DELETE FROM " + T("users") + " WHERE user_id = $1", {Text(user_id)})
