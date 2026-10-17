@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <future>
 #include <thread>
 #include <string>
 
@@ -196,7 +197,7 @@ TEST_F(RbacServerFixture, AdministratorManagesAccessControl) {
       << Cell(granted, 0, 0);
 
   ASSERT_ARROW_OK_AND_ASSIGN(auto grants, Query(GetPort(), admin, "SHOW GRANTS FOR joe"));
-  ASSERT_EQ(grants->num_columns(), 7);
+  ASSERT_EQ(grants->num_columns(), 8);
   EXPECT_EQ(grants->schema()->field(0)->name(), "privilege");
   bool saw = false;
   for (int r = 0; r < grants->num_rows(); ++r) {
@@ -213,13 +214,15 @@ TEST_F(RbacServerFixture, StoreUsersConnectWithTokensAndCannotGrant) {
   // A store user may look at their own grants ...
   ASSERT_OK(Query(GetPort(), mia, "SHOW GRANTS").status());
   // ... but not change anything, and the refusal says why.
-  for (const char* sql : {"CREATE ROLE sneaky", "GRANT SELECT ON orders TO PUBLIC",
-                          "CREATE USER helper", "ALTER USER mia DISABLE"}) {
+  for (const auto& [sql, why] : std::vector<std::pair<std::string, std::string>>{
+           {"CREATE ROLE sneaky", "only administrators manage users and roles"},
+           {"CREATE USER helper", "only administrators manage users and roles"},
+           {"ALTER USER mia DISABLE", "only administrators manage users and roles"},
+           {"GRANT SELECT ON orders TO PUBLIC", "may not grant SELECT"},
+           {"GRANT PUBLIC TO mia", "cannot be granted"}}) {
     auto st = Query(GetPort(), mia, sql).status();
     EXPECT_FALSE(st.ok()) << sql;
-    EXPECT_NE(st.ToString().find("only administrators manage users, roles and grants"),
-              std::string::npos)
-        << sql << " -> " << st.ToString();
+    EXPECT_NE(st.ToString().find(why), std::string::npos) << sql << " -> " << st.ToString();
   }
   ASSERT_ARROW_OK_AND_ASSIGN(auto roles, Query(GetPort(), admin, "SHOW GRANTS FOR mia"));
   EXPECT_EQ(roles->num_rows(), 0);  // nothing was granted by those attempts
@@ -263,7 +266,7 @@ TEST_F(RbacServerFixture, StoreUsersLogInWithTheirPassword) {
   // The session is pat's, not the administrator's.
   auto st = Query(GetPort(), pat, "CREATE ROLE pats_role").status();
   ASSERT_FALSE(st.ok()) << "a password login got administrator rights";
-  EXPECT_NE(st.ToString().find("only administrators manage users, roles and grants"), std::string::npos)
+  EXPECT_NE(st.ToString().find("only administrators manage users and roles"), std::string::npos)
       << st.ToString();
 
   // Every failure looks the same: wrong password, no password, unknown name.
@@ -379,4 +382,73 @@ TEST_F(RbacClusterFixture, DisablingAUserOnAnotherNodeEndsSessionsHere) {
     if (!ended) std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   EXPECT_TRUE(ended) << "the session survived a DISABLE made on another node";
+}
+
+TEST_F(RbacClusterFixture, ARevokeOnAnotherNodeStopsAStatementRunningHere) {
+  if (!ClusterStoreUri()) GTEST_SKIP() << "GIZMOSQL_TEST_RBAC_PG_URI is not set";
+  REQUIRE_RBAC_SERVER();
+  namespace rbac = gizmosql::enterprise::rbac;
+  rbac::RbacEngine::Options options;
+  options.store_uri = ClusterStoreUri();
+  options.poll_interval = std::chrono::milliseconds(0);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto other_node, rbac::RbacEngine::Create(options));
+  // The other node resolves names as this server's catalog does.
+  struct TableResolver : rbac::ObjectResolver {
+    arrow::Result<rbac::ResolvedObject> ResolveObject(const rbac::QualifiedName& n) override {
+      return rbac::ResolvedObject{{"rbac_cluster_test", {"main"}, n.parts.back()},
+                                  rbac::ObjectType::kTable, {"id"}};
+    }
+    arrow::Result<rbac::ObjectPath> ResolveSchema(const rbac::QualifiedName&) override {
+      return arrow::Status::Invalid("unused");
+    }
+    arrow::Result<std::string> ResolveCatalog(const std::string&) override {
+      return arrow::Status::Invalid("unused");
+    }
+  } resolver;
+  auto run_elsewhere = [&](const std::string& sql) {
+    auto cmd = rbac::ParseRbacStatement(sql);
+    ASSERT_TRUE(cmd.ok()) << cmd.status().ToString();
+    auto result = other_node->Execute(*cmd, rbac::Principal::Superuser("admin"), resolver);
+    ASSERT_TRUE(result.ok()) << sql << " -> " << result.status().ToString();
+  };
+  const std::string tag = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count() % 1000000);
+  const std::string user = "otto_" + tag, role = "otto_role_" + tag, table = "otto_t_" + tag;
+  const auto admin = Bearer("admin_user", "admin", "00000000-0000-4000-8000-0000000000b0");
+  ASSERT_OK(Query(GetPort(), admin, "CREATE TABLE " + table + " AS SELECT 1 AS id").status());
+  run_elsewhere("CREATE ROLE " + role);
+  run_elsewhere("CREATE USER " + user);
+  run_elsewhere("GRANT " + role + " TO " + user);
+  run_elsewhere("GRANT SELECT ON " + table + " TO " + role);
+
+  const auto session = Bearer(user, "user", "00000000-0000-4000-8000-0000000000b1");
+  arrow::Status st;
+  for (int i = 0; i < 50; ++i) {  // this node learns of the grant by polling
+    st = Query(GetPort(), session, "SELECT * FROM " + table).status();
+    if (st.ok()) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  ASSERT_OK(st);
+  auto running = std::async(std::launch::async, [&] {
+    return Query(GetPort(), session,
+                 "SELECT sum(t.id * r.range) FROM " + table + " t, range(1000000000000) r")
+        .status();
+  });
+  struct EndIfStillRunning {
+    int port;
+    std::future<arrow::Status>& f;
+    ~EndIfStillRunning() {
+      if (f.valid() && f.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        (void)Query(port, Bearer("admin_user", "admin", "00000000-0000-4000-8000-0000000000b2"),
+                    "KILL SESSION '00000000-0000-4000-8000-0000000000b1'");
+        f.wait_for(std::chrono::seconds(60));
+      }
+    }
+  } end_if_still_running{GetPort(), running};
+  std::this_thread::sleep_for(std::chrono::seconds(1));
+  ASSERT_EQ(running.wait_for(std::chrono::seconds(0)), std::future_status::timeout);
+
+  run_elsewhere("REVOKE SELECT ON " + table + " FROM " + role);
+  ASSERT_EQ(running.wait_for(std::chrono::seconds(30)), std::future_status::ready)
+      << "a REVOKE on another node left a statement running here";
+  EXPECT_FALSE(running.get().ok());
 }

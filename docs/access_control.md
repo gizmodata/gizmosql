@@ -34,7 +34,9 @@ gizmosql_server \
 GizmoSQL creates its tables in a `gizmosql_rbac` schema of that database on first
 start. **Every node of a cluster points at the same store**: a change made on one
 node reaches the others within about a second, and disabling or dropping a user
-(or changing their password) ends that user's open sessions on every node.
+(or changing their password) ends that user's open sessions on every node. A user
+who loses any privilege also has the statement they are running stopped, on every
+node; their next statement is checked against the new grants.
 
 ## Who is who
 
@@ -94,7 +96,8 @@ later. A store user can see their own grants with `SHOW GRANTS`.
 Whoever creates a table, view or schema **owns** it, and may read, change and drop
 it without further grants. The owner of a schema may also create and drop objects
 in it. The administrator can hand an object to a user or role, and take it back
-under its own user name:
+under its own user name (an owner can hand it only to itself or to a role it
+holds):
 
 ```sql
 ALTER TABLE sales.main.orders OWNER TO analyst;
@@ -102,6 +105,28 @@ ALTER TABLE sales.main.orders OWNER TO admin;  -- the server's --username
 ```
 
 No store user may be named like the administrator.
+
+## Delegating grants
+
+Users and roles are the administrator's to create, but grants can be delegated:
+
+- **Owners grant on what they own.** The owner of a table or view (or of the schema
+  it is in) may `GRANT` and `REVOKE` privileges on it.
+- **`WITH GRANT OPTION`** lets a role's members pass a privilege on, never more
+  than they hold: a column grant passes on only its columns.
+- **`WITH ADMIN OPTION`** on a role lets its holders grant and revoke that role.
+
+```sql
+GRANT SELECT ON sales.main.orders TO analyst WITH GRANT OPTION;  -- as the administrator
+GRANT SELECT ON sales.main.orders TO intern;                     -- as ann, an analyst
+GRANT analyst TO lead WITH ADMIN OPTION;                         -- leads may hand out analyst
+REVOKE SELECT ON sales.main.orders FROM analyst;                 -- also removes ann's grant to intern
+```
+
+A user revokes only the grants they made; the administrator's `REVOKE` removes a
+privilege whoever granted it. Revoking takes away everything that was granted
+through it, down the chain (`CASCADE`, the default); `REVOKE ... RESTRICT` refuses
+instead when other grants depend on it. `SHOW GRANTS` lists who granted each one.
 
 ## Views read with their owner's rights
 
@@ -160,8 +185,7 @@ whether or not queries are logged.
 
 ## Limits of this release
 
-- Only the administrator grants and revokes. Owners granting their own objects,
-  `WITH GRANT OPTION` and system privileges come later.
+- Only the administrator creates and drops users and roles.
 - A user's privileges are those of all their roles together (there is no `SET ROLE`).
 - Names are not secret: catalog functions such as `duckdb_tables()` and the Flight
   SQL metadata calls list every table and view, including ones a user cannot read.

@@ -105,6 +105,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_rbac_attached.cpp
             integration/test_rbac_views.cpp
             integration/test_rbac_views_unit.cpp
+            integration/test_rbac_delegation.cpp
     )
 endif()
 

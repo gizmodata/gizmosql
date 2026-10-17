@@ -239,13 +239,18 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
     auto snap = snapshot();
     CommandResult result;
     result.column_names = {"privilege", "object_type", "object", "columns", "granted_to",
-                           "grantee_type", "grant_option"};
+                           "grantee_type", "grant_option", "granted_by"};
+    auto grantor_name = [&](const std::string& id) -> std::string {
+      if (id.empty()) return "administrator";
+      const auto* user = snap->FindUserById(id);
+      return user ? user->name : id;
+    };
 
     // Which roles to list: one role, or every role a user holds.
     std::vector<std::string> role_ids;
     if (!show->principal) {
       if (actor.superuser) {
-        result.rows.push_back({"ALL", "SERVER", "*", "", actor.user_name, "SUPERUSER", "YES"});
+        result.rows.push_back({"ALL", "SERVER", "*", "", actor.user_name, "SUPERUSER", "YES", ""});
         return result;
       }
       for (const auto& id : snap->EffectiveRoleIds(actor.user_id)) role_ids.push_back(id);
@@ -274,7 +279,7 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         const auto* role = snap->FindRoleById(m.role_id);
         result.rows.push_back({"ROLE", "ROLE", role ? role->name : m.role_id, "", who.name,
                                who.kind == PrincipalKind::kUser ? "USER" : "ROLE",
-                               m.admin_option ? "YES" : "NO"});
+                               m.admin_option ? "YES" : "NO", grantor_name(m.granted_by)});
       }
     }
     for (const auto& role_id : role_ids) {
@@ -283,7 +288,7 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         if (g.role_id != role_id) continue;
         result.rows.push_back({PrivilegeName(g.privilege), ScopeLabel(g.scope),
                                g.target.ToString(), Join(g.columns), role ? role->name : role_id,
-                               "ROLE", g.grant_option ? "YES" : "NO"});
+                               "ROLE", g.grant_option ? "YES" : "NO", grantor_name(g.granted_by)});
       }
     }
     for (const auto& o : snap->owners()) {
@@ -292,26 +297,65 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
                                o.type == ObjectType::kView ? "VIEW"
                                : o.type == ObjectType::kSchema ? "SCHEMA"
                                                                : "TABLE",
-                               o.object.ToString(), "", actor.user_name, "USER", "YES"});
+                               o.object.ToString(), "", actor.user_name, "USER", "YES", ""});
       }
     }
     return result;
   }
 
-  if (!actor.superuser) {
+  // Users and roles are the administrator's. Grants can be delegated: an owner
+  // grants on what it owns, and WITH GRANT / ADMIN OPTION passes that on.
+  const bool user_or_role_ddl =
+      std::holds_alternative<CreateUserCommand>(command) ||
+      std::holds_alternative<AlterUserCommand>(command) ||
+      std::holds_alternative<DropUserCommand>(command) ||
+      std::holds_alternative<CreateRoleCommand>(command) ||
+      std::holds_alternative<DropRoleCommand>(command);
+  if (!actor.superuser && user_or_role_ddl) {
     return AccessControlError("GizmoSQL blocked " + CommandKind(command) +
-                              ": only administrators manage users, roles and grants on this "
-                              "server");
+                              ": only administrators manage users and roles on this server");
   }
 
   CommandResult result;
-  auto mutate = [&](const std::function<arrow::Status(StoreTransaction&, const Snapshot&)>& fn)
+  // Every change runs in one store transaction, which also removes the grants
+  // and memberships the change left without a grantor able to make them
+  // (REVOKE ... CASCADE, the default; RESTRICT refuses instead).
+  size_t cascaded = 0;
+  auto mutate_with = [&](bool restrict,
+                         const std::function<arrow::Status(StoreTransaction&, const Snapshot&)>& fn)
       -> arrow::Status {
-    ARROW_RETURN_NOT_OK(store_->Mutate(fn));
+    ARROW_RETURN_NOT_OK(store_->Mutate([&](StoreTransaction& txn, const Snapshot& snap) {
+      cascaded = 0;
+      ARROW_RETURN_NOT_OK(fn(txn, snap));
+      ARROW_ASSIGN_OR_RAISE(auto after, txn.Reload());
+      const auto fallen = after->FallenDelegations();
+      if (fallen.empty()) return arrow::Status::OK();
+      if (restrict) {
+        return AccessControlError(
+            "other grants depend on this one; REVOKE ... CASCADE removes them too");
+      }
+      for (const auto& id : fallen.grant_ids) ARROW_RETURN_NOT_OK(txn.DeleteGrant(id));
+      for (const auto& m : fallen.memberships) {
+        ARROW_RETURN_NOT_OK(txn.DeleteMembership(m.member_kind, m.member_id, m.role_id));
+      }
+      cascaded = fallen.grant_ids.size() + fallen.memberships.size();
+      return arrow::Status::OK();
+    }));
     ARROW_ASSIGN_OR_RAISE(auto snap, store_->Load());
     Publish(std::move(snap));
     return arrow::Status::OK();
   };
+  auto mutate = [&](const std::function<arrow::Status(StoreTransaction&, const Snapshot&)>& fn) {
+    return mutate_with(false, fn);
+  };
+  auto with_cascade_note = [&](std::string text) {
+    if (cascaded > 0) {
+      text += "; also revoked " + std::to_string(cascaded) +
+              " grant(s) that were made through it";
+    }
+    return Message(text);
+  };
+  const std::string grantor = actor.superuser ? "" : actor.user_id;
   std::string message;
 
   // ---- CREATE USER -------------------------------------------------------
@@ -452,6 +496,12 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         if (role->id == kPublicRoleId) {
           return AccessControlError("every user already holds PUBLIC; it cannot be granted or revoked");
         }
+        if (!snap.CanAdminRole(actor, role->id)) {
+          return AccessControlError("GizmoSQL blocked " + CommandKind(command) + ": user " +
+                                    actor.user_name + " may not grant or revoke role " +
+                                    role->name + " (only an administrator, or a holder of it "
+                                    "WITH ADMIN OPTION)");
+        }
         for (const auto& g : c->grantees) {
           ARROW_ASSIGN_OR_RAISE(auto grantee, ResolveGrantee(snap, g));
           const MembershipRecord* existing = nullptr;
@@ -473,18 +523,29 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
                 ARROW_RETURN_NOT_OK(txn.DeleteMembership(grantee.kind, grantee.id, role->id));
                 MembershipRecord updated = *existing;
                 updated.admin_option = true;
+                updated.granted_by = grantor;
                 ARROW_RETURN_NOT_OK(txn.InsertMembership(updated));
+                done.push_back("Granted " + role->name + " to " + grantee.name +
+                               " WITH ADMIN OPTION");
+                continue;
               }
               done.push_back(grantee.name + " already holds " + role->name);
               continue;
             }
             ARROW_RETURN_NOT_OK(txn.InsertMembership(
-                {grantee.kind, grantee.id, role->id, c->with_admin_option, actor.user_name}));
-            done.push_back("Granted " + role->name + " to " + grantee.name);
+                {grantee.kind, grantee.id, role->id, c->with_admin_option, grantor}));
+            done.push_back("Granted " + role->name + " to " + grantee.name +
+                           (c->with_admin_option ? " WITH ADMIN OPTION" : ""));
           } else {
             if (!existing) {
               done.push_back(grantee.name + " does not hold " + role->name);
               continue;
+            }
+            // Others revoke only what they granted; the administrator, anything.
+            if (!actor.superuser && existing->granted_by != grantor) {
+              return AccessControlError("GizmoSQL blocked REVOKE: " + grantee.name + " holds " +
+                                        role->name + " from another grantor; only that grantor "
+                                        "or an administrator can revoke it");
             }
             ARROW_RETURN_NOT_OK(txn.DeleteMembership(grantee.kind, grantee.id, role->id));
             if (c->with_admin_option) {  // REVOKE ADMIN OPTION FOR: keep the membership
@@ -500,7 +561,7 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       }
       return arrow::Status::OK();
     }));
-    return Message(Join(done, "; "));
+    return with_cascade_note(Join(done, "; "));
   }
 
   // ---- GRANT / REVOKE privileges -----------------------------------------
@@ -533,12 +594,9 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         }
       }
     }
-    if (c->grant && c->with_grant_option) {
-      return AccessControlError("WITH GRANT OPTION is not supported yet");
-    }
-
     std::vector<std::string> done;
-    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+    ARROW_RETURN_NOT_OK(mutate_with(!c->grant && !c->cascade,
+                                    [&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
       std::vector<ResolvedGrantee> grantees;
       for (const auto& g : c->grantees) {
         ARROW_ASSIGN_OR_RAISE(auto grantee, ResolveGrantee(snap, g));
@@ -551,40 +609,52 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       for (const auto& item : c->privileges) {
         for (Privilege p : Expand(item.privilege)) {
           const auto columns = p == Privilege::kSelect ? item.columns : std::vector<std::string>{};
+          const std::string what = PrivilegeName(p) +
+                                   (columns.empty() ? "" : " (" + Join(columns) + ")") + " on " +
+                                   target.ToString();
+          if (c->grant && !snap.CanGrant(actor, c->scope, target, p, columns)) {
+            return AccessControlError("GizmoSQL blocked GRANT: user " + actor.user_name +
+                                      " may not grant " + what +
+                                      " (only its owner, or a role granted it WITH GRANT OPTION)");
+          }
           for (const auto& grantee : grantees) {
-            const ObjectGrantRecord* existing = nullptr;
+            // One record per grantor, so each grant stands or falls with its own grantor.
+            std::vector<const ObjectGrantRecord*> matching;
+            const ObjectGrantRecord* own = nullptr;
             for (const auto& g : snap.grants()) {
               if (g.role_id == grantee.id && g.scope == c->scope && g.privilege == p &&
                   SamePath(g.target, target)) {
-                existing = &g;
+                matching.push_back(&g);
+                if (g.granted_by == grantor) own = &g;
               }
             }
-            const std::string what = PrivilegeName(p) +
-                                     (columns.empty() ? "" : " (" + Join(columns) + ")") + " on " +
-                                     target.ToString();
             if (c->grant) {
-              if (existing) {
-                if (existing->columns.empty() || columns.empty()) {
-                  if (!existing->columns.empty() && columns.empty()) {
-                    // Widen a column grant to the whole table.
-                    ObjectGrantRecord widened = *existing;
-                    widened.columns.clear();
-                    ARROW_RETURN_NOT_OK(txn.UpdateGrant(widened));
-                    done.push_back("Granted " + what + " to " + grantee.name);
-                  } else {
-                    done.push_back(grantee.name + " already has " + what);
-                  }
-                  continue;
+              if (own) {
+                ObjectGrantRecord updated = *own;
+                bool changed = false;
+                if (c->with_grant_option && !own->grant_option) {
+                  updated.grant_option = true;
+                  changed = true;
                 }
-                ObjectGrantRecord merged = *existing;
-                for (const auto& col : columns) {
-                  if (std::none_of(merged.columns.begin(), merged.columns.end(),
-                                   [&](const std::string& m) { return IdentifiersEqual(m, col); })) {
-                    merged.columns.push_back(col);
+                if (!own->columns.empty() && columns.empty()) {
+                  updated.columns.clear();  // widen a column grant to the whole table
+                  changed = true;
+                } else if (!own->columns.empty()) {
+                  for (const auto& col : columns) {
+                    if (std::none_of(updated.columns.begin(), updated.columns.end(),
+                                     [&](const std::string& m) { return IdentifiersEqual(m, col); })) {
+                      updated.columns.push_back(col);
+                      changed = true;
+                    }
                   }
                 }
-                ARROW_RETURN_NOT_OK(txn.UpdateGrant(merged));
-                done.push_back("Granted " + what + " to " + grantee.name);
+                if (changed) {
+                  ARROW_RETURN_NOT_OK(txn.UpdateGrant(updated));
+                  done.push_back("Granted " + what + " to " + grantee.name +
+                                 (updated.grant_option ? " WITH GRANT OPTION" : ""));
+                } else {
+                  done.push_back(grantee.name + " already has " + what);
+                }
                 continue;
               }
               ObjectGrantRecord record;
@@ -594,17 +664,38 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
               record.target = target;
               record.privilege = p;
               record.columns = columns;
-              record.granted_by = actor.user_name;
+              record.grant_option = c->with_grant_option;
+              record.granted_by = grantor;
               ARROW_RETURN_NOT_OK(txn.InsertGrant(record));
-              done.push_back("Granted " + what + " to " + grantee.name);
-            } else {
-              if (!existing) {
-                done.push_back(grantee.name + " does not have " + what);
+              done.push_back("Granted " + what + " to " + grantee.name +
+                             (c->with_grant_option ? " WITH GRANT OPTION" : ""));
+              continue;
+            }
+
+            // REVOKE: the administrator's applies to every grantor's record;
+            // anyone else's only to the records they granted.
+            std::vector<const ObjectGrantRecord*> revocable;
+            for (const auto* g : matching) {
+              if (actor.superuser || g->granted_by == grantor) revocable.push_back(g);
+            }
+            if (revocable.empty()) {
+              if (!matching.empty()) {
+                return AccessControlError("GizmoSQL blocked REVOKE: " + grantee.name + " has " +
+                                          what + " from another grantor; only that grantor or "
+                                          "an administrator can revoke it");
+              }
+              done.push_back(grantee.name + " does not have " + what);
+              continue;
+            }
+            for (const auto* existing : revocable) {
+              if (c->with_grant_option) {  // REVOKE GRANT OPTION FOR: keep the privilege
+                ObjectGrantRecord updated = *existing;
+                updated.grant_option = false;
+                ARROW_RETURN_NOT_OK(txn.UpdateGrant(updated));
                 continue;
               }
               if (columns.empty()) {
                 ARROW_RETURN_NOT_OK(txn.DeleteGrant(existing->id));
-                done.push_back("Revoked " + what + " from " + grantee.name);
                 continue;
               }
               // Revoke some columns: from a whole-table grant, keep every other column
@@ -624,14 +715,15 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
                 narrowed.columns = remaining;
                 ARROW_RETURN_NOT_OK(txn.UpdateGrant(narrowed));
               }
-              done.push_back("Revoked " + what + " from " + grantee.name);
             }
+            done.push_back((c->with_grant_option ? "Revoked the grant option for " : "Revoked ") +
+                           what + " from " + grantee.name);
           }
         }
       }
       return arrow::Status::OK();
     }));
-    return Message(Join(done, "; "));
+    return with_cascade_note(Join(done, "; "));
   }
 
   // ---- ALTER TABLE | VIEW ... OWNER TO -------------------------------------
@@ -643,24 +735,57 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
                                 "; use ALTER " + (obj.type == ObjectType::kView ? "VIEW" : "TABLE"));
     }
     ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      const OwnerRecord* current = snap.FindOwner(obj.path);
       OwnerRecord record;
       record.object = obj.path;
       record.type = obj.type;
       record.definition_hash = obj.definition_hash;
-      if (!options_.administrator_name.empty() && c->new_owner.kind != GranteeKind::kRole &&
-          IdentifiersEqual(c->new_owner.name, options_.administrator_name)) {
-        // Back to the administrator, as if the administrator had created it.
+      const bool to_administrator =
+          !options_.administrator_name.empty() && c->new_owner.kind != GranteeKind::kRole &&
+          IdentifiersEqual(c->new_owner.name, options_.administrator_name);
+      ResolvedGrantee owner{PrincipalKind::kUser, "", ""};
+      if (to_administrator) {
         record.owner_kind = OwnerKind::kSystem;
-        message = obj.path.ToString() + " is now owned by the administrator";
-        return txn.UpsertOwner(record);
+      } else {
+        ARROW_ASSIGN_OR_RAISE(owner, ResolveGrantee(snap, c->new_owner));
+        record.owner_kind = owner.kind == PrincipalKind::kUser ? OwnerKind::kUser : OwnerKind::kRole;
+        record.owner_id = owner.id;
       }
-      ARROW_ASSIGN_OR_RAISE(auto owner, ResolveGrantee(snap, c->new_owner));
-      record.owner_kind = owner.kind == PrincipalKind::kUser ? OwnerKind::kUser : OwnerKind::kRole;
-      record.owner_id = owner.id;
-      message = obj.path.ToString() + " is now owned by " + owner.name;
+      if (!actor.superuser) {
+        // An owner may hand the object to itself or to a role it holds; giving
+        // it to anyone else could lend them, or take from them, the object's rights.
+        const bool owns = current && snap.IsOwner(actor, *current);
+        const bool to_self_or_role =
+            !to_administrator &&
+            ((owner.kind == PrincipalKind::kUser && owner.id == actor.user_id) ||
+             (owner.kind == PrincipalKind::kRole && snap.RolesOf(actor).count(owner.id)));
+        if (!owns || !to_self_or_role) {
+          return AccessControlError(
+              "GizmoSQL blocked ALTER OWNER: user " + actor.user_name + " may not change the "
+              "owner of " + obj.path.ToString() + " (only its owner, to itself or a role it "
+              "holds, or an administrator)");
+        }
+      }
+      // Grants the previous owner made as owner stay in force: they become the
+      // administrator's, rather than falling with the ownership.
+      if (current && current->owner_kind != OwnerKind::kSystem) {
+        for (const auto& g : snap.grants()) {
+          if (g.granted_by.empty() || g.scope != GrantScope::kObject || !SamePath(g.target, obj.path)) {
+            continue;
+          }
+          const UserRecord* by = snap.FindUserById(g.granted_by);
+          if (by && snap.IsOwner(Principal{false, by->id, by->name, ""}, *current)) {
+            ObjectGrantRecord kept = g;
+            kept.granted_by.clear();
+            ARROW_RETURN_NOT_OK(txn.UpdateGrant(kept));
+          }
+        }
+      }
+      message = obj.path.ToString() + " is now owned by " +
+                (to_administrator ? std::string("the administrator") : owner.name);
       return txn.UpsertOwner(record);
     }));
-    return Message(message);
+    return with_cascade_note(message);
   }
 
   return AccessControlError("unsupported statement");

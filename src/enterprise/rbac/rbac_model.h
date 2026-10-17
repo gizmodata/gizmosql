@@ -59,7 +59,7 @@ struct MembershipRecord {
   std::string member_id;
   std::string role_id;
   bool admin_option = false;
-  std::string granted_by;
+  std::string granted_by;  // user id of the grantor; empty for the administrator
 };
 
 struct ObjectGrantRecord {
@@ -70,7 +70,7 @@ struct ObjectGrantRecord {
   Privilege privilege = Privilege::kSelect;
   std::vector<std::string> columns;  // SELECT only; empty = every column
   bool grant_option = false;
-  std::string granted_by;
+  std::string granted_by;  // user id of the grantor; empty for the administrator
 };
 
 // kSchema: the object is the schema itself (catalog + schema path, no name).
@@ -157,6 +157,36 @@ class Snapshot {
   // Every role whose grants apply to the principal (empty for an unknown or
   // disabled user, or an unknown role).
   std::set<std::string> RolesOf(const Principal& principal) const;
+
+  // Everything the principal may do, as comparable strings (each grant through
+  // its roles, each object it owns). A right in one snapshot's set that is
+  // missing from a later one was taken away.
+  std::set<std::string> RightsOf(const Principal& principal) const;
+  // Did the principal lose a right between `before` and this snapshot? Owning
+  // an object that has no owner at all any more (it was dropped) is not one.
+  bool LostRightsSince(const Snapshot& before, const Principal& principal) const;
+
+  // ---- delegation ----
+  // May the principal give `privilege` on `target` (at `scope`, on `columns`
+  // for SELECT) to others: as the owner of the object or of its schema, or
+  // holding it WITH GRANT OPTION through one of its roles? Always true for
+  // the administrator.
+  bool CanGrant(const Principal& principal, GrantScope scope, const ObjectPath& target,
+                Privilege privilege, const std::vector<std::string>& columns) const;
+  // May the principal grant and revoke membership in the role (it holds the
+  // role WITH ADMIN OPTION)? Always true for the administrator.
+  bool CanAdminRole(const Principal& principal, const std::string& role_id) const;
+
+  // Delegated grants and memberships that no longer stand, because their
+  // grantor can no longer make them. What stands is worked out from what the
+  // administrator and the owners granted, so grants made through each other
+  // in a cycle do not keep one another alive.
+  struct Fallen {
+    std::vector<std::string> grant_ids;
+    std::vector<MembershipRecord> memberships;
+    bool empty() const { return grant_ids.empty() && memberships.empty(); }
+  };
+  Fallen FallenDelegations() const;
 
  private:
   bool GrantCovers(const ObjectGrantRecord& grant, const AccessRequest& request) const;

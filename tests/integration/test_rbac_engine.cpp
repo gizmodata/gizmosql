@@ -266,11 +266,15 @@ TEST_F(RbacEngineTest, OnlyAdministratorsChangeAccessControl) {
   Admin("CREATE ROLE analyst");
   Admin("GRANT analyst TO joe");
   auto joe = User("joe");
-  for (const char* sql : {"CREATE ROLE sneaky", "GRANT analyst TO joe",
-                          "GRANT SELECT ON orders TO analyst", "DROP USER joe",
-                          "ALTER USER joe WITH PASSWORD 'x'", "ALTER TABLE orders OWNER TO joe",
-                          "REVOKE analyst FROM joe"}) {
-    EXPECT_NE(Error(sql, joe).find("only administrators manage"), std::string::npos) << sql;
+  for (const auto& [sql, why] : std::vector<std::pair<std::string, std::string>>{
+           {"CREATE ROLE sneaky", "only administrators manage users and roles"},
+           {"DROP USER joe", "only administrators manage users and roles"},
+           {"ALTER USER joe WITH PASSWORD 'x'", "only administrators manage users and roles"},
+           {"GRANT analyst TO joe", "may not grant or revoke role analyst"},
+           {"REVOKE analyst FROM joe", "may not grant or revoke role analyst"},
+           {"GRANT SELECT ON orders TO analyst", "may not grant SELECT on lake.main.orders"},
+           {"ALTER TABLE orders OWNER TO joe", "may not change the owner"}}) {
+    EXPECT_NE(Error(sql, joe).find(why), std::string::npos) << sql << " -> " << Error(sql, joe);
   }
   // ... and none of them changed anything.
   EXPECT_FALSE(engine_->snapshot()->FindRoleByName("sneaky"));

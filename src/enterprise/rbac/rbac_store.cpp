@@ -407,7 +407,7 @@ arrow::Status RbacStore::Mutate(
                                         "WHERE key = 'data_version'")
                               .status());
       ARROW_ASSIGN_OR_RAISE(auto snapshot, LoadLocked());
-      StoreTransaction txn(conn);
+      StoreTransaction txn(*this, conn);
       ARROW_RETURN_NOT_OK(fn(txn, *snapshot));
       return Exec(conn, "COMMIT");
     };
@@ -512,8 +512,8 @@ arrow::Status StoreTransaction::InsertGrant(const ObjectGrantRecord& g) {
 
 arrow::Status StoreTransaction::UpdateGrant(const ObjectGrantRecord& g) {
   return Run(conn_, "UPDATE " + T("object_grants") +
-                        " SET columns = $2, grant_option = $3 WHERE grant_id = $1",
-             {Text(g.id), Text(ToJson(g.columns)), Bool(g.grant_option)})
+                        " SET columns = $2, grant_option = $3, granted_by = $4 WHERE grant_id = $1",
+             {Text(g.id), Text(ToJson(g.columns)), Bool(g.grant_option), Text(g.granted_by)})
       .status();
 }
 
@@ -530,6 +530,10 @@ arrow::Status StoreTransaction::UpsertOwner(const OwnerRecord& o) {
               Text(o.object.object_name), Text(ObjectTypeName(o.type)),
               Text(OwnerKindName(o.owner_kind)), Text(o.owner_id), Text(o.definition_hash)})
       .status();
+}
+
+arrow::Result<std::shared_ptr<const Snapshot>> StoreTransaction::Reload() {
+  return store_.LoadLocked();
 }
 
 arrow::Status StoreTransaction::DeleteOwner(const ObjectPath& object) {

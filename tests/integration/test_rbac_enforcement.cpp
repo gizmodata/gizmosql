@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <future>
 #include <map>
 #include <string>
 
@@ -334,6 +335,60 @@ TEST_F(RbacEnforcementFixture, CreatingNeedsThePrivilegeAndMakesTheCreatorOwner)
   ExpectBlocked(*eve_, "DROP TABLE bob_table", "may not drop table");
   ExpectBlocked(*eve_, "ALTER TABLE bob_table RENAME TO stolen", "may not alter table");
   ExpectAllowed(*bob_, "DROP TABLE bob_table");
+}
+
+TEST_F(RbacEnforcementFixture, RevokingStopsAStatementThatIsRunning) {
+  ExpectAllowed(*admin_, "CREATE ROLE runner");
+  ExpectAllowed(*admin_, "CREATE USER rob");
+  ExpectAllowed(*admin_, "GRANT runner TO rob");
+  ExpectAllowed(*admin_, "GRANT SELECT ON orders TO runner");
+  Client rob(GetPort(), "rob", "user", 30);
+  Client rob_runner(GetPort(), "rob", "user", 31);
+  auto running = std::async(std::launch::async, [&] {
+    return rob_runner.Run("SELECT sum(o.id * r.range) FROM orders o, range(1000000000000) r").status();
+  });
+  // If the test fails while the statement still runs, end it so the test can.
+  struct EndIfStillRunning {
+    Client& admin;
+    std::future<arrow::Status>& f;
+    ~EndIfStillRunning() {
+      if (f.valid() && f.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        (void)admin.Run("KILL SESSION '00000000-0000-4000-9000-000000000031'");
+        f.wait_for(std::chrono::seconds(60));
+      }
+    }
+  } end_if_still_running{*admin_, running};
+  std::this_thread::sleep_for(std::chrono::seconds(1));
+  // Gaining a right leaves it running...
+  ExpectAllowed(*admin_, "GRANT SELECT (id) ON customers TO runner");
+  ASSERT_EQ(running.wait_for(std::chrono::seconds(2)), std::future_status::timeout)
+      << "the statement stopped on a GRANT: " << (running.valid() ? running.get().ToString() : "");
+  // ...losing one stops it.
+  ExpectAllowed(*admin_, "REVOKE SELECT ON orders FROM runner");
+  ASSERT_EQ(running.wait_for(std::chrono::seconds(30)), std::future_status::ready)
+      << "a running statement kept going after its user lost access";
+  const auto st = running.get();
+  ASSERT_FALSE(st.ok());
+  EXPECT_NE(st.ToString().find("nterrupt"), std::string::npos) << st.ToString();
+  // Both sessions live on; their next statements are checked against the new grants.
+  ExpectAllowed(rob, "SELECT 1");
+  ExpectAllowed(rob_runner, "SELECT 1");
+  ExpectBlocked(rob_runner, "SELECT * FROM orders", "no SELECT privilege");
+  ExpectAllowed(rob, "SELECT id FROM customers");
+}
+
+TEST_F(RbacEnforcementFixture, AnOwnerSharesWhatItCreated) {
+  ExpectAllowed(*bob_, "CREATE TABLE bob_shared AS SELECT 1 AS id, 'b' AS note");
+  ExpectBlocked(*joe_, "SELECT * FROM bob_shared", "no SELECT privilege on table");
+  ExpectAllowed(*bob_, "GRANT SELECT (id) ON bob_shared TO reader");
+  ExpectAllowed(*joe_, "SELECT id FROM bob_shared");
+  ExpectBlocked(*joe_, "SELECT note FROM bob_shared", "no SELECT on column(s) note");
+  // Not on what bob does not own.
+  auto st = bob_->Run("GRANT SELECT ON secrets TO builder").status();
+  ASSERT_FALSE(st.ok());
+  EXPECT_NE(st.ToString().find("may not grant SELECT"), std::string::npos) << st.ToString();
+  ExpectAllowed(*bob_, "REVOKE SELECT (id) ON bob_shared FROM reader");
+  ExpectBlocked(*joe_, "SELECT id FROM bob_shared", "no SELECT");
 }
 
 TEST_F(RbacEnforcementFixture, ASchemasCreatorOwnsIt) {

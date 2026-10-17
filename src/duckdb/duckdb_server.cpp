@@ -1067,6 +1067,9 @@ class DuckDBFlightSqlServer::Impl {
 
   // Role-based access control (Enterprise); null when not configured.
   std::shared_ptr<enterprise::rbac::RbacEngine> rbac_engine_;
+  // The access-control snapshot the sessions were last compared with.
+  std::mutex rbac_seen_mutex_;
+  std::shared_ptr<const enterprise::rbac::Snapshot> rbac_seen_snapshot_;
 
   static std::optional<std::string> SessionValueToString(
       const flight::SessionOptionValue& v) {
@@ -1469,6 +1472,10 @@ class DuckDBFlightSqlServer::Impl {
     rbac_engine_ = std::move(engine);
 #ifdef GIZMOSQL_ENTERPRISE
     if (rbac_engine_) {
+      {
+        std::lock_guard<std::mutex> lock(rbac_seen_mutex_);
+        rbac_seen_snapshot_ = rbac_engine_->snapshot();
+      }
       rbac_engine_->SetSnapshotListener(
           [this](const enterprise::rbac::Snapshot& snapshot) { EndStaleRbacSessions(snapshot); });
     }
@@ -1478,14 +1485,42 @@ class DuckDBFlightSqlServer::Impl {
 #ifdef GIZMOSQL_ENTERPRISE
   // A user disabled, dropped or with a changed password on ANY node: end their
   // sessions on this one, exactly as the node that made the change does.
+  //
+  // A user who lost any right (a REVOKE, a role taken away, an object handed
+  // to someone else) also has the statement they are running stopped: it was
+  // checked against the rights they had when it started.
   void EndStaleRbacSessions(const enterprise::rbac::Snapshot& snapshot) {
+    std::shared_ptr<const enterprise::rbac::Snapshot> previous;
+    {
+      std::lock_guard<std::mutex> lock(rbac_seen_mutex_);
+      previous = std::move(rbac_seen_snapshot_);
+      rbac_seen_snapshot_ = rbac_engine_ ? rbac_engine_->snapshot() : nullptr;
+    }
     std::shared_lock read_lock(sessions_mutex_);
+    std::map<std::string, bool> lost_rights;  // per user, worked out once
     for (auto& [id, session] : client_sessions_) {
       if (!session || session->rbac_user_id.empty() || session->kill_requested) continue;
       const auto* user = snapshot.FindUserById(session->rbac_user_id);
       const bool stale = !user || !user->enabled ||
                          user->password_hash.value_or("") != session->rbac_credential;
-      if (!stale) continue;
+      if (!stale) {
+        if (!previous) continue;
+        // Only a session running SQL has anything to stop; an idle one's next
+        // statement is checked against the new grants anyway.
+        if (!session->HasInFlightSql()) continue;
+        auto it = lost_rights.find(user->id);
+        if (it == lost_rights.end()) {
+          const enterprise::rbac::Principal who{false, user->id, user->name, ""};
+          it = lost_rights.emplace(user->id, snapshot.LostRightsSince(*previous, who)).first;
+        }
+        if (it->second && session->connection) {
+          session->connection->Get().Interrupt();
+          GIZMOSQL_LOGKV_SESSION(INFO, session,
+                                 "Stopped any running statement after a user lost access",
+                                 {"kind", "access_control"}, {"reason", "rights revoked"});
+        }
+        continue;
+      }
       session->kill_requested = true;
       if (session->connection) session->connection->Get().Interrupt();
       GIZMOSQL_LOGKV_SESSION(INFO, session, "Ended a session after an access-control change",

@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   view definition it was recorded for. Inside a view, a session's temporary tables
   and views are refused, and store users may not create macros or types (not even
   temporary ones) or `SET VARIABLE`, since each could change what a view computes.
+  Grants can be delegated: an owner grants and revokes on what it owns, `WITH GRANT
+  OPTION` and `WITH ADMIN OPTION` let holders pass a privilege or a role on (never
+  more than they hold), a user revokes only what they granted, and a `REVOKE`
+  removes everything granted through it (`CASCADE`; `RESTRICT` refuses instead).
+  An owner can hand an object to itself or a role it holds. A user who loses any
+  privilege has their running statement stopped on every node of the cluster.
+  `SHOW GRANTS` gains a `granted_by` column.
   This uses a small hook added to DuckDB's binder at build time
   (`third_party/patch_duckdb.cmake`); on the LTS channel (DuckDB 1.4) views read
   with the caller's rights.

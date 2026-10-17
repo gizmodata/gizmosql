@@ -106,8 +106,12 @@ class StoreTransaction {
   // A fresh random id (UUID v4 text).
   static std::string NewId();
 
+  // The store as this transaction sees it, its own writes included.
+  arrow::Result<std::shared_ptr<const Snapshot>> Reload();
+
  private:
-  explicit StoreTransaction(duckdb::Connection& conn) : conn_(conn) {}
+  StoreTransaction(RbacStore& store, duckdb::Connection& conn) : store_(store), conn_(conn) {}
+  RbacStore& store_;
   duckdb::Connection& conn_;
   friend class RbacStore;
 };
