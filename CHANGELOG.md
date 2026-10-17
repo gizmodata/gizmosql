@@ -106,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TOKEN` revokes a token with everything minted under it, ending their sessions on
   every node. `SHOW SCOPED TOKENS` lists them without the tokens. `gizmosql_client`
   shows the result of `CREATE SCOPED TOKEN` instead of a row count.
+  Store users' settings: without `MANAGE CONFIG` a bare `SET` applies to their own
+  session (a server-wide-only setting is refused), credential settings are hidden
+  from `current_setting()` and `duckdb_settings()`, and settings that write files
+  need `WRITE FILESYSTEM`. A tenant's user cannot create a view over another
+  tenant's catalog (whether it worked would show what exists there), and may use
+  temporary tables and views.
   An external policy service: `--rbac-opa-url` (or `GIZMOSQL_RBAC_OPA_URL`) names an
   Open Policy Agent decision URL that is asked about every store user's session
   and statement (user, roles, tenant, scoped token, groups, and the objects with
@@ -119,6 +125,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the result. They now run once and their result is kept for the fetch.
 
 ### Security
+- **Non-admin sessions could make the server write files and read through
+  statements that only bind.** The admin command gate now also blocks, for
+  non-admin sessions, `SET log_query_path`, `profiling_output` and
+  `http_logging_output` in every scope (each writes to the path it names), and
+  checks the queries of `DESCRIBE` / `SUMMARIZE` / `SHOW` and `CREATE VIEW`, which
+  DuckDB binds (reading the files and URLs they name) before anything runs.
+- **`CREATE TEMPORARY SECRET` was logged with its keys.** Query logging redacted
+  `CREATE [OR REPLACE] [PERSISTENT] SECRET` but not the `TEMPORARY` / `TEMP` forms,
+  nor a secret statement behind a nested comment.
 - **Edge channel: more DuckDB 2.0 commands are admin-only.** The admin command
   gate now also blocks, for non-admin sessions, DuckDB 2.0's external-resource
   table functions (`create_external_resource`, `destroy_external_resource`,

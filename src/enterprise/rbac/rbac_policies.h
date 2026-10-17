@@ -31,6 +31,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <arrow/result.h>
 #include <arrow/status.h>
@@ -66,6 +67,11 @@ arrow::Result<duckdb::unique_ptr<duckdb::ParsedExpression>> PreparePolicyExpress
     const std::string& sql, const PolicyContext& context,
     const std::string& mask_parameter = "",
     const duckdb::ParsedExpression* parameter_value = nullptr);
+
+// Settings that hold credentials (a proxy password, cloud keys): reading them
+// needs MANAGE CONFIG.
+bool IsCredentialSetting(const std::string& name);
+std::vector<std::string> CredentialSettingNames(duckdb::ClientContext& context);
 
 // Rewrite a store user's checked plan for the row and masking policies that
 // apply to them. Throws a PermissionException for a statement it cannot

@@ -232,7 +232,14 @@ TEST_F(RbacTenantsFixture, AnotherTenantsCatalogLooksExactlyLikeAMissingOne) {
         "SELECT * FROM shared_default", "SELECT * FROM secrets", "USE beta_db",
         "CREATE TABLE beta_db.main.planted AS SELECT 1",
         "DROP TABLE beta_db.main.secrets",
-        "INSERT INTO beta_db.main.secrets VALUES (2, 'x')"}) {
+        "INSERT INTO beta_db.main.secrets VALUES (2, 'x')",
+        // Describing or building on it must not tell either.
+        "DESCRIBE beta_db.main.secrets", "DESCRIBE SELECT * FROM beta_db.main.secrets",
+        "SUMMARIZE beta_db.main.secrets", "SHOW beta_db.main.secrets",
+        "CREATE VIEW acme_db.main.peek_a AS SELECT * FROM beta_db.main.secrets",
+        "CREATE VIEW acme_db.main.peek_b AS SELECT * FROM beta_db.main.no_such_table",
+        "CREATE TABLE acme_db.main.copy_a AS SELECT * FROM beta_db.main.secrets",
+        "EXPLAIN SELECT * FROM beta_db.main.secrets"}) {
     EXPECT_EQ(Error(*joe_, sql), missing)
         << sql << " told joe more than a missing catalog would";
   }
@@ -451,4 +458,22 @@ TEST_F(RbacTenantsFixture, ChangingATenantsCatalogsEndsItsSessions) {
   EXPECT_EQ(Column(*t),
             (std::set<std::string>{"_gizmosql_system", "acme_db", "acme_extra"}));
   ASSERT_EQ(AdminError("ALTER CATALOG acme_extra UNSET TENANT"), "");
+}
+
+TEST_F(RbacTenantsFixture, ATenantsUserBuildsViewsOnItsOwnTables) {
+  // Positive twin of the cross-tenant views refused above (a session of its
+  // own: an earlier test ends joe's sessions on purpose).
+  Client joe(GetPort(), "acme/joe", "user", 60);
+  EXPECT_EQ(Error(joe,
+                  "CREATE OR REPLACE VIEW acme_db.main.own_v AS SELECT * FROM "
+                  "acme_db.main.orders"),
+            "");
+  EXPECT_EQ(
+      Error(joe,
+            "CREATE OR REPLACE TEMP VIEW own_tv AS SELECT * FROM acme_db.main.orders"),
+      "");
+  // Temporary tables are the session's own too.
+  EXPECT_EQ(Error(joe, "CREATE TEMP TABLE own_tt AS SELECT * FROM acme_db.main.orders"),
+            "");
+  EXPECT_EQ(Error(joe, "SELECT * FROM own_tt"), "");
 }

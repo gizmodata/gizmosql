@@ -1327,6 +1327,8 @@ class DuckDBFlightSqlServer::Impl {
                 {c.catalog, CatalogAccessLevel::kWrite});
           }
         }
+        // The session's own temporary objects are its business.
+        new_session->catalog_access.push_back({"temp", CatalogAccessLevel::kWrite});
         // A rule that matches nothing, so an empty list still denies.
         new_session->catalog_access.push_back({"", CatalogAccessLevel::kNone});
       }

@@ -363,6 +363,19 @@ TEST(RbacLogging, UserDdlIsRedactedWhereverTheKeywordsSit) {
   EXPECT_EQ(gizmosql::redact_sql_for_logs("SELECT 1"), "SELECT 1");
 }
 
+TEST(RbacLogging, SecretDdlIsRedactedInEveryForm) {
+  for (const char* sql :
+       {"CREATE SECRET s (TYPE s3, KEY_ID 'k', SECRET 'shh-123')",
+        "CREATE TEMPORARY SECRET s (TYPE s3, KEY_ID 'k', SECRET 'shh-123')",
+        "create temp secret s (TYPE s3, SECRET 'shh-123')",
+        "CREATE OR REPLACE PERSISTENT SECRET s (TYPE s3, SECRET 'shh-123')",
+        "/* /* nested */ */ CREATE SECRET s (TYPE s3, SECRET 'shh-123')",
+        "-- c\nCREATE\n  SECRET s (TYPE s3, SECRET 'shh-123')"}) {
+    const std::string logged = gizmosql::redact_sql_for_logs(sql);
+    EXPECT_EQ(logged.find("shh-123"), std::string::npos) << sql << " -> " << logged;
+  }
+}
+
 TEST_F(NoRbacServerFixture, AccessControlStatementsNeedTheStore) {
   ASSERT_TRUE(IsServerReady());
   const auto admin =

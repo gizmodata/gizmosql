@@ -88,7 +88,8 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(
     const QualifiedName& name) {
   ResolvedObject resolved;
   bool found = false;
-  ARROW_RETURN_NOT_OK(InTransaction(connection_, [&]() -> arrow::Status {
+  // Not inside the macro: MSVC rejects preprocessor lines in macro arguments.
+  auto lookup = [&]() -> arrow::Status {
     auto& context = *connection_.context;
     dd::optional_ptr<dd::CatalogEntry> entry;
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
@@ -146,7 +147,8 @@ arrow::Result<ResolvedObject> SessionObjectResolver::ResolveObject(
         resolved.columns.push_back(n);
     }
     return arrow::Status::OK();
-  }));
+  };
+  ARROW_RETURN_NOT_OK(InTransaction(connection_, lookup));
   if (!found) {
     return AccessControlError("table or view " + name.ToString() + " does not exist");
   }
@@ -157,7 +159,8 @@ arrow::Result<ObjectPath> SessionObjectResolver::ResolveSchema(
     const QualifiedName& name) {
   ObjectPath resolved;
   bool found = false;
-  ARROW_RETURN_NOT_OK(InTransaction(connection_, [&]() -> arrow::Status {
+  // Not inside the macro: MSVC rejects preprocessor lines in macro arguments.
+  auto lookup = [&]() -> arrow::Status {
     auto& context = *connection_.context;
     // The first part is a catalog when one by that name is attached. An
     // unqualified schema is the session's current database's, never the
@@ -191,7 +194,8 @@ arrow::Result<ObjectPath> SessionObjectResolver::ResolveSchema(
     resolved.catalog = compat::Str(schema->ParentCatalog().GetName());
     resolved.schema_path = SchemaPathOf(*schema);
     return arrow::Status::OK();
-  }));
+  };
+  ARROW_RETURN_NOT_OK(InTransaction(connection_, lookup));
   if (!found) return AccessControlError("schema " + name.ToString() + " does not exist");
   return resolved;
 }
@@ -199,11 +203,12 @@ arrow::Result<ObjectPath> SessionObjectResolver::ResolveSchema(
 arrow::Result<std::string> SessionObjectResolver::ResolveCatalog(
     const std::string& name) {
   std::string resolved;
-  ARROW_RETURN_NOT_OK(InTransaction(connection_, [&]() -> arrow::Status {
+  auto lookup = [&]() -> arrow::Status {
     auto catalog = CatalogNamed(*connection_.context, name);
     if (catalog) resolved = compat::Str(catalog->GetName());
     return arrow::Status::OK();
-  }));
+  };
+  ARROW_RETURN_NOT_OK(InTransaction(connection_, lookup));
   if (resolved.empty()) return AccessControlError("catalog " + name + " does not exist");
   return resolved;
 }

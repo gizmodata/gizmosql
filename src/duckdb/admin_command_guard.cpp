@@ -32,6 +32,7 @@
 #include <duckdb/parser/expression/subquery_expression.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/parser/tableref/showref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
@@ -46,6 +47,7 @@
 #include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/parser/statement/prepare_statement.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
 #include <duckdb/parser/query_node/copy_query_node.hpp>
@@ -258,6 +260,15 @@ bool IsDangerousGlobalSetting(const std::string& name_lower) {
 // with its own grammar could send SQL the gate cannot read but the engine runs.
 // Gated in every scope (SESSION too); RESET, back to the built-in grammar, is
 // allowed.
+// Settings that make DuckDB write to a path the statement names (a query log,
+// a profile, an HTTP log): a file write anywhere the server can write, so they
+// are gated in every scope, SESSION too. RESET is allowed.
+bool IsFileWritingSetting(const std::string& name_lower) {
+  static const std::unordered_set<std::string> kSettings = {
+      "log_query_path", "profiling_output", "http_logging_output"};
+  return kSettings.count(name_lower) > 0;
+}
+
 bool IsGrammarSetting(const std::string& name_lower) {
   static const std::unordered_set<std::string> kSettings = {
       "current_dialect", "active_grammar_extensions", "enable_legacy_parser"};
@@ -386,6 +397,20 @@ struct GatedFunctionWalker {
       if (table_name && LooksLikeLocalFilePath(*table_name)) {
         Flag("reading a local file via FROM '" + *table_name + "'");
       }
+    } else if (ref.type == dd::TableReferenceType::SHOW_REF) {
+      // DESCRIBE / SUMMARIZE / SHOW bind (and so read) their query or table
+      // when the statement is bound, before any later check.
+      auto& show = ref.Cast<dd::ShowRef>();
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+      const std::string shown = Str(show.GetTableName());
+#else
+      const std::string shown = show.table_name;
+#endif
+      if (LooksLikeLocalFilePath(shown)) {
+        Flag("reading a local file via FROM '" + shown + "'");
+        return;
+      }
+      if (show.query) WalkNode(*show.query);
     } else if (ref.type == dd::TableReferenceType::SUBQUERY) {
       // Its children were enumerated already; only the node edges are left.
       auto& sq = ref.Cast<dd::SubqueryRef>();
@@ -483,6 +508,11 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
       if (s.info && s.info->type == dd::CatalogType::TABLE_ENTRY) {
         auto& ti = s.info->Cast<dd::CreateTableInfo>();
         if (ti.query && ti.query->node) walker.WalkNode(*ti.query->node);
+      } else if (s.info && s.info->type == dd::CatalogType::VIEW_ENTRY) {
+        // CREATE VIEW binds its query (reading what it names) to learn the
+        // view's columns.
+        auto& vi = s.info->Cast<dd::CreateViewInfo>();
+        if (vi.query && vi.query->node) walker.WalkNode(*vi.query->node);
       }
       break;
     }
@@ -580,6 +610,10 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
         if (ss.scope == dd::SetScope::AUTOMATIC &&
             IsDangerousGlobalSetting(ToLower(Str(ss.name)))) {
           return Gate(verb + Str(ss.name));
+        }
+        if (ss.set_type != dd::SetType::RESET &&
+            IsFileWritingSetting(ToLower(Str(ss.name)))) {
+          return Gate("SET " + Str(ss.name));
         }
         if (ss.set_type != dd::SetType::RESET &&
             IsGrammarSetting(ToLower(Str(ss.name)))) {

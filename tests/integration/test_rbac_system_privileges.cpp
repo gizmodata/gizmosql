@@ -331,3 +331,80 @@ TEST_F(RbacSystemPrivileges, ARefusalNamesThePrivilegeThatWouldAllowIt) {
   // What no privilege covers stays the administrator's, and says so.
   ExpectBlocked(nob, "SELECT * FROM query('SELECT 1')", "requires the 'admin' role");
 }
+
+// Settings: one that writes to a path needs WRITE FILESYSTEM; reading one that
+// holds credentials needs MANAGE CONFIG; and without MANAGE CONFIG a bare SET
+// changes this session only, never the server.
+TEST_F(RbacSystemPrivileges, SettingsThatWriteFilesOrHoldCredentials) {
+  auto nob = As("nob", 140);
+  auto wes = As("wes", 141);
+  auto con = As("con", 142);
+  // A query log or profile written anywhere the server may write.
+  const std::string log = Dir() + "/stolen.log";
+  ExpectBlocked(nob, "SET log_query_path = '" + log + "'", "WRITE FILESYSTEM");
+  ExpectBlocked(nob, "SET SESSION profiling_output = '" + Dir() + "/p.json'",
+                "WRITE FILESYSTEM");
+  ExpectBlocked(nob, "SET http_logging_output = '" + Dir() + "/h.log'",
+                "WRITE FILESYSTEM");
+  EXPECT_FALSE(std::filesystem::exists(log));
+  ExpectAllowed(
+      wes, "SET SESSION profiling_output = '" + Dir() + "/wes.txt'");  // positive twin
+  // Server-wide settings stay as they are.
+  auto value = [&](const std::string& name) {
+    auto t = ExpectAllowed(*admin_, "SELECT current_setting('" + name + "')");
+    return t ? t->column(0)->GetScalar(0).ValueOrDie()->ToString() : std::string();
+  };
+  const auto threshold = value("checkpoint_threshold");
+  auto st = nob.Run("SET checkpoint_threshold = '999MB'").status();
+  EXPECT_FALSE(st.ok()) << "a store user changed a server-wide setting";
+  EXPECT_NE(st.ToString().find("cannot be set locally"), std::string::npos)
+      << st.ToString();
+  EXPECT_EQ(value("checkpoint_threshold"), threshold);
+  const auto order = value("default_order");
+  ExpectAllowed(nob, "SET default_order = 'DESC'");  // this session only
+  EXPECT_EQ(value("default_order"), order);
+  ExpectAllowed(con,
+                "SET checkpoint_threshold = '" + threshold + "'");  // MANAGE CONFIG may
+  // Credentials in settings.
+  ExpectAllowed(*admin_, "LOAD httpfs");
+  ExpectAllowed(*admin_, "SET GLOBAL http_proxy_password = 'proxy-pw-for-test'");
+  ExpectBlocked(nob, "SELECT current_setting('http_proxy_password')", "MANAGE CONFIG");
+  ExpectBlocked(nob, "SELECT current_setting(lower('HTTP_PROXY_PASSWORD'))",
+                "MANAGE CONFIG");
+  ExpectAllowed(nob, "SELECT current_setting('TimeZone')");
+  auto listed = ExpectAllowed(
+      nob,
+      "SELECT count(*) FROM duckdb_settings() WHERE name = 'http_proxy_password' "
+      "OR value LIKE '%proxy-pw-for-test%'");
+  ASSERT_TRUE(listed);
+  EXPECT_EQ(listed->column(0)->GetScalar(0).ValueOrDie()->ToString(), "0");
+  auto all = ExpectAllowed(
+      nob, "SELECT count(*) FROM duckdb_settings() WHERE name = 'TimeZone'");
+  ASSERT_TRUE(all);
+  EXPECT_EQ(all->column(0)->GetScalar(0).ValueOrDie()->ToString(), "1");
+  // MANAGE CONFIG sees them.
+  auto seen = ExpectAllowed(con, "SELECT current_setting('http_proxy_password')");
+  ASSERT_TRUE(seen);
+  EXPECT_EQ(seen->column(0)->GetScalar(0).ValueOrDie()->ToString(), "proxy-pw-for-test");
+  ExpectAllowed(*admin_, "RESET GLOBAL http_proxy_password");
+}
+
+// Statements that bind (and so fetch) a file or URL when DuckDB plans them are
+// refused before that happens, not only when they run.
+TEST_F(RbacSystemPrivileges, NothingIsReadWhileAStatementIsBound) {
+  auto nob = As("nob", 143);
+  const std::string file = Dir() + "/in.parquet";
+  for (const std::string& sql : {
+           "DESCRIBE SELECT * FROM read_parquet('" + file + "')",
+           "SUMMARIZE SELECT * FROM read_parquet('" + file + "')",
+           "DESCRIBE '" + file + "'",
+           "CREATE TEMP VIEW tv AS SELECT * FROM read_parquet('" + file + "')",
+           "CREATE OR REPLACE VIEW nv AS SELECT * FROM '" + file + "'",
+           "EXPLAIN SELECT * FROM read_parquet('" + file + "')",
+       }) {
+    ExpectBlocked(nob, sql, "READ FILESYSTEM");
+  }
+  // Positive twin: a holder of READ FILESYSTEM.
+  auto fay = As("fay", 144);
+  ExpectAllowed(fay, "DESCRIBE SELECT * FROM read_parquet('" + file + "')");
+}

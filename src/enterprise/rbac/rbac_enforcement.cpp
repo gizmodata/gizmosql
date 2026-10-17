@@ -40,7 +40,10 @@
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/planner.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_reset.hpp>
@@ -395,6 +398,7 @@ class PlanChecker {
       }
       case OpType::LOGICAL_CREATE_VIEW: {
         auto& create = op.Cast<dd::LogicalCreate>();
+        RequireViewSourcesVisible(create.info->Cast<dd::CreateViewInfo>());
         const size_t before = ownership_.size();
         CheckCreate(*create.info, ObjectType::kView, Privilege::kCreateView);
         if (ownership_.size() > before)
@@ -434,7 +438,7 @@ class PlanChecker {
 
       // ---- session statements --------------------------------------------
       case OpType::LOGICAL_SET: {
-        const auto& set = op.Cast<dd::LogicalSet>();
+        auto& set = op.Cast<dd::LogicalSet>();
         // A variable's value is computed by a query (which would otherwise go
         // unchecked here), and getvariable() hands it to any view that asks.
         if (set.scope == dd::SetScope::VARIABLE) {
@@ -448,6 +452,18 @@ class PlanChecker {
         }
         // USE c / SET schema / SET search_path: no catalog the user cannot see.
         const std::string setting = Lower(compat::Str(set.name));
+        // A setting that makes DuckDB write to the path it names.
+        if (setting == "log_query_path" || setting == "profiling_output" ||
+            setting == "http_logging_output") {
+          RequireSystem(SystemPrivilege::kWriteFilesystem, "SET " + setting);
+        }
+        // A bare SET of a server-wide setting would change it for every
+        // session: without MANAGE CONFIG it applies to this session only, and a
+        // setting that has no session value is refused by DuckDB.
+        if (set.scope == dd::SetScope::AUTOMATIC &&
+            !snapshot_.HasSystemPrivilege(principal_, SystemPrivilege::kManageConfig)) {
+          set.scope = dd::SetScope::SESSION;
+        }
         if ((setting == "schema" || setting == "search_path") && !set.value.IsNull()) {
           RequireVisibleSearchPath(set.value.ToString());
         }
@@ -758,6 +774,51 @@ class PlanChecker {
     }
   }
 
+ public:
+  // current_setting() of a credential setting (a proxy password, a key) needs
+  // MANAGE CONFIG, and so does one whose name is not a constant.
+  void CheckSettingReads(dd::LogicalOperator& op) {
+    std::function<void(dd::Expression&)> visit = [&](dd::Expression& expr) {
+      if (expr.GetExpressionClass() == dd::ExpressionClass::BOUND_FUNCTION) {
+        auto& fn = expr.Cast<dd::BoundFunctionExpression>();
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+        const std::string fn_name = Lower(compat::Str(fn.Function().GetName()));
+        const auto& fn_children = fn.GetChildren();
+#else
+        const std::string fn_name = Lower(fn.function.name);
+        const auto& fn_children = fn.children;
+#endif
+        if (fn_name == "current_setting") {
+          const dd::Expression* arg =
+              fn_children.empty() ? nullptr : fn_children[0].get();
+          if (!arg || arg->GetExpressionClass() != dd::ExpressionClass::BOUND_CONSTANT) {
+            RequireSystem(SystemPrivilege::kManageConfig,
+                          "current_setting() of a computed name");
+          } else {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+            const std::string name =
+                arg->Cast<dd::BoundConstantExpression>().GetValue().ToString();
+#else
+            const std::string name =
+                arg->Cast<dd::BoundConstantExpression>().value.ToString();
+#endif
+            if (IsCredentialSetting(name)) {
+              RequireSystem(SystemPrivilege::kManageConfig,
+                            "reading the setting " + name);
+            }
+          }
+        }
+      }
+      dd::ExpressionIterator::EnumerateChildren(expr, visit);
+    };
+    dd::LogicalOperatorVisitor::EnumerateExpressions(
+        op, [&](dd::unique_ptr<dd::Expression>* child) { visit(**child); });
+    for (auto& child : op.children) {
+      if (child) CheckSettingReads(*child);
+    }
+  }
+
+ private:
   bool OnlySuperusers() const {
     for (const auto& rights : rights_) {
       if (!rights.principal.superuser) return false;
@@ -844,6 +905,35 @@ class PlanChecker {
   // CREATE needs the privilege on the container; CREATE OR REPLACE of an
   // existing object also needs the right to drop it; IF NOT EXISTS on an
   // existing object changes nothing and never takes its ownership.
+  // A tenant's user creating a view (temporary ones too): everything the view
+  // reads must be in catalogs the user can see. Otherwise whether the CREATE
+  // works would tell whether another tenant's table exists. The view's query is
+  // bound again here, as the CREATE did, to see what it reads.
+  void RequireViewSourcesVisible(dd::CreateViewInfo& info) {
+    if (snapshot_.TenantOfPrincipal(principal_).empty() || !info.query) return;
+    dd::unique_ptr<dd::LogicalOperator> plan;
+    try {
+      dd::Planner planner(context_);
+      planner.CreatePlan(info.query->Copy());
+      plan = std::move(planner.plan);
+    } catch (...) {
+      throw dd::CatalogException(HiddenObjectMessage(principal_.user_name));
+    }
+    if (!plan) throw dd::CatalogException(HiddenObjectMessage(principal_.user_name));
+    std::function<void(dd::LogicalOperator&)> walk = [&](dd::LogicalOperator& op) {
+      if (op.type == OpType::LOGICAL_GET) {
+        if (auto table = op.Cast<dd::LogicalGet>().GetTable())
+          RequireVisible(PathOf(*table).catalog);
+      }
+      if (auto* marker = dynamic_cast<ViewMarker*>(&op))
+        RequireVisible(marker->view.catalog);
+      for (auto& child : op.children) {
+        if (child) walk(*child);
+      }
+    };
+    walk(*plan);
+  }
+
   void CheckCreate(dd::CreateInfo& info, ObjectType type, Privilege privilege) {
     auto parts = PartsOf(info);
     if (info.temporary || (!parts.empty() && IsTempCatalog(parts[0]))) return;
@@ -1097,6 +1187,7 @@ void PreOptimize(dd::OptimizerExtensionInput& input,
   const auto view_columns = ViewColumnsUsed(*plan);
   PlanChecker checker(context, *snapshot, principal, view_columns);
   checker.Visit(*plan);
+  checker.CheckSettingReads(*plan);
   RemoveViewMarkers(plan);
   // The external policy service may refuse what passed.
   if (const auto* service = engine->policy_service()) {
@@ -1354,6 +1445,11 @@ std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(
   if (category == "EXPORT DATABASE") return SystemPrivilege::kExportDatabase;
   if (category == "IMPORT DATABASE") return SystemPrivilege::kImportDatabase;
   if (category == "CHECKPOINT") return SystemPrivilege::kCheckpoint;
+  // Settings that write to a path the statement names.
+  if (category == "SET log_query_path" || category == "SET profiling_output" ||
+      category == "SET http_logging_output") {
+    return SystemPrivilege::kWriteFilesystem;
+  }
   if (starts("COPY TO")) return SystemPrivilege::kWriteFilesystem;
   if (starts("COPY FROM") || starts("reading a local file via FROM")) {
     return SystemPrivilege::kReadFilesystem;

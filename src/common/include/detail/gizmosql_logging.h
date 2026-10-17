@@ -42,10 +42,12 @@ static inline std::string_view strip_leading_comments(std::string_view s) {
   return s;
 }
 
+// CREATE SECRET (OR REPLACE / PERSISTENT / TEMPORARY / TEMP) carries keys.
+// Searched anywhere in the text, so comments (nested ones included) cannot hide
+// it.
 static inline bool should_redact_secret_sql(std::string_view sql) {
-  sql = strip_leading_comments(sql);
   static const std::regex secret_re(
-      R"(^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:PERSISTENT\s+)?SECRET\b)",
+      R"(\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:PERSISTENT\s+|TEMPORARY\s+|TEMP\s+)?SECRET\b)",
       std::regex::icase | std::regex::optimize);
   return std::regex_search(sql.begin(), sql.end(), secret_re);
 }

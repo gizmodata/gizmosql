@@ -182,6 +182,30 @@ TEST(AdminCommandGuard, HarmlessSessionSetIsAllowed) {
 // INSTALL / LOAD extensions.
 // =============================================================================
 
+TEST(AdminCommandGuard, SettingsThatWriteFilesAreGatedInEveryScope) {
+  for (const char* sql : {"SET log_query_path = '/tmp/q.log'",
+                          "SET SESSION profiling_output = '/tmp/p.txt'",
+                          "SET http_logging_output = '/tmp/h.log'"}) {
+    EXPECT_TRUE(Gated(sql)) << sql;
+  }
+  EXPECT_FALSE(Gated("RESET profiling_output"));        // back to no file
+  EXPECT_FALSE(Gated("SET SESSION TimeZone = 'UTC'"));  // positive twin
+}
+
+TEST(AdminCommandGuard, BindTimeReadsAreGated) {
+  // DESCRIBE / SUMMARIZE and CREATE VIEW bind their query, reading what it
+  // names, before any later check.
+  for (const char* sql :
+       {"DESCRIBE SELECT * FROM read_csv('/etc/passwd')",
+        "SUMMARIZE SELECT * FROM read_csv('/etc/passwd')", "DESCRIBE '/etc/passwd'",
+        "CREATE VIEW v AS SELECT * FROM read_csv('/etc/passwd')",
+        "CREATE OR REPLACE TEMP VIEW v AS SELECT * FROM '/etc/passwd'"}) {
+    EXPECT_TRUE(Gated(sql)) << sql;
+  }
+  EXPECT_FALSE(Gated("DESCRIBE SELECT 1"));  // positive twins
+  EXPECT_FALSE(Gated("CREATE VIEW v AS SELECT 1"));
+}
+
 TEST(AdminCommandGuard, InstallLoadIsGated) {
   EXPECT_TRUE(Gated("INSTALL httpfs"));
   EXPECT_TRUE(Gated("FORCE INSTALL httpfs"));

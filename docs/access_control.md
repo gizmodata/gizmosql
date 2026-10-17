@@ -508,6 +508,17 @@ Besides what their grants and system privileges do not cover, store users cannot
 - turn off the optimizer or change the SQL dialect (not even with `MANAGE CONFIG`),
   or run the other [admin-only commands](admin_command_gating.md) that no system
   privilege covers.
+- change a setting for the whole server without `MANAGE CONFIG`: a bare `SET` then
+  applies to their own session only, and a setting that exists only server-wide
+  (`checkpoint_threshold`, `http_proxy`, ...) is refused.
+- point a setting that writes a file at a path (`log_query_path`,
+  `profiling_output`, `http_logging_output`) without `WRITE FILESYSTEM`.
+- read a setting that holds a credential (`http_proxy_password`, keys, tokens)
+  without `MANAGE CONFIG`: `current_setting()` refuses it and `duckdb_settings()`
+  leaves it out.
+- make the server read a file or URL while a statement is only being described or
+  defined (`DESCRIBE`, `SUMMARIZE`, `CREATE VIEW`): these need `READ FILESYSTEM` as
+  well.
 
 Every refusal says `GizmoSQL blocked ...` and what is missing; a refusal caused by
 what a view reads does not name the objects behind the view. The server also logs
@@ -525,7 +536,12 @@ whether or not queries are logged.
   catalog functions such as `duckdb_tables()` and the Flight SQL metadata calls list
   every table and view, including ones the user cannot read.
 - A tenant's users cannot read a view in their catalogs that reads another
-  tenant's catalog, even one the administrator made.
+  tenant's catalog, even one the administrator made, nor create one.
+- A store user's statement can make DuckDB install and load a known extension
+  that a function in it needs (DuckDB's `autoinstall_known_extensions`, on by
+  default), without `MANAGE EXTENSIONS`. Turn it off on servers where that
+  matters (`SET GLOBAL autoinstall_known_extensions = false` in the init SQL) and
+  install the extensions you need.
 - Ownership follows an object's name: renaming a table or view needs its owner (or
   `ALTER TABLE` / `ALTER VIEW`), and the renamed object has no owner on record.
 - On the [LTS channel](lts_channel.md) (DuckDB 1.4), a view reads with the caller's
