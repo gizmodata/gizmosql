@@ -42,28 +42,257 @@ static inline std::string_view strip_leading_comments(std::string_view s) {
   return s;
 }
 
-// CREATE SECRET (OR REPLACE / PERSISTENT / TEMPORARY / TEMP) carries keys.
-// Searched anywhere in the text, so comments (nested ones included) cannot hide
-// it.
+// ---- Redacting credentials from log text --------------------------------------
+// Log lines and instrumentation rows carry SQL and error messages, and DuckDB's
+// error messages repeat the SQL. Statements that carry credentials are found by
+// their words, the way DuckDB reads them (comments and string literals are not
+// words), so a comment between keywords cannot hide them.
+
+static inline bool is_sql_word_char(char c) {
+  const auto u = static_cast<unsigned char>(c);
+  return (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') || (u >= '0' && u <= '9') ||
+         u == '_' || u >= 0x80;
+}
+
+static inline char ascii_upper(char c) {
+  return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 32) : c;
+}
+
+// Upper-cased words of `s` in order: keywords, names and quoted identifiers,
+// without comments (nested /* */ included) or string literals ('', E'',
+// $tag$...$tag$). With `raw`, every run of word characters instead, comments and
+// literals included, so a misread quote cannot hide a statement either.
+static inline std::vector<std::string> sql_words(std::string_view s, bool raw = false) {
+  std::vector<std::string> words;
+  const size_t n = s.size();
+  size_t i = 0;
+  while (i < n) {
+    const char c = s[i];
+    if (!raw && c == '-' && i + 1 < n && s[i + 1] == '-') {
+      const size_t nl = s.find('\n', i);
+      i = nl == std::string_view::npos ? n : nl + 1;
+    } else if (!raw && c == '/' && i + 1 < n && s[i + 1] == '*') {
+      int depth = 1;
+      i += 2;
+      while (i < n && depth > 0) {
+        if (s.compare(i, 2, "/*") == 0) {
+          ++depth;
+          i += 2;
+        } else if (s.compare(i, 2, "*/") == 0) {
+          --depth;
+          i += 2;
+        } else {
+          ++i;
+        }
+      }
+    } else if (!raw && c == '\'') {
+      // E'...' takes backslash escapes; its E was read as a word just before.
+      const bool escapes = !words.empty() && words.back() == "E" && i > 0 &&
+                           (s[i - 1] == 'E' || s[i - 1] == 'e');
+      if (escapes) words.pop_back();
+      ++i;
+      while (i < n) {
+        if (escapes && s[i] == '\\') {
+          i += 2;
+        } else if (s[i] == '\'') {
+          if (i + 1 < n && s[i + 1] == '\'') {
+            i += 2;
+          } else {
+            ++i;
+            break;
+          }
+        } else {
+          ++i;
+        }
+      }
+    } else if (!raw && c == '$' && i + 1 < n && !(s[i + 1] >= '0' && s[i + 1] <= '9')) {
+      // $tag$ ... $tag$ (a $ followed by a digit is a parameter).
+      size_t j = i + 1;
+      while (j < n && is_sql_word_char(s[j]) && s[j] != '$') ++j;
+      if (j < n && s[j] == '$') {
+        const std::string_view tag = s.substr(i, j - i + 1);
+        const size_t end = s.find(tag, j + 1);
+        i = end == std::string_view::npos ? n : end + tag.size();
+      } else {
+        ++i;
+      }
+    } else if (!raw && c == '"') {
+      std::string word;
+      ++i;
+      while (i < n) {
+        if (s[i] == '"') {
+          if (i + 1 < n && s[i + 1] == '"') {
+            word += '"';
+            i += 2;
+          } else {
+            ++i;
+            break;
+          }
+        } else {
+          word += ascii_upper(s[i++]);
+        }
+      }
+      words.push_back(std::move(word));
+    } else if (is_sql_word_char(c)) {
+      std::string word;
+      while (i < n && is_sql_word_char(s[i])) word += ascii_upper(s[i++]);
+      words.push_back(std::move(word));
+    } else {
+      ++i;
+    }
+  }
+  return words;
+}
+
+// A setting whose value is a credential (keep in step with the access-control
+// check of current_setting()).
+static inline bool is_credential_setting_name(const std::string& upper_name) {
+  for (const char* marker :
+       {"PASSWORD", "SECRET", "TOKEN", "CREDENTIAL", "CONNECTION_STRING", "ACCESS_KEY",
+        "ACCOUNT_KEY", "API_KEY", "PRIVATE_KEY", "KEY_ID"}) {
+    if (upper_name.find(marker) != std::string::npos) return true;
+  }
+  return false;
+}
+
+// Which kind of credential-carrying statement `words` contain, or nullptr.
+static inline const char* credential_statement_kind(const std::vector<std::string>& w) {
+  const size_t n = w.size();
+  for (size_t i = 0; i < n; ++i) {
+    if (w[i] == "CREATE") {
+      size_t j = i + 1;
+      if (j + 1 < n && w[j] == "OR" && w[j + 1] == "REPLACE") j += 2;
+      if (j < n && (w[j] == "PERSISTENT" || w[j] == "TEMPORARY" || w[j] == "TEMP")) ++j;
+      if (j < n && w[j] == "SECRET") return "secret DDL";
+    }
+    if ((w[i] == "CREATE" || w[i] == "ALTER") && i + 1 < n && w[i + 1] == "USER")
+      return "user DDL";
+    if (w[i] == "SET" || w[i] == "PRAGMA") {
+      size_t j = i + 1;
+      if (j < n && (w[j] == "GLOBAL" || w[j] == "SESSION" || w[j] == "LOCAL")) ++j;
+      if (j < n && is_credential_setting_name(w[j])) return "credential setting";
+    }
+  }
+  return nullptr;
+}
+
 static inline bool should_redact_secret_sql(std::string_view sql) {
-  static const std::regex secret_re(
-      R"(\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:PERSISTENT\s+|TEMPORARY\s+|TEMP\s+)?SECRET\b)",
-      std::regex::icase | std::regex::optimize);
-  return std::regex_search(sql.begin(), sql.end(), secret_re);
+  const char* kind = credential_statement_kind(sql_words(sql));
+  if (!kind) kind = credential_statement_kind(sql_words(sql, /*raw=*/true));
+  return kind && std::string_view(kind) == "secret DDL";
 }
 
-// CREATE / ALTER USER can carry a password. Searched anywhere in the text, not
-// just at the start, so comments (nested ones included) cannot hide it.
-static inline bool should_redact_user_sql(std::string_view sql) {
-  static const std::regex user_re(R"(\b(?:CREATE|ALTER)\s+USER\b)",
-                                  std::regex::icase | std::regex::optimize);
-  return std::regex_search(sql.begin(), sql.end(), user_re);
+// Replace the value after a credential key (password=..., 'password': '...',
+// sig=..., token=...) and the password of a user:password@ URI with ***.
+static inline std::string mask_inline_credentials(std::string_view s) {
+  static constexpr const char* kKeys[] = {"password",
+                                          "passwd",
+                                          "pwd",
+                                          "accountkey",
+                                          "sharedaccesssignature",
+                                          "sig",
+                                          "token",
+                                          "access_token",
+                                          "secret",
+                                          "x-amz-signature",
+                                          "x-amz-security-token",
+                                          "x-amz-credential"};
+  std::string out;
+  out.reserve(s.size());
+  const size_t n = s.size();
+  auto lower = [](char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c;
+  };
+  auto key_at = [&](size_t i) -> size_t {  // length of the key starting at i, or 0
+    if (i > 0 && (is_sql_word_char(s[i - 1]) || s[i - 1] == '-')) return 0;
+    for (const char* key : kKeys) {
+      const size_t len = std::char_traits<char>::length(key);
+      if (i + len > n) continue;
+      bool match = true;
+      for (size_t k = 0; k < len && match; ++k) match = lower(s[i + k]) == key[k];
+      if (match && (i + len == n || !(is_sql_word_char(s[i + len]) || s[i + len] == '-')))
+        return len;
+    }
+    return 0;
+  };
+  size_t i = 0;
+  while (i < n) {
+    // user:password@host in a URI
+    if (s.compare(i, 3, "://") == 0) {
+      size_t j = i + 3, colon = std::string_view::npos;
+      while (j < n &&
+             std::string_view("/?#@ \t\r\n'\"").find(s[j]) == std::string_view::npos) {
+        if (s[j] == ':' && colon == std::string_view::npos) colon = j;
+        ++j;
+      }
+      if (j < n && s[j] == '@' && colon != std::string_view::npos && colon + 1 < j) {
+        out.append(s.substr(i, colon + 1 - i));
+        out += "***";
+        i = j;
+        continue;
+      }
+    }
+    if (const size_t len = key_at(i)) {
+      size_t j = i + len;
+      // key=value anywhere; 'key': 'value' only with a quoted key (a map or
+      // JSON), so prose such as "invalid token: expired" stays readable.
+      const bool quoted_key = j < n && (s[j] == '\'' || s[j] == '"');
+      if (quoted_key) ++j;
+      while (j < n && (s[j] == ' ' || s[j] == '\t')) ++j;
+      if (j < n && (s[j] == '=' || (quoted_key && s[j] == ':'))) {
+        ++j;
+        while (j < n && (s[j] == ' ' || s[j] == '\t')) ++j;
+        size_t end = j;
+        if (s.compare(j, 2, "''") == 0) {  // a quoted value inside a SQL literal
+          const size_t close = s.find("''", j + 2);
+          end = close == std::string_view::npos ? n : close + 2;
+        } else if (j < n && (s[j] == '\'' || s[j] == '"')) {
+          const size_t close = s.find(s[j], j + 1);
+          end = close == std::string_view::npos ? n : close + 1;
+        } else {
+          while (end < n && std::string_view(" \t\r\n'\";&),}").find(s[end]) ==
+                                std::string_view::npos)
+            ++end;
+        }
+        if (end > j) {
+          out.append(s.substr(i, j - i));
+          out += "***";
+          i = end;
+          continue;
+        }
+      }
+    }
+    out += s[i++];
+  }
+  return out;
 }
 
+// Cheap test before the scans above: text without any of these cannot carry a
+// credential they would find.
+static inline bool might_hold_credentials(std::string_view s) {
+  std::string lower(s.size(), '\0');
+  for (size_t i = 0; i < s.size(); ++i)
+    lower[i] = (s[i] >= 'A' && s[i] <= 'Z') ? static_cast<char>(s[i] + 32) : s[i];
+  for (const char* needle :
+       {"secret", "user", "set", "pragma", "password", "passwd", "pwd", "token",
+        "credential", "connection_string", "accountkey", "sig", "://"}) {
+    if (lower.find(needle) != std::string::npos) return true;
+  }
+  return false;
+}
+
+// SQL, an error message or any other text, as it may be logged or recorded: a
+// statement that carries credentials (secret DDL, user DDL with a password, a
+// credential setting) is replaced as a whole, wherever it appears in the text
+// (DuckDB's errors quote the statement); other credentials (connection-string
+// passwords, URI passwords, signed-URL tokens) are masked. Applying it twice
+// gives the same text.
 static inline std::string redact_sql_for_logs(std::string_view sql) {
-  if (should_redact_secret_sql(sql)) return "[REDACTED: secret DDL]";
-  if (should_redact_user_sql(sql)) return "[REDACTED: user DDL]";
-  return std::string(sql);
+  if (!might_hold_credentials(sql)) return std::string(sql);
+  const char* kind = credential_statement_kind(sql_words(sql));
+  if (!kind) kind = credential_statement_kind(sql_words(sql, /*raw=*/true));
+  if (kind) return std::string("[REDACTED: ") + kind + "]";
+  return mask_inline_credentials(sql);
 }
 
 // -----------------------------------------------------------------------------

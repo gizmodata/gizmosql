@@ -362,6 +362,22 @@ Permission denied: GizmoSQL blocked enabling allow_unredacted_secrets, which is 
 For per-role limits on filesystem- and instance-level commands (for non-admin
 token roles), see [Admin Command Gating](admin_command_gating.md).
 
+### Credentials stay out of logs and instrumentation
+
+Query logs, access-control audit records and instrumentation rows carry SQL and
+error messages, and DuckDB's error messages quote the statement. Before any of
+them is written, GizmoSQL:
+
+- replaces a statement that carries credentials, wherever it appears in the text,
+  with `[REDACTED: secret DDL]` (`CREATE SECRET`, every variant),
+  `[REDACTED: user DDL]` (`CREATE` / `ALTER USER`, which can set a password) or
+  `[REDACTED: credential setting]` (`SET` / `PRAGMA` of a setting such as
+  `s3_secret_access_key` or `http_proxy_password`). Statements are recognized by
+  their words, as DuckDB reads them, so a comment between keywords does not hide one;
+- masks other credentials in place: `password=***` in connection strings (`ATTACH
+  'postgres:... password=...'`), `user:***@` in URIs, and `sig=***` / `token=***`
+  in signed URLs.
+
 ---
 
 ## Layer 6: Audit & Monitoring

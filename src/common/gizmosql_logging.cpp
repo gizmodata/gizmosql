@@ -168,11 +168,17 @@ inline std::optional<TraceCorrelationIds> GetEffectiveTraceCorrelationIds() {
   return std::nullopt;
 }
 
-// Encode fields into a compact JSON string (only for transport inside message)
+// Encode fields into a compact JSON string (only for transport inside message).
+// Text values pass through redact_sql_for_logs: SQL, and errors that quote it,
+// reach many fields.
 inline std::string EncodeFieldsForMessage(const FieldList& fields) {
   if (fields.empty()) return {};
   nlohmann::json j = nlohmann::json::object();
   for (const auto& f : fields) {
+    if (const auto* text = std::get_if<std::string>(&f.value)) {
+      j[f.key] = redact_sql_for_logs(*text);
+      continue;
+    }
     std::visit([&](auto&& v) {
       j[f.key] = v;
     }, f.value);
@@ -335,7 +341,14 @@ public:
     const auto lvl = d.severity;
     const std::string& file = d.source_location.file;
     const int line = static_cast<int>(d.source_location.line);
-    const std::string_view& msg = d.message;
+    // A message logged without fields (ARROW_LOG and the like) has not been
+    // redacted yet; one with the fields prefix was, by LogWithFields.
+    std::string redacted;
+    std::string_view msg = d.message;
+    if (msg.rfind(kKV_PREFIX, 0) != 0) {
+      redacted = redact_sql_for_logs(msg);
+      msg = redacted;
+    }
 
     if (G.cfg.format == LogFormat::kJson) {
       WriteJson(lvl, file, line, msg);
@@ -533,7 +546,7 @@ void LogWithFields(arrow::util::ArrowLogLevel level,
   // Prepend encoded KV if present
   std::string full = EncodeFieldsForMessage(fields);
 
-  full.append(msg.data(), msg.size());
+  full += redact_sql_for_logs(msg);
 
   arrow::util::LogDetails d;
   d.severity = level;
@@ -552,7 +565,7 @@ void LogWithFieldsUnchecked(arrow::util::Logger* logger,
   // Prepend encoded KV if present
   std::string full = EncodeFieldsForMessage(fields);
 
-  full.append(msg.data(), msg.size());
+  full += redact_sql_for_logs(msg);
 
   arrow::util::LogDetails d;
   d.severity = level;

@@ -319,6 +319,22 @@ TEST_F(RbacAuditChainFixture, RecordsBelowTheLogLevelDoNotBreakTheChain) {
   EXPECT_TRUE(report.ok()) << Problems(report);
 }
 
+// A record is sealed as it is written: with its credentials redacted.
+TEST_F(RbacAuditChainFixture, RedactedRecordsStillVerify) {
+  gizmosql::LogAuditRecord(
+      arrow::util::ArrowLogLevel::ARROW_WARNING, __FILE__, __LINE__,
+      "Access control refused a statement",
+      {{"kind", "access_control"},
+       {"sql", "CREATE /* c */ SECRET s (TYPE s3, SECRET 'AUDITLEAK1')"},
+       {"error", "IO Error: Unable to connect to Postgres at \"password=AUDITLEAK2\""}});
+  const auto log = Log();
+  EXPECT_EQ(log.find("AUDITLEAK"), std::string::npos) << log;
+  EXPECT_NE(log.find("[REDACTED: secret DDL]"), std::string::npos) << log;
+  EXPECT_NE(log.find("password=***"), std::string::npos) << log;
+  const auto report = Verify(log);
+  EXPECT_TRUE(report.ok()) << Problems(report);
+}
+
 TEST_F(RbacAuditChainFixture, ConcurrentWritersKeepOneChain) {
   std::vector<std::thread> threads;
   for (int t = 0; t < 8; ++t) {

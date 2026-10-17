@@ -180,8 +180,15 @@ void LogAuditRecord(arrow::util::ArrowLogLevel level, const char* file, int line
                     std::string_view msg, FieldList fields) {
   auto logger = arrow::util::LoggerRegistry::GetDefaultLogger();
   if (!Enabled(level)) return;
-  Seal(fields, msg);
-  LogWithFieldsUnchecked(logger.get(), level, file, line, msg, fields);
+  // Seal what will be written: logging redacts credentials from text, and doing
+  // it again later gives the same text.
+  const std::string text = redact_sql_for_logs(msg);
+  for (auto& f : fields) {
+    if (auto* value = std::get_if<std::string>(&f.value))
+      *value = redact_sql_for_logs(*value);
+  }
+  Seal(fields, text);
+  LogWithFieldsUnchecked(logger.get(), level, file, line, text, fields);
 }
 
 AuditChainReport VerifyAuditLog(std::istream& in, const std::string& key, bool partial) {

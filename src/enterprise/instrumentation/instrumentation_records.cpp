@@ -5,6 +5,7 @@
 #include "instrumentation_records.h"
 #include "duckdb_compat.h"
 
+#include "gizmosql_logging.h"
 #include "instrumentation_manager.h"
 
 #include <algorithm>
@@ -205,8 +206,11 @@ StatementInstrumentation::StatementInstrumentation(
   }
 
   bool prepare_success = prepare_error.empty();
-  manager_->QueueWrite([statement_id, session_id, sql_text, flight_method,
-                        is_internal, prepare_success, prepare_error,
+  // The SQL and its prepare error (which quotes it) as they may be recorded.
+  manager_->QueueWrite([statement_id, session_id,
+                        sql_text = gizmosql::redact_sql_for_logs(sql_text), flight_method,
+                        is_internal, prepare_success,
+                        prepare_error = gizmosql::redact_sql_for_logs(prepare_error),
                         query_tag](duckdb::Connection& conn) {
     ExecuteInstrumentationWrite(
         conn, "record statement",
@@ -264,7 +268,7 @@ void ExecutionInstrumentation::SetCompleted() {
 
 void ExecutionInstrumentation::SetError(const std::string& error_message) {
   end_timestamp_ = std::chrono::system_clock::now();
-  error_message_ = error_message;
+  error_message_ = gizmosql::redact_sql_for_logs(error_message);  // errors quote the SQL
   status_ = "error";
   Finalize();
 }
