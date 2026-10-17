@@ -37,6 +37,9 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/explain_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -140,6 +143,9 @@ thread_local bool t_strict = false;
 // Categories this classification may let through (see ClassifyGatedCommand).
 thread_local const std::function<bool(const std::string&)>* t_permitted = nullptr;
 
+// How deep query('<sql>') nesting the classification on this thread has gone.
+thread_local int t_nested_sql_depth = 0;
+
 // `category`, unless the session may run it after all.
 std::optional<std::string> Gate(std::string category) {
   if (t_permitted && *t_permitted && (*t_permitted)(category)) return std::nullopt;
@@ -209,6 +215,9 @@ const std::unordered_set<std::string>& FsReadFunctions() {
 const std::unordered_set<std::string>& AlwaysGatedFunctions() {
   static const std::unordered_set<std::string> kFns = {
       "duckdb_secrets",
+      // Runs a statement serialized by json_serialize_sql(), which the parser
+      // here only sees as a string.
+      "json_execute_serialized_sql",
       // DuckDB 2.0 external resources. Their callbacks are named by string and
       // run on an internal connection, outside every check on the client's
       // statement: destroy_external_resource('query', '<sql>') executes <sql>
@@ -273,6 +282,48 @@ bool IsGrammarSetting(const std::string& name_lower) {
   static const std::unordered_set<std::string> kSettings = {
       "current_dialect", "active_grammar_extensions", "enable_legacy_parser"};
   return kSettings.count(name_lower) > 0;
+}
+
+// A string literal, or a list of them ('a' or ['a', 'b']), as its strings;
+// nullopt for anything else.
+std::optional<std::vector<std::string>> StringConstants(
+    const dd::ParsedExpression& expr) {
+  if (auto one = StringConstant(expr)) return std::vector<std::string>{*one};
+  if (expr.GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
+    const auto& fe = expr.Cast<dd::FunctionExpression>();
+    if (ToLower(FunctionNameOf(fe)) != "list_value") return std::nullopt;
+    std::vector<std::string> out;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    for (const auto& arg : fe.GetArguments()) {
+      auto text = StringConstant(arg.GetExpression());
+#else
+    for (const auto& child : fe.children) {
+      auto text = child ? StringConstant(*child) : std::nullopt;
+#endif
+      if (!text) return std::nullopt;
+      out.push_back(*text);
+    }
+    return out;
+  }
+  if (expr.GetExpressionClass() == dd::ExpressionClass::CONSTANT) {
+    const auto value = compat::ConstantValue(expr.Cast<dd::ConstantExpression>());
+    if (value.IsNull() || value.type().id() != dd::LogicalTypeId::LIST)
+      return std::nullopt;
+    std::vector<std::string> out;
+    for (const auto& child : dd::ListValue::GetChildren(value)) {
+      if (child.IsNull() || child.type().id() != dd::LogicalTypeId::VARCHAR)
+        return std::nullopt;
+      out.push_back(child.GetValue<std::string>());
+    }
+    return out;
+  }
+  return std::nullopt;
+}
+
+// A permission check that lets nothing through.
+const std::function<bool(const std::string&)>& AllowNothing() {
+  static const std::function<bool(const std::string&)> nothing;
+  return nothing;
 }
 
 // Extract the first positional string-literal argument of a function call (the
@@ -456,6 +507,38 @@ struct GatedFunctionWalker {
       Flag(name + "()");
       return;
     }
+    // Otherwise the SQL or table names inside are checked like the statement
+    // around them: to the parser they are only string literals, but DuckDB runs
+    // them. What is built at run time cannot be checked, so it is gated.
+    if (name == "query") {
+      const auto* first = FirstPositionalArg(fe);
+      const auto inner = first ? StringConstant(*first) : std::nullopt;
+      if (!inner || t_nested_sql_depth >= 8) {
+        Flag("query() with SQL that is not a string literal");
+        return;
+      }
+      ++t_nested_sql_depth;
+      auto nested = ClassifyGatedCommand(*inner, t_strict,
+                                         t_permitted ? *t_permitted : AllowNothing());
+      --t_nested_sql_depth;
+      if (nested) violation = nested;
+      return;
+    }
+    if (name == "query_table") {
+      const auto* first = FirstPositionalArg(fe);
+      auto names = first ? StringConstants(*first) : std::nullopt;
+      if (!names) {
+        Flag("query_table() with names that are not string literals");
+        return;
+      }
+      for (const auto& table : *names) {
+        if (LooksLikeLocalFilePath(table)) {
+          Flag("reading a local file via query_table('" + table + "')");
+          return;
+        }
+      }
+      return;
+    }
     if (FsReadFunctions().count(name)) {
       auto path = FirstStringLiteralArg(fe);
       if (path && IsProvenRemotePath(ToLower(*path))) return;  // remote read allowed
@@ -513,6 +596,25 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
         // view's columns.
         auto& vi = s.info->Cast<dd::CreateViewInfo>();
         if (vi.query && vi.query->node) walker.WalkNode(*vi.query->node);
+      } else if (s.info && (s.info->type == dd::CatalogType::MACRO_ENTRY ||
+                            s.info->type == dd::CatalogType::TABLE_MACRO_ENTRY)) {
+        // A macro's body runs when it is called, under the caller's checks only
+        // as far as its name: FROM m() is not a file read, so check the body
+        // (and its default parameter values) when it is created.
+        auto& mi = s.info->Cast<dd::CreateMacroInfo>();
+        for (auto& macro : mi.macros) {
+          if (!macro) continue;
+          if (macro->type == dd::MacroType::TABLE_MACRO) {
+            auto& table = macro->Cast<dd::TableMacroFunction>();
+            if (table.query_node) walker.WalkNode(*table.query_node);
+          } else if (macro->type == dd::MacroType::SCALAR_MACRO) {
+            auto& scalar = macro->Cast<dd::ScalarMacroFunction>();
+            if (scalar.expression) walker.CheckExpr(*scalar.expression);
+          }
+          for (auto& entry : macro->default_parameters) {
+            if (entry.second) walker.CheckExpr(*entry.second);
+          }
+        }
       }
       break;
     }

@@ -131,6 +131,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http_logging_output` in every scope (each writes to the path it names), and
   checks the queries of `DESCRIBE` / `SUMMARIZE` / `SHOW` and `CREATE VIEW`, which
   DuckDB binds (reading the files and URLs they name) before anything runs.
+- **Non-admin sessions could read local files and list secrets through SQL the
+  gate only saw as a string.** For non-admin sessions, the admin command gate now
+  checks the SQL inside `query('<sql>')` (refusing SQL built at run time) and the
+  names given to `query_table(...)`, checks a macro's body and default parameter
+  values when `CREATE MACRO` runs (calling `FROM m()` names no file), and blocks
+  `json_execute_serialized_sql()`. Before, `query('SELECT name FROM
+  duckdb_secrets()')`, `query_table('<file>')`, a temporary table macro over
+  `read_csv('<file>')` and `json_execute_serialized_sql(json_serialize_sql(...))`
+  all ran for a non-admin token role. Sessions under role-based access control
+  already refused `query()` / `query_table()`.
+- **Credentials reached query logs and instrumentation.** Secret and user DDL with a
+  comment between its keywords (`CREATE /* x */ SECRET`, `CREATE OR/**/REPLACE
+  SECRET`, `ALTER /* c */ USER ... PASSWORD`) was logged and recorded in clear, and
+  so were DuckDB's error messages that quote such a statement, credential settings
+  (`SET [GLOBAL] s3_secret_access_key = ...`), and passwords in connection strings
+  and URIs (`ATTACH 'postgres:... password=...'`, `ducklake:postgres:...`,
+  `postgresql://user:password@...`). Redaction now reads the statement's words the
+  way DuckDB does (comments and string literals are not words), replaces secret
+  DDL, user DDL and credential settings wherever they appear in a log field or
+  message, masks connection-string, URI and signed-URL credentials (`password=***`,
+  `user:***@`, `sig=***`), and applies to instrumentation's `sql_text`,
+  `prepare_error` and `error_message`. Access-control audit records are sealed
+  after redaction, so they still verify.
 - **`CREATE TEMPORARY SECRET` was logged with its keys.** Query logging redacted
   `CREATE [OR REPLACE] [PERSISTENT] SECRET` but not the `TEMPORARY` / `TEMP` forms,
   nor a secret statement behind a nested comment.

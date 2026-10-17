@@ -20,6 +20,8 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <thread>
@@ -654,6 +656,60 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForGatedCommands) {
   }
 }
 
+// SQL inside query() / query_table() is checked like the statement around it:
+// it is only a string literal to the parser, but DuckDB runs it. The file is an
+// ordinary local file (not one the sensitive-path guard knows), so only the
+// admin gate can refuse it.
+TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForNestedSql) {
+  ASSERT_TRUE(IsServerReady());
+  const std::pair<std::string, std::string> analyst{
+      "authorization", "Bearer " + MintToken("analyst_user", "analyst")};
+  const std::string file =
+      (std::filesystem::temp_directory_path() /
+       ("gizmosql_nested_sql_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+        ".csv"))
+          .string();
+  {
+    std::ofstream out(file);
+    out << "a\n1\n";
+  }
+  const std::string q1 = "'" + file + "'";    // a literal at depth 1
+  const std::string q2 = "''" + file + "''";  // inside query('...')
+  const std::string q3 = std::string(4, '\'') + file + std::string(4, '\'');  // two deep
+  for (const std::string& sql : {
+           "SELECT * FROM query('SELECT * FROM read_csv(" + q2 + ")')",
+           "SELECT * FROM query('SELECT * FROM " + q2 + "')",
+           std::string("SELECT * FROM query('SELECT name FROM duckdb_secrets()')"),
+           "SELECT * FROM query('SELECT * FROM query(''SELECT * FROM read_csv(" + q3 +
+               ")'')')",
+           "SELECT * FROM query('SELECT ' || '* FROM read_csv(" + q2 + ")')",
+           "SELECT * FROM query_table(" + q1 + ")",
+           "SELECT * FROM query_table(['t', " + q1 + "])",
+       }) {
+    auto st = ExecAs(GetPort(), analyst, sql);
+    EXPECT_FALSE(st.ok()) << "non-admin should be rejected for: " << sql;
+    EXPECT_NE(st.ToString().find("requires the 'admin' role"), std::string::npos)
+        << "rejection should mention the admin requirement for: " << sql
+        << " (got: " << st.ToString() << ")";
+  }
+  // Positive twins: nested SQL that reads nothing gated still runs, and the
+  // admin may read the file this way.
+  EXPECT_TRUE(ExecAs(GetPort(), analyst, "SELECT * FROM query('SELECT 42 AS x')").ok());
+  EXPECT_TRUE(
+      ExecAs(GetPort(), analyst, "SELECT * FROM query('SELECT * FROM range(3)')").ok());
+  // The admin logs in with Basic auth (every minted token here shares a session).
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, arrow::flight::FlightClient::Connect(loc, {}));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto admin, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  auto st = ExecAs(GetPort(), admin,
+                   "SELECT * FROM query('SELECT * FROM read_csv(" + q2 + ")')");
+  EXPECT_TRUE(st.ok()) << st.ToString();
+  std::filesystem::remove(file);
+}
+
 TEST_F(AdminGateServerFixture, NonAdminTokenAllowedForOrdinaryQueries) {
   ASSERT_TRUE(IsServerReady());
   const std::pair<std::string, std::string> analyst{
@@ -797,3 +853,53 @@ TEST_F(UnredactedSecretsAllowedFixture, SetTrueReachesDuckDB) {
 }
 
 #endif  // !_WIN32
+
+// A macro's body runs when it is called, and FROM m() names no file, so the
+// body is checked when the macro is created. json_execute_serialized_sql() runs
+// a statement the parser only sees as a string.
+TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForMacroAndSerializedSql) {
+  ASSERT_TRUE(IsServerReady());
+  const std::pair<std::string, std::string> analyst{
+      "authorization", "Bearer " + MintToken("analyst_user", "analyst")};
+  const std::string file =
+      (std::filesystem::temp_directory_path() /
+       ("gizmosql_macro_" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+        ".csv"))
+          .string();
+  {
+    std::ofstream out(file);
+    out << "a\n1\n";
+  }
+  for (const std::string& sql : {
+           "CREATE TEMP MACRO pm() AS TABLE SELECT * FROM read_csv('" + file + "')",
+           std::string(
+               "CREATE TEMP MACRO ps() AS TABLE SELECT name FROM duckdb_secrets()"),
+           std::string("CREATE MACRO pq(x) AS TABLE SELECT * FROM query_table(x)"),
+           std::string("CREATE MACRO pr(p) AS TABLE SELECT * FROM read_csv(p)"),
+           "CREATE MACRO pc() AS (SELECT count(*) FROM read_csv('" + file + "'))",
+           "CREATE MACRO pd(p := (SELECT count(*) FROM read_csv('" + file + "'))) AS p",
+           "SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT * FROM "
+           "read_csv(''" +
+               file + "'')'))",
+       }) {
+    auto st = ExecAs(GetPort(), analyst, sql);
+    EXPECT_FALSE(st.ok()) << "non-admin should be rejected for: " << sql;
+    // DuckDB 1.4 (LTS) refuses a default value that is not a constant itself.
+    const bool lts_default =
+        sql.rfind("CREATE MACRO pd", 0) == 0 &&
+        st.ToString().find("Invalid default value for parameter") != std::string::npos;
+    EXPECT_TRUE(lts_default ||
+                st.ToString().find("requires the 'admin' role") != std::string::npos)
+        << "rejection should mention the admin requirement for: " << sql
+        << " (got: " << st.ToString() << ")";
+  }
+  // Positive twins: macros that read nothing gated are created and run.
+  EXPECT_TRUE(ExecAs(GetPort(), analyst,
+                     "CREATE TEMP MACRO ok_t(n) AS TABLE SELECT * FROM range(n)")
+                  .ok());
+  EXPECT_TRUE(ExecAs(GetPort(), analyst, "SELECT * FROM ok_t(3)").ok());
+  EXPECT_TRUE(ExecAs(GetPort(), analyst, "CREATE TEMP MACRO ok_s(a) AS a + 1").ok());
+  EXPECT_TRUE(ExecAs(GetPort(), analyst, "SELECT ok_s(1)").ok());
+  std::filesystem::remove(file);
+}

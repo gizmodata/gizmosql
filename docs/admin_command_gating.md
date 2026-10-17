@@ -65,6 +65,9 @@ staged with `PREPARE`:
 | **Replacement scans** of a **local** path | `SELECT * FROM '/etc/passwd'`, `FROM 'data.parquet'` |
 | **`CREATE SECRET` / `DROP SECRET`** (all variants) | `CREATE [OR REPLACE] [PERSISTENT\|TEMPORARY] SECRET …`, `DROP SECRET …` |
 | **`duckdb_secrets()`** (always) | `SELECT * FROM duckdb_secrets()` |
+| **SQL inside `query()` / `query_table()`** — checked like the statement around it; SQL built at run time is refused | `query('SELECT * FROM read_csv(''/tmp/x.csv'')')`, `query('SELECT name FROM duckdb_secrets()')`, `query_table('/tmp/x.csv')` |
+| **Macro bodies**, checked at `CREATE MACRO` (a call such as `FROM m()` names no file) | `CREATE TEMP MACRO m() AS TABLE SELECT * FROM read_csv('/tmp/x.csv')`, `CREATE MACRO r(p) AS TABLE SELECT * FROM read_csv(p)` |
+| **`json_execute_serialized_sql()`** (always) — runs a serialized statement | `SELECT * FROM json_execute_serialized_sql(json_serialize_sql('…'))` |
 | **Quack remote protocol** functions (always) | `CALL quack_serve(…)`, `SELECT * FROM quack_query(…)`, `SELECT quack_cancel(…)` |
 | **`CONNECT` / `DISCONNECT` / `EXTERNAL RESOURCE`** (edge channel, DuckDB 2.0) — `CONNECT` attaches its target and forwards raw SQL to it | `CONNECT 'other.db'`, `CREATE EXTERNAL RESOURCE …` |
 | **External-resource functions** (edge channel, always) — they run callbacks named by string on an internal connection, outside the checks on the client's statement (`destroy_external_resource('query', '<sql>')` runs `<sql>`) | `SELECT * FROM destroy_external_resource(…)`, `CALL create_external_resource(…)`, `register_external_resource[_type](…)`, `deregister_external_resource(…)`, `duckdb_external_resources()`, `duckdb_external_resource_types()`, `duckdb_extension_repositories()` |
