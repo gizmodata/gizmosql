@@ -988,6 +988,15 @@ bool ContainsWordIgnoringCase(const std::string& text, const std::string& word) 
 // about a catalog, schema or table it cannot see reads exactly like one about
 // one that does not exist, and so does any error that names a catalog it
 // cannot see (DuckDB's suggestions and candidate columns can).
+// The session's SET ROLE role, for audit records (empty: all roles).
+std::string ActiveRoleName(const std::shared_ptr<ClientSession>& session) {
+  if (!session->connection) return "";
+  auto state = session->connection->Get().context->registered_state
+                   ->Get<gizmosql::enterprise::rbac::RbacSessionState>(
+                       gizmosql::enterprise::rbac::kRbacSessionStateName);
+  return state ? state->active_role_name() : "";
+}
+
 arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session, arrow::Status status) {
   if (status.ok() || session->rbac_tenant_id.empty()) return status;
   const std::string& message = status.message();
@@ -1017,6 +1026,11 @@ arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session, arrow
   return arrow::Status::Invalid(gizmosql::enterprise::rbac::HiddenObjectMessage(session->username));
 }
 
+}  // namespace
+#endif
+#ifndef GIZMOSQL_ENTERPRISE
+namespace {
+std::string ActiveRoleName(const std::shared_ptr<ClientSession>&) { return ""; }
 }  // namespace
 #endif
 
@@ -1183,6 +1197,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
                                   ? rbac::Principal::Superuser(client_session->username)
                                   : rbac::Principal{false, client_session->rbac_user_id,
                                                     client_session->username};
+      auto rbac_state = client_session->connection->Get().context->registered_state
+                            ->Get<rbac::RbacSessionState>(rbac::kRbacSessionStateName);
+      if (rbac_state && !client_session->rbac_superuser) actor = rbac_state->principal();
       rbac::SessionObjectResolver resolver(client_session->connection->Get());
       auto executed = engine->Execute(*parsed, actor, resolver);
       if (!executed.ok()) {
@@ -1197,6 +1214,11 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
                                                 message);
         }
         return arrow::Status::Invalid(message);
+      }
+      if (executed->active_role_id) {
+        if (!rbac_state) return arrow::Status::Invalid("GizmoSQL access control: no session state");
+        const auto* role = engine->snapshot()->FindRoleById(*executed->active_role_id);
+        rbac_state->SetActiveRole(*executed->active_role_id, role ? role->name : "");
       }
       for (const auto& user_id : executed->terminate_user_ids) {
         const int ended = server->TerminateRbacUserSessions(user_id);
@@ -1522,7 +1544,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
           for (const auto& a : accesses) objects += (objects.empty() ? "" : "; ") + a;
           GIZMOSQL_AUDIT_SESSION(INFO, client_session, "Access control allowed a statement",
                                  {"kind", "access_control"}, {"status", "allowed"},
-                                 {"statement_id", handle}, {"objects", objects});
+                                 {"statement_id", handle}, {"objects", objects},
+                                 {"active_role", rbac_state->active_role_name()});
         }
       }
     }
@@ -1589,7 +1612,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
       GIZMOSQL_AUDIT_SESSION(WARNING, client_session, "Access control refused a statement",
                              {"kind", "access_control"}, {"status", "denied"},
                              {"statement_id", handle}, {"error", error_message},
-                             {"sql", logged_sql});
+                             {"sql", logged_sql}, {"active_role", ActiveRoleName(client_session)});
     }
 
 #ifdef GIZMOSQL_ENTERPRISE

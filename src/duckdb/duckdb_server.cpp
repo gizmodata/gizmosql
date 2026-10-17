@@ -1257,6 +1257,9 @@ class DuckDBFlightSqlServer::Impl {
           new_session->rbac_credential = user->password_hash.value_or("");
         }
         new_session->rbac_tenant_id = snap->TenantOfPrincipal(*principal);
+        new_session->rbac_idp_issuer = tl_request_ctx.idp_issuer.value_or("");
+        new_session->rbac_idp_groups =
+            tl_request_ctx.idp_groups.value_or(std::vector<std::string>{});
       }
       new_session->catalog_access.clear();
       if (!new_session->rbac_tenant_id.empty()) {
@@ -1329,12 +1332,16 @@ class DuckDBFlightSqlServer::Impl {
       // Every client session on an access-control server carries its principal
       // into DuckDB, where the plan check reads it.
       if (rbac_engine_) {
-        enterprise::rbac::AttachRbacSession(
-            *new_session->connection->Get().context, rbac_engine_,
+        enterprise::rbac::Principal principal =
             new_session->rbac_superuser
                 ? enterprise::rbac::Principal::Superuser(new_session->username)
                 : enterprise::rbac::Principal{false, new_session->rbac_user_id,
-                                              new_session->username});
+                                              new_session->username};
+        // Groups from the login token count through CREATE GROUP MAPPING.
+        principal.idp_issuer = new_session->rbac_idp_issuer;
+        principal.idp_groups = new_session->rbac_idp_groups;
+        enterprise::rbac::AttachRbacSession(*new_session->connection->Get().context, rbac_engine_,
+                                            std::move(principal));
         // A tenant's sessions start in the tenant's default catalog.
         if (!new_session->rbac_tenant_id.empty()) {
           const auto* tenant =
@@ -1538,7 +1545,6 @@ class DuckDBFlightSqlServer::Impl {
       rbac_seen_snapshot_ = rbac_engine_ ? rbac_engine_->snapshot() : nullptr;
     }
     std::shared_lock read_lock(sessions_mutex_);
-    std::map<std::string, bool> lost_rights;  // per user, worked out once
     for (auto& [id, session] : client_sessions_) {
       if (!session || session->rbac_user_id.empty() || session->kill_requested) continue;
       const auto* user = snapshot.FindUserById(session->rbac_user_id);
@@ -1553,12 +1559,16 @@ class DuckDBFlightSqlServer::Impl {
         // Only a session running SQL has anything to stop; an idle one's next
         // statement is checked against the new grants anyway.
         if (!session->HasInFlightSql()) continue;
-        auto it = lost_rights.find(user->id);
-        if (it == lost_rights.end()) {
-          const enterprise::rbac::Principal who{false, user->id, user->name, ""};
-          it = lost_rights.emplace(user->id, snapshot.LostRightsSince(*previous, who)).first;
+        // The session's own principal: its SET ROLE role and token groups count.
+        enterprise::rbac::Principal who{false, user->id, user->name, ""};
+        if (session->connection) {
+          if (auto state = session->connection->Get().context->registered_state
+                               ->Get<enterprise::rbac::RbacSessionState>(
+                                   enterprise::rbac::kRbacSessionStateName)) {
+            who = state->principal();
+          }
         }
-        if (it->second && session->connection) {
+        if (snapshot.LostRightsSince(*previous, who) && session->connection) {
           session->connection->Get().Interrupt();
           GIZMOSQL_AUDIT_SESSION(INFO, session,
                                  "Stopped any running statement after a user lost access",

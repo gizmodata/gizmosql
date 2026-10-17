@@ -27,6 +27,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -79,6 +80,8 @@ struct CommandResult {
   std::vector<std::vector<std::string>> rows;
   // Users whose sessions must end now (ALTER USER ... DISABLE, DROP USER).
   std::vector<std::string> terminate_user_ids;
+  // SET ROLE: the session's new active role (empty: all roles).
+  std::optional<std::string> active_role_id;
 };
 
 class RbacEngine {

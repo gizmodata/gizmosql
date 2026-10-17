@@ -98,6 +98,15 @@ struct CatalogTenantRecord {
   std::string tenant_id;
 };
 
+// CREATE GROUP MAPPING 'group' [ISSUER 'iss'] TO ROLE role: a user whose
+// login token lists the group (from that issuer, or any) holds the role.
+struct GroupMappingRecord {
+  std::string id;
+  std::string issuer;  // empty: any issuer the server accepts
+  std::string group;
+  std::string role_id;
+};
+
 // The two roles every tenant has.
 constexpr const char* kTenantPublicSuffix = "/PUBLIC";
 constexpr const char* kTenantAdminSuffix = "/tenant_admin";
@@ -162,6 +171,14 @@ struct Principal {
   std::string user_id;    // for a store user
   std::string user_name;  // for messages and audit (a role principal: the role's name)
   std::string role_id;    // for a role principal
+  // SET ROLE: the session acts with this role (what it inherits, and PUBLIC)
+  // only. Empty: with all of the user's roles.
+  std::string active_role_id;
+  std::string active_role_name;  // for audit records
+  // The identity provider's groups from the login token, and its issuer
+  // (CREATE GROUP MAPPING turns them into roles).
+  std::string idp_issuer;
+  std::vector<std::string> idp_groups;
 
   static Principal Superuser(std::string name) { return {true, "", std::move(name), ""}; }
   static Principal Role(std::string id, std::string name) {
@@ -196,7 +213,8 @@ class Snapshot {
            std::vector<MaskBindingRecord> mask_bindings = {},
            std::vector<TenantRecord> tenants = {},
            std::vector<PrincipalTenantRecord> principal_tenants = {},
-           std::vector<CatalogTenantRecord> catalog_tenants = {});
+           std::vector<CatalogTenantRecord> catalog_tenants = {},
+           std::vector<GroupMappingRecord> group_mappings = {});
 
   int64_t version() const { return version_; }
 
@@ -215,6 +233,7 @@ class Snapshot {
   const std::vector<MaskBindingRecord>& mask_bindings() const { return mask_bindings_; }
   const std::vector<TenantRecord>& tenants() const { return tenants_; }
   const std::vector<CatalogTenantRecord>& catalog_tenants() const { return catalog_tenants_; }
+  const std::vector<GroupMappingRecord>& group_mappings() const { return group_mappings_; }
   const TenantRecord* FindTenantByName(const std::string& name) const;
   const TenantRecord* FindTenantById(const std::string& id) const;
   // "" for a system-scope user, role or catalog.
@@ -263,6 +282,11 @@ class Snapshot {
   // Every role whose grants apply to the principal (empty for an unknown or
   // disabled user, or an unknown role).
   std::set<std::string> RolesOf(const Principal& principal) const;
+  // The roles a user holds: granted ones and those their login token's groups
+  // map to, with what each inherits (not narrowed by SET ROLE).
+  std::set<std::string> HeldRoleIds(const Principal& principal) const;
+  // False when the session's SET ROLE role is no longer granted to the user.
+  bool HoldsActiveRole(const Principal& principal) const;
 
   // Everything the principal may do, as comparable strings (each grant through
   // its roles, each object it owns). A right in one snapshot's set that is
@@ -313,6 +337,7 @@ class Snapshot {
   std::vector<TenantRecord> tenants_;
   std::vector<PrincipalTenantRecord> principal_tenants_;
   std::vector<CatalogTenantRecord> catalog_tenants_;
+  std::vector<GroupMappingRecord> group_mappings_;
   std::map<std::string, size_t> user_by_key_, user_by_id_, role_by_key_, role_by_id_;
   std::map<std::string, std::vector<const ObjectGrantRecord*>> grants_by_role_;
 };

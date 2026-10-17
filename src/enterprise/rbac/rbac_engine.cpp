@@ -282,7 +282,8 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         result.rows.push_back({"ALL", "SERVER", "*", "", actor.user_name, "SUPERUSER", "YES", ""});
         return result;
       }
-      for (const auto& id : snap->EffectiveRoleIds(actor.user_id)) role_ids.push_back(id);
+      // The roles the session acts with (SET ROLE narrows them).
+      for (const auto& id : snap->RolesOf(actor)) role_ids.push_back(id);
     } else {
       ARROW_ASSIGN_OR_RAISE(auto who, ResolveGrantee(*snap, *show->principal));
       if (who.kind == PrincipalKind::kUser) {
@@ -1172,6 +1173,87 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       return txn.SetMaskBinding(binding, /*remove=*/false);
     }));
     return Message(message);
+  }
+  if (const auto* c = std::get_if<SetRoleCommand>(&command)) {
+    if (actor.superuser) {
+      return AccessControlError("GizmoSQL blocked SET ROLE: the administrator holds every right "
+                                "already; SET ROLE is for store users");
+    }
+    auto snap = snapshot();
+    CommandResult result;
+    result.column_names = {"result"};
+    if (!c->role) {
+      result.active_role_id = "";
+      result.rows.push_back({"All of " + actor.user_name + "'s roles are active"});
+      return result;
+    }
+    // An unqualified name means the user's own tenant's role first.
+    const RoleRecord* role = nullptr;
+    const std::string tenant = snap->TenantOfPrincipal(actor);
+    if (!tenant.empty() && c->role->find('/') == std::string::npos) {
+      if (const auto* t = snap->FindTenantById(tenant)) role = snap->FindRoleByName(t->name + "/" + *c->role);
+    }
+    if (!role) role = snap->FindRoleByName(*c->role);
+    if (!role || !snap->HeldRoleIds(actor).count(role->id)) {
+      // Not telling a role that exists from one that does not.
+      return AccessControlError("GizmoSQL blocked SET ROLE: user " + actor.user_name +
+                                " does not hold role " + *c->role);
+    }
+    result.active_role_id = role->id;
+    result.rows.push_back({"Active role: " + role->name});
+    return result;
+  }
+  if (const auto* c = std::get_if<GroupMappingCommand>(&command)) {
+    if (!actor.superuser) {
+      return AccessControlError("GizmoSQL blocked " + CommandKind(command) +
+                                ": only administrators manage group mappings");
+    }
+    auto snap = snapshot();
+    auto role_name = [&](const std::string& id) {
+      const auto* r = snap->FindRoleById(id);
+      return r ? r->name : id;
+    };
+    if (c->kind == GroupMappingCommand::Kind::kShow) {
+      CommandResult result;
+      result.column_names = {"group", "issuer", "role"};
+      for (const auto& m : snap->group_mappings()) {
+        result.rows.push_back({m.group, m.issuer.empty() ? "(any)" : m.issuer, role_name(m.role_id)});
+      }
+      return result;
+    }
+    const RoleRecord* role = nullptr;
+    if (c->role) {
+      role = snap->FindRoleByName(*c->role);
+      if (!role) return AccessControlError("role " + *c->role + " does not exist");
+      if (role->id == kPublicRoleId) {
+        return AccessControlError("everyone holds PUBLIC already; map the group to another role");
+      }
+    }
+    std::string mapping_message;
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& now) -> arrow::Status {
+      if (c->kind == GroupMappingCommand::Kind::kCreate) {
+        for (const auto& m : now.group_mappings()) {
+          if (m.group == c->group && m.issuer == c->issuer && m.role_id == role->id) {
+            return AccessControlError("group '" + c->group + "' is already mapped to role " +
+                                      role->name);
+          }
+        }
+        mapping_message = "Users in group '" + c->group + "' hold role " + role->name;
+        return txn.InsertGroupMapping({StoreTransaction::NewId(), c->issuer, c->group, role->id});
+      }
+      std::vector<std::string> ids;
+      for (const auto& m : now.group_mappings()) {
+        if (m.group == c->group && m.issuer == c->issuer && (!role || m.role_id == role->id)) {
+          ids.push_back(m.id);
+        }
+      }
+      if (ids.empty()) return AccessControlError("group '" + c->group + "' has no such mapping");
+      for (const auto& id : ids) ARROW_RETURN_NOT_OK(txn.DeleteGroupMapping(id));
+      mapping_message = "Removed " + std::to_string(ids.size()) + " mapping" +
+                        (ids.size() == 1 ? "" : "s") + " of group '" + c->group + "'";
+      return arrow::Status::OK();
+    }));
+    return Message(mapping_message);
   }
   if (std::holds_alternative<ShowTenantsCommand>(command)) {
     // The administrator sees every tenant; a tenant's users see their own.

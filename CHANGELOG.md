@@ -87,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with parameters on DuckDB 1.5 (which plans it again for each run) is checked when
   it is bound, so a denied one fails when prepared without describing its columns,
   and its run is checked as usual; before, every such statement was refused.
+  `SET ROLE role` narrows a session to one of the user's roles (with what it
+  inherits, and `PUBLIC`); `RESET ROLE` (or `SET ROLE ALL` / `NONE`) brings back
+  all of them. Refusals, `SHOW GRANTS`, `is_role_active()` and audit records
+  (`active_role`) follow the active role, and statements prepared before a
+  `SET ROLE` are checked again.
+  Identity-provider groups map to roles: `CREATE GROUP MAPPING 'group' [ISSUER
+  'iss'] TO ROLE role`, `DROP GROUP MAPPING`, `SHOW GROUP MAPPINGS`. A store user
+  whose login token lists the group (`groups` claim, or `GIZMOSQL_TOKEN_GROUPS_CLAIM`)
+  holds the role for that session; users are never created from a token, mapped
+  tenant roles apply only within the tenant, and dropping a mapping stops the
+  statements that relied on it.
 
 ### Fixed
 - **`KILL SESSION` ran twice through Flight SQL `Execute`.** GizmoSQL's own commands

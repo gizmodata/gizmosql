@@ -187,6 +187,9 @@ struct ClientSession {
   // A tenant's user (empty: system scope), and the catalogs it was given at
   // session start (folded, joined); the session ends when they change.
   std::string rbac_tenant_id;
+  // The login token's identity provider and groups (CREATE GROUP MAPPING).
+  std::string rbac_idp_issuer;
+  std::vector<std::string> rbac_idp_groups;
   std::string rbac_tenant_catalogs;
   // The user's password hash when the session started (empty: none). A change
   // anywhere in the cluster ends the session, as on the node that made it.

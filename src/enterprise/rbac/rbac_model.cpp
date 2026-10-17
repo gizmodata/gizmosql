@@ -66,7 +66,8 @@ Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<R
                    std::vector<MaskBindingRecord> mask_bindings,
                    std::vector<TenantRecord> tenants,
                    std::vector<PrincipalTenantRecord> principal_tenants,
-                   std::vector<CatalogTenantRecord> catalog_tenants)
+                   std::vector<CatalogTenantRecord> catalog_tenants,
+                   std::vector<GroupMappingRecord> group_mappings)
     : version_(version),
       users_(std::move(users)),
       roles_(std::move(roles)),
@@ -79,7 +80,8 @@ Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<R
       mask_bindings_(std::move(mask_bindings)),
       tenants_(std::move(tenants)),
       principal_tenants_(std::move(principal_tenants)),
-      catalog_tenants_(std::move(catalog_tenants)) {
+      catalog_tenants_(std::move(catalog_tenants)),
+      group_mappings_(std::move(group_mappings)) {
   for (size_t i = 0; i < users_.size(); ++i) {
     user_by_key_[FoldIdentifier(users_[i].name)] = i;
     user_by_id_[users_[i].id] = i;
@@ -161,7 +163,37 @@ std::set<std::string> Snapshot::RolesOf(const Principal& principal) const {
   }
   const UserRecord* user = FindUserById(principal.user_id);
   if (!user || !user->enabled) return {};
-  return EffectiveRoleIds(principal.user_id);
+  auto roles = HeldRoleIds(principal);
+  if (principal.active_role_id.empty()) return roles;
+  // SET ROLE: PUBLIC (the tenant's) and the active role with what it inherits.
+  if (!roles.count(principal.active_role_id)) return {};
+  const std::string tenant = TenantOf(PrincipalKind::kUser, principal.user_id);
+  const RoleRecord* tenant_public = tenant.empty() ? nullptr : TenantRole(tenant, kTenantPublicSuffix);
+  std::set<std::string> active = RoleClosure(tenant_public ? tenant_public->id : kPublicRoleId);
+  for (const auto& r : RoleClosure(principal.active_role_id)) active.insert(r);
+  return active;
+}
+
+bool Snapshot::HoldsActiveRole(const Principal& principal) const {
+  if (principal.active_role_id.empty() || principal.superuser || principal.is_role()) return true;
+  return HeldRoleIds(principal).count(principal.active_role_id) > 0;
+}
+
+std::set<std::string> Snapshot::HeldRoleIds(const Principal& principal) const {
+  auto roles = EffectiveRoleIds(principal.user_id);
+  if (principal.idp_groups.empty() || group_mappings_.empty()) return roles;
+  const std::string tenant = TenantOf(PrincipalKind::kUser, principal.user_id);
+  for (const auto& m : group_mappings_) {
+    if (!m.issuer.empty() && m.issuer != principal.idp_issuer) continue;
+    if (std::find(principal.idp_groups.begin(), principal.idp_groups.end(), m.group) ==
+        principal.idp_groups.end()) {
+      continue;
+    }
+    // Roles never cross a tenant, mapped ones included.
+    if (!FindRoleById(m.role_id) || TenantOf(PrincipalKind::kRole, m.role_id) != tenant) continue;
+    for (const auto& r : RoleClosure(m.role_id)) roles.insert(r);
+  }
+  return roles;
 }
 
 bool Snapshot::IsOwner(const Principal& principal, const OwnerRecord& owner) const {

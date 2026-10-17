@@ -271,6 +271,10 @@ class Parser {
         return ParseCreateMaskingPolicy(or_replace);
       }
       if (or_replace) return SyntaxError("expected ROW POLICY or MASKING POLICY after CREATE OR REPLACE");
+      if (PeekKeyword("GROUP") && PeekKeyword("MAPPING", 1)) {
+        pos_ += 2;
+        return ParseGroupMapping(GroupMappingCommand::Kind::kCreate);
+      }
       if (AcceptKeyword("TENANT")) {
         TenantCommand cmd;
         cmd.if_exists = ParseIfNotExists();
@@ -282,6 +286,10 @@ class Parser {
       return SyntaxError("expected USER or ROLE after CREATE");
     }
     if (AcceptKeyword("DROP")) {
+      if (PeekKeyword("GROUP") && PeekKeyword("MAPPING", 1)) {
+        pos_ += 2;
+        return ParseGroupMapping(GroupMappingCommand::Kind::kDrop);
+      }
       if (AcceptKeyword("TENANT")) {
         TenantCommand cmd;
         cmd.create = false;
@@ -354,6 +362,18 @@ class Parser {
       }
       return SyntaxError("expected USER, TABLE or VIEW after ALTER");
     }
+    if (AcceptKeyword("SET")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("ROLE"));
+      SetRoleCommand cmd;
+      if (AcceptKeyword("ALL") || AcceptKeyword("NONE")) return cmd;
+      ARROW_ASSIGN_OR_RAISE(auto name, ParsePrincipalName("a role name"));
+      cmd.role = std::move(name);
+      return cmd;
+    }
+    if (AcceptKeyword("RESET")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("ROLE"));
+      return SetRoleCommand{};
+    }
     if (AcceptKeyword("GRANT")) return ParseGrantOrRevoke(/*grant=*/true);
     if (AcceptKeyword("REVOKE")) return ParseGrantOrRevoke(/*grant=*/false);
     if (AcceptKeyword("SHOW")) {
@@ -367,6 +387,10 @@ class Parser {
         return cmd;
       }
       if (AcceptKeyword("TENANTS")) return ShowTenantsCommand{};
+      if (PeekKeyword("GROUP") && PeekKeyword("MAPPINGS", 1)) {
+        pos_ += 2;
+        return GroupMappingCommand{};
+      }
       if (PeekKeyword("MASKING") && PeekKeyword("POLICIES", 1)) {
         pos_ += 2;
         ShowPoliciesCommand cmd;
@@ -377,6 +401,24 @@ class Parser {
       return ParseShowGrants();
     }
     return SyntaxError("not an access-control statement");
+  }
+
+  arrow::Result<RbacCommand> ParseGroupMapping(GroupMappingCommand::Kind kind) {
+    GroupMappingCommand cmd;
+    cmd.kind = kind;
+    ARROW_ASSIGN_OR_RAISE(cmd.group, ParseStringLiteral("the group, as a string"));
+    if (cmd.group.empty()) return SyntaxError("the group cannot be empty");
+    if (AcceptKeyword("ISSUER")) {
+      ARROW_ASSIGN_OR_RAISE(cmd.issuer, ParseStringLiteral("the issuer, as a string"));
+    }
+    if (AcceptKeyword("TO")) {
+      ARROW_RETURN_NOT_OK(ExpectKeyword("ROLE"));
+      ARROW_ASSIGN_OR_RAISE(auto role, ParsePrincipalName("a role name"));
+      cmd.role = std::move(role);
+    } else if (kind == GroupMappingCommand::Kind::kCreate) {
+      return SyntaxError("expected TO ROLE role after the group");
+    }
+    return cmd;
   }
 
   arrow::Result<RbacCommand> ParseCreateUser() {
@@ -902,6 +944,12 @@ bool LooksLikeRbacStatement(const std::string& sql) {
     return true;
   }
   if (first == "SHOW" && second == "TENANTS" && words.size() == 2) return true;
+  if ((first == "SET" || first == "RESET") && second == "ROLE") return true;
+  if ((first == "CREATE" || first == "DROP") && second == "GROUP" && words.size() > 2 &&
+      words[2] == "MAPPING") {
+    return true;
+  }
+  if (first == "SHOW" && second == "GROUP" && words.size() > 2 && words[2] == "MAPPINGS") return true;
   if (first == "CREATE" || first == "DROP") return second == "USER" || second == "ROLE";
   if (first == "ALTER") {
     if (second == "USER") return true;
@@ -985,6 +1033,12 @@ std::string CommandKind(const RbacCommand& command) {
     std::string operator()(const CatalogTenantCommand&) const { return "ALTER CATALOG"; }
     std::string operator()(const TenantDefaultCatalogCommand&) const { return "ALTER TENANT"; }
     std::string operator()(const ShowTenantsCommand&) const { return "SHOW TENANTS"; }
+    std::string operator()(const SetRoleCommand&) const { return "SET ROLE"; }
+    std::string operator()(const GroupMappingCommand& c) const {
+      return c.kind == GroupMappingCommand::Kind::kCreate ? "CREATE GROUP MAPPING"
+             : c.kind == GroupMappingCommand::Kind::kDrop ? "DROP GROUP MAPPING"
+                                                          : "SHOW GROUP MAPPINGS";
+    }
     std::string operator()(const ShowPoliciesCommand& c) const {
       return c.masking ? "SHOW MASKING POLICIES" : "SHOW ROW POLICIES";
     }

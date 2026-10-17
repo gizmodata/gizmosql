@@ -112,6 +112,8 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_rbac_policies.cpp
             integration/test_rbac_tenants.cpp
             integration/test_rbac_audit_chain.cpp
+            integration/test_rbac_set_role.cpp
+            integration/test_rbac_group_mapping.cpp
     )
 endif()
 

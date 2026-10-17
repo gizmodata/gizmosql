@@ -58,6 +58,7 @@ The generated JWT includes the following claims:
 | `iat` | Issued at timestamp |
 | `exp` | Expiration timestamp |
 | `catalog_access` | *(Optional, Enterprise)* Per-catalog access rules |
+| `groups` | *(Optional, Enterprise)* The user's identity-provider groups; with [access control](access_control.md#roles-from-identity-provider-groups), `CREATE GROUP MAPPING` turns them into roles. Another claim name: `GIZMOSQL_TOKEN_GROUPS_CLAIM` |
 
 ## Server Configuration
 

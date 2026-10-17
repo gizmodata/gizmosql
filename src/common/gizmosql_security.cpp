@@ -271,7 +271,8 @@ std::string CreateGizmoSQLJWT(
     const std::string& username, const std::string& role,
     const std::string& auth_method, const std::string& secret_key,
     const std::string& instance_id,
-    const std::optional<std::string>& catalog_access_json) {
+    const std::optional<std::string>& catalog_access_json,
+    const std::optional<std::string>& identity_json) {
   auto builder =
       jwt::create()
           .set_issuer(std::string(kServerJWTIssuer))
@@ -289,6 +290,14 @@ std::string CreateGizmoSQLJWT(
               "session_id",
               jwt::claim(boost::uuids::to_string(boost::uuids::random_generator()())));
 
+  // The identity provider's groups (propagated from the bootstrap token).
+  if (identity_json.has_value()) {
+    picojson::value json_val;
+    if (picojson::parse(json_val, identity_json.value()).empty()) {
+      builder.set_payload_claim("idp", jwt::claim(json_val));
+    }
+  }
+
   // Include catalog_access claim if present (propagated from bootstrap token)
   if (catalog_access_json.has_value()) {
     picojson::value json_val;
@@ -299,6 +308,27 @@ std::string CreateGizmoSQLJWT(
   }
 
   return builder.sign(jwt::algorithm::hs256{secret_key});
+}
+
+std::optional<std::string> IdentityClaimJson(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& token) {
+  const char* configured = std::getenv("GIZMOSQL_TOKEN_GROUPS_CLAIM");
+  const std::string claim_name = configured && *configured ? configured : "groups";
+  if (!token.has_payload_claim(claim_name)) return std::nullopt;
+  const auto value = token.get_payload_claim(claim_name).to_json();
+  picojson::array groups;
+  if (value.is<picojson::array>()) {
+    for (const auto& g : value.get<picojson::array>()) {
+      if (g.is<std::string>()) groups.push_back(g);
+    }
+  } else if (value.is<std::string>()) {
+    groups.push_back(value);  // one group as a plain string
+  }
+  if (groups.empty()) return std::nullopt;
+  picojson::object identity;
+  identity["iss"] = picojson::value(token.has_issuer() ? token.get_issuer() : std::string());
+  identity["groups"] = picojson::value(groups);
+  return picojson::value(identity).serialize();
 }
 
 // ----------------------------------------
@@ -327,13 +357,15 @@ BasicAuthServerMiddleware::BasicAuthServerMiddleware(const std::string& username
                                                      const std::string& auth_method,
                                                      const std::string& secret_key,
                                                      const std::string& instance_id,
-                                                     std::optional<std::string> catalog_access_json)
+                                                     std::optional<std::string> catalog_access_json,
+                                                     std::optional<std::string> identity_json)
     : username_(username),
       role_(role),
       auth_method_(auth_method),
       secret_key_(secret_key),
       instance_id_(instance_id),
-      catalog_access_json_(std::move(catalog_access_json)) {}
+      catalog_access_json_(std::move(catalog_access_json)),
+      identity_json_(std::move(identity_json)) {}
 
 void BasicAuthServerMiddleware::SendingHeaders(flight::AddCallHeaders* outgoing_headers) {
   auto token = CreateJWTToken();
@@ -348,7 +380,7 @@ std::string BasicAuthServerMiddleware::name() const {
 
 std::string BasicAuthServerMiddleware::CreateJWTToken() const {
   return CreateGizmoSQLJWT(username_, role_, auth_method_, secret_key_, instance_id_,
-                           catalog_access_json_);
+                           catalog_access_json_, identity_json_);
 }
 
 void BasicAuthServerMiddlewareFactory::SetTokenAuthorizedEmails(
@@ -569,7 +601,8 @@ Status BasicAuthServerMiddlewareFactory::StartCall(
                                        : token_default_role_;
       *middleware = std::make_shared<BasicAuthServerMiddleware>(
           ExtractUsername(bootstrap_decoded_token), bootstrap_role, "BootstrapToken",
-          secret_key_, instance_id_, catalog_access_json);
+          secret_key_, instance_id_, catalog_access_json,
+          IdentityClaimJson(bootstrap_decoded_token));
     }
   }
   return Status::OK();
@@ -954,6 +987,24 @@ Status BearerAuthServerMiddlewareFactory::StartCall(
       tl_request_ctx.session_id = decoded_jwt.get_payload_claim("session_id").as_string();
       tl_request_ctx.auth_method = decoded_jwt.get_payload_claim("auth_method").as_string();
       tl_request_ctx.catalog_access = ParseCatalogAccessClaim(decoded_jwt);
+      tl_request_ctx.idp_issuer.reset();
+      tl_request_ctx.idp_groups.reset();
+      if (decoded_jwt.has_payload_claim("idp")) {
+        const auto idp = decoded_jwt.get_payload_claim("idp").to_json();
+        if (idp.is<picojson::object>()) {
+          const auto& obj = idp.get<picojson::object>();
+          if (auto it = obj.find("iss"); it != obj.end() && it->second.is<std::string>()) {
+            tl_request_ctx.idp_issuer = it->second.get<std::string>();
+          }
+          if (auto it = obj.find("groups"); it != obj.end() && it->second.is<picojson::array>()) {
+            std::vector<std::string> groups;
+            for (const auto& g : it->second.get<picojson::array>()) {
+              if (g.is<std::string>()) groups.push_back(g.get<std::string>());
+            }
+            tl_request_ctx.idp_groups = std::move(groups);
+          }
+        }
+      }
       if (decoded_jwt.has_payload_claim("instance_id")) {
         tl_request_ctx.token_instance_id =
             decoded_jwt.get_payload_claim("instance_id").as_string();

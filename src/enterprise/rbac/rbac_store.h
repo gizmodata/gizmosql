@@ -112,6 +112,8 @@ class StoreTransaction {
   arrow::Status SetPrincipalTenant(PrincipalKind kind, const std::string& id,
                                    const std::string& tenant_id);
   arrow::Status SetCatalogTenant(const std::string& catalog, const std::string& tenant_id);
+  arrow::Status InsertGroupMapping(const GroupMappingRecord& mapping);
+  arrow::Status DeleteGroupMapping(const std::string& mapping_id);
   arrow::Status UpsertRowPolicy(const RowPolicyRecord& policy);
   arrow::Status DeleteRowPolicy(const std::string& policy_id);
   arrow::Status UpsertMaskingPolicy(const MaskingPolicyRecord& policy);

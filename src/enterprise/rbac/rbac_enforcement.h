@@ -57,7 +57,18 @@ class RbacSessionState : public duckdb::ClientContextState {
  public:
   RbacSessionState(std::shared_ptr<RbacEngine> engine, Principal principal);
 
-  const Principal& principal() const { return principal_; }
+  // A copy: SET ROLE may change it between statements.
+  Principal principal() const {
+    std::lock_guard<std::mutex> lock(principal_mutex_);
+    return principal_;
+  }
+  // SET ROLE (empty: all roles). Statements prepared before are checked again.
+  void SetActiveRole(std::string role_id, std::string role_name);
+  // The SET ROLE role's name, for audit records (empty: all roles).
+  std::string active_role_name() const {
+    std::lock_guard<std::mutex> lock(principal_mutex_);
+    return principal_.active_role_name;
+  }
   std::shared_ptr<RbacEngine> engine() const { return engine_.lock(); }
 
   // GizmoSQL's own statements on the session connection (metadata queries for
@@ -112,7 +123,9 @@ class RbacSessionState : public duckdb::ClientContextState {
   duckdb::RebindQueryInfo RebindIfGrantsChanged(const duckdb::PreparedStatementData& prepared);
 
   std::weak_ptr<RbacEngine> engine_;
+  mutable std::mutex principal_mutex_;
   Principal principal_;
+  std::atomic<int64_t> persona_version_{0};
   std::atomic<int> bypass_depth_{0};
 
   std::mutex mutex_;
@@ -121,6 +134,7 @@ class RbacSessionState : public duckdb::ClientContextState {
   // The statement being prepared passed the bind-time check.
   bool bind_checked_pending_ = false;
   int64_t last_checked_version_ = 0;
+  int64_t last_checked_persona_ = 0;
   // Ownership changes of the plan just checked, until OnFinalizePrepare files
   // them under "runs now" (pending_ownership_) or "prepared" (prepared_ownership_).
   std::vector<PendingOwnership> planned_ownership_;
@@ -128,7 +142,7 @@ class RbacSessionState : public duckdb::ClientContextState {
   std::vector<PendingOwnership> prepared_ownership_;
   std::vector<std::string> last_accesses_;
   // Which snapshot version each prepared statement was checked against.
-  std::unordered_map<const void*, int64_t> prepared_versions_;
+  std::unordered_map<const void*, std::pair<int64_t, int64_t>> prepared_versions_;
   std::vector<PendingOwnership> pending_ownership_;
 };
 

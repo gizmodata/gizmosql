@@ -261,6 +261,12 @@ std::string DefinitionHashOf(dd::CreateInfo& info) {
 }
 
 [[noreturn]] void Deny(const Principal& who, const std::string& what) {
+  if (!who.active_role_name.empty()) {
+    throw dd::PermissionException(
+        "GizmoSQL blocked this statement: " + what + ". This session acts with role " +
+        who.active_role_name + " only (SET ROLE); RESET ROLE brings back all of user " +
+        who.user_name + "'s roles (see SHOW GRANTS)");
+  }
   throw dd::PermissionException(
       "GizmoSQL blocked this statement: " + what + ". Access control on this server lets user " +
       who.user_name + " do only what their roles are granted (see SHOW GRANTS)");
@@ -892,6 +898,18 @@ class PlanChecker {
   std::set<std::string> accesses_;
 };
 
+// A session whose SET ROLE role was revoked acts with nothing until it picks
+// another one: say so rather than refusing every object.
+void RequireActiveRole(const Snapshot& snapshot, const Principal& principal) {
+  if (snapshot.HoldsActiveRole(principal)) return;
+  const RoleRecord* role = snapshot.FindRoleById(principal.active_role_id);
+  throw dd::PermissionException("GizmoSQL blocked this statement: user " + principal.user_name +
+                                " no longer holds role " +
+                                (role ? role->name : std::string("(dropped)")) +
+                                ", which SET ROLE made active. Run SET ROLE with another role, "
+                                "or RESET ROLE");
+}
+
 void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalOperator>& plan) {
   auto& context = input.context;
   auto state = context.registered_state->Get<RbacSessionState>(kRbacSessionStateName);
@@ -936,16 +954,18 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
                        plan && plan->type == OpType::LOGICAL_PREPARE);
     return;
   }
-  if (!engine->IsActive(state->principal())) {
-    throw dd::PermissionException("GizmoSQL blocked this statement: user " +
-                                  state->principal().user_name + " is disabled or was dropped");
+  const Principal principal = state->principal();
+  if (!engine->IsActive(principal)) {
+    throw dd::PermissionException("GizmoSQL blocked this statement: user " + principal.user_name +
+                                  " is disabled or was dropped");
   }
+  RequireActiveRole(*snapshot, principal);
   const auto view_columns = ViewColumnsUsed(*plan);
-  PlanChecker checker(context, *snapshot, state->principal(), view_columns);
+  PlanChecker checker(context, *snapshot, principal, view_columns);
   checker.Visit(*plan);
   RemoveViewMarkers(plan);
   // Row and masking policies apply to what passed the check.
-  ApplyPolicies(context, *snapshot, state->principal(), plan);
+  ApplyPolicies(context, *snapshot, principal, plan);
   state->NoteChecked(snapshot->version(), checker.TakeOwnership(),
                      plan->type == OpType::LOGICAL_PREPARE, checker.TakeAccesses());
 }
@@ -983,8 +1003,10 @@ void PostBind(dd::PlannerExtensionInput& input, dd::BoundStatement& statement) {
     throw dd::PermissionException("GizmoSQL blocked this statement: access control is shutting down");
   }
   auto snapshot = engine->snapshot();
+  const Principal principal = state->principal();
+  RequireActiveRole(*snapshot, principal);
   const auto view_columns = ViewColumnsUsed(*statement.plan);
-  PlanChecker checker(input.context, *snapshot, state->principal(), view_columns);
+  PlanChecker checker(input.context, *snapshot, principal, view_columns);
   checker.Visit(*statement.plan);
   state->NoteBindChecked();
 }
@@ -1013,6 +1035,7 @@ void RbacSessionState::NoteChecked(int64_t snapshot_version,
   last_accesses_ = std::move(accesses);
   ++checked_pending_;
   last_checked_version_ = snapshot_version;
+  last_checked_persona_ = persona_version_.load();
   planned_prepare_only_ = prepare_only;
   for (auto& o : ownership) planned_ownership_.push_back(std::move(o));
 }
@@ -1029,6 +1052,13 @@ std::vector<PendingOwnership> RbacSessionState::TakePreparedOwnership() {
   std::vector<PendingOwnership> taken;
   taken.swap(prepared_ownership_);
   return taken;
+}
+
+void RbacSessionState::SetActiveRole(std::string role_id, std::string role_name) {
+  std::lock_guard<std::mutex> lock(principal_mutex_);
+  principal_.active_role_id = std::move(role_id);
+  principal_.active_role_name = std::move(role_name);
+  ++persona_version_;
 }
 
 void RbacSessionState::NoteBindChecked() {
@@ -1081,7 +1111,7 @@ dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(dd::ClientContext&,
         principal_.user_name + "'s grants");
   }
   if (prepared_versions_.size() > 4096) prepared_versions_.clear();
-  prepared_versions_[&prepared] = last_checked_version_;
+  prepared_versions_[&prepared] = {last_checked_version_, last_checked_persona_};
   return dd::RebindQueryInfo::DO_NOT_REBIND;
 }
 
@@ -1092,7 +1122,10 @@ dd::RebindQueryInfo RbacSessionState::RebindIfGrantsChanged(const dd::PreparedSt
   const int64_t current = engine->snapshot()->version();
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = prepared_versions_.find(&prepared);
-  if (it != prepared_versions_.end() && it->second == current) return dd::RebindQueryInfo::DO_NOT_REBIND;
+  if (it != prepared_versions_.end() && it->second.first == current &&
+      it->second.second == persona_version_.load()) {
+    return dd::RebindQueryInfo::DO_NOT_REBIND;
+  }
   // Grants changed since this statement was checked (or it was never seen):
   // re-plan it, which runs the check again.
   return dd::RebindQueryInfo::ATTEMPT_TO_REBIND;

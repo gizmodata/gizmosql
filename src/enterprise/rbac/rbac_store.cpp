@@ -292,6 +292,9 @@ arrow::Status RbacStore::InitializeSchema() {
       "CREATE TABLE IF NOT EXISTS " + T("catalog_tenants") +
           " (catalog_key VARCHAR PRIMARY KEY, catalog_name VARCHAR NOT NULL, tenant_id VARCHAR NOT "
           "NULL)",
+      "CREATE TABLE IF NOT EXISTS " + T("group_mappings") +
+          " (mapping_id VARCHAR PRIMARY KEY, issuer VARCHAR NOT NULL, group_name VARCHAR NOT "
+          "NULL, role_id VARCHAR NOT NULL, UNIQUE (issuer, group_name, role_id))",
       "CREATE TABLE IF NOT EXISTS " + T("user_attributes") +
           " (user_id VARCHAR NOT NULL, attribute VARCHAR NOT NULL, value VARCHAR NOT NULL, "
           "PRIMARY KEY (user_id, attribute))",
@@ -492,11 +495,20 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
     catalog_tenants.push_back({GetString(*ct, 0, r), GetString(*ct, 1, r)});
   }
 
+  std::vector<GroupMappingRecord> group_mappings;
+  ARROW_ASSIGN_OR_RAISE(auto gm, Run(conn, "SELECT mapping_id, issuer, group_name, role_id FROM " +
+                                               T("group_mappings") +
+                                               " ORDER BY group_name, issuer, role_id"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*gm); ++r) {
+    group_mappings.push_back(
+        {GetString(*gm, 0, r), GetString(*gm, 1, r), GetString(*gm, 2, r), GetString(*gm, 3, r)});
+  }
+
   return std::make_shared<const Snapshot>(
       version, std::move(users), std::move(roles), std::move(memberships), std::move(grants),
       std::move(owners), std::move(system_privileges), std::move(row_policies),
       std::move(masking_policies), std::move(mask_bindings), std::move(tenants),
-      std::move(principal_tenants), std::move(catalog_tenants));
+      std::move(principal_tenants), std::move(catalog_tenants), std::move(group_mappings));
 }
 
 arrow::Status RbacStore::Mutate(
@@ -625,6 +637,18 @@ arrow::Status StoreTransaction::SetCatalogTenant(const std::string& catalog,
       .status();
 }
 
+arrow::Status StoreTransaction::InsertGroupMapping(const GroupMappingRecord& m) {
+  return Run(conn_, "INSERT INTO " + T("group_mappings") + " VALUES ($1, $2, $3, $4)",
+             {Text(m.id), Text(m.issuer), Text(m.group), Text(m.role_id)})
+      .status();
+}
+
+arrow::Status StoreTransaction::DeleteGroupMapping(const std::string& mapping_id) {
+  return Run(conn_, "DELETE FROM " + T("group_mappings") + " WHERE mapping_id = $1",
+             {Text(mapping_id)})
+      .status();
+}
+
 arrow::Status StoreTransaction::UpsertRowPolicy(const RowPolicyRecord& p) {
   ARROW_RETURN_NOT_OK(DeleteRowPolicy(p.id));
   return Run(conn_, "INSERT INTO " + T("row_policies") +
@@ -704,6 +728,9 @@ arrow::Status StoreTransaction::DeleteRole(const std::string& role_id) {
       Run(conn_, "DELETE FROM " + T("system_privileges") + " WHERE role_id = $1", {Text(role_id)})
           .status());
   ARROW_RETURN_NOT_OK(SetPrincipalTenant(PrincipalKind::kRole, role_id, ""));
+  ARROW_RETURN_NOT_OK(
+      Run(conn_, "DELETE FROM " + T("group_mappings") + " WHERE role_id = $1", {Text(role_id)})
+          .status());
   return Run(conn_, "DELETE FROM " + T("roles") + " WHERE role_id = $1", {Text(role_id)})
       .status();
 }

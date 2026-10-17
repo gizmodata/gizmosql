@@ -91,6 +91,58 @@ session's queries.
 A grant on a schema or catalog covers the objects in it, including ones created
 later. A store user can see their own grants with `SHOW GRANTS`.
 
+## Acting with one role
+
+A user's privileges are those of all their roles together. `SET ROLE` narrows a
+session to one of them (plus what that role inherits, and `PUBLIC`), for example
+to check what a role can do, or to keep a script from touching more than it
+should:
+
+```sql
+SET ROLE analyst;
+SELECT * FROM sales;    -- analyst may
+SELECT * FROM payroll;  -- refused: only hr may
+RESET ROLE;             -- all roles again (also SET ROLE ALL or SET ROLE NONE)
+```
+
+While a role is active, refusals say so (`This session acts with role analyst
+only (SET ROLE)`), `SHOW GRANTS` lists what the session acts with,
+`is_role_active()` in row policies sees only the active role, and audit records
+carry `active_role`. `SET ROLE` affects only the session that runs it. A user can
+set only a role granted to them; a role that does not exist is refused the same
+way. A tenant's user may leave out the tenant (`SET ROLE readers`). If the active
+role is revoked, the session's statements are refused until it runs `SET ROLE`
+or `RESET ROLE` again. The administrator always holds every right, so `SET ROLE`
+is for store users.
+
+## Roles from identity-provider groups
+
+When users log in with a token from your identity provider (Okta, Microsoft
+Entra ID, ...), the administrator can map the provider's groups to roles:
+
+```sql
+CREATE GROUP MAPPING 'okta-analysts' ISSUER 'https://example.okta.com' TO ROLE analyst;
+CREATE GROUP MAPPING 'hr-team' TO ROLE hr;  -- from any issuer the server accepts
+SHOW GROUP MAPPINGS;
+DROP GROUP MAPPING 'hr-team';               -- all of the group's mappings; or add TO ROLE hr
+```
+
+```text
+group,issuer,role
+hr-team,(any),hr
+okta-analysts,https://example.okta.com,analyst
+```
+
+A user whose login token lists the group in its `groups` claim (set
+`GIZMOSQL_TOKEN_GROUPS_CLAIM` for another claim name, such as `roles`) holds the
+role for that session, as if it were granted. Group names match exactly. The user
+must still exist in the store (`CREATE USER`): a group never creates a user. A
+tenant's role counts only for that tenant's users. Groups are read from the login
+token when the session starts. Dropping a mapping takes the role away at once and
+stops statements that relied on it; a change of groups at the identity provider
+applies from the user's next login. Mapped roles can be made active with
+`SET ROLE`. Only the administrator manages mappings.
+
 ## Owners
 
 Whoever creates a table, view or schema **owns** it, and may read, change and drop
@@ -379,7 +431,6 @@ whether or not queries are logged.
 - Store users cannot `INSERT`, `UPDATE` or `MERGE` into a table with row or
   masking policies yet; `DELETE` removes only rows they can see. Row policies
   cannot read other tables (mapping tables) yet.
-- A user's privileges are those of all their roles together (there is no `SET ROLE`).
 - Names are not secret outside tenants: for a user who belongs to no tenant,
   catalog functions such as `duckdb_tables()` and the Flight SQL metadata calls list
   every table and view, including ones the user cannot read.

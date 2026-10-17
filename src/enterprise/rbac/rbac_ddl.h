@@ -184,6 +184,23 @@ struct ShowPoliciesCommand {
 // SHOW TENANTS
 struct ShowTenantsCommand {};
 
+// CREATE GROUP MAPPING 'group' [ISSUER 'issuer'] TO ROLE role
+// DROP GROUP MAPPING 'group' [ISSUER 'issuer'] [TO ROLE role]
+// SHOW GROUP MAPPINGS
+struct GroupMappingCommand {
+  enum class Kind { kCreate, kDrop, kShow };
+  Kind kind = Kind::kShow;
+  std::string group;
+  std::string issuer;
+  std::optional<std::string> role;
+};
+
+// SET ROLE role | SET ROLE ALL | SET ROLE NONE | RESET ROLE
+// (no role: act with all of the user's roles again)
+struct SetRoleCommand {
+  std::optional<std::string> role;
+};
+
 // ALTER TABLE | VIEW obj OWNER TO principal
 struct AlterOwnerCommand {
   bool is_view = false;
@@ -203,7 +220,7 @@ using RbacCommand =
                  CreateRowPolicyCommand, DropRowPolicyCommand, CreateMaskingPolicyCommand,
                  DropMaskingPolicyCommand, SetColumnMaskCommand, ShowPoliciesCommand,
                  TenantCommand, CatalogTenantCommand, TenantDefaultCatalogCommand,
-                 ShowTenantsCommand>;
+                 ShowTenantsCommand, SetRoleCommand, GroupMappingCommand>;
 
 // True when `sql` begins like an access-control statement (GRANT, REVOKE,
 // CREATE/ALTER/DROP USER or ROLE, ALTER TABLE|VIEW ... OWNER TO, SHOW GRANTS).

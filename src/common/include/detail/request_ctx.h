@@ -30,6 +30,9 @@ struct RequestCtx
     std::optional<std::string> user_agent;
     std::optional<std::string> connection_protocol;
     std::optional<std::vector<CatalogAccessRule>> catalog_access;
+    // The login token's identity provider and groups ("idp" claim).
+    std::optional<std::string> idp_issuer;
+    std::optional<std::vector<std::string>> idp_groups;
     // instance_id claim of the bearer token (the instance that issued it).
     std::optional<std::string> token_instance_id;
 };

@@ -54,7 +54,15 @@ std::string CreateGizmoSQLJWT(
     const std::string& username, const std::string& role,
     const std::string& auth_method, const std::string& secret_key,
     const std::string& instance_id,
-    const std::optional<std::string>& catalog_access_json = std::nullopt);
+    const std::optional<std::string>& catalog_access_json = std::nullopt,
+    const std::optional<std::string>& identity_json = std::nullopt);
+
+// The login token's identity provider and groups, as the JSON object GizmoSQL
+// carries in its own token's "idp" claim ({"iss": ..., "groups": [...]});
+// nullopt when the token lists no groups. The groups claim is "groups", or the
+// name in GIZMOSQL_TOKEN_GROUPS_CLAIM.
+std::optional<std::string> IdentityClaimJson(
+    const jwt::decoded_jwt<jwt::traits::kazuho_picojson>& token);
 
 class SecurityUtilities {
  public:
@@ -85,7 +93,8 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
                             const std::string& auth_method,
                             const std::string& secret_key,
                             const std::string& instance_id,
-                            std::optional<std::string> catalog_access_json = std::nullopt);
+                            std::optional<std::string> catalog_access_json = std::nullopt,
+                            std::optional<std::string> identity_json = std::nullopt);
 
   const jwt::decoded_jwt<jwt::traits::kazuho_picojson> GetJWT();
   const std::string GetUsername() const;
@@ -104,6 +113,7 @@ class BasicAuthServerMiddleware : public flight::ServerMiddleware {
   std::string secret_key_;
   std::string instance_id_;
   std::optional<std::string> catalog_access_json_;
+  std::optional<std::string> identity_json_;
 
   std::string CreateJWTToken() const;
 };
