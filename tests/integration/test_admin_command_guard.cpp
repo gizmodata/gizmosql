@@ -852,8 +852,6 @@ TEST_F(UnredactedSecretsAllowedFixture, SetTrueReachesDuckDB) {
       << st.ToString();
 }
 
-#endif  // !_WIN32
-
 // A macro's body runs when it is called, and FROM m() names no file, so the
 // body is checked when the macro is created. json_execute_serialized_sql() runs
 // a statement the parser only sees as a string.
@@ -903,3 +901,5 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForMacroAndSerializedSql) {
   EXPECT_TRUE(ExecAs(GetPort(), analyst, "SELECT ok_s(1)").ok());
   std::filesystem::remove(file);
 }
+
+#endif  // !_WIN32

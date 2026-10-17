@@ -186,7 +186,9 @@ def tidy_cpp(files, args):
                 cwd=ROOT,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                timeout=300,
+                # Large test files that include the logging header take close
+                # to 300 s on the hosted macOS runners; a timeout still fails.
+                timeout=900,
             )
         diagnostics = (
             (yaml.safe_load(fixes.read_text()) or {}).get("Diagnostics", [])
