@@ -108,6 +108,7 @@ if(GIZMOSQL_ENTERPRISE)
             integration/test_rbac_delegation.cpp
             integration/test_rbac_system_privileges.cpp
             integration/test_rbac_system_unit.cpp
+            integration/test_rbac_concurrency.cpp
     )
 endif()
 
