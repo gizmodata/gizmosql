@@ -74,7 +74,8 @@ std::string Token(const std::string& user, const std::string& role, const std::s
 
 std::string SessionId(int server, int n) {
   char sid[64];
-  std::snprintf(sid, sizeof(sid), "00000000-0000-4000-6%03d-%012d", server, n);
+  // A well-formed UUID: instrumentation keys sessions by its value.
+  std::snprintf(sid, sizeof(sid), "00000000-0000-4000-6%03d-%012d", server % 1000, n);
   return sid;
 }
 

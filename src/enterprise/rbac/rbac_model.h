@@ -76,6 +76,32 @@ struct ObjectGrantRecord {
   std::string granted_by;  // user id of the grantor; empty for the administrator
 };
 
+// CREATE TENANT name. A tenant's users and roles are named "tenant/name";
+// its catalogs are assigned with ALTER CATALOG ... SET TENANT.
+struct TenantRecord {
+  std::string id;
+  std::string name;
+  std::string default_catalog;  // empty: none
+};
+
+// Which tenant a user or role belongs to (none: system scope).
+struct PrincipalTenantRecord {
+  PrincipalKind kind = PrincipalKind::kUser;
+  std::string principal_id;
+  std::string tenant_id;
+};
+
+// Which tenant a catalog belongs to (none: only system-scope users see it,
+// and only if they could before).
+struct CatalogTenantRecord {
+  std::string catalog;
+  std::string tenant_id;
+};
+
+// The two roles every tenant has.
+constexpr const char* kTenantPublicSuffix = "/PUBLIC";
+constexpr const char* kTenantAdminSuffix = "/tenant_admin";
+
 // CREATE ROW POLICY name ON table [AS PERMISSIVE | RESTRICTIVE] [TO roles] USING (predicate)
 struct RowPolicyRecord {
   std::string id;
@@ -167,7 +193,10 @@ class Snapshot {
            std::vector<SystemPrivilegeRecord> system_privileges = {},
            std::vector<RowPolicyRecord> row_policies = {},
            std::vector<MaskingPolicyRecord> masking_policies = {},
-           std::vector<MaskBindingRecord> mask_bindings = {});
+           std::vector<MaskBindingRecord> mask_bindings = {},
+           std::vector<TenantRecord> tenants = {},
+           std::vector<PrincipalTenantRecord> principal_tenants = {},
+           std::vector<CatalogTenantRecord> catalog_tenants = {});
 
   int64_t version() const { return version_; }
 
@@ -184,6 +213,21 @@ class Snapshot {
   const std::vector<RowPolicyRecord>& row_policies() const { return row_policies_; }
   const std::vector<MaskingPolicyRecord>& masking_policies() const { return masking_policies_; }
   const std::vector<MaskBindingRecord>& mask_bindings() const { return mask_bindings_; }
+  const std::vector<TenantRecord>& tenants() const { return tenants_; }
+  const std::vector<CatalogTenantRecord>& catalog_tenants() const { return catalog_tenants_; }
+  const TenantRecord* FindTenantByName(const std::string& name) const;
+  const TenantRecord* FindTenantById(const std::string& id) const;
+  // "" for a system-scope user, role or catalog.
+  std::string TenantOf(PrincipalKind kind, const std::string& id) const;
+  std::string TenantOfPrincipal(const Principal& principal) const;
+  std::string TenantOfCatalog(const std::string& catalog) const;
+  // The catalogs a tenant's users may see (folded names).
+  std::set<std::string> TenantCatalogs(const std::string& tenant_id) const;
+  // May the principal see objects of this catalog? System-scope principals:
+  // always. Tenant users: their tenant's catalogs, plus temp and system.
+  bool CatalogVisible(const Principal& principal, const std::string& catalog) const;
+  const RoleRecord* TenantRole(const std::string& tenant_id, const char* suffix) const;
+
   const MaskingPolicyRecord* FindMaskingPolicyByName(const std::string& name) const;
   const MaskingPolicyRecord* FindMaskingPolicyById(const std::string& id) const;
   // Row policies on the table, and of those the ones that apply to the principal.
@@ -266,6 +310,9 @@ class Snapshot {
   std::vector<RowPolicyRecord> row_policies_;
   std::vector<MaskingPolicyRecord> masking_policies_;
   std::vector<MaskBindingRecord> mask_bindings_;
+  std::vector<TenantRecord> tenants_;
+  std::vector<PrincipalTenantRecord> principal_tenants_;
+  std::vector<CatalogTenantRecord> catalog_tenants_;
   std::map<std::string, size_t> user_by_key_, user_by_id_, role_by_key_, role_by_id_;
   std::map<std::string, std::vector<const ObjectGrantRecord*>> grants_by_role_;
 };

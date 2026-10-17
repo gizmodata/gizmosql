@@ -105,6 +105,13 @@ class StoreTransaction {
   // nullopt removes the attribute.
   arrow::Status SetUserAttribute(const std::string& user_id, const std::string& attribute,
                                  const std::optional<std::string>& value);
+  arrow::Status UpsertTenant(const TenantRecord& tenant);
+  // Also forgets the tenant's catalog and principal assignments.
+  arrow::Status DeleteTenant(const std::string& tenant_id);
+  // An empty tenant_id removes the assignment.
+  arrow::Status SetPrincipalTenant(PrincipalKind kind, const std::string& id,
+                                   const std::string& tenant_id);
+  arrow::Status SetCatalogTenant(const std::string& catalog, const std::string& tenant_id);
   arrow::Status UpsertRowPolicy(const RowPolicyRecord& policy);
   arrow::Status DeleteRowPolicy(const std::string& policy_id);
   arrow::Status UpsertMaskingPolicy(const MaskingPolicyRecord& policy);

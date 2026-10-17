@@ -251,6 +251,41 @@ TEST_F(RbacPoliciesFixture, NoSpellingOfTheQueryGetsAroundTheFilter) {
   EXPECT_EQ(t->column(0)->GetScalar(0).ValueOrDie()->ToString(), "2");
 }
 
+TEST_F(RbacPoliciesFixture, PreparedStatementsWithParametersAreFilteredAndMasked) {
+  // DuckDB plans a statement with parameters again for each run: the policies
+  // apply to that plan.
+  auto param = [](const std::shared_ptr<arrow::DataType>& type, const std::string& value) {
+    auto scalar = arrow::Scalar::Parse(type, value).ValueOrDie();
+    auto array = arrow::MakeArrayFromScalar(*scalar, 1).ValueOrDie();
+    return arrow::RecordBatch::Make(arrow::schema({arrow::field("p", type)}), 1, {array});
+  };
+  auto by_id = ann_->Prepare("SELECT id, ssn FROM emp WHERE id >= ? ORDER BY id");
+  ASSERT_TRUE(by_id.ok()) << by_id.status().ToString();
+  ASSERT_TRUE((*by_id)->SetParameters(param(arrow::int32(), "0")).ok());
+  ASSERT_OK_AND_ASSIGN(auto rows, ann_->ExecutePrepared(**by_id));
+  ASSERT_EQ(rows->num_rows(), 2);
+  EXPECT_EQ(rows->column(0)->GetScalar(0).ValueOrDie()->ToString(), "1");
+  EXPECT_EQ(rows->column(0)->GetScalar(1).ValueOrDie()->ToString(), "3");
+  EXPECT_EQ(rows->column(1)->GetScalar(0).ValueOrDie()->ToString(), "XXX");
+  // Running it again with another value: still filtered.
+  ASSERT_TRUE((*by_id)->SetParameters(param(arrow::int32(), "2")).ok());
+  ASSERT_OK_AND_ASSIGN(auto again, ann_->ExecutePrepared(**by_id));
+  ASSERT_EQ(again->num_rows(), 1);
+  EXPECT_EQ(again->column(0)->GetScalar(0).ValueOrDie()->ToString(), "3");
+  // A parameter is no oracle for the masked value.
+  auto by_ssn = ann_->Prepare("SELECT count(*) FROM emp WHERE ssn = ?");
+  ASSERT_TRUE(by_ssn.ok()) << by_ssn.status().ToString();
+  ASSERT_TRUE((*by_ssn)->SetParameters(param(arrow::utf8(), "111")).ok());
+  ASSERT_OK_AND_ASSIGN(auto count, ann_->ExecutePrepared(**by_ssn));
+  EXPECT_EQ(count->column(0)->GetScalar(0).ValueOrDie()->ToString(), "0");
+  // Positive twin: the exempt user finds it.
+  auto hal_ssn = hal_->Prepare("SELECT count(*) FROM emp WHERE ssn = ?");
+  ASSERT_TRUE(hal_ssn.ok()) << hal_ssn.status().ToString();
+  ASSERT_TRUE((*hal_ssn)->SetParameters(param(arrow::utf8(), "111")).ok());
+  ASSERT_OK_AND_ASSIGN(auto hal_count, hal_->ExecutePrepared(**hal_ssn));
+  EXPECT_EQ(hal_count->column(0)->GetScalar(0).ValueOrDie()->ToString(), "1");
+}
+
 TEST_F(RbacPoliciesFixture, AnOwnersViewDoesNotLiftTheCallersPolicies) {
   // emp_v is the administrator's, but policies follow the caller.
   EXPECT_EQ(Values(*ann_, "SELECT id FROM emp_v"), (S{"1", "3"}));

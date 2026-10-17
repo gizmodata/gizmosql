@@ -63,7 +63,10 @@ Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<R
                    std::vector<SystemPrivilegeRecord> system_privileges,
                    std::vector<RowPolicyRecord> row_policies,
                    std::vector<MaskingPolicyRecord> masking_policies,
-                   std::vector<MaskBindingRecord> mask_bindings)
+                   std::vector<MaskBindingRecord> mask_bindings,
+                   std::vector<TenantRecord> tenants,
+                   std::vector<PrincipalTenantRecord> principal_tenants,
+                   std::vector<CatalogTenantRecord> catalog_tenants)
     : version_(version),
       users_(std::move(users)),
       roles_(std::move(roles)),
@@ -73,7 +76,10 @@ Snapshot::Snapshot(int64_t version, std::vector<UserRecord> users, std::vector<R
       system_privileges_(std::move(system_privileges)),
       row_policies_(std::move(row_policies)),
       masking_policies_(std::move(masking_policies)),
-      mask_bindings_(std::move(mask_bindings)) {
+      mask_bindings_(std::move(mask_bindings)),
+      tenants_(std::move(tenants)),
+      principal_tenants_(std::move(principal_tenants)),
+      catalog_tenants_(std::move(catalog_tenants)) {
   for (size_t i = 0; i < users_.size(); ++i) {
     user_by_key_[FoldIdentifier(users_[i].name)] = i;
     user_by_id_[users_[i].id] = i;
@@ -119,7 +125,10 @@ std::set<std::string> Snapshot::RoleClosure(const std::string& role_id) const {
 }
 
 std::set<std::string> Snapshot::EffectiveRoleIds(const std::string& user_id) const {
-  std::set<std::string> roles = RoleClosure(kPublicRoleId);
+  // A tenant's users hold that tenant's PUBLIC, not the server-wide one.
+  const std::string tenant = TenantOf(PrincipalKind::kUser, user_id);
+  const RoleRecord* tenant_public = tenant.empty() ? nullptr : TenantRole(tenant, kTenantPublicSuffix);
+  std::set<std::string> roles = RoleClosure(tenant_public ? tenant_public->id : kPublicRoleId);
   for (const auto& m : memberships_) {
     if (m.member_kind == PrincipalKind::kUser && m.member_id == user_id) {
       for (const auto& r : RoleClosure(m.role_id)) roles.insert(r);
@@ -405,6 +414,65 @@ std::vector<std::pair<std::string, const MaskingPolicyRecord*>> Snapshot::Applic
   return found;
 }
 
+const TenantRecord* Snapshot::FindTenantByName(const std::string& name) const {
+  for (const auto& t : tenants_) {
+    if (IdentifiersEqual(t.name, name)) return &t;
+  }
+  return nullptr;
+}
+
+const TenantRecord* Snapshot::FindTenantById(const std::string& id) const {
+  for (const auto& t : tenants_) {
+    if (t.id == id) return &t;
+  }
+  return nullptr;
+}
+
+std::string Snapshot::TenantOf(PrincipalKind kind, const std::string& id) const {
+  for (const auto& p : principal_tenants_) {
+    if (p.kind == kind && p.principal_id == id) return p.tenant_id;
+  }
+  return "";
+}
+
+std::string Snapshot::TenantOfPrincipal(const Principal& principal) const {
+  if (principal.superuser) return "";
+  if (principal.is_role()) return TenantOf(PrincipalKind::kRole, principal.role_id);
+  return TenantOf(PrincipalKind::kUser, principal.user_id);
+}
+
+std::string Snapshot::TenantOfCatalog(const std::string& catalog) const {
+  for (const auto& c : catalog_tenants_) {
+    if (IdentifiersEqual(c.catalog, catalog)) return c.tenant_id;
+  }
+  return "";
+}
+
+std::set<std::string> Snapshot::TenantCatalogs(const std::string& tenant_id) const {
+  std::set<std::string> catalogs;
+  for (const auto& c : catalog_tenants_) {
+    if (c.tenant_id == tenant_id) catalogs.insert(FoldIdentifier(c.catalog));
+  }
+  return catalogs;
+}
+
+bool Snapshot::CatalogVisible(const Principal& principal, const std::string& catalog) const {
+  const std::string tenant = TenantOfPrincipal(principal);
+  if (tenant.empty()) return true;
+  // GizmoSQL's helper catalog holds views for JDBC metadata calls; what they
+  // list is limited to the user's catalogs like any metadata.
+  if (IdentifiersEqual(catalog, "temp") || IdentifiersEqual(catalog, "system") ||
+      IdentifiersEqual(catalog, "_gizmosql_system")) {
+    return true;
+  }
+  return TenantOfCatalog(catalog) == tenant;
+}
+
+const RoleRecord* Snapshot::TenantRole(const std::string& tenant_id, const char* suffix) const {
+  const TenantRecord* tenant = FindTenantById(tenant_id);
+  return tenant ? FindRoleByName(tenant->name + suffix) : nullptr;
+}
+
 // ---------------------------------------------------------------------------
 // Delegation
 // ---------------------------------------------------------------------------
@@ -552,6 +620,15 @@ Snapshot::Fallen Snapshot::FallenDelegations() const {
       const auto& m = memberships_[i];
       if (!FindUserById(m.granted_by)) continue;
       const auto roles = roles_of(m.granted_by);
+      // A tenant admin administers its tenant's roles.
+      const std::string tenant = TenantOf(PrincipalKind::kRole, m.role_id);
+      if (!tenant.empty()) {
+        const RoleRecord* admin = TenantRole(tenant, kTenantAdminSuffix);
+        if (admin && roles.count(admin->id)) {
+          m_ok[i] = changed = true;
+          continue;
+        }
+      }
       for (size_t j = 0; j < memberships_.size(); ++j) {
         const auto& h = memberships_[j];
         if (!m_ok[j] || h.role_id != m.role_id || !h.admin_option) continue;

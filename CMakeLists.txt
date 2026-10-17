@@ -893,6 +893,7 @@ endif()
 # Add a library target
 add_library(gizmosqlserver STATIC
         src/common/gizmosql_logging.cpp
+        src/common/gizmosql_audit.cpp
         src/common/gizmosql_library.cpp
         src/common/system_catalog.cpp
         src/common/session_context.cpp

@@ -90,6 +90,9 @@ class RbacSessionState : public duckdb::ClientContextState {
   // preparing and applies them once the statement has run successfully.
   std::vector<PendingOwnership> TakePreparedOwnership();
 
+  // Called by the bind-time hook once a statement with parameters passed.
+  void NoteBindChecked();
+
   bool CanRequestRebind() override { return true; }
   duckdb::RebindQueryInfo OnFinalizePrepare(duckdb::ClientContext& context,
                                             duckdb::PreparedStatementData& prepared,
@@ -115,6 +118,8 @@ class RbacSessionState : public duckdb::ClientContextState {
   std::mutex mutex_;
   // Plans checked by the hook that have not reached OnFinalizePrepare yet.
   int checked_pending_ = 0;
+  // The statement being prepared passed the bind-time check.
+  bool bind_checked_pending_ = false;
   int64_t last_checked_version_ = 0;
   // Ownership changes of the plan just checked, until OnFinalizePrepare files
   // them under "runs now" (pending_ownership_) or "prepared" (prepared_ownership_).

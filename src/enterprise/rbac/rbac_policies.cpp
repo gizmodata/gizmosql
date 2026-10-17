@@ -21,7 +21,9 @@
 #include <unordered_set>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/conjunction_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
@@ -32,6 +34,8 @@
 #include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/where_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -286,7 +290,8 @@ class PolicyRewriter {
       : context_(context),
         snapshot_(snapshot),
         principal_(principal),
-        policy_context_(PolicyContext::For(snapshot, principal)) {}
+        policy_context_(PolicyContext::For(snapshot, principal)),
+        tenant_user_(!snapshot.TenantOfPrincipal(principal).empty()) {}
 
   void Rewrite(dd::unique_ptr<dd::LogicalOperator>& plan) {
     Walk(plan);
@@ -344,10 +349,91 @@ class PolicyRewriter {
     }
   }
 
+  // The metadata table functions a tenant user may call list every attached
+  // catalog; keep the rows of the catalogs the user can see. This covers
+  // information_schema, SHOW and GizmoSQL's own helper views too, which are
+  // built on them, however the statement reaches them.
+  void RestrictMetadataRows(dd::unique_ptr<dd::LogicalOperator>& op) {
+    static const std::unordered_set<std::string> kCatalogListing = {
+        "duckdb_databases", "duckdb_tables",    "duckdb_views",    "duckdb_columns",
+        "duckdb_constraints", "duckdb_functions", "duckdb_indexes", "duckdb_schemas",
+        "duckdb_sequences", "duckdb_types",     "pragma_database_size"};
+    auto& get = op->Cast<dd::LogicalGet>();
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    const std::string function = Lower(compat::Str(get.function.GetName()));
+#else
+    const std::string function = Lower(get.function.name);
+#endif
+    if (!kCatalogListing.count(function)) return;
+    dd::idx_t column = dd::DConstants::INVALID_INDEX;
+    for (dd::idx_t i = 0; i < get.names.size(); ++i) {
+      if (IdentifiersEqual(compat::Str(get.names[i]), "database_name")) column = i;
+    }
+    if (column == dd::DConstants::INVALID_INDEX) {
+      Refuse("the table function " + function + " cannot be limited to user " +
+             principal_.user_name + "'s catalogs");
+    }
+    auto& column_ids = get.GetMutableColumnIds();
+    const size_t original_columns = column_ids.size();
+    std::optional<size_t> position;
+    for (size_t p = 0; p < original_columns; ++p) {
+      if (!column_ids[p].IsRowIdColumn() && !column_ids[p].IsVirtualColumn() &&
+          column_ids[p].GetPrimaryIndex() == column) {
+        position = p;
+      }
+    }
+    if (!position) {
+      column_ids.emplace_back(column);
+      position = column_ids.size() - 1;
+    }
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    const dd::ColumnBinding binding(get.table_index, dd::ProjectionIndex(*position));
+#else
+    const dd::ColumnBinding binding(get.table_index, *position);
+#endif
+    auto in = dd::make_uniq<dd::BoundOperatorExpression>(dd::ExpressionType::COMPARE_IN,
+                                                         dd::LogicalType::BOOLEAN);
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    auto& in_children = in->GetChildrenMutable();
+#else
+    auto& in_children = in->children;
+#endif
+    in_children.push_back(
+        dd::make_uniq<dd::BoundColumnRefExpression>(get.returned_types[column], binding));
+    for (const auto& db : dd::DatabaseManager::Get(context_).GetDatabases()) {
+      const std::string name = compat::Str(db->GetName());
+      if (snapshot_.CatalogVisible(principal_, name)) {
+        in_children.push_back(dd::make_uniq<dd::BoundConstantExpression>(dd::Value(name)));
+      }
+    }
+    dd::unique_ptr<dd::Expression> predicate;
+    if (in_children.size() == 1) {
+      predicate = dd::make_uniq<dd::BoundConstantExpression>(dd::Value::BOOLEAN(false));
+    } else {
+      predicate = std::move(in);
+    }
+    auto filter = dd::make_uniq<dd::LogicalFilter>(std::move(predicate));
+    if (column_ids.size() > original_columns) {
+      for (size_t i = 0; i < original_columns; ++i) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+        filter->projection_map.push_back(dd::ProjectionIndex(i));
+#else
+        filter->projection_map.push_back(i);
+#endif
+      }
+    }
+    filter->children.push_back(std::move(op));
+    op = std::move(filter);
+    policy_filters_.insert(op.get());
+  }
+
   void RewriteGet(dd::unique_ptr<dd::LogicalOperator>& op) {
     auto& get = op->Cast<dd::LogicalGet>();
     auto table = get.GetTable();
-    if (!table) return;
+    if (!table) {
+      if (tenant_user_) RestrictMetadataRows(op);
+      return;
+    }
     const ObjectPath path = PathOfEntry(*table);
     if (IdentifiersEqual(path.catalog, TEMP_CATALOG)) return;
     const auto policies = snapshot_.RowPoliciesOn(path);
@@ -519,6 +605,7 @@ class PolicyRewriter {
   PolicyContext policy_context_;
   dd::column_binding_map_t<dd::unique_ptr<dd::Expression>> masks_;
   std::unordered_set<const dd::LogicalOperator*> policy_filters_;
+  const bool tenant_user_;
 };
 
 }  // namespace
@@ -550,7 +637,10 @@ arrow::Result<dd::unique_ptr<dd::ParsedExpression>> PreparePolicyExpression(
 void ApplyPolicies(dd::ClientContext& context, const Snapshot& snapshot, const Principal& principal,
                    dd::unique_ptr<dd::LogicalOperator>& plan) {
   if (!plan || principal.superuser) return;
-  if (snapshot.row_policies().empty() && snapshot.mask_bindings().empty()) return;
+  if (snapshot.row_policies().empty() && snapshot.mask_bindings().empty() &&
+      snapshot.catalog_tenants().empty()) {
+    return;
+  }
   PolicyRewriter(context, snapshot, principal).Rewrite(plan);
 }
 

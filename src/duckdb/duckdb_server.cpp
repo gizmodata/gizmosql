@@ -58,6 +58,7 @@
 #include "duckdb_tables_schema_batch_reader.h"
 #include "duckdb_arrow_ingest.h"
 #include "gizmosql_security.h"
+#include "gizmosql_audit.h"
 #include "gizmosql_logging.h"
 #ifdef GIZMOSQL_ENTERPRISE
 #include "enterprise/rbac/rbac_engine.h"
@@ -379,6 +380,10 @@ struct CatalogEntryRow {
 // from duckdb_databases(). nullopt = the session's current database.
 Result<std::vector<std::string>> ResolveCatalogNames(
     duckdb::Connection& conn, const std::optional<std::string>& like_pattern) {
+#ifdef GIZMOSQL_ENTERPRISE
+  // GizmoSQL's own lookup; what the client may see is filtered afterwards.
+  enterprise::rbac::RbacSessionState::BypassScope internal(*conn.context);
+#endif
   std::vector<std::string> names;
   if (!like_pattern.has_value()) {
     names.push_back(compat::Str(duckdb::DatabaseManager::GetDefaultDatabase(*conn.context)));
@@ -518,8 +523,8 @@ void FilterRowsByCatalogVisibility(const std::shared_ptr<ClientSession>& client_
   }
 #ifdef GIZMOSQL_ENTERPRISE
   if (client_session->catalog_access.empty() ||
-      !gizmosql::enterprise::EnterpriseFeatures::Instance()
-           .IsCatalogPermissionsAvailable()) {
+      (!gizmosql::enterprise::EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable() &&
+       !gizmosql::enterprise::EnterpriseFeatures::Instance().IsRbacAvailable())) {
     return;
   }
   std::shared_ptr<InstrumentationManager> instr_mgr;
@@ -583,6 +588,9 @@ struct ResolvedTableTarget {
 Result<ResolvedTableTarget> ResolveTableTarget(
     duckdb::Connection& conn, const std::optional<std::string>& catalog_name,
     const std::optional<std::string>& schema_name, bool is_temp) {
+#ifdef GIZMOSQL_ENTERPRISE
+  enterprise::rbac::RbacSessionState::BypassScope internal(*conn.context);
+#endif
   if (is_temp) {
     return ResolvedTableTarget{"temp", "main"};
   }
@@ -1244,11 +1252,26 @@ class DuckDBFlightSqlServer::Impl {
                                          principal.status().message());
         }
         new_session->rbac_user_id = principal->user_id;
-        if (const auto* user = rbac_engine_->snapshot()->FindUserById(principal->user_id)) {
+        auto snap = rbac_engine_->snapshot();
+        if (const auto* user = snap->FindUserById(principal->user_id)) {
           new_session->rbac_credential = user->password_hash.value_or("");
         }
+        new_session->rbac_tenant_id = snap->TenantOfPrincipal(*principal);
       }
       new_session->catalog_access.clear();
+      if (!new_session->rbac_tenant_id.empty()) {
+        // A tenant's user sees its tenant's catalogs and no others: the
+        // catalog rules hide the rest everywhere (metadata included).
+        new_session->rbac_tenant_catalogs = TenantCatalogsKey(new_session->rbac_tenant_id);
+        auto snap = rbac_engine_->snapshot();
+        for (const auto& c : snap->catalog_tenants()) {
+          if (c.tenant_id == new_session->rbac_tenant_id) {
+            new_session->catalog_access.push_back({c.catalog, CatalogAccessLevel::kWrite});
+          }
+        }
+        // A rule that matches nothing, so an empty list still denies.
+        new_session->catalog_access.push_back({"", CatalogAccessLevel::kNone});
+      }
     }
 #endif
     // Note: query_timeout and query_log_level are intentionally left as nullopt
@@ -1312,6 +1335,24 @@ class DuckDBFlightSqlServer::Impl {
                 ? enterprise::rbac::Principal::Superuser(new_session->username)
                 : enterprise::rbac::Principal{false, new_session->rbac_user_id,
                                               new_session->username});
+        // A tenant's sessions start in the tenant's default catalog.
+        if (!new_session->rbac_tenant_id.empty()) {
+          const auto* tenant =
+              rbac_engine_->snapshot()->FindTenantById(new_session->rbac_tenant_id);
+          if (tenant && !tenant->default_catalog.empty()) {
+            std::string quoted = "\"";
+            for (char ch : tenant->default_catalog) quoted += ch == '"' ? std::string("\"\"") : std::string(1, ch);
+            quoted += "\"";
+            enterprise::rbac::RbacSessionState::BypassScope internal(
+                *new_session->connection->Get().context);
+            auto used = new_session->connection->Get().Query("USE " + quoted);
+            if (used->HasError()) {
+              GIZMOSQL_AUDIT_SESSION(WARNING, new_session,
+                                     "A tenant's default catalog could not be used",
+                                     {"kind", "access_control"}, {"error", used->GetError()});
+            }
+          }
+        }
       }
 #endif
 
@@ -1501,7 +1542,11 @@ class DuckDBFlightSqlServer::Impl {
     for (auto& [id, session] : client_sessions_) {
       if (!session || session->rbac_user_id.empty() || session->kill_requested) continue;
       const auto* user = snapshot.FindUserById(session->rbac_user_id);
-      const bool stale = !user || !user->enabled ||
+      const bool tenant_changed =
+          !session->rbac_tenant_id.empty() &&
+          (!snapshot.FindTenantById(session->rbac_tenant_id) ||
+           TenantCatalogsKey(snapshot, session->rbac_tenant_id) != session->rbac_tenant_catalogs);
+      const bool stale = !user || !user->enabled || tenant_changed ||
                          user->password_hash.value_or("") != session->rbac_credential;
       if (!stale) {
         if (!previous) continue;
@@ -1515,7 +1560,7 @@ class DuckDBFlightSqlServer::Impl {
         }
         if (it->second && session->connection) {
           session->connection->Get().Interrupt();
-          GIZMOSQL_LOGKV_SESSION(INFO, session,
+          GIZMOSQL_AUDIT_SESSION(INFO, session,
                                  "Stopped any running statement after a user lost access",
                                  {"kind", "access_control"}, {"reason", "rights revoked"});
         }
@@ -1523,15 +1568,27 @@ class DuckDBFlightSqlServer::Impl {
       }
       session->kill_requested = true;
       if (session->connection) session->connection->Get().Interrupt();
-      GIZMOSQL_LOGKV_SESSION(INFO, session, "Ended a session after an access-control change",
+      GIZMOSQL_AUDIT_SESSION(INFO, session, "Ended a session after an access-control change",
                              {"kind", "access_control"},
                              {"reason", !user ? "user dropped"
                                         : !user->enabled ? "user disabled"
+                                        : tenant_changed ? "tenant's catalogs changed"
                                                          : "password changed"});
     }
   }
 #endif
   std::shared_ptr<enterprise::rbac::RbacEngine> GetRbacEngine() const { return rbac_engine_; }
+
+  // The catalogs a tenant may see, as one comparable string.
+  static std::string TenantCatalogsKey(const enterprise::rbac::Snapshot& snapshot,
+                                       const std::string& tenant_id) {
+    std::string key;
+    for (const auto& c : snapshot.TenantCatalogs(tenant_id)) key += c + "\x1f";
+    return key;
+  }
+  std::string TenantCatalogsKey(const std::string& tenant_id) const {
+    return TenantCatalogsKey(*rbac_engine_->snapshot(), tenant_id);
+  }
 
   // Flag every session of an access-control user for termination and interrupt
   // its running statement; the next request on it is refused.

@@ -16,6 +16,7 @@
 // under the License.
 
 #include "gizmosql_library.h"
+#include "detail/gizmosql_audit.h"
 #include "detail/sql_splitter.h"
 #include "system_catalog.h"
 #include "detail/cgroup_limits.h"
@@ -797,6 +798,8 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                          << "). Users, roles and grants come from the store; token "
                             "catalog_access claims are ignored";
       duckdb_server->SetRbacEngine(std::move(rbac_engine));
+      // Access-control audit records form a hash chain from here on.
+      gizmosql::StartAuditChain(gizmosql::AuditChainKeyFromEnvironment());
     }
 #else
     if (!rbac_store_uri.empty()) {

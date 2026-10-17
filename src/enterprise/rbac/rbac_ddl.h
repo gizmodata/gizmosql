@@ -156,11 +156,33 @@ struct SetColumnMaskCommand {
   std::vector<std::string> exempt_roles;
 };
 
+// CREATE TENANT [IF NOT EXISTS] name / DROP TENANT [IF EXISTS] name
+struct TenantCommand {
+  bool create = true;
+  std::string name;
+  bool if_exists = false;  // IF NOT EXISTS for CREATE
+};
+
+// ALTER CATALOG c SET TENANT t | UNSET TENANT
+struct CatalogTenantCommand {
+  std::string catalog;
+  std::optional<std::string> tenant;  // nullopt: UNSET
+};
+
+// ALTER TENANT t SET DEFAULT CATALOG c | UNSET DEFAULT CATALOG
+struct TenantDefaultCatalogCommand {
+  std::string tenant;
+  std::string catalog;  // empty: UNSET
+};
+
 // SHOW ROW POLICIES [ON table] | SHOW MASKING POLICIES
 struct ShowPoliciesCommand {
   bool masking = false;
   std::optional<QualifiedName> table;
 };
+
+// SHOW TENANTS
+struct ShowTenantsCommand {};
 
 // ALTER TABLE | VIEW obj OWNER TO principal
 struct AlterOwnerCommand {
@@ -179,7 +201,9 @@ using RbacCommand =
                  DropRoleCommand, RoleMembershipCommand, ObjectPrivilegeCommand,
                  SystemPrivilegeCommand, AlterOwnerCommand, ShowGrantsCommand,
                  CreateRowPolicyCommand, DropRowPolicyCommand, CreateMaskingPolicyCommand,
-                 DropMaskingPolicyCommand, SetColumnMaskCommand, ShowPoliciesCommand>;
+                 DropMaskingPolicyCommand, SetColumnMaskCommand, ShowPoliciesCommand,
+                 TenantCommand, CatalogTenantCommand, TenantDefaultCatalogCommand,
+                 ShowTenantsCommand>;
 
 // True when `sql` begins like an access-control statement (GRANT, REVOKE,
 // CREATE/ALTER/DROP USER or ROLE, ALTER TABLE|VIEW ... OWNER TO, SHOW GRANTS).

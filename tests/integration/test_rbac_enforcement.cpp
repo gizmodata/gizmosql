@@ -88,15 +88,33 @@ class Client {
     return client_->Prepare(Options(), sql);
   }
   arrow::Status ExecutePrepared(arrow::flight::sql::PreparedStatement& stmt) {
+    return ExecutePreparedRows(stmt).status();
+  }
+  arrow::Result<int64_t> ExecutePreparedRows(arrow::flight::sql::PreparedStatement& stmt) {
     auto co = Options();
     ARROW_ASSIGN_OR_RAISE(auto info, stmt.Execute(co));
+    int64_t rows = 0;
     for (const auto& ep : info->endpoints()) {
       ARROW_ASSIGN_OR_RAISE(auto reader, client_->DoGet(co, ep.ticket));
       ARROW_ASSIGN_OR_RAISE(auto table, reader->ToTable());
-      (void)table;
+      rows += table->num_rows();
     }
-    return arrow::Status::OK();
+    return rows;
   }
+  // A Flight metadata call's rows.
+  arrow::Result<int64_t> MetadataRows(
+      arrow::Result<std::unique_ptr<arrow::flight::FlightInfo>> info) {
+    auto co = Options();
+    ARROW_ASSIGN_OR_RAISE(auto flight_info, std::move(info));
+    int64_t rows = 0;
+    for (const auto& ep : flight_info->endpoints()) {
+      ARROW_ASSIGN_OR_RAISE(auto reader, client_->DoGet(co, ep.ticket));
+      ARROW_ASSIGN_OR_RAISE(auto table, reader->ToTable());
+      rows += table->num_rows();
+    }
+    return rows;
+  }
+  FlightSqlClient& flight() { return *client_; }
 
  private:
   std::pair<std::string, std::string> header_;
@@ -248,10 +266,11 @@ TEST_F(RbacEnforcementFixture, WrappingAStatementDoesNotHideIt) {
   ExpectBlocked(*joe_, "EXPLAIN ANALYZE SELECT * FROM secrets", kSecret);
   // A batch: the denied statement stops it (DuckDB runs these one by one).
   ExpectBlocked(*joe_, "SELECT 1; SELECT * FROM secrets", kSecret);
-  // Client-side prepared statements are checked when prepared.
+  // Client-side prepared statements are checked when prepared, with parameters
+  // too (DuckDB 1.x plans those again when they run).
   auto prepared = joe_->Prepare("SELECT * FROM secrets WHERE id = ?");
   ASSERT_FALSE(prepared.ok());
-  EXPECT_NE(prepared.status().ToString().find("GizmoSQL blocked"), std::string::npos)
+  EXPECT_NE(prepared.status().ToString().find(kSecret), std::string::npos)
       << prepared.status().ToString();
   // Session-local wrappers inline the protected table: still checked.
   ExpectAllowed(*joe_, "CREATE TEMP VIEW tv AS SELECT * FROM secrets");
@@ -260,6 +279,83 @@ TEST_F(RbacEnforcementFixture, WrappingAStatementDoesNotHideIt) {
   // view too, so users may not create even temporary ones.
   ExpectBlocked(*joe_, "CREATE TEMP MACRO tm() AS TABLE SELECT * FROM secrets",
                 "creating macros needs an administrator");
+}
+
+// One INT32 parameter row for a prepared statement.
+static std::shared_ptr<arrow::RecordBatch> IntParameter(int32_t value) {
+  arrow::Int32Builder builder;
+  (void)builder.Append(value);
+  auto array = builder.Finish().ValueOrDie();
+  return arrow::RecordBatch::Make(arrow::schema({arrow::field("p", arrow::int32())}), 1, {array});
+}
+
+TEST_F(RbacEnforcementFixture, PreparedStatementsWithParametersAreCheckedWhenPreparedAndRun) {
+  const char* kSecret = "no SELECT privilege on table";
+  // Positive twin: a granted table, read with a bound parameter.
+  auto ok = joe_->Prepare("SELECT * FROM orders WHERE id = ?");
+  ASSERT_TRUE(ok.ok()) << "WRONGLY BLOCKED: " << ok.status().ToString();
+  ASSERT_TRUE((*ok)->SetParameters(IntParameter(/*value=*/2)).ok());
+  auto rows = joe_->ExecutePreparedRows(**ok);
+  ASSERT_TRUE(rows.ok()) << rows.status().ToString();
+  EXPECT_EQ(*rows, 1);
+  // The same statement on a table joe may not read fails when prepared, before
+  // its columns are described.
+  auto denied = joe_->Prepare("SELECT value FROM secrets WHERE id = ?");
+  ASSERT_FALSE(denied.ok()) << "NOT BLOCKED";
+  EXPECT_NE(denied.status().ToString().find(kSecret), std::string::npos) << denied.status().ToString();
+  // A parameter whose type DuckDB can only learn from the value: no plan when
+  // prepared, so the run's plan is the one checked.
+  auto open_type = joe_->Prepare("SELECT value FROM secrets WHERE ? IS NOT NULL");
+  if (open_type.ok()) {
+    ASSERT_TRUE((*open_type)->SetParameters(IntParameter(/*value=*/1)).ok());
+    auto st = joe_->ExecutePrepared(**open_type);
+    ASSERT_FALSE(st.ok()) << "NOT BLOCKED when run";
+    EXPECT_NE(st.ToString().find(kSecret), std::string::npos) << st.ToString();
+  } else {
+    EXPECT_NE(open_type.status().ToString().find(kSecret), std::string::npos)
+        << open_type.status().ToString();
+  }
+  // Positive twin of that shape.
+  auto open_ok = joe_->Prepare("SELECT id FROM orders WHERE ? IS NOT NULL");
+  ASSERT_TRUE(open_ok.ok()) << "WRONGLY BLOCKED: " << open_ok.status().ToString();
+  ASSERT_TRUE((*open_ok)->SetParameters(IntParameter(/*value=*/1)).ok());
+  auto open_rows = joe_->ExecutePreparedRows(**open_ok);
+  ASSERT_TRUE(open_rows.ok()) << open_rows.status().ToString();
+  EXPECT_EQ(*open_rows, 2);
+}
+
+TEST_F(RbacEnforcementFixture, StoreUsersCanBrowseMetadata) {
+  auto co = joe_->Options();
+  auto catalogs = joe_->MetadataRows(joe_->flight().GetCatalogs(co));
+  ASSERT_TRUE(catalogs.ok()) << catalogs.status().ToString();
+  EXPECT_GE(*catalogs, 1);
+  auto schemas = joe_->MetadataRows(joe_->flight().GetDbSchemas(co, nullptr, nullptr));
+  ASSERT_TRUE(schemas.ok()) << schemas.status().ToString();
+  EXPECT_GE(*schemas, 1);
+  auto tables = joe_->MetadataRows(
+      joe_->flight().GetTables(co, nullptr, nullptr, nullptr, /*include_schema=*/false, nullptr));
+  ASSERT_TRUE(tables.ok()) << tables.status().ToString();
+  EXPECT_GE(*tables, 1);
+  auto with_schema = joe_->MetadataRows(
+      joe_->flight().GetTables(co, nullptr, nullptr, nullptr, /*include_schema=*/true, nullptr));
+  ASSERT_TRUE(with_schema.ok()) << with_schema.status().ToString();
+  const std::string orders = "orders";
+  auto filtered = joe_->MetadataRows(
+      joe_->flight().GetTables(co, nullptr, nullptr, &orders, /*include_schema=*/true, nullptr));
+  ASSERT_TRUE(filtered.ok()) << filtered.status().ToString();
+  EXPECT_EQ(*filtered, 1);
+}
+
+TEST_F(RbacEnforcementFixture, GizmoSqlsMetadataViewsNeedNoGrant) {
+  // The views JDBC metadata calls use need no grant, like duckdb_views().
+  ExpectAllowed(*joe_, "SELECT * FROM _gizmosql_system.main.gizmosql_index_info");
+  ExpectAllowed(*joe_, "SELECT * FROM _gizmosql_system.main.gizmosql_view_definition");
+  // Nothing else can be put there to ride on that: the catalog is read-only.
+  auto st = admin_->Run("CREATE VIEW _gizmosql_system.main.leak AS SELECT 1").status();
+  ASSERT_FALSE(st.ok());
+  EXPECT_NE(st.ToString().find("is read-only"), std::string::npos) << st.ToString();
+  // The views list only what joe may list (here: all catalogs, no tenant).
+  ExpectBlocked(*joe_, "SELECT * FROM secrets", "no SELECT privilege on table");
 }
 
 TEST_F(RbacEnforcementFixture, TheCheckCannotBeSwitchedOff) {

@@ -136,4 +136,9 @@ std::optional<SystemPrivilege> SystemPrivilegeFromName(const std::string& name) 
   return std::nullopt;
 }
 
+std::string HiddenObjectMessage(const std::string& user_name) {
+  return "GizmoSQL blocked this statement: it names a catalog, schema, table or view that does not "
+         "exist, or that user " + user_name + " cannot see";
+}
+
 }  // namespace gizmosql::enterprise::rbac

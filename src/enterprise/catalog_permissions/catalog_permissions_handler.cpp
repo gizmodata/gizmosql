@@ -102,7 +102,9 @@ CatalogAccessLevel GetCatalogAccess(
 
   // Runtime check: if catalog permissions feature is not licensed, grant full access
   // to all other catalogs (backward compatible with Core edition behavior)
-  if (!EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+  // (Access control's tenant isolation sets these rules too, under its own license.)
+  if (!EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable() &&
+      !EnterpriseFeatures::Instance().IsRbacAvailable()) {
     return CatalogAccessLevel::kWrite;
   }
 
@@ -317,7 +319,8 @@ std::vector<std::string> GetAllowedCatalogs(
     const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
     const std::string& log_catalog) {
   // No filtering if feature not licensed or no rules defined
-  if (!EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable()) {
+  if (!EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable() &&
+      !EnterpriseFeatures::Instance().IsRbacAvailable()) {
     return {};
   }
   if (client_session.catalog_access.empty()) {

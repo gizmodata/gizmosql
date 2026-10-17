@@ -283,6 +283,15 @@ arrow::Status RbacStore::InitializeSchema() {
           "VARCHAR NOT NULL, object_name VARCHAR NOT NULL, object_type VARCHAR NOT NULL, "
           "owner_kind VARCHAR NOT NULL, owner_id VARCHAR NOT NULL, definition_hash VARCHAR NOT "
           "NULL)",
+      "CREATE TABLE IF NOT EXISTS " + T("tenants") +
+          " (tenant_id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, name_key VARCHAR NOT NULL "
+          "UNIQUE, default_catalog VARCHAR NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS " + T("principal_tenants") +
+          " (principal_kind VARCHAR NOT NULL, principal_id VARCHAR NOT NULL, tenant_id VARCHAR NOT "
+          "NULL, PRIMARY KEY (principal_kind, principal_id))",
+      "CREATE TABLE IF NOT EXISTS " + T("catalog_tenants") +
+          " (catalog_key VARCHAR PRIMARY KEY, catalog_name VARCHAR NOT NULL, tenant_id VARCHAR NOT "
+          "NULL)",
       "CREATE TABLE IF NOT EXISTS " + T("user_attributes") +
           " (user_id VARCHAR NOT NULL, attribute VARCHAR NOT NULL, value VARCHAR NOT NULL, "
           "PRIMARY KEY (user_id, attribute))",
@@ -462,10 +471,32 @@ arrow::Result<std::shared_ptr<const Snapshot>> RbacStore::LoadLocked() {
          GetString(*mb, 3, r), GetString(*mb, 4, r), FromJson(GetString(*mb, 5, r))});
   }
 
+  std::vector<TenantRecord> tenants;
+  ARROW_ASSIGN_OR_RAISE(auto tn, Run(conn, "SELECT tenant_id, name, default_catalog FROM " +
+                                               T("tenants") + " ORDER BY name_key"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*tn); ++r) {
+    tenants.push_back({GetString(*tn, 0, r), GetString(*tn, 1, r), GetString(*tn, 2, r)});
+  }
+  std::vector<PrincipalTenantRecord> principal_tenants;
+  ARROW_ASSIGN_OR_RAISE(auto pt, Run(conn, "SELECT principal_kind, principal_id, tenant_id FROM " +
+                                               T("principal_tenants")));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*pt); ++r) {
+    principal_tenants.push_back({GetString(*pt, 0, r) == "role" ? PrincipalKind::kRole
+                                                                : PrincipalKind::kUser,
+                                 GetString(*pt, 1, r), GetString(*pt, 2, r)});
+  }
+  std::vector<CatalogTenantRecord> catalog_tenants;
+  ARROW_ASSIGN_OR_RAISE(auto ct, Run(conn, "SELECT catalog_name, tenant_id FROM " +
+                                               T("catalog_tenants") + " ORDER BY catalog_key"));
+  for (dd::idx_t r = 0; r < compat::ResultRowCount(*ct); ++r) {
+    catalog_tenants.push_back({GetString(*ct, 0, r), GetString(*ct, 1, r)});
+  }
+
   return std::make_shared<const Snapshot>(
       version, std::move(users), std::move(roles), std::move(memberships), std::move(grants),
       std::move(owners), std::move(system_privileges), std::move(row_policies),
-      std::move(masking_policies), std::move(mask_bindings));
+      std::move(masking_policies), std::move(mask_bindings), std::move(tenants),
+      std::move(principal_tenants), std::move(catalog_tenants));
 }
 
 arrow::Status RbacStore::Mutate(
@@ -550,6 +581,50 @@ arrow::Status StoreTransaction::SetUserAttribute(const std::string& user_id,
       .status();
 }
 
+arrow::Status StoreTransaction::UpsertTenant(const TenantRecord& t) {
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("tenants") + " WHERE tenant_id = $1",
+                          {Text(t.id)})
+                          .status());
+  return Run(conn_, "INSERT INTO " + T("tenants") + " VALUES ($1, $2, $3, $4)",
+             {Text(t.id), Text(t.name), Text(FoldIdentifier(t.name)), Text(t.default_catalog)})
+      .status();
+}
+
+arrow::Status StoreTransaction::DeleteTenant(const std::string& tenant_id) {
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("catalog_tenants") + " WHERE tenant_id = $1",
+                          {Text(tenant_id)})
+                          .status());
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("principal_tenants") + " WHERE tenant_id = $1",
+                          {Text(tenant_id)})
+                          .status());
+  return Run(conn_, "DELETE FROM " + T("tenants") + " WHERE tenant_id = $1", {Text(tenant_id)})
+      .status();
+}
+
+arrow::Status StoreTransaction::SetPrincipalTenant(PrincipalKind kind, const std::string& id,
+                                                   const std::string& tenant_id) {
+  const std::string kind_name = kind == PrincipalKind::kRole ? "role" : "user";
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("principal_tenants") +
+                                     " WHERE principal_kind = $1 AND principal_id = $2",
+                          {Text(kind_name), Text(id)})
+                          .status());
+  if (tenant_id.empty()) return arrow::Status::OK();
+  return Run(conn_, "INSERT INTO " + T("principal_tenants") + " VALUES ($1, $2, $3)",
+             {Text(kind_name), Text(id), Text(tenant_id)})
+      .status();
+}
+
+arrow::Status StoreTransaction::SetCatalogTenant(const std::string& catalog,
+                                                 const std::string& tenant_id) {
+  ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("catalog_tenants") + " WHERE catalog_key = $1",
+                          {Text(FoldIdentifier(catalog))})
+                          .status());
+  if (tenant_id.empty()) return arrow::Status::OK();
+  return Run(conn_, "INSERT INTO " + T("catalog_tenants") + " VALUES ($1, $2, $3)",
+             {Text(FoldIdentifier(catalog)), Text(catalog), Text(tenant_id)})
+      .status();
+}
+
 arrow::Status StoreTransaction::UpsertRowPolicy(const RowPolicyRecord& p) {
   ARROW_RETURN_NOT_OK(DeleteRowPolicy(p.id));
   return Run(conn_, "INSERT INTO " + T("row_policies") +
@@ -606,6 +681,7 @@ arrow::Status StoreTransaction::DeleteUser(const std::string& user_id) {
   ARROW_RETURN_NOT_OK(Run(conn_, "DELETE FROM " + T("user_attributes") + " WHERE user_id = $1",
                           {Text(user_id)})
                           .status());
+  ARROW_RETURN_NOT_OK(SetPrincipalTenant(PrincipalKind::kUser, user_id, ""));
   return Run(conn_, "DELETE FROM " + T("users") + " WHERE user_id = $1", {Text(user_id)})
       .status();
 }
@@ -627,6 +703,7 @@ arrow::Status StoreTransaction::DeleteRole(const std::string& role_id) {
   ARROW_RETURN_NOT_OK(
       Run(conn_, "DELETE FROM " + T("system_privileges") + " WHERE role_id = $1", {Text(role_id)})
           .status());
+  ARROW_RETURN_NOT_OK(SetPrincipalTenant(PrincipalKind::kRole, role_id, ""));
   return Run(conn_, "DELETE FROM " + T("roles") + " WHERE role_id = $1", {Text(role_id)})
       .status();
 }

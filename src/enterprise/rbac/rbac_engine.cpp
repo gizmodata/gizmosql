@@ -93,6 +93,33 @@ arrow::Status CheckNameFree(const Snapshot& snap, const std::string& name) {
   return arrow::Status::OK();
 }
 
+// The tenant a user or role name belongs to: "tenant/name" names a tenant's
+// principal, a plain name a system-scope one. "" for system scope.
+arrow::Result<std::string> TenantForName(const Snapshot& snap, const std::string& name) {
+  const auto slash = name.find('/');
+  if (slash == std::string::npos) return std::string();
+  const std::string tenant_name = name.substr(0, slash), rest = name.substr(slash + 1);
+  if (tenant_name.empty() || rest.empty() || rest.find('/') != std::string::npos) {
+    return AccessControlError("a tenant's users and roles are named tenant/name");
+  }
+  const auto* tenant = snap.FindTenantByName(tenant_name);
+  if (!tenant) return AccessControlError("tenant " + tenant_name + " does not exist");
+  return tenant->id;
+}
+
+// Does the principal hold the tenant's tenant_admin role?
+bool IsTenantAdmin(const Snapshot& snap, const Principal& actor, const std::string& tenant_id) {
+  if (tenant_id.empty() || actor.superuser) return false;
+  const RoleRecord* admin = snap.TenantRole(tenant_id, kTenantAdminSuffix);
+  return admin && snap.RolesOf(actor).count(admin->id) > 0;
+}
+
+std::string TenantName(const Snapshot& snap, const std::string& tenant_id) {
+  if (tenant_id.empty()) return "the system scope";
+  const auto* t = snap.FindTenantById(tenant_id);
+  return "tenant " + (t ? t->name : tenant_id);
+}
+
 std::vector<std::string> OwnedObjects(const Snapshot& snap, OwnerKind kind, const std::string& id) {
   std::vector<std::string> owned;
   for (const auto& o : snap.owners()) {
@@ -323,8 +350,19 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       std::holds_alternative<CreateRoleCommand>(command) ||
       std::holds_alternative<DropRoleCommand>(command);
   if (!actor.superuser && user_or_role_ddl) {
-    return AccessControlError("GizmoSQL blocked " + CommandKind(command) +
-                              ": only administrators manage users and roles on this server");
+    // A tenant admin manages the users and roles of its own tenant.
+    std::string name;
+    if (const auto* c = std::get_if<CreateUserCommand>(&command)) name = c->name;
+    if (const auto* c = std::get_if<AlterUserCommand>(&command)) name = c->name;
+    if (const auto* c = std::get_if<DropUserCommand>(&command)) name = c->name;
+    if (const auto* c = std::get_if<CreateRoleCommand>(&command)) name = c->name;
+    if (const auto* c = std::get_if<DropRoleCommand>(&command)) name = c->name;
+    auto snap = snapshot();
+    auto tenant = TenantForName(*snap, name);
+    if (!tenant.ok() || !IsTenantAdmin(*snap, actor, *tenant)) {
+      return AccessControlError("GizmoSQL blocked " + CommandKind(command) +
+                                ": only administrators manage users and roles on this server");
+    }
   }
 
   CommandResult result;
@@ -390,8 +428,11 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
           IdentifiersEqual(c->name, options_.administrator_name)) {
         return AccessControlError(c->name + " is the server administrator's name");
       }
+      ARROW_ASSIGN_OR_RAISE(auto tenant, TenantForName(snap, c->name));
       message = "User " + c->name + " created";
-      return txn.InsertUser({StoreTransaction::NewId(), c->name, hash, true});
+      UserRecord user{StoreTransaction::NewId(), c->name, hash, true, {}};
+      ARROW_RETURN_NOT_OK(txn.InsertUser(user));
+      return txn.SetPrincipalTenant(PrincipalKind::kUser, user.id, tenant);
     }));
     return Message(message);
   }
@@ -478,8 +519,11 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         return arrow::Status::OK();
       }
       ARROW_RETURN_NOT_OK(CheckNameFree(snap, c->name));
+      ARROW_ASSIGN_OR_RAISE(auto tenant, TenantForName(snap, c->name));
       message = "Role " + c->name + " created";
-      return txn.InsertRole({StoreTransaction::NewId(), c->name, false});
+      RoleRecord role{StoreTransaction::NewId(), c->name, false};
+      ARROW_RETURN_NOT_OK(txn.InsertRole(role));
+      return txn.SetPrincipalTenant(PrincipalKind::kRole, role.id, tenant);
     }));
     return Message(message);
   }
@@ -517,7 +561,8 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         if (role->id == kPublicRoleId) {
           return AccessControlError("every user already holds PUBLIC; it cannot be granted or revoked");
         }
-        if (!snap.CanAdminRole(actor, role->id)) {
+        const std::string role_tenant = snap.TenantOf(PrincipalKind::kRole, role->id);
+        if (!snap.CanAdminRole(actor, role->id) && !IsTenantAdmin(snap, actor, role_tenant)) {
           return AccessControlError("GizmoSQL blocked " + CommandKind(command) + ": user " +
                                     actor.user_name + " may not grant or revoke role " +
                                     role->name + " (only an administrator, or a holder of it "
@@ -525,6 +570,11 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         }
         for (const auto& g : c->grantees) {
           ARROW_ASSIGN_OR_RAISE(auto grantee, ResolveGrantee(snap, g));
+          if (snap.TenantOf(grantee.kind, grantee.id) != role_tenant) {
+            return AccessControlError("role " + role->name + " belongs to " +
+                                      TenantName(snap, role_tenant) + " and " + grantee.name +
+                                      " does not: roles never cross tenants");
+          }
           const MembershipRecord* existing = nullptr;
           for (const auto& m : snap.memberships()) {
             if (m.member_kind == grantee.kind && m.member_id == grantee.id && m.role_id == role->id) {
@@ -563,7 +613,8 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
               continue;
             }
             // Others revoke only what they granted; the administrator, anything.
-            if (!actor.superuser && existing->granted_by != grantor) {
+            if (!actor.superuser && existing->granted_by != grantor &&
+                !IsTenantAdmin(snap, actor, role_tenant)) {
               return AccessControlError("GizmoSQL blocked REVOKE: " + grantee.name + " holds " +
                                         role->name + " from another grantor; only that grantor "
                                         "or an administrator can revoke it");
@@ -624,6 +675,12 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         if (grantee.kind != PrincipalKind::kRole) {
           return AccessControlError("privileges are granted to roles, not users. Grant them to a "
                                     "role, then GRANT the role TO USER " + grantee.name);
+        }
+        const std::string role_tenant = snap.TenantOf(PrincipalKind::kRole, grantee.id);
+        if (!role_tenant.empty() && snap.TenantOfCatalog(target.catalog) != role_tenant) {
+          return AccessControlError("role " + grantee.name + " belongs to " +
+                                    TenantName(snap, role_tenant) + "; it can hold privileges "
+                                    "only on that tenant's catalogs");
         }
         grantees.push_back(std::move(grantee));
       }
@@ -765,6 +822,10 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
             return AccessControlError("privileges are granted to roles, not users. Grant them to a "
                                       "role, then GRANT the role TO USER " + grantee.name);
           }
+          if (c->grant && !snap.TenantOf(PrincipalKind::kRole, grantee.id).empty()) {
+            return AccessControlError("system privileges reach the whole server; a tenant's role "
+                                      "(" + grantee.name + ") cannot hold them");
+          }
           std::vector<SystemPrivilegeRecord> matching;
           const SystemPrivilegeRecord* own = nullptr;
           for (const auto& r : snap.system_privileges()) {
@@ -812,6 +873,158 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
       return arrow::Status::OK();
     }));
     return with_cascade_note(Join(done, "; "));
+  }
+
+  // ---- tenants ---------------------------------------------------------------
+  if (std::holds_alternative<TenantCommand>(command) ||
+      std::holds_alternative<CatalogTenantCommand>(command) ||
+      std::holds_alternative<TenantDefaultCatalogCommand>(command)) {
+    if (!actor.superuser) {
+      return AccessControlError("GizmoSQL blocked " + CommandKind(command) +
+                                ": only administrators manage tenants");
+    }
+  }
+  if (const auto* c = std::get_if<TenantCommand>(&command)) {
+    CommandResult result;
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      const auto* existing = snap.FindTenantByName(c->name);
+      if (c->create) {
+        if (existing) {
+          if (c->if_exists) {
+            message = "Tenant " + c->name + " already exists";
+            return arrow::Status::OK();
+          }
+          return AccessControlError("tenant " + c->name + " already exists");
+        }
+        if (c->name.find('/') != std::string::npos) return AccessControlError("a tenant name cannot contain /");
+        TenantRecord tenant{StoreTransaction::NewId(), c->name, ""};
+        ARROW_RETURN_NOT_OK(txn.UpsertTenant(tenant));
+        for (const char* suffix : {kTenantPublicSuffix, kTenantAdminSuffix}) {
+          ARROW_RETURN_NOT_OK(CheckNameFree(snap, c->name + suffix));
+          RoleRecord role{StoreTransaction::NewId(), c->name + suffix, true};
+          ARROW_RETURN_NOT_OK(txn.InsertRole(role));
+          ARROW_RETURN_NOT_OK(txn.SetPrincipalTenant(PrincipalKind::kRole, role.id, tenant.id));
+        }
+        message = "Tenant " + c->name + " created, with roles " + c->name + kTenantPublicSuffix +
+                  " and " + c->name + kTenantAdminSuffix;
+        return arrow::Status::OK();
+      }
+      if (!existing) {
+        if (c->if_exists) {
+          message = "Tenant " + c->name + " does not exist";
+          return arrow::Status::OK();
+        }
+        return AccessControlError("tenant " + c->name + " does not exist");
+      }
+      std::vector<std::string> members;
+      for (const auto& u : snap.users()) {
+        if (snap.TenantOf(PrincipalKind::kUser, u.id) == existing->id) members.push_back(u.name);
+      }
+      if (!members.empty()) {
+        std::sort(members.begin(), members.end());
+        return AccessControlError("tenant " + existing->name + " still has users (" +
+                                  Join(members) + "); drop them first");
+      }
+      if (!snap.TenantCatalogs(existing->id).empty()) {
+        return AccessControlError("tenant " + existing->name +
+                                  " still has catalogs; ALTER CATALOG ... UNSET TENANT first");
+      }
+      for (const auto& r : snap.roles()) {
+        if (snap.TenantOf(PrincipalKind::kRole, r.id) == existing->id) {
+          ARROW_RETURN_NOT_OK(txn.DeleteRole(r.id));
+        }
+      }
+      message = "Tenant " + existing->name + " dropped";
+      return txn.DeleteTenant(existing->id);
+    }));
+    return Message(message);
+  }
+  if (const auto* c = std::get_if<CatalogTenantCommand>(&command)) {
+    ARROW_ASSIGN_OR_RAISE(auto catalog, resolver.ResolveCatalog(c->catalog));
+    CommandResult result;
+    std::vector<std::string> affected_users;
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      const std::string current = snap.TenantOfCatalog(catalog);
+      auto users_of = [&](const std::string& tenant_id) {
+        for (const auto& u : snap.users()) {
+          if (!tenant_id.empty() && snap.TenantOf(PrincipalKind::kUser, u.id) == tenant_id) {
+            affected_users.push_back(u.id);
+          }
+        }
+      };
+      if (!c->tenant) {
+        if (current.empty()) {
+          message = "Catalog " + catalog + " belongs to no tenant";
+          return arrow::Status::OK();
+        }
+        // The tenant's roles lose what they held there.
+        for (const auto& g : snap.grants()) {
+          if (IdentifiersEqual(g.target.catalog, catalog) &&
+              snap.TenantOf(PrincipalKind::kRole, g.role_id) == current) {
+            ARROW_RETURN_NOT_OK(txn.DeleteGrant(g.id));
+          }
+        }
+        users_of(current);
+        message = "Catalog " + catalog + " no longer belongs to " + TenantName(snap, current);
+        return txn.SetCatalogTenant(catalog, "");
+      }
+      const auto* tenant = snap.FindTenantByName(*c->tenant);
+      if (!tenant) return AccessControlError("tenant " + *c->tenant + " does not exist");
+      if (!current.empty() && current != tenant->id) {
+        return AccessControlError("catalog " + catalog + " belongs to " + TenantName(snap, current) +
+                                  "; UNSET TENANT first");
+      }
+      ARROW_RETURN_NOT_OK(txn.SetCatalogTenant(catalog, tenant->id));
+      // The tenant admin may do everything there, and grant it on.
+      const RoleRecord* admin = snap.TenantRole(tenant->id, kTenantAdminSuffix);
+      if (!admin) return AccessControlError("tenant " + tenant->name + " has no tenant_admin role");
+      for (Privilege p : {Privilege::kSelect, Privilege::kInsert, Privilege::kUpdate, Privilege::kDelete,
+                          Privilege::kCreateTable, Privilege::kCreateView, Privilege::kCreateSchema,
+                          Privilege::kDropTable, Privilege::kDropView, Privilege::kDropSchema,
+                          Privilege::kAlterTable, Privilege::kAlterView}) {
+        bool have = false;
+        for (const auto& g : snap.grants()) {
+          have = have || (g.role_id == admin->id && g.scope == GrantScope::kCatalog &&
+                          g.privilege == p && IdentifiersEqual(g.target.catalog, catalog) &&
+                          g.granted_by.empty());
+        }
+        if (have) continue;
+        ObjectGrantRecord grant;
+        grant.id = StoreTransaction::NewId();
+        grant.role_id = admin->id;
+        grant.scope = GrantScope::kCatalog;
+        grant.target.catalog = catalog;
+        grant.privilege = p;
+        grant.grant_option = true;
+        ARROW_RETURN_NOT_OK(txn.InsertGrant(grant));
+      }
+      users_of(tenant->id);
+      message = "Catalog " + catalog + " now belongs to tenant " + tenant->name;
+      return arrow::Status::OK();
+    }));
+    result = Message(message);
+    // What the tenant's users may see changed: their sessions start over.
+    result.terminate_user_ids = affected_users;
+    return result;
+  }
+  if (const auto* c = std::get_if<TenantDefaultCatalogCommand>(&command)) {
+    std::string catalog;
+    if (!c->catalog.empty()) {
+      ARROW_ASSIGN_OR_RAISE(catalog, resolver.ResolveCatalog(c->catalog));
+    }
+    ARROW_RETURN_NOT_OK(mutate([&](StoreTransaction& txn, const Snapshot& snap) -> arrow::Status {
+      const auto* tenant = snap.FindTenantByName(c->tenant);
+      if (!tenant) return AccessControlError("tenant " + c->tenant + " does not exist");
+      if (!catalog.empty() && snap.TenantOfCatalog(catalog) != tenant->id) {
+        return AccessControlError("catalog " + catalog + " does not belong to tenant " + tenant->name);
+      }
+      TenantRecord updated = *tenant;
+      updated.default_catalog = catalog;
+      message = catalog.empty() ? "Tenant " + tenant->name + " has no default catalog"
+                                : "Tenant " + tenant->name + "'s default catalog is " + catalog;
+      return txn.UpsertTenant(updated);
+    }));
+    return Message(message);
   }
 
   // ---- row policies --------------------------------------------------------
@@ -960,6 +1173,24 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
     }));
     return Message(message);
   }
+  if (std::holds_alternative<ShowTenantsCommand>(command)) {
+    // The administrator sees every tenant; a tenant's users see their own.
+    auto snap = snapshot();
+    const std::string own = actor.superuser ? "" : snap->TenantOfPrincipal(actor);
+    CommandResult result;
+    result.column_names = {"tenant", "default_catalog", "catalogs", "users", "roles"};
+    for (const auto& t : snap->tenants()) {
+      if (!actor.superuser && t.id != own) continue;
+      const auto tenant_catalogs = snap->TenantCatalogs(t.id);
+      const std::vector<std::string> catalogs(tenant_catalogs.begin(), tenant_catalogs.end());
+      int64_t users = 0, roles = 0;
+      for (const auto& u : snap->users()) users += snap->TenantOf(PrincipalKind::kUser, u.id) == t.id;
+      for (const auto& r : snap->roles()) roles += snap->TenantOf(PrincipalKind::kRole, r.id) == t.id;
+      result.rows.push_back({t.name, t.default_catalog, Join(catalogs), std::to_string(users),
+                             std::to_string(roles)});
+    }
+    return result;
+  }
   if (const auto* c = std::get_if<ShowPoliciesCommand>(&command)) {
     auto snap = snapshot();
     CommandResult result;
@@ -1025,6 +1256,11 @@ arrow::Result<CommandResult> RbacEngine::Execute(const RbacCommand& command,
         ARROW_ASSIGN_OR_RAISE(owner, ResolveGrantee(snap, c->new_owner));
         record.owner_kind = owner.kind == PrincipalKind::kUser ? OwnerKind::kUser : OwnerKind::kRole;
         record.owner_id = owner.id;
+        const std::string owner_tenant = snap.TenantOf(owner.kind, owner.id);
+        if (!owner_tenant.empty() && snap.TenantOfCatalog(obj.path.catalog) != owner_tenant) {
+          return AccessControlError(owner.name + " belongs to " + TenantName(snap, owner_tenant) +
+                                    "; it can own objects only in that tenant's catalogs");
+        }
       }
       if (!actor.superuser) {
         // An owner may hand the object to itself or to a role it holds; giving

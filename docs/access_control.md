@@ -260,6 +260,99 @@ hold none, while its owner holds `READ FILESYSTEM`. `MANAGE EXTENSIONS`,
 `MANAGE SECRETS` and `MANAGE CONFIG` reach the whole server: grant them only to
 operators you would trust with it.
 
+## Tenants
+
+Several customers (tenants) can share one server, each seeing only its own
+catalogs. The administrator creates a tenant and gives it catalogs:
+
+```sql
+ATTACH 'acme.duckdb' AS acme_db;        -- put this in --init-sql-commands
+CREATE TENANT acme;
+ALTER CATALOG acme_db SET TENANT acme;  -- or ALTER DATABASE
+ALTER TENANT acme SET DEFAULT CATALOG acme_db;
+CREATE USER acme/boss PASSWORD 'boss-password-123';
+GRANT acme/tenant_admin TO acme/boss;
+```
+
+A tenant's users and roles are named `tenant/name`. `CREATE TENANT` makes two
+roles: `acme/PUBLIC`, which every acme user holds instead of `PUBLIC`, and
+`acme/tenant_admin`, which holds every privilege on the tenant's catalogs `WITH
+GRANT OPTION` and lets its members create and drop the tenant's users and roles.
+So the tenant manages itself:
+
+```sql
+-- as acme/boss
+CREATE USER acme/joe PASSWORD 'joe-password-123';
+CREATE ROLE acme/readers;
+GRANT SELECT ON acme_db.main.orders TO acme/readers;
+GRANT acme/readers TO acme/joe;
+```
+
+A tenant's users see their tenant's catalogs (plus `system`, `temp`, and
+`_gizmosql_system`, which holds the views JDBC metadata calls use). Everything
+else is invisible: a statement that names another tenant's catalog, schema or
+table fails exactly like one that names something that does not exist:
+
+```text
+GizmoSQL blocked this statement: it names a catalog, schema, table or view that
+does not exist, or that user acme/joe cannot see
+```
+
+The same goes for `USE`, `SET search_path`, `DESCRIBE` and
+`pragma_table_info()`. Metadata (`duckdb_tables()` and the other `duckdb_*()`
+functions, `information_schema`, `SHOW TABLES`, the Flight SQL metadata calls
+and GizmoSQL's JDBC helper views) lists only the tenant's catalogs, also when read
+through a view.
+
+`SHOW TENANTS` lists every tenant for the administrator, and their own tenant for
+a tenant's users:
+
+```text
+tenant,default_catalog,catalogs,users,roles
+acme,acme_db,acme_db,2,3
+```
+
+Tenants never mix:
+
+- a tenant's roles hold privileges only on its catalogs, and no system
+  privileges;
+- roles are granted only to users and roles of the same tenant;
+- a tenant admin manages only its own tenant's users and roles;
+- only the administrator creates, drops and changes tenants and their catalogs.
+  `DROP TENANT` is refused while the tenant still has users or catalogs.
+
+Giving a tenant a catalog or taking one away (`ALTER CATALOG ... UNSET TENANT`,
+which also removes the tenant roles' grants on it) ends the tenant's sessions on
+every node, so nobody keeps the old view of the catalogs.
+
+## Audit records
+
+Every access-control record in the server log (`"kind":"access_control"`:
+refused statements, allowed ones with the objects they read and wrote,
+access-control statements, sessions ended by an access change) is part of a hash
+chain. Each record carries `audit_chain`, `audit_seq`, `audit_prev` and
+`audit_hash`. Editing, removing, repeating or inserting a record breaks the
+chain. Write the log as JSON (`--log-format json --log-file ...`) and check it
+with:
+
+```bash
+gizmosql_server --verify-audit-log server.log
+```
+
+```text
+chain c09696f7e1e4e4d7: sequence 1 to 9
+9 audit records, intact
+```
+
+The exit status is 0 for an intact log and 1 otherwise, with a `PROBLEM:` line
+for each broken record. Set `GIZMOSQL_AUDIT_CHAIN_KEY` on the server, and again
+when checking, to seal records with HMAC-SHA256: without the key nobody can
+rebuild a consistent chain after editing the log. Without a key, records are
+sealed with plain SHA-256, which shows accidental and partial edits. Each server
+start begins a new chain. `--verify-audit-log-partial` accepts a rotated log that
+begins in the middle of a chain. The newest records can be cut off a log file
+without a trace, so ship the log to another system as it is written.
+
 ## What store users cannot do
 
 Besides what their grants and system privileges do not cover, store users cannot:
@@ -281,14 +374,17 @@ whether or not queries are logged.
 
 ## Limits of this release
 
-- Only the administrator creates and drops users and roles, and manages row and
-  masking policies.
+- Only the administrator (and, within a tenant, its tenant admins) creates and drops
+  users and roles, and only the administrator manages row and masking policies.
 - Store users cannot `INSERT`, `UPDATE` or `MERGE` into a table with row or
   masking policies yet; `DELETE` removes only rows they can see. Row policies
   cannot read other tables (mapping tables) yet.
 - A user's privileges are those of all their roles together (there is no `SET ROLE`).
-- Names are not secret: catalog functions such as `duckdb_tables()` and the Flight
-  SQL metadata calls list every table and view, including ones a user cannot read.
+- Names are not secret outside tenants: for a user who belongs to no tenant,
+  catalog functions such as `duckdb_tables()` and the Flight SQL metadata calls list
+  every table and view, including ones the user cannot read.
+- A tenant's users cannot read a view in their catalogs that reads another
+  tenant's catalog, even one the administrator made.
 - Ownership follows an object's name: renaming a table or view needs its owner (or
   `ALTER TABLE` / `ALTER VIEW`), and the renamed object has no owner on record.
 - On the [LTS channel](lts_channel.md) (DuckDB 1.4), a view reads with the caller's

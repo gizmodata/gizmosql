@@ -59,6 +59,7 @@
 #include "session_context.h"
 #include "shutdown_state.h"
 #include "admin_command_guard.h"
+#include "gizmosql_audit.h"
 #include "gizmosql_telemetry.h"
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -964,24 +965,82 @@ class DirectExecutionAccessGuard : public duckdb::ClientContextState {
 
 }  // namespace
 
+#ifdef GIZMOSQL_ENTERPRISE
+namespace {
+
+bool ContainsWordIgnoringCase(const std::string& text, const std::string& word) {
+  if (word.empty()) return false;
+  auto lower = [](std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+  };
+  const std::string t = lower(text), w = lower(word);
+  for (size_t at = t.find(w); at != std::string::npos; at = t.find(w, at + 1)) {
+    const bool start = at == 0 || !(std::isalnum(static_cast<unsigned char>(t[at - 1])) || t[at - 1] == '_');
+    const size_t end = at + w.size();
+    const bool stop = end >= t.size() || !(std::isalnum(static_cast<unsigned char>(t[end])) || t[end] == '_');
+    if (start && stop) return true;
+  }
+  return false;
+}
+
+// A tenant's user must learn nothing about what other tenants have. An error
+// about a catalog, schema or table it cannot see reads exactly like one about
+// one that does not exist, and so does any error that names a catalog it
+// cannot see (DuckDB's suggestions and candidate columns can).
+arrow::Status ForTenantUser(const std::shared_ptr<ClientSession>& session, arrow::Status status) {
+  if (status.ok() || session->rbac_tenant_id.empty()) return status;
+  const std::string& message = status.message();
+  bool hide = message.find("does not exist") != std::string::npos ||
+              message.find("access to catalog") != std::string::npos ||
+              message.find("system-managed catalog") != std::string::npos;
+  if (!hide && session->connection) {
+    auto& connection = session->connection->Get();
+    gizmosql::enterprise::rbac::RbacSessionState::BypassScope internal(*connection.context);
+    auto databases = connection.Query("SELECT database_name FROM duckdb_databases()");
+    if (!databases->HasError()) {
+      const auto rows = gizmosql::ddb::compat::ResultRowCount(*databases);
+      for (duckdb::idx_t r = 0; r < rows && !hide; ++r) {
+        const std::string name =
+            gizmosql::ddb::compat::ResultValue(*databases, 0, r).ToString();
+        bool visible = name == "system" || name == "temp" || name == "_gizmosql_system";
+        for (const auto& rule : session->catalog_access) {
+          visible = visible || (rule.access != CatalogAccessLevel::kNone && rule.catalog == name);
+        }
+        hide = !visible && ContainsWordIgnoringCase(message, name);
+      }
+    } else {
+      hide = true;  // cannot tell: say nothing
+    }
+  }
+  if (!hide) return status;
+  return arrow::Status::Invalid(gizmosql::enterprise::rbac::HiddenObjectMessage(session->username));
+}
+
+}  // namespace
+#endif
+
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
     const std::string& sql, const std::optional<arrow::util::ArrowLogLevel>& log_level,
     const bool& log_queries, const std::shared_ptr<arrow::Schema>& override_schema,
     const std::string& flight_method, bool is_internal) {
 #ifdef GIZMOSQL_ENTERPRISE
-  if (!is_internal && client_session->metrics) {
+  if (!is_internal && (client_session->metrics || !client_session->rbac_tenant_id.empty())) {
     const auto start = std::chrono::steady_clock::now();
     auto result = CreateImpl(client_session, handle, sql, log_level, log_queries,
                              override_schema, flight_method, is_internal);
+    if (result.ok()) return result;
+    const auto status = ForTenantUser(client_session, result.status());
     // A failed parse/bind never reaches Execute(). Account for that request
     // once, using "other" when no trustworthy parsed statement type exists.
-    if (!result.ok())
+    if (client_session->metrics) {
       client_session->metrics->StatementFinished(
-          gizmosql::enterprise::StatementKind::Other, result.status().ToString(),
+          gizmosql::enterprise::StatementKind::Other, status.ToString(),
           std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
               .count());
-    return result;
+    }
+    return status;
   }
 #endif
   return CreateImpl(client_session, handle, sql, log_level, log_queries, override_schema,
@@ -1128,7 +1187,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
       auto executed = engine->Execute(*parsed, actor, resolver);
       if (!executed.ok()) {
         const std::string message = executed.status().message();
-        GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access-control statement refused",
+        GIZMOSQL_AUDIT_SESSION(WARNING, client_session, "Access-control statement refused",
                                {"kind", "access_control"}, {"statement", kind},
                                {"status", "rejected"}, {"error", message},
                                {"statement_id", handle});
@@ -1142,12 +1201,12 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
       for (const auto& user_id : executed->terminate_user_ids) {
         const int ended = server->TerminateRbacUserSessions(user_id);
         if (ended > 0) {
-          GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Ended sessions of an access-control user",
+          GIZMOSQL_AUDIT_SESSION(INFO, client_session, "Ended sessions of an access-control user",
                                  {"kind", "access_control"}, {"statement", kind},
                                  {"sessions", std::to_string(ended)});
         }
       }
-      GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Access-control statement",
+      GIZMOSQL_AUDIT_SESSION(INFO, client_session, "Access-control statement",
                              {"kind", "access_control"}, {"statement", kind},
                              {"status", "success"}, {"statement_id", handle});
 
@@ -1461,7 +1520,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
         if (!stmt->HasError() && !rbac_state->unchecked() && !accesses.empty()) {
           std::string objects;
           for (const auto& a : accesses) objects += (objects.empty() ? "" : "; ") + a;
-          GIZMOSQL_LOGKV_SESSION(INFO, client_session, "Access control allowed a statement",
+          GIZMOSQL_AUDIT_SESSION(INFO, client_session, "Access control allowed a statement",
                                  {"kind", "access_control"}, {"status", "allowed"},
                                  {"statement_id", handle}, {"objects", objects});
         }
@@ -1527,7 +1586,7 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     // An access-control refusal is always recorded, whether or not queries are logged.
     if (client_session->rbac_enabled &&
         error_message.find("GizmoSQL blocked this statement") != std::string::npos) {
-      GIZMOSQL_LOGKV_SESSION(WARNING, client_session, "Access control refused a statement",
+      GIZMOSQL_AUDIT_SESSION(WARNING, client_session, "Access control refused a statement",
                              {"kind", "access_control"}, {"status", "denied"},
                              {"statement_id", handle}, {"error", error_message},
                              {"sql", logged_sql});

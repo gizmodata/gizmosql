@@ -16,7 +16,9 @@
 // under the License.
 
 #include "gizmosql_library.h"
+#include "common/include/detail/gizmosql_audit.h"
 #include "common/include/detail/gizmosql_logging.h"
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <boost/program_options.hpp>
@@ -43,6 +45,14 @@ int main(int argc, char** argv) {
             ("help", "produce this help message")
             ("version", "Print the version and exit")
             ("print-duckdb-version", "Print the linked DuckDB version and exit")
+            ("verify-audit-log", po::value<std::string>(),
+             "Check the access-control audit records in a JSON-format server log "
+             "(--log-format json) for edits, removals and reordering, and exit "
+             "(0 = intact, 1 = not). Records sealed with GIZMOSQL_AUDIT_CHAIN_KEY "
+             "need the same key in the environment")
+            ("verify-audit-log-partial",
+             "With --verify-audit-log: the log may begin in the middle of a chain "
+             "(a rotated log file)")
             ("verify-tls", po::value<std::string>(),
              "Diagnostic: perform a verified HTTPS GET to the given URL using the "
              "system CA trust store (the same path JWKS/OAuth use) and exit "
@@ -374,6 +384,24 @@ int main(int argc, char** argv) {
   if (vm.count("print-duckdb-version")) {
     std::cout << GetDuckDBVersion() << "\n";
     return 0;
+  }
+
+  if (vm.count("verify-audit-log")) {
+    const auto path = vm["verify-audit-log"].as<std::string>();
+    std::ifstream in(path);
+    if (!in) {
+      std::cerr << "Cannot read " << path << "\n";
+      return 1;
+    }
+    const auto report = gizmosql::VerifyAuditLog(
+        in, gizmosql::AuditChainKeyFromEnvironment(),
+        /*partial=*/vm.count("verify-audit-log-partial") > 0);
+    for (const auto& chain : report.chains) std::cout << "chain " << chain << "\n";
+    for (const auto& problem : report.problems) std::cout << "PROBLEM: " << problem << "\n";
+    if (report.records == 0) std::cout << "PROBLEM: no access-control audit records found\n";
+    std::cout << report.records << " audit records, "
+              << (report.ok() ? "intact" : "NOT intact") << "\n";
+    return report.ok() ? 0 : 1;
   }
 
   if (vm.count("verify-tls")) {

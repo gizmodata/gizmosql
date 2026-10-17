@@ -70,6 +70,10 @@ std::string SystemPrivilegeName(SystemPrivilege privilege);
 const std::vector<SystemPrivilege>& AllSystemPrivileges();
 std::optional<SystemPrivilege> SystemPrivilegeFromName(const std::string& name);
 
+// What a tenant's user is told about a catalog, schema, table or view it
+// cannot see: exactly what it is told about one that does not exist.
+std::string HiddenObjectMessage(const std::string& user_name);
+
 // What a GRANT is attached to. kObject is one table or view; kSchema and
 // kCatalog grant on every present and future object in the container.
 enum class GrantScope { kObject, kSchema, kCatalog };

@@ -209,6 +209,15 @@ class Parser {
     return SyntaxError(std::string("expected ") + what + " but found '" + Describe(t) + "'");
   }
 
+  // A user or role name: name, or tenant/name for a tenant's users and roles.
+  arrow::Result<std::string> ParsePrincipalName(const char* what) {
+    ARROW_ASSIGN_OR_RAISE(auto first, ParseIdentifier(what));
+    if (!PeekSymbol("/")) return first;
+    ++pos_;
+    ARROW_ASSIGN_OR_RAISE(auto second, ParseIdentifier(what));
+    return first + "/" + second;
+  }
+
   arrow::Result<QualifiedName> ParseQualifiedName(const char* what) {
     QualifiedName name;
     ARROW_ASSIGN_OR_RAISE(auto first, ParseIdentifier(what));
@@ -262,11 +271,24 @@ class Parser {
         return ParseCreateMaskingPolicy(or_replace);
       }
       if (or_replace) return SyntaxError("expected ROW POLICY or MASKING POLICY after CREATE OR REPLACE");
+      if (AcceptKeyword("TENANT")) {
+        TenantCommand cmd;
+        cmd.if_exists = ParseIfNotExists();
+        ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a tenant name"));
+        return cmd;
+      }
       if (AcceptKeyword("USER")) return ParseCreateUser();
       if (AcceptKeyword("ROLE")) return ParseCreateRole();
       return SyntaxError("expected USER or ROLE after CREATE");
     }
     if (AcceptKeyword("DROP")) {
+      if (AcceptKeyword("TENANT")) {
+        TenantCommand cmd;
+        cmd.create = false;
+        cmd.if_exists = ParseIfExists();
+        ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a tenant name"));
+        return cmd;
+      }
       if (PeekKeyword("ROW") && PeekKeyword("POLICY", 1)) {
         pos_ += 2;
         DropRowPolicyCommand cmd;
@@ -287,12 +309,37 @@ class Parser {
       if (!is_user && !PeekKeyword("ROLE")) return SyntaxError("expected USER or ROLE after DROP");
       ++pos_;
       const bool if_exists = ParseIfExists();
-      ARROW_ASSIGN_OR_RAISE(auto name, ParseIdentifier(is_user ? "a user name" : "a role name"));
+      ARROW_ASSIGN_OR_RAISE(auto name, ParsePrincipalName(is_user ? "a user name" : "a role name"));
       if (is_user) return DropUserCommand{std::move(name), if_exists};
       return DropRoleCommand{std::move(name), if_exists};
     }
     if (AcceptKeyword("ALTER")) {
       if (AcceptKeyword("USER")) return ParseAlterUser();
+      if (AcceptKeyword("CATALOG") || AcceptKeyword("DATABASE")) {
+        CatalogTenantCommand cmd;
+        ARROW_ASSIGN_OR_RAISE(cmd.catalog, ParseIdentifier("a catalog name"));
+        if (AcceptKeyword("UNSET")) {
+          ARROW_RETURN_NOT_OK(ExpectKeyword("TENANT"));
+          return cmd;
+        }
+        ARROW_RETURN_NOT_OK(ExpectKeyword("SET"));
+        ARROW_RETURN_NOT_OK(ExpectKeyword("TENANT"));
+        ARROW_ASSIGN_OR_RAISE(auto tenant, ParseIdentifier("a tenant name"));
+        cmd.tenant = std::move(tenant);
+        return cmd;
+      }
+      if (AcceptKeyword("TENANT")) {
+        TenantDefaultCatalogCommand cmd;
+        ARROW_ASSIGN_OR_RAISE(cmd.tenant, ParseIdentifier("a tenant name"));
+        const bool unset = AcceptKeyword("UNSET");
+        if (!unset) ARROW_RETURN_NOT_OK(ExpectKeyword("SET"));
+        ARROW_RETURN_NOT_OK(ExpectKeyword("DEFAULT"));
+        ARROW_RETURN_NOT_OK(ExpectKeyword("CATALOG"));
+        if (!unset) {
+          ARROW_ASSIGN_OR_RAISE(cmd.catalog, ParseIdentifier("a catalog name"));
+        }
+        return cmd;
+      }
       const bool is_view = PeekKeyword("VIEW");
       if (is_view || PeekKeyword("TABLE")) {
         ++pos_;
@@ -319,6 +366,7 @@ class Parser {
         }
         return cmd;
       }
+      if (AcceptKeyword("TENANTS")) return ShowTenantsCommand{};
       if (PeekKeyword("MASKING") && PeekKeyword("POLICIES", 1)) {
         pos_ += 2;
         ShowPoliciesCommand cmd;
@@ -334,7 +382,7 @@ class Parser {
   arrow::Result<RbacCommand> ParseCreateUser() {
     CreateUserCommand cmd;
     cmd.if_not_exists = ParseIfNotExists();
-    ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a user name"));
+    ARROW_ASSIGN_OR_RAISE(cmd.name, ParsePrincipalName("a user name"));
     AcceptKeyword("WITH");
     if (AcceptKeyword("PASSWORD")) {
       ARROW_ASSIGN_OR_RAISE(auto password, ParseStringLiteral("the password"));
@@ -346,13 +394,13 @@ class Parser {
   arrow::Result<RbacCommand> ParseCreateRole() {
     CreateRoleCommand cmd;
     cmd.if_not_exists = ParseIfNotExists();
-    ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a role name"));
+    ARROW_ASSIGN_OR_RAISE(cmd.name, ParsePrincipalName("a role name"));
     return cmd;
   }
 
   arrow::Result<RbacCommand> ParseAlterUser() {
     AlterUserCommand cmd;
-    ARROW_ASSIGN_OR_RAISE(cmd.name, ParseIdentifier("a user name"));
+    ARROW_ASSIGN_OR_RAISE(cmd.name, ParsePrincipalName("a user name"));
     AcceptKeyword("WITH");
     if (AcceptKeyword("PASSWORD")) {
       if (AcceptKeyword("NULL")) {
@@ -421,7 +469,7 @@ class Parser {
     }
     if (AcceptKeyword("TO")) {
       do {
-        ARROW_ASSIGN_OR_RAISE(auto role, ParseIdentifier("a role name"));
+        ARROW_ASSIGN_OR_RAISE(auto role, ParsePrincipalName("a role name"));
         cmd.roles.push_back(std::move(role));
       } while (PeekSymbol(",") && (++pos_, true));
     }
@@ -489,7 +537,7 @@ class Parser {
     if (AcceptKeyword("EXEMPT")) {
       ARROW_RETURN_NOT_OK(ExpectKeyword("ROLE"));
       do {
-        ARROW_ASSIGN_OR_RAISE(auto role, ParseIdentifier("a role name"));
+        ARROW_ASSIGN_OR_RAISE(auto role, ParsePrincipalName("a role name"));
         cmd.exempt_roles.push_back(std::move(role));
       } while (PeekSymbol(",") && (++pos_, true));
     }
@@ -539,7 +587,7 @@ class Parser {
       g.kind = GranteeKind::kRole;
       ++pos_;
     }
-    ARROW_ASSIGN_OR_RAISE(g.name, ParseIdentifier("a user or role name"));
+    ARROW_ASSIGN_OR_RAISE(g.name, ParsePrincipalName("a user or role name"));
     return g;
   }
 
@@ -738,7 +786,7 @@ class Parser {
     cmd.grant = grant;
     cmd.with_admin_option = admin_option_for;
     do {
-      ARROW_ASSIGN_OR_RAISE(auto role, ParseIdentifier("a role name or privilege"));
+      ARROW_ASSIGN_OR_RAISE(auto role, ParsePrincipalName("a role name or privilege"));
       cmd.roles.push_back(std::move(role));
     } while (PeekSymbol(",") && (++pos_, true));
     if (PeekKeyword("ON")) {
@@ -838,10 +886,22 @@ bool LooksLikeRbacStatement(const std::string& sql) {
     return true;
   }
   if (first == "DROP" && is_policy(1)) return true;
+  if ((first == "CREATE" || first == "DROP") && second == "TENANT") return true;
+  if (first == "ALTER" && second == "TENANT") return true;
+  if (first == "ALTER" && (second == "CATALOG" || second == "DATABASE")) {
+    // ALTER CATALOG c SET | UNSET TENANT: ours; anything else is DuckDB's.
+    auto tokens = Tokenize(sql);
+    if (!tokens.ok()) return false;
+    for (const auto& t : *tokens) {
+      if (t.type == TokenType::kWord && KeywordEquals(t.text, "TENANT")) return true;
+    }
+    return false;
+  }
   if (first == "SHOW" && words.size() > 2 && (second == "ROW" || second == "MASKING") &&
       words[2] == "POLICIES") {
     return true;
   }
+  if (first == "SHOW" && second == "TENANTS" && words.size() == 2) return true;
   if (first == "CREATE" || first == "DROP") return second == "USER" || second == "ROLE";
   if (first == "ALTER") {
     if (second == "USER") return true;
@@ -919,6 +979,12 @@ std::string CommandKind(const RbacCommand& command) {
     std::string operator()(const SetColumnMaskCommand& c) const {
       return c.policy ? "SET MASKING POLICY" : "UNSET MASKING POLICY";
     }
+    std::string operator()(const TenantCommand& c) const {
+      return c.create ? "CREATE TENANT" : "DROP TENANT";
+    }
+    std::string operator()(const CatalogTenantCommand&) const { return "ALTER CATALOG"; }
+    std::string operator()(const TenantDefaultCatalogCommand&) const { return "ALTER TENANT"; }
+    std::string operator()(const ShowTenantsCommand&) const { return "SHOW TENANTS"; }
     std::string operator()(const ShowPoliciesCommand& c) const {
       return c.masking ? "SHOW MASKING POLICIES" : "SHOW ROW POLICIES";
     }

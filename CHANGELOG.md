@@ -67,6 +67,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This uses a small hook added to DuckDB's binder at build time
   (`third_party/patch_duckdb.cmake`); on the LTS channel (DuckDB 1.4) views read
   with the caller's rights.
+  Tenants: `CREATE TENANT`, `ALTER CATALOG ... SET TENANT`, `ALTER TENANT ... SET
+  DEFAULT CATALOG`, `SHOW TENANTS`, and users and roles named `tenant/name`. A
+  tenant's users see only its catalogs: another tenant's catalog, schema or table
+  fails exactly like a missing one (in errors, `USE`, `SET search_path`,
+  `DESCRIBE`, `pragma_table_info()`), and every metadata listing (`duckdb_*()`,
+  `information_schema`, `SHOW`, the Flight SQL metadata calls, the JDBC helper
+  views) is limited to the tenant's catalogs on the plan, also through views. Each
+  tenant gets `T/PUBLIC` and `T/tenant_admin`; tenant admins manage their own
+  tenant's users, roles and grants, and nothing crosses a tenant. Changing a
+  tenant's catalogs ends its sessions on every node.
+  Access-control audit records form a hash chain (`audit_chain`, `audit_seq`,
+  `audit_prev`, `audit_hash`), sealed with HMAC-SHA256 when
+  `GIZMOSQL_AUDIT_CHAIN_KEY` is set; `gizmosql_server --verify-audit-log FILE`
+  checks a JSON-format log and reports edited, missing, repeated or reordered
+  records.
+  Store users can read GizmoSQL's JDBC metadata views (`gizmosql_index_info`,
+  `gizmosql_view_definition`) without a grant. A store user's prepared statement
+  with parameters on DuckDB 1.5 (which plans it again for each run) is checked when
+  it is bound, so a denied one fails when prepared without describing its columns,
+  and its run is checked as usual; before, every such statement was refused.
 
 ### Fixed
 - **`KILL SESSION` ran twice through Flight SQL `Execute`.** GizmoSQL's own commands

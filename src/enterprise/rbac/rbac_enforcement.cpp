@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
@@ -31,6 +32,7 @@
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
@@ -44,6 +46,11 @@
 #include <duckdb/planner/operator/logical_set.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/logical_operator_visitor.hpp>
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2 || GIZMOSQL_DUCKDB_MINOR_VERSION >= 5
+#include <duckdb/planner/planner_extension.hpp>
+#endif
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
 #include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_drop.hpp>
@@ -96,6 +103,16 @@ std::string Lower(std::string s) {
 
 bool IsTempCatalog(const std::string& catalog) {
   return IdentifiersEqual(catalog, TEMP_CATALOG);
+}
+
+// GizmoSQL's views for JDBC metadata calls (getIndexInfo, view definitions):
+// metadata anyone may list, like duckdb_views(), and limited to what the
+// caller may see the same way.
+bool IsGizmoSqlMetadataView(const ObjectPath& view) {
+  return IdentifiersEqual(view.catalog, "_gizmosql_system") && view.schema_path.size() == 1 &&
+         IdentifiersEqual(view.schema_path[0], "main") &&
+         (IdentifiersEqual(view.object_name, "gizmosql_index_info") ||
+          IdentifiersEqual(view.object_name, "gizmosql_view_definition"));
 }
 
 std::string TableFunctionName(const dd::LogicalGet& get) {
@@ -367,6 +384,11 @@ class PlanChecker {
         if (set.scope == dd::SetScope::GLOBAL) {
           RequireSystem(SystemPrivilege::kManageConfig, "SET GLOBAL");
         }
+        // USE c / SET schema / SET search_path: no catalog the user cannot see.
+        const std::string setting = Lower(compat::Str(set.name));
+        if ((setting == "schema" || setting == "search_path") && !set.value.IsNull()) {
+          RequireVisibleSearchPath(set.value.ToString());
+        }
         return;
       }
       case OpType::LOGICAL_RESET: {
@@ -494,6 +516,9 @@ class PlanChecker {
       if (!AllowedTableFunctions().count(name)) {
         Deny(principal_, "the table function " + name + " is not available under access control");
       }
+      if ((name == "pragma_table_info" || name == "pragma_show") && !get.parameters.empty()) {
+        RequireVisibleTableArgument(get.parameters[0]);
+      }
       return;
     }
     std::vector<std::string> columns;
@@ -514,8 +539,73 @@ class PlanChecker {
     RequireObject(PathOf(entry), ObjectTypeOf(entry), privilege, std::move(columns));
   }
 
+  // A tenant's user sees only its tenant's catalogs: anything else is as if
+  // it did not exist.
+  // Any part of a search path entry ("c", "c.s", "s", quoted or not) that
+  // names an attached catalog the user cannot see.
+  void RequireVisibleSearchPath(const std::string& value) {
+    std::string part;
+    bool quoted = false;
+    auto check = [&]() {
+      if (part.empty()) return;
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+      auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, dd::Identifier(part));
+#else
+      auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, part);
+#endif
+      if (db) RequireVisible(compat::Str(db->GetName()));
+      part.clear();
+    };
+    for (size_t i = 0; i < value.size(); ++i) {
+      const char c = value[i];
+      if (c == '"') {
+        if (quoted && i + 1 < value.size() && value[i + 1] == '"') {
+          part += '"';
+          ++i;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (!quoted && (c == '.' || c == ',')) {
+        check();
+      } else if (quoted || !std::isspace(static_cast<unsigned char>(c))) {
+        part += c;
+      }
+    }
+    check();
+  }
+
+  // The table a metadata function such as pragma_table_info('t') describes.
+  void RequireVisibleTableArgument(const dd::Value& argument) {
+    if (argument.IsNull()) return;
+    std::vector<std::string> parts;
+    for (const auto& part : dd::QualifiedName::ParseComponents(argument.ToString())) {
+      parts.push_back(compat::Str(part));
+    }
+    if (parts.empty()) return;
+    if (parts.size() >= 2) {
+      // A leading part naming a catalog the user cannot see, whatever DuckDB
+      // made of the rest.
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+      auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, dd::Identifier(parts[0]));
+#else
+      auto db = dd::DatabaseManager::Get(context_).GetDatabase(context_, parts[0]);
+#endif
+      if (db) RequireVisible(compat::Str(db->GetName()));
+    }
+    if (auto entry = LookUp(context_, dd::CatalogType::TABLE_ENTRY, parts)) {
+      RequireVisible(PathOf(*entry).catalog);
+    }
+  }
+
+  void RequireVisible(const std::string& catalog) {
+    if (!snapshot_.CatalogVisible(principal_, catalog)) {
+      throw dd::CatalogException(HiddenObjectMessage(principal_.user_name));
+    }
+  }
+
   void RequireObject(const ObjectPath& path, ObjectType type, Privilege privilege,
                      std::vector<std::string> columns) {
+    RequireVisible(path.catalog);
     if (IsTempCatalog(path.catalog)) {
       // A session's temporary table or view is found before the catalog's
       // objects, inside a view too: it could stand in for a table the view's
@@ -598,8 +688,10 @@ class PlanChecker {
       return;
     }
     auto used = view_columns_.find(&view);
-    RequireObject(view.view, ObjectType::kView, Privilege::kSelect,
-                  used != view_columns_.end() ? used->second : view.column_names);
+    if (!IsGizmoSqlMetadataView(view.view)) {
+      RequireObject(view.view, ObjectType::kView, Privilege::kSelect,
+                    used != view_columns_.end() ? used->second : view.column_names);
+    }
 
     const auto saved_rights = rights_;
     const auto saved_in_owned = in_owned_view_;
@@ -679,6 +771,7 @@ class PlanChecker {
     if (existing && info.on_conflict == dd::OnCreateConflict::REPLACE_ON_CONFLICT) {
       CheckDropOf(*existing);
     }
+    RequireVisible(target.catalog);
     AccessRequest request{target, type, privilege, {}};
     if (!snapshot_.Check(principal_, request).allowed) {
       Deny(principal_, "user " + principal_.user_name + " has no " + PrivilegeName(privilege) +
@@ -699,6 +792,7 @@ class PlanChecker {
   void CheckDropOf(dd::CatalogEntry& entry) {
     ObjectPath path = PathOf(entry);
     if (IsTempCatalog(path.catalog)) return;
+    RequireVisible(path.catalog);
     const ObjectType type = ObjectTypeOf(entry);
     const Privilege privilege = type == ObjectType::kView     ? Privilege::kDropView
                                 : type == ObjectType::kSchema ? Privilege::kDropSchema
@@ -762,6 +856,7 @@ class PlanChecker {
     if (!entry) return;  // DuckDB reports the missing object
     ObjectPath path = PathOf(*entry);
     if (IsTempCatalog(path.catalog)) return;
+    RequireVisible(path.catalog);
     const ObjectType type = ObjectTypeOf(*entry);
     if (info.type == dd::AlterType::ALTER_TABLE || info.type == dd::AlterType::ALTER_VIEW) {
       // A rename moves the object out from under its owner record: owners only.
@@ -855,6 +950,46 @@ void PreOptimize(dd::OptimizerExtensionInput& input, dd::unique_ptr<dd::LogicalO
                      plan->type == OpType::LOGICAL_PREPARE, checker.TakeAccesses());
 }
 
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2 || GIZMOSQL_DUCKDB_MINOR_VERSION >= 5
+bool HasParameter(dd::LogicalOperator& op) {
+  bool found = false;
+  std::function<void(dd::Expression&)> visit = [&](dd::Expression& expr) {
+    if (found) return;
+    if (expr.GetExpressionClass() == dd::ExpressionClass::BOUND_PARAMETER) {
+      found = true;
+      return;
+    }
+    dd::ExpressionIterator::EnumerateChildren(expr, visit);
+  };
+  dd::LogicalOperatorVisitor::EnumerateExpressions(
+      op, [&](dd::unique_ptr<dd::Expression>* child) { visit(**child); });
+  for (auto& child : op.children) {
+    if (found) break;
+    if (child) found = HasParameter(*child);
+  }
+  return found;
+}
+
+// DuckDB prepares a statement with parameters that it plans again for each run
+// (one that reads a table, or whose parameter types are still open) without
+// optimizing it, so PreOptimize does not see it until it runs. Check such a
+// statement as soon as it is bound, so a denied one fails when prepared and
+// its result columns are never described; the run's plan is checked again.
+void PostBind(dd::PlannerExtensionInput& input, dd::BoundStatement& statement) {
+  auto state = input.context.registered_state->Get<RbacSessionState>(kRbacSessionStateName);
+  if (!state || state->unchecked() || !statement.plan || !HasParameter(*statement.plan)) return;
+  auto engine = state->engine();
+  if (!engine) {
+    throw dd::PermissionException("GizmoSQL blocked this statement: access control is shutting down");
+  }
+  auto snapshot = engine->snapshot();
+  const auto view_columns = ViewColumnsUsed(*statement.plan);
+  PlanChecker checker(input.context, *snapshot, state->principal(), view_columns);
+  checker.Visit(*statement.plan);
+  state->NoteBindChecked();
+}
+#endif
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -896,10 +1031,26 @@ std::vector<PendingOwnership> RbacSessionState::TakePreparedOwnership() {
   return taken;
 }
 
+void RbacSessionState::NoteBindChecked() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  bind_checked_pending_ = true;
+}
+
 dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(dd::ClientContext&,
                                                         dd::PreparedStatementData& prepared,
                                                         dd::PreparedStatementMode mode) {
   std::lock_guard<std::mutex> lock(mutex_);
+  // A statement with parameters that DuckDB prepared without optimizing (it is
+  // planned again with the values for each run). It may go ahead when the
+  // bind-time check passed it, or when DuckDB could not plan it yet and so
+  // describes no result columns; the run's plan is the one that is enforced.
+  const bool bind_checked = bind_checked_pending_;
+  bind_checked_pending_ = false;
+  const bool unplanned = prepared.types.size() == 1 && prepared.types[0].id() == dd::LogicalTypeId::UNKNOWN;
+  const bool replanned_on_run = prepared.statement_type != dd::StatementType::PREPARE_STATEMENT &&
+                                (!prepared.properties.bound_all_parameters ||
+                                 prepared.properties.always_require_rebind) &&
+                                (bind_checked || unplanned);
   // File the plan's ownership changes: applied at QueryEnd when it runs now,
   // or handed to GizmoSQL to apply after a later successful execution.
   const bool prepare_only =
@@ -911,7 +1062,10 @@ dd::RebindQueryInfo RbacSessionState::OnFinalizePrepare(dd::ClientContext&,
   planned_ownership_.clear();
   if (checked_pending_ > 0) {
     --checked_pending_;
-  } else if (!unchecked() && prepared.statement_type == dd::StatementType::PREPARE_STATEMENT) {
+  } else if (!unchecked() && (prepared.statement_type == dd::StatementType::PREPARE_STATEMENT ||
+                              replanned_on_run)) {
+    // A statement prepared without optimizing (above): checked on a fresh bind
+    // already, and not recorded as checked, so the run's re-plan is checked too.
     // DuckDB 2.x prepares a statement it must re-plan before every run (bound
     // parameters still open, or a catalog such as DuckLake that requires a
     // rebind) without optimizing it, so the check has not run yet. It runs on
@@ -964,6 +1118,7 @@ void RbacSessionState::QueryEnd(dd::ClientContext&, dd::optional_ptr<dd::ErrorDa
     pending.swap(pending_ownership_);
     planned_ownership_.clear();
     checked_pending_ = 0;
+    bind_checked_pending_ = false;
   }
   if (error || pending.empty()) return;
   if (auto engine = engine_.lock()) ApplyOwnership(*engine, principal_, pending);
@@ -1021,6 +1176,9 @@ void RegisterRbacEnforcement(dd::DBConfig& config) {
   config.optimizer_extensions.push_back(std::move(extension));
 #else
   dd::OptimizerExtension::Register(config, std::move(extension));
+  dd::PlannerExtension planner_extension;
+  planner_extension.post_bind_function = PostBind;
+  dd::PlannerExtension::Register(config, std::move(planner_extension));
 #endif
 }
 
