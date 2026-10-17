@@ -591,6 +591,15 @@ TEST_F(RbacEnforcementFixture, AdministrativeStatementsStayDenied) {
 // administrator's view publishes what it selects once the view is granted,
 // while the table behind it stays closed.
 TEST_F(RbacEnforcementFixture, ViewsReadWithTheirOwnersRights) {
+#if !GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
+  // DuckDB 1.4 (LTS) has no view-binding hook: a view reads with the caller's
+  // rights, so a grant on the view does not open what it reads.
+  ExpectAllowed(*admin_, "GRANT SELECT ON orders_over_secrets TO reader");
+  ExpectBlocked(*joe_, "SELECT * FROM orders_over_secrets",
+                "no SELECT privilege on table rbac_enforce_test.main.secrets");
+  ExpectAllowed(*admin_, "REVOKE SELECT ON orders_over_secrets FROM reader");
+  return;
+#endif
   ExpectBlocked(*joe_, "SELECT * FROM orders_over_secrets",
                 "no SELECT privilege on view");
   ExpectAllowed(*admin_, "GRANT SELECT ON orders_over_secrets TO reader");

@@ -3318,6 +3318,11 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
     return arrow::Status::IOError("Could not open database '", db_location, "': ", message,
                                   hint);
   }
+#ifdef GIZMOSQL_ENTERPRISE
+  if (enable_rbac_enforcement) {
+    ARROW_RETURN_NOT_OK(enterprise::rbac::FinishRbacEnforcement(*db));
+  }
+#endif
 
   // Apply the DuckDB memory limit (global / instance-wide) if the operator set
   // one. Accepts DuckDB's own syntax ("8GB", "75%", ...). Empty => leave DuckDB's

@@ -39,6 +39,7 @@ class RbacSystemUnit : public ::testing::Test {
     engine_ = RbacEngine::Create(options).ValueOrDie();
     RegisterRbacEnforcement(config_);
     db_ = std::make_unique<duckdb::DuckDB>(nullptr, &config_);
+    ASSERT_TRUE(FinishRbacEnforcement(*db_).ok());
     admin_ = std::make_unique<duckdb::Connection>(*db_);
     dir_ = (std::filesystem::temp_directory_path() /
             ("gizmosql_rbac_sysunit_" + std::to_string(getpid())))

@@ -233,6 +233,12 @@ TEST_F(RbacSystemPrivileges, AFileViewReadsWithItsOwnersFilesystemPrivilege) {
   ExpectAllowed(fay,
                 "CREATE VIEW fay_file AS SELECT n FROM read_parquet('" + file + "')");
   ExpectAllowed(*admin_, "GRANT SELECT ON fay_file TO readers");
+#if !GIZMOSQL_DUCKDB_HAS_VIEW_HOOK
+  // DuckDB 1.4 (LTS): views read with the caller's rights, and nob may not
+  // read files.
+  ExpectBlocked(nob, "SELECT * FROM fay_file", "READ FILESYSTEM");
+  return;
+#endif
   ExpectAllowed(nob, "SELECT * FROM fay_file");  // nob has no READ FILESYSTEM himself
   ExpectAllowed(*admin_, "REVOKE READ FILESYSTEM FROM fs_reader");
   ExpectBlocked(nob, "SELECT * FROM fay_file", "its owner lacks a privilege");

@@ -45,6 +45,7 @@ class RbacViewsUnit : public ::testing::Test {
     engine_ = MemoryEngine();
     RegisterRbacEnforcement(config_);
     db_ = std::make_unique<duckdb::DuckDB>(nullptr, &config_);
+    ASSERT_TRUE(FinishRbacEnforcement(*db_).ok());
     admin_ = std::make_unique<duckdb::Connection>(*db_);  // GizmoSQL's own: unchecked
     for (const char* sql : {"CREATE TABLE secret AS SELECT 'TOP' AS s",
                             "CREATE VIEW v AS SELECT s FROM secret"}) {

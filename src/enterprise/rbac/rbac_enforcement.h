@@ -170,6 +170,12 @@ void ApplyOwnership(RbacEngine& engine, const Principal& principal,
 // database is opened).
 void RegisterRbacEnforcement(duckdb::DBConfig& config);
 
+// Call once the database is open. DuckDB 1.4 does not copy optimizer
+// extensions from the configuration a database is opened with, so the hook is
+// installed on the database's own configuration there. Fails if the hook is
+// not in place (the check would silently not run).
+arrow::Status FinishRbacEnforcement(duckdb::DuckDB& db);
+
 // Give a session connection its principal. Every client session connection on
 // an access-control server gets one; a connection without it is GizmoSQL's own.
 void AttachRbacSession(duckdb::ClientContext& context, std::shared_ptr<RbacEngine> engine,

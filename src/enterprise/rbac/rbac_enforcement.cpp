@@ -1369,6 +1369,26 @@ std::optional<SystemPrivilege> SystemPrivilegeForGatedCategory(
   return std::nullopt;
 }
 
+arrow::Status FinishRbacEnforcement(dd::DuckDB& db) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION == 1 && GIZMOSQL_DUCKDB_MINOR_VERSION < 5
+  auto& extensions = dd::DBConfig::GetConfig(*db.instance).optimizer_extensions;
+  for (const auto& e : extensions) {
+    if (e.pre_optimize_function == PreOptimize) return arrow::Status::OK();
+  }
+  dd::OptimizerExtension extension;
+  extension.pre_optimize_function = PreOptimize;
+  extensions.push_back(std::move(extension));
+  for (const auto& e : extensions) {
+    if (e.pre_optimize_function == PreOptimize) return arrow::Status::OK();
+  }
+  return arrow::Status::Invalid(
+      "GizmoSQL access control could not install its statement check");
+#else
+  (void)db;
+  return arrow::Status::OK();
+#endif
+}
+
 void RegisterRbacEnforcement(dd::DBConfig& config) {
   InstallViewHook();
   dd::OptimizerExtension extension;
