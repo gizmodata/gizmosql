@@ -11,6 +11,8 @@ ExternalProject_Add(
     GIT_REPOSITORY https://github.com/duckdb/duckdb
     GIT_TAG @DUCKDB_GIT_TAG@
     GIT_SHALLOW TRUE
+    # Local source fixes (see patch_duckdb.cmake); idempotent.
+    PATCH_COMMAND "${CMAKE_COMMAND}" -DDUCKDB_SOURCE_DIR=<SOURCE_DIR> -P "${CMAKE_SOURCE_DIR}/third_party/patch_duckdb.cmake"
     CMAKE_ARGS
           -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/third_party/duckdb
           # Pin the libdir: Red Hat-family hosts (e.g. the manylinux_2_28

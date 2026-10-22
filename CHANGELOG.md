@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **DuckDB temp-spill byte counter can no longer wrap to ~2^64 (patch on DuckDB v1.5.4).** After a spill was interrupted, DuckDB's `size_on_disk` counter could be decremented by more than had been reserved and wrap around, after which every query needing to spill failed with `failed to offload data block … (16383.9 PiB/… used)` until the server restarted ([duckdb/duckdb#20561](https://github.com/duckdb/duckdb/issues/20561)). `third_party/patches/duckdb_temp_size_on_disk.patch` (applied to the pulled DuckDB source by `third_party/patch_duckdb.cmake`) makes the decrement saturate at 0, and fixes the variable-size `.block` spill path to reserve before creating the file, truncate any stale file of the same name, and release the reservation and remove the partial file if the write fails. Drop the patch once the fix ships in the pinned DuckDB version.
+
 ## [1.34.2] - 2026-07-23
 
 > Backport release on the v1.34.x line (DuckDB v1.5.4). Contains only the
