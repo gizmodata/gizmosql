@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Added a prominent README notice that GizmoSQL is in maintenance mode, directing users to Hardcharger and its documentation.
+
 ## [1.42.0] - 2026-10-15
 
 ### Fixed

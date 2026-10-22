@@ -1,5 +1,9 @@
 # 🚀 GizmoSQL — High-Performance SQL Server for the Cloud
 
+> [!IMPORTANT]
+> **GizmoSQL is in maintenance mode.** Please use [Hardcharger](https://github.com/gizmodata/hardcharger) going forward.
+> See the [Hardcharger documentation](https://docs.hardcharger.gizmodata.com) to get started.
+
 [![DockerHub](https://img.shields.io/badge/dockerhub-image-green.svg?logo=Docker)](https://hub.docker.com/r/gizmodata/gizmosql)
 [![DockerHub LTS](https://img.shields.io/badge/dockerhub-LTS%20image-blue.svg?logo=Docker)](https://hub.docker.com/r/gizmodata/gizmosql-lts)
 [![LTS Channel](https://img.shields.io/badge/LTS-channel%20guide-orange.svg)](https://docs.gizmosql.com/lts_channel/)
