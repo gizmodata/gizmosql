@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Manual ARM64-only Docker publishing workflow for v1.34.3, built from Chris Harrison's original PR #197 commit with the DuckDB v1.5.4 temp-spill accounting fix. The workflow validates the image before publishing its version tag.
+
 ### Changed
 - Added a prominent README notice that GizmoSQL is in maintenance mode, directing users to Hardcharger and its documentation.
 

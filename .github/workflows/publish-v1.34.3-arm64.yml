@@ -1,0 +1,205 @@
+name: Publish v1.34.3 ARM64 one-off
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-gizmosql-v1.34.3-arm64
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: 8b5c35018d98fe90a08ce302f5cca78395e8cabe
+  IMAGE: gizmodata/gizmosql:v1.34.3
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: ducklake_catalog
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      postgres-instrumentation:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: instrumentation_catalog
+        ports:
+          - 5433:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Checkout publishing checks
+        uses: actions/checkout@v7
+        with:
+          path: automation
+          persist-credentials: false
+
+      - name: Checkout Chris Harrison's unmodified PR 197 commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+
+      - name: Verify source and set the build-local version tag
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git show -s --format=%an HEAD)" = 'Chris Harrison'
+          git show -s --format=fuller HEAD
+          # Do not push this tag: that would trigger the full release matrix.
+          git tag v1.34.3 "$SOURCE_SHA"
+          test "$(git describe --tags --abbrev=0)" = v1.34.3
+          test -z "$(git status --porcelain)"
+          if docker manifest inspect "$IMAGE" >/dev/null 2>../manifest-error.txt; then
+            echo "Refusing to replace existing $IMAGE" >&2
+            exit 1
+          fi
+          grep -Ei 'no such manifest|manifest unknown|not found' ../manifest-error.txt
+
+      - name: Build fresh portable ARM64 binaries and integration tests
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          test ! -e build
+          docker run --rm \
+            -v "$PWD:$PWD" -e REPO_ROOT="$PWD" -e CMAKE_BUILD_TYPE=Release \
+            quay.io/pypa/manylinux_2_28_aarch64:2026.10.10-1 \
+            bash "$PWD/scripts/build_portable_linux.sh" stable build
+          sudo chown -R "$(id -u):$(id -g)" build
+          build/gizmosql_server --version | tee ../server-version.txt
+          grep -F v1.34.3 ../server-version.txt
+          test "$(build/gizmosql_server --print-duckdb-version)" = v1.5.4
+          # Prove the linked build came from a patched tree; prove the patch is idempotent.
+          duckdb_source="$PWD/build/third_party/src/duckdb_project"
+          git -C "$duckdb_source" apply --check --reverse --ignore-whitespace \
+            "$PWD/third_party/patches/duckdb_temp_size_on_disk.patch"
+          cmake -DDUCKDB_SOURCE_DIR="$duckdb_source" -P third_party/patch_duckdb.cmake
+
+      - name: Start S3-compatible storage for integration tests
+        run: |
+          set -euo pipefail
+          docker run -d --name s3 -p 9000:9000 \
+            -e ROOT_ACCESS_KEY=minioadmin -e ROOT_SECRET_KEY=minioadmin \
+            versity/versitygw:v1.8.0 --port :9000 --health /health posix /tmp
+          for attempt in {1..30}; do
+            if curl -sf http://localhost:9000/health; then break; fi
+            echo "Waiting for S3 storage (attempt $attempt)"
+            sleep 2
+          done
+          curl -sSf --aws-sigv4 'aws:amz:us-east-1:s3' --user minioadmin:minioadmin \
+            -X PUT http://localhost:9000/instrumentation
+
+      - name: Run integration tests without a license
+        working-directory: source
+        run: ./build/tests/gizmosql_integration_tests --gtest_output=xml:../integration-unlicensed.xml
+
+      - name: Run integration tests with the Enterprise license
+        working-directory: source
+        env:
+          GIZMOSQL_LICENSE_KEY: ${{ secrets.GIZMOSQL_LICENSE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$GIZMOSQL_LICENSE_KEY"
+          license_file="$RUNNER_TEMP/gizmosql-oneoff-license.jwt"
+          trap 'rm -f "$license_file"' EXIT
+          printf '%s' "$GIZMOSQL_LICENSE_KEY" > "$license_file"
+          chmod 600 "$license_file"
+          GIZMOSQL_LICENSE_KEY_FILE="$license_file" \
+            ./build/tests/gizmosql_integration_tests --gtest_output=xml:../integration-enterprise.xml
+
+      - name: Stage the freshly built binaries
+        working-directory: source
+        run: |
+          cp build/gizmosql_server build/gizmosql_client .
+          git diff --exit-code
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the full ARM64 image locally
+        uses: docker/build-push-action@v7
+        with:
+          context: source
+          file: source/Dockerfile.ci
+          platforms: linux/arm64
+          build-args: DUCKDB_VERSION=1.5.4
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+          labels: |
+            org.opencontainers.image.version=v1.34.3
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.source=https://github.com/gizmodata/gizmosql
+            org.opencontainers.image.authors=Chris Harrison <chris@lwaldtech.com>
+            org.opencontainers.image.description=ARM64-only v1.34.3 backport of PR 197 by Chris Harrison; DuckDB 1.5.4 temp-spill accounting fix.
+
+      - name: Check image architecture, versions, repeated spilling and timeout recovery
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/arm64
+          docker run --rm --entrypoint gizmosql_server "$IMAGE" --version | grep -F v1.34.3
+          test "$(docker run --rm --entrypoint gizmosql_server "$IMAGE" --print-duckdb-version)" = v1.5.4
+          docker run -d --name spill-check \
+            -e GIZMOSQL_PASSWORD=oneoff-spill-check -e TLS_ENABLED=0 \
+            -e INIT_SQL_COMMANDS="SET memory_limit='200MB'; SET threads=2; SET temp_directory='/tmp/gizmosql-spill'; SET max_temp_directory_size='4GB';" \
+            "$IMAGE"
+          docker exec -i spill-check python < automation/scripts/verify-v1.34.3-spill.py
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Publish only the versioned ARM64 image
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$IMAGE" >/dev/null 2>manifest-error.txt; then
+            echo "Refusing to replace existing $IMAGE" >&2
+            exit 1
+          fi
+          grep -Ei 'no such manifest|manifest unknown|not found' manifest-error.txt
+          docker push "$IMAGE" | tee push-result.txt
+          docker buildx imagetools inspect "$IMAGE" | tee published-image.txt
+          {
+            echo '### Published ARM64-only GizmoSQL v1.34.3'
+            echo "- Image: \`$IMAGE\`"
+            echo "- Original source commit: \`$SOURCE_SHA\` (Chris Harrison, PR #197)"
+            echo '- DuckDB: v1.5.4, rebuilt with the temp-spill accounting patch.'
+            echo '- Only the Docker Hub version tag was pushed; no Git tag or other release artifacts.'
+            echo '```'
+            cat push-result.txt published-image.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gizmosql-v1.34.3-arm64-validation
+          path: |
+            integration-*.xml
+            server-version.txt
+            push-result.txt
+            published-image.txt
+          if-no-files-found: ignore
+
+      - name: Show server diagnostics and clean up
+        if: always()
+        run: |
+          docker logs spill-check 2>&1 || true
+          docker rm -f spill-check s3 2>/dev/null || true
