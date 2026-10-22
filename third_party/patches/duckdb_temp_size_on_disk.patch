@@ -1,0 +1,97 @@
+diff --git a/src/storage/standard_buffer_manager.cpp b/src/storage/standard_buffer_manager.cpp
+index 55a09a556..65014cbaf 100644
+--- a/src/storage/standard_buffer_manager.cpp
++++ b/src/storage/standard_buffer_manager.cpp
+@@ -482,33 +482,53 @@ void StandardBufferManager::WriteTemporaryBuffer(MemoryTag tag, block_id_t block
+ 	// These files are .block, and variable sized (larger then 256kb), as opposed to .tmp
+ 	auto path = GetTemporaryPath(block_id);
+ 
+-	idx_t header_size = sizeof(idx_t) * 2;
++	// The exact number of bytes this file occupies on disk. DeleteTemporaryFile decrements by the file's actual size,
++	// so this must match what is written below.
++	idx_t file_size = sizeof(idx_t) * 2 + buffer.AllocSize();
+ 	if (EncryptTemporaryFiles()) {
+-		header_size += DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE;
++		file_size += DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE;
+ 	}
+ 
+-	evicted_data_per_tag[uint8_t(tag)] += buffer.AllocSize();
++	// Reserve the space first (this can throw if the temp directory is full), so a failed reservation leaves no file.
++	auto &temp_file = temporary_directory.handle->GetTempFile();
++	temp_file.IncreaseSizeOnDisk(file_size);
+ 
+ 	// Create the file and write the size followed by the buffer contents.
+ 	auto &fs = FileSystem::GetFileSystem(db);
+-	auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE);
+-	temporary_directory.handle->GetTempFile().IncreaseSizeOnDisk(buffer.AllocSize() + sizeof(idx_t) * 2 + header_size);
+-	//! for very large buffers, we store the size of the buffer in plaintext.
+-	idx_t block_header_size = buffer.GetHeaderSize();
+-	handle->Write(QueryContext(), &buffer.size, sizeof(idx_t), 0);
+-	handle->Write(QueryContext(), &block_header_size, sizeof(idx_t), sizeof(idx_t));
+-
+-	idx_t offset = sizeof(idx_t) * 2;
++	try {
++		// CREATE_NEW truncates: a stale file with the same name (e.g. left behind by a killed process) must not be
++		// counted when it is deleted, since its size was never reserved.
++		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
++		//! for very large buffers, we store the size of the buffer in plaintext.
++		idx_t block_header_size = buffer.GetHeaderSize();
++		handle->Write(QueryContext(), &buffer.size, sizeof(idx_t), 0);
++		handle->Write(QueryContext(), &block_header_size, sizeof(idx_t), sizeof(idx_t));
++
++		idx_t offset = sizeof(idx_t) * 2;
++
++		if (EncryptTemporaryFiles()) {
++			uint8_t encryption_metadata[DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE];
++			EncryptionEngine::EncryptTemporaryBuffer(db, buffer.InternalBuffer(), buffer.AllocSize(),
++			                                         encryption_metadata);
++			//! Write the nonce (and tag for GCM).
++			handle->Write(QueryContext(), encryption_metadata, DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE, offset);
++			offset += DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE;
++		}
+ 
+-	if (EncryptTemporaryFiles()) {
+-		uint8_t encryption_metadata[DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE];
+-		EncryptionEngine::EncryptTemporaryBuffer(db, buffer.InternalBuffer(), buffer.AllocSize(), encryption_metadata);
+-		//! Write the nonce (and tag for GCM).
+-		handle->Write(QueryContext(), encryption_metadata, DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE, offset);
+-		offset += DEFAULT_ENCRYPTED_BUFFER_HEADER_SIZE;
++		buffer.Write(QueryContext(), *handle, offset);
++	} catch (...) {
++		// The write failed: release the reservation and remove the partial file, otherwise the reserved bytes leak
++		// (the block stays in memory, so nothing will ever delete this file or release them).
++		temp_file.DecreaseSizeOnDisk(file_size);
++		try {
++			if (fs.FileExists(path)) {
++				fs.RemoveFile(path);
++			}
++		} catch (...) { // NOLINT: best effort cleanup
++		}
++		throw;
+ 	}
+-
+-	buffer.Write(QueryContext(), *handle, offset);
++	evicted_data_per_tag[uint8_t(tag)] += buffer.AllocSize();
+ }
+ 
+ unique_ptr<FileBuffer> StandardBufferManager::ReadTemporaryBuffer(QueryContext context, MemoryTag tag,
+diff --git a/src/storage/temporary_file_manager.cpp b/src/storage/temporary_file_manager.cpp
+index a7440ec76..e4993f8a3 100644
+--- a/src/storage/temporary_file_manager.cpp
++++ b/src/storage/temporary_file_manager.cpp
+@@ -640,7 +640,14 @@ You can adjust this setting, by using (for example) PRAGMA max_temp_directory_si
+ }
+ 
+ void TemporaryFileManager::DecreaseSizeOnDisk(idx_t bytes) {
+-	size_on_disk -= bytes;
++	// Saturating subtraction: if the accounting ever drifts (more bytes released than were reserved), clamp at 0
++	// instead of wrapping the unsigned counter to ~2^64, which would make every later spill fail with
++	// "failed to offload data block ... (16383.9 PiB/... used)" until the process restarts.
++	auto current = size_on_disk.load(std::memory_order_relaxed);
++	idx_t desired;
++	do {
++		desired = current > bytes ? current - bytes : 0;
++	} while (!size_on_disk.compare_exchange_weak(current, desired, std::memory_order_relaxed));
+ }
+ 
+ bool TemporaryFileManager::IsEncrypted() const {
