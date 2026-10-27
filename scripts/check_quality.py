@@ -186,7 +186,10 @@ def tidy_cpp(files, args):
                 cwd=ROOT,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                timeout=300,
+                # tests/integration/test_interactive_client.cpp alone takes ~100 s
+                # on an M5 Max, and over 300 s on a 3-vCPU macOS runner analyzing
+                # three TUs at once.
+                timeout=900,
             )
         diagnostics = (
             (yaml.safe_load(fixes.read_text()) or {}).get("Diagnostics", [])

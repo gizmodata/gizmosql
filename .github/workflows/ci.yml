@@ -355,6 +355,11 @@ jobs:
           exit $fail
 
       - name: Clang-tidy (project sources, stable and LTS)
+        # Not on release tags: like the quality job, a lint result must never
+        # block (and force a re-cut of) a tag. A header change makes it analyze
+        # every TU, which on this runner ran past the per-file limit and failed
+        # the v1.42.2 tag. Every push to main still runs it.
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         env:
           BEFORE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
