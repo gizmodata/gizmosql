@@ -53,7 +53,7 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 | Component                                                                        | Stable channel | LTS channel | Edge channel *(experimental)* |
 |----------------------------------------------------------------------------------|----------------|-------------|-------------------------------|
-| [DuckDB](https://duckdb.org)                                                     | v1.5.6         | v1.4.5      | v2.0.0-alpha46057             |
+| [DuckDB](https://duckdb.org)                                                     | v1.5.6         | v1.4.5      | v2.0.0                        |
 | [SQLite](https://sqlite.org)                                                     | 3.53.4         | 3.53.4      | 3.53.4                        |
 | [Apache Arrow (Flight SQL)](https://arrow.apache.org/docs/format/FlightSql.html) | 26.0.0         | 26.0.0      | 26.0.0                        |
 | [jwt-cpp](https://thalhammer.github.io/jwt-cpp/)                                 | v0.7.2         | v0.7.2      | v0.7.2                        |
@@ -62,9 +62,9 @@ It is originally **forked from [`sqlflite`](https://github.com/voltrondata/sqlfl
 
 ### Release channels
 
-GizmoSQL ships three parallel release channels: **stable** (latest DuckDB minor), **LTS** (most recent DuckDB long-term-support release) and **edge** (the next DuckDB major, pre-release). All channels carry every GizmoSQL fix and feature; they only differ in which DuckDB release is bundled. LTS and edge artifacts use an `_lts`/`-lts` or `_edge`/`-edge` suffix so they can coexist with stable installs.
+GizmoSQL ships three parallel release channels: **stable** (latest DuckDB minor), **LTS** (most recent DuckDB long-term-support release) and **edge** (the newest DuckDB major, today DuckDB 2.0). All channels carry every GizmoSQL fix and feature; they only differ in which DuckDB release is bundled. LTS and edge artifacts use an `_lts`/`-lts` or `_edge`/`-edge` suffix so they can coexist with stable installs.
 
-> ⚠️ **The edge channel is experimental and NOT meant for production workloads.** It runs on a DuckDB pre-release whose behavior and on-disk format can change between builds; databases it creates cannot be opened by the stable or LTS channel. Use it to evaluate the next DuckDB major, not to run anything you depend on.
+> ⚠️ **The edge channel is experimental and NOT meant for production workloads.** It runs on the newest DuckDB major, whose support in GizmoSQL is new and can change between releases; databases it creates cannot be opened by the stable or LTS channel. Use it to evaluate DuckDB 2.0, not to run anything you depend on.
 
 See the [LTS Channel guide](lts_channel.md) for details on which DuckDB versions are LTS, artifact naming, install commands, and how to switch channels in production, and the [Edge Channel guide](edge_channel.md) for what is different on edge. The DuckDB [release calendar](https://duckdb.org/release_calendar) is the authoritative source for current LTS designations and end-of-support dates.
 

@@ -1236,11 +1236,12 @@ arrow::Result<std::shared_ptr<flight::sql::FlightSqlServerBase>> FlightSQLServer
                        << server->location().ToString();
 #if GIZMOSQL_DUCKDB_CHANNEL_EDGE
     GIZMOSQL_LOG(WARNING)
-        << "This is an EDGE channel build of GizmoSQL, on a pre-release DuckDB ("
+        << "This is an EDGE channel build of GizmoSQL, on the newest DuckDB major ("
         << GIZMOSQL_DUCKDB_VERSION_TAG
-        << "). It is EXPERIMENTAL and NOT meant for production workloads: behavior, "
-           "storage format and extensions can change or break between builds. Use the "
-           "stable or LTS channel for production.";
+        << "). It is EXPERIMENTAL and NOT meant for production workloads: behavior and "
+           "extensions can change or break between releases, and database files it "
+           "creates cannot be opened by the stable or LTS channel. Use the stable or "
+           "LTS channel for production.";
 #endif
 
     return server;

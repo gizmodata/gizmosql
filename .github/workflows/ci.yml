@@ -915,9 +915,11 @@ jobs:
           file: Dockerfile.ci
           # The DuckDB CLI tag baked in for ad-hoc shell use must match
           # the channel; default in the Dockerfile is the stable version.
+          # DUCKDB_CLI_STAGED is "<commit10>/<version>" only while a channel
+          # pins an untagged DuckDB pre-release (see CMakeLists.txt).
           build-args: |
-            DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.5' || matrix.duckdb_channel == 'edge' && '2.0.0-alpha46057' || '1.5.6' }}
-            DUCKDB_CLI_STAGED=${{ matrix.duckdb_channel == 'edge' && 'b15358c371/v2.0.0-alpha46057' || '' }}
+            DUCKDB_VERSION=${{ matrix.duckdb_channel == 'lts' && '1.4.5' || matrix.duckdb_channel == 'edge' && '2.0.0' || '1.5.6' }}
+            DUCKDB_CLI_STAGED=
           no-cache: true
           provenance: ${{ startsWith(github.ref, 'refs/tags/') && 'mode=max' || 'false' }}
           sbom: ${{ startsWith(github.ref, 'refs/tags/') }}
@@ -1612,7 +1614,7 @@ jobs:
               dockerhub_repo="${{ env.DOCKERHUB_LTS_IMAGE_NAME }}"
               ghcr_repo="${{ env.GITHUB_LTS_IMAGE_NAME }}"
             elif [ "$channel" = "edge" ]; then
-              # Experimental (pre-release DuckDB); its own repo, so `latest`
+              # Experimental (newest DuckDB major); its own repo, so `latest`
               # here never touches the stable image.
               dockerhub_repo="${{ env.DOCKERHUB_EDGE_IMAGE_NAME }}"
               ghcr_repo="${{ env.GITHUB_EDGE_IMAGE_NAME }}"
@@ -1919,12 +1921,12 @@ jobs:
           # typed: false
           # frozen_string_literal: true
 
-          # GizmoSQL edge — EXPERIMENTAL, built against a DuckDB pre-release
-          # (the next DuckDB major). Not for production workloads.
+          # GizmoSQL edge — EXPERIMENTAL, built against the newest DuckDB
+          # major (DuckDB 2.0). Not for production workloads.
           # Installs as gizmosql_server_edge / gizmosql_client_edge so it can
           # coexist with the `gizmosql` and `gizmosql-lts` formulas.
           class GizmosqlEdge < Formula
-            desc "GizmoSQL (edge channel, experimental) — Flight SQL server on a DuckDB pre-release"
+            desc "GizmoSQL (edge channel, experimental) — Flight SQL server on DuckDB 2.0"
             homepage "https://docs.gizmosql.com/edge_channel/"
             version "VERSION_PLACEHOLDER"
             license "Apache-2.0"
@@ -1955,8 +1957,8 @@ jobs:
             def caveats
               <<~EOS
                 WARNING: the edge channel is EXPERIMENTAL and NOT meant for production
-                workloads. It runs on a DuckDB pre-release; behavior, storage format and
-                extensions can change or break between builds, and database files it
+                workloads. It runs on the newest DuckDB major (2.0); behavior and
+                extensions can change or break between releases, and database files it
                 creates cannot be opened by the stable or LTS channels. See:
                   https://docs.gizmosql.com/edge_channel/
 

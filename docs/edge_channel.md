@@ -1,22 +1,22 @@
 # GizmoSQL Edge Channel
 
 > ⚠️ **EXPERIMENTAL — NOT FOR PRODUCTION WORKLOADS.** The edge channel builds
-> GizmoSQL against a **pre-release DuckDB** (today a DuckDB 2.0 alpha). Its
-> behavior, on-disk storage format and extension compatibility can change or
-> break from one build to the next, and DuckDB itself does not support its
-> pre-releases for production use. Use the **stable** or **LTS** channel for
-> anything you depend on.
+> GizmoSQL against the **newest DuckDB major** (today DuckDB **v2.0.0**). GizmoSQL's
+> support for it is new: behavior and extension compatibility can change or
+> break from one GizmoSQL release to the next, and the database files it
+> creates cannot be opened by the stable or LTS channel. Use the **stable** or
+> **LTS** channel for anything you depend on.
 
-The edge channel exists so you can try GizmoSQL on the next DuckDB major
-*before* it ships — to test your workloads, clients and data against it, and to
-use new DuckDB features early. It is the third of GizmoSQL's release channels
+The edge channel exists so you can try GizmoSQL on the newest DuckDB major
+*before* the stable channel moves to it — to test your workloads, clients and
+data against it, and to use new DuckDB features early. It is the third of GizmoSQL's release channels
 (see [LTS channel](lts_channel.md) for the overview):
 
 | Channel    | DuckDB tracked                                         | Intended for |
 |------------|--------------------------------------------------------|--------------|
 | **Stable** | Latest DuckDB minor release (e.g. `v1.5.6`)            | Production |
 | **LTS**    | Most recent DuckDB LTS release (e.g. `v1.4.5`)         | Production that favors a slower-moving engine |
-| **Edge**   | Next DuckDB major, pre-release (`v2.0.0-alpha46057`)   | **Evaluation and testing only** |
+| **Edge**   | Newest DuckDB major (`v2.0.0`)                         | **Evaluation and testing only** |
 
 All three channels share the same GizmoSQL code, flags, API and protocol; edge
 only changes which DuckDB is linked in.
@@ -45,9 +45,9 @@ GizmoSQL:
 - **Query profiles.** `sql_executions.query_profile` uses DuckDB 2.0's nested
   profile layout — total query time is `$.query.total_time` rather than
   `$.latency` (see [Session instrumentation](session_instrumentation.md)).
-- **Extensions** come from DuckDB's repository for that exact pre-release
-  (`extensions.duckdb.org/v2.0.0-alpha46057/…`); not every community extension
-  is published for it.
+- **Extensions** come from DuckDB's repository for that exact version
+  (`extensions.duckdb.org/v2.0.0/…`); not every community extension is
+  published for it yet.
 
 ## Telling an edge build apart
 
@@ -55,27 +55,27 @@ An edge build marks itself everywhere it reports its version:
 
 ```text
 $ gizmosql_server_edge --version
-GizmoSQL Server CLI: v1.40.0-EDGE
+GizmoSQL Server CLI: v1.42.1-EDGE
 
 $ gizmosql_client_edge --version
-GizmoSQL Client v1.40.0-EDGE
+GizmoSQL Client v1.42.1-EDGE
 
 $ gizmosql_server_edge --print-duckdb-version
-v2.0.0-alpha46057
+v2.0.0
 ```
 
 At startup it logs the channel and a warning:
 
 ```text
-INFO ... GizmoSQL server version: v1.40.0-EDGE - with engine: DuckDB (edge channel — DuckDB v2.0.0-alpha46057) - will listen on grpc+tcp://0.0.0.0:31337
-WARN ... This is an EDGE channel build of GizmoSQL, on a pre-release DuckDB (v2.0.0-alpha46057). It is EXPERIMENTAL and NOT meant for production workloads: behavior, storage format and extensions can change or break between builds. Use the stable or LTS channel for production.
+INFO ... GizmoSQL server version: v1.42.1-EDGE - with engine: DuckDB (edge channel — DuckDB v2.0.0) - will listen on grpc+tcp://0.0.0.0:31337
+WARN ... This is an EDGE channel build of GizmoSQL, on the newest DuckDB major (v2.0.0). It is EXPERIMENTAL and NOT meant for production workloads: behavior and extensions can change or break between releases, and database files it creates cannot be opened by the stable or LTS channel. Use the stable or LTS channel for production.
 ```
 
 And from SQL:
 
 ```sql
 SELECT GIZMOSQL_VERSION();
--- v1.40.0-EDGE
+-- v1.42.1-EDGE
 ```
 
 ## Artifacts
@@ -110,8 +110,8 @@ docker run --name gizmosql-edge \
            gizmodata/gizmosql-edge:latest
 ```
 
-The image's `duckdb` CLI is the matching DuckDB pre-release, so it can open the
-v2.0-format files the server creates.
+The image's `duckdb` CLI is the matching DuckDB release (v2.0.0), so it can
+open the v2.0-format files the server creates.
 
 ### Homebrew (macOS / Linux)
 
@@ -135,9 +135,11 @@ cmake -B build -DGIZMOSQL_DUCKDB_CHANNEL=edge
 cmake --build build
 ```
 
-The pre-release is pinned by commit (`DUCKDB_EDGE_GIT_REF`) together with the
-exact version string DuckDB published it as (`DUCKDB_EDGE_VERSION`) — runtime
-`INSTALL`/`LOAD` looks extensions up by that string.
+The DuckDB version is `DUCKDB_EDGE_VERSION` (`v2.0.0`), which is also the
+string runtime `INSTALL`/`LOAD` looks extensions up by. While edge tracks an
+untagged DuckDB pre-release, it is pinned by commit through
+`DUCKDB_EDGE_GIT_REF` together with the exact version string DuckDB published
+that build as.
 
 ## Moving a deployment between edge and stable
 

@@ -307,7 +307,7 @@ void MetricsService::Collect() {
       ok = false;
     else {
       set("gizmosql_duckdb_memory_limit_bytes",
-          duckdb::DBConfig::ParseMemoryLimit(compat::ResultValue(*settings, 0, 0).ToString()));
+          compat::ParseMemoryLimit(compat::ResultValue(*settings, 0, 0).ToString()));
       set("gizmosql_duckdb_threads", compat::ResultValue(*settings, 1, 0).GetValue<double>());
       auto temp = std::filesystem::path(compat::ResultValue(*settings, 2, 0).ToString());
       if (!temp.empty()) {

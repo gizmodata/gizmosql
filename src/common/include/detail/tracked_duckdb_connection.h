@@ -21,6 +21,8 @@
 
 #include <duckdb.hpp>
 
+#include "duckdb_compat.h"
+
 namespace gizmosql {
 namespace metrics {
 void RecordOpenDuckDBConnections(int64_t count);
@@ -50,6 +52,15 @@ class TrackedDuckDBConnection {
 
   duckdb::Connection& Get() { return connection_; }
   const duckdb::Connection& Get() const { return connection_; }
+
+  // The connection, for running a new statement on it: first closes a result
+  // an earlier statement left streaming here (DuckDB 2.x refuses the new
+  // statement otherwise; see compat::EndOpenResult). It waits for a fetch in
+  // progress, so Interrupt() and other calls that must not wait use Get().
+  duckdb::Connection& ForStatement() {
+    ddb::compat::EndOpenResult(connection_);
+    return connection_;
+  }
 
  private:
   duckdb::Connection connection_;

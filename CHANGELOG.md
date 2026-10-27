@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Edge channel: DuckDB `v2.0.0`**, the official DuckDB 2.0 release (was the
+  pre-release build `v2.0.0-alpha46057`). Edge now builds from the `v2.0.0` tag
+  and installs extensions from `extensions.duckdb.org/v2.0.0/`, and the edge
+  Docker images carry the DuckDB v2.0.0 CLI from DuckDB's GitHub release. The
+  edge channel itself stays experimental (not for production workloads); its
+  startup warning, Homebrew caveat and docs now describe it as running the
+  newest DuckDB major rather than a DuckDB pre-release. Stable stays on DuckDB
+  v1.5.6, LTS on v1.4.5.
+- On edge, results stream to the client only for a SELECT that returns rows
+  and writes nothing (DuckDB 2.0's `StreamsByDefault` rule, which replaced the
+  alpha's result-eagerness flag); DML, DDL and a SELECT with a data-modifying
+  CTE are run to completion before their result is returned, so a client that
+  stops reading early cannot roll back the write.
+
+### Fixed
+- **Edge: a session stayed blocked after a result it did not finish reading.**
+  DuckDB 2.0.0 refuses any new statement on a connection while an earlier
+  result is still open on it (`Resource In Use Error: connection has an open
+  result`), where DuckDB 1.x and the 2.0 alphas closed the earlier result. On
+  edge, a session whose DoGet was cancelled or timed out, or a JDBC/ADBC
+  `getTables` call with column schemas, then failed every following statement.
+  GizmoSQL now closes a session's open result before running its next
+  statement, as on stable and LTS; reading further from the closed result fails
+  with an error saying a later statement closed it.
 - Added a prominent README notice that GizmoSQL is in maintenance mode, directing users to Hardcharger and its documentation.
 
 ## [1.42.0] - 2026-10-15

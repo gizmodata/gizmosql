@@ -991,6 +991,9 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
     const std::string& flight_method, bool is_internal) {
   std::string status;
   auto logged_sql = redact_sql_for_logs(sql);
+  // Close a result an earlier statement left streaming on the session (what
+  // DuckDB 1.x did itself); 2.x refuses the prepare below otherwise.
+  client_session->connection->ForStatement();
   // Threshold: session/server log level gates whether messages are emitted
   ARROW_ASSIGN_OR_RAISE(auto log_threshold,
                         GetSessionOrServerLogLevel(client_session));
@@ -2445,6 +2448,10 @@ arrow::Result<int> DuckDBStatement::ExecuteImpl() {
   // Mark the session busy for the idle-session sweeper for exactly the
   // duration of execution, on every exit path (RAII).
   ScopedSqlInFlight sql_in_flight_guard(session);
+
+  // Close a result an earlier statement (or an earlier run of this one) left
+  // streaming on the session, as for a new prepare in CreateImpl().
+  session->connection->ForStatement();
 
   std::string execute_status;
 

@@ -6,7 +6,7 @@ GizmoSQL ships in three parallel **release channels** that share the same GizmoS
 |------------|----------------------------------------|------------------|
 | **Stable** | Latest DuckDB minor (e.g. `v1.5.6`)    | You want every new DuckDB feature, type, and performance improvement on its normal cadence. |
 | **LTS**    | Most recent DuckDB LTS (e.g. `v1.4.5`) | You need a slower-moving, longer-supported DuckDB engine — production deployments where the underlying database's stability guarantees matter more than new features. |
-| **Edge**   | Next DuckDB major, pre-release (e.g. `v2.0.0-alpha46057`) | **Experimental — not for production workloads.** You want to evaluate the next DuckDB major before it ships. See the [Edge Channel guide](edge_channel.md). |
+| **Edge**   | Newest DuckDB major (e.g. `v2.0.0`) | **Experimental — not for production workloads.** You want to evaluate the newest DuckDB major before GizmoSQL's stable channel moves to it. See the [Edge Channel guide](edge_channel.md). |
 
 All channels get every GizmoSQL fix, feature, and quality-of-life improvement at the same time. Choosing LTS or edge only changes which DuckDB version is statically linked into the binary; the GizmoSQL CLI flags, library API, configuration, authentication, and protocol behavior are identical. (Edge does inherit the next DuckDB major's own SQL and storage-format changes — see its guide.)
 

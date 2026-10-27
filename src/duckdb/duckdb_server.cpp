@@ -525,7 +525,8 @@ void FilterRowsByCatalogVisibility(const std::shared_ptr<ClientSession>& client_
     log_catalog = server->GetLogCatalog();
   }
   auto allowed_vec = gizmosql::enterprise::GetAllowedCatalogs(
-      *client_session, client_session->connection->Get(), instr_mgr, log_catalog);
+      *client_session, client_session->connection->ForStatement(), instr_mgr,
+      log_catalog);
   if (allowed_vec.empty()) return;
   std::unordered_set<std::string> allowed(allowed_vec.begin(), allowed_vec.end());
   rows.erase(std::remove_if(rows.begin(), rows.end(),
@@ -1829,7 +1830,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetDbSchemas(
       const flight::ServerCallContext& context, const sql::GetDbSchemas& command) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    auto& conn = client_session->connection->Get();
+    auto& conn = client_session->connection->ForStatement();
 
     // Flight SQL: "If omitted the catalog name should not be used to narrow
     // the search" — so an omitted catalog enumerates every attached catalog
@@ -2105,7 +2106,7 @@ class DuckDBFlightSqlServer::Impl {
   Result<std::unique_ptr<flight::FlightDataStream>> DoGetTables(
       const flight::ServerCallContext& context, const sql::GetTables& command) {
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetClientSession(context));
-    auto& conn = client_session->connection->Get();
+    auto& conn = client_session->connection->ForStatement();
 
     // Resolve the catalogs the request names (LIKE pattern; nullopt = every
     // attached catalog) in-process, then scan only those.
@@ -2392,7 +2393,7 @@ class DuckDBFlightSqlServer::Impl {
         {"session_id", client_session->session_id}, {"user", client_session->username},
         {"role", client_session->role}, {"query", redact_sql_for_logs(query)});
 
-    auto res = client_session->connection->Get().Query(query);
+    auto res = client_session->connection->ForStatement().Query(query);
     if (res->HasError()) {
       return Status::Invalid("Failed to run DuckDB query: " + query + ": " +
                              res->GetError());
@@ -2432,8 +2433,8 @@ class DuckDBFlightSqlServer::Impl {
     std::string catalog = command.catalog.value_or("");
     std::string schema = command.schema.value_or("");
     if (auto target =
-            ResolveTableTarget(client_session->connection->Get(), command.catalog,
-                               command.schema, command.temporary);
+            ResolveTableTarget(client_session->connection->ForStatement(),
+                               command.catalog, command.schema, command.temporary);
         target.ok()) {
       catalog = target->catalog;
       schema = target->schema;
@@ -2529,10 +2530,10 @@ class DuckDBFlightSqlServer::Impl {
 
     bool target_table_exists = false;
     {
-      ARROW_ASSIGN_OR_RAISE(target_table_exists,
-                            TableExists(client_session->connection->Get(), command.catalog,
-                                        command.schema, command.table,
-                                        command.temporary));
+      ARROW_ASSIGN_OR_RAISE(
+          target_table_exists,
+          TableExists(client_session->connection->ForStatement(), command.catalog,
+                      command.schema, command.table, command.temporary));
     }
 
     using ExistsOpt = sql::TableDefinitionOptionsTableExistsOption;
@@ -2566,7 +2567,7 @@ class DuckDBFlightSqlServer::Impl {
         (command.transaction_id.has_value() &&
          !command.transaction_id->empty()) ||
         client_session->connection->Get().HasActiveTransaction();
-    DuckDBTransactionGuard txn(client_session->connection->Get(),
+    DuckDBTransactionGuard txn(client_session->connection->ForStatement(),
                                /*owns_transaction=*/!client_has_outer_txn);
 
     // 4. Handle existence options inside the transaction
@@ -2605,8 +2606,8 @@ class DuckDBFlightSqlServer::Impl {
     const std::string ingest_view =
         "__gizmosql_ingest_" +
         boost::algorithm::erase_all_copy(client_session->session_id, "-");
-    ARROW_RETURN_NOT_OK(
-        ingest_stream.RegisterView(client_session->connection->Get(), ingest_view));
+    ARROW_RETURN_NOT_OK(ingest_stream.RegisterView(
+        client_session->connection->ForStatement(), ingest_view));
     // The view holds raw pointers into ingest_stream: always drop it before
     // leaving this frame, whatever happens.
     struct ViewDropper {
@@ -2618,7 +2619,7 @@ class DuckDBFlightSqlServer::Impl {
         } catch (...) {
         }
       }
-    } view_dropper{client_session->connection->Get(), ingest_view};
+    } view_dropper{client_session->connection->ForStatement(), ingest_view};
 
     int64_t total_rows = 0;
     try {
@@ -2735,7 +2736,8 @@ class DuckDBFlightSqlServer::Impl {
             boost::algorithm::erase_all_copy(std::get<std::string>(value), "\"");
 #ifdef GIZMOSQL_ENTERPRISE
         if (name == "catalog" &&
-            CatalogExistsOnConnection(client_session->connection->Get(), sanitized)) {
+            CatalogExistsOnConnection(client_session->connection->ForStatement(),
+                                      sanitized)) {
           std::shared_ptr<InstrumentationManager> instr_mgr;
           std::string log_catalog;
           if (auto server = GetServer(*client_session)) {
@@ -2769,8 +2771,8 @@ class DuckDBFlightSqlServer::Impl {
     // detect and recycle a stale pooled connection.
     ARROW_ASSIGN_OR_RAISE(auto client_session, GetExistingClientSession(context));
 
-    auto catalog_result = ExecuteSqlAndGetStringVector(client_session->connection->Get(),
-                                                       "SELECT current_catalog()");
+    auto catalog_result = ExecuteSqlAndGetStringVector(
+        client_session->connection->ForStatement(), "SELECT current_catalog()");
     if (catalog_result.ok()) {
       auto current_catalog = catalog_result.ValueOrDie().front();
       res.session_options.emplace("catalog", current_catalog);
@@ -2778,8 +2780,8 @@ class DuckDBFlightSqlServer::Impl {
       return Status::Invalid("Could not get current catalog");
     }
 
-    auto schema_result = ExecuteSqlAndGetStringVector(client_session->connection->Get(),
-                                                      "SELECT current_schema()");
+    auto schema_result = ExecuteSqlAndGetStringVector(
+        client_session->connection->ForStatement(), "SELECT current_schema()");
     if (schema_result.ok()) {
       auto current_schema = schema_result.ValueOrDie().front();
       res.session_options.emplace("schema", current_schema);
@@ -2826,7 +2828,7 @@ class DuckDBFlightSqlServer::Impl {
 
   static Status ExecuteSql(const std::shared_ptr<ClientSession>& client_session,
                            const std::string& sql) {
-    return ExecuteSql(client_session->connection->Get(), sql);
+    return ExecuteSql(client_session->connection->ForStatement(), sql);
   }
 
   Result<std::vector<std::string>> ExecuteSqlAndGetStringVector(

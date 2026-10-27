@@ -30,8 +30,8 @@ endif()
 # Three release channels are supported:
 #   stable  → tracks the latest DuckDB minor release (current default)
 #   lts     → tracks the most recent DuckDB LTS release
-#   edge    → tracks the next DuckDB major ahead of its release (today a
-#             DuckDB 2.0 alpha). EXPERIMENTAL — not for production workloads.
+#   edge    → tracks the next DuckDB major (today DuckDB 2.0). EXPERIMENTAL —
+#             not for production workloads.
 # The lts and edge channels produce parallel artifacts (gizmosql_server_lts /
 # gizmosql_server_edge, gizmosql_cli_<os>_<arch>_lts.zip / _edge.zip,
 # gizmodata/gizmosql-lts:* / gizmodata/gizmosql-edge:*) so the variants can be
@@ -44,18 +44,18 @@ set(DUCKDB_STABLE_VERSION "v1.5.6" CACHE STRING
     "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=stable")
 set(DUCKDB_LTS_VERSION "v1.4.5" CACHE STRING
     "Git tag of the DuckDB release used by GIZMOSQL_DUCKDB_CHANNEL=lts")
-# A DuckDB pre-release has no git tag, so the edge channel pins the commit of
-# an official alpha build. DUCKDB_EDGE_VERSION must be the exact version string
+# A DuckDB pre-release has no git tag, so for one the edge channel pins the
+# commit of an official alpha build. DUCKDB_EDGE_VERSION must be the exact version string
 # DuckDB published that build as: it becomes the runtime extension folder
 # (extensions.duckdb.org/<version>/...), and INSTALL/LOAD 404s for any other
 # string. Get the pair from
 # https://duckdb-staging.duckdb.org/latest_alpha_version.txt
 # ("<commit10>/<version>") and keep DUCKDB_CLI_STAGED in .github/workflows/ci.yml
-# in sync. Once the version is tagged, set DUCKDB_EDGE_GIT_REF to "" (it then
-# defaults to the version tag).
-set(DUCKDB_EDGE_VERSION "v2.0.0-alpha46057" CACHE STRING
+# in sync. For a tagged release (as now), DUCKDB_EDGE_GIT_REF is "" and the
+# version tag is checked out.
+set(DUCKDB_EDGE_VERSION "v2.0.0" CACHE STRING
     "DuckDB version used by GIZMOSQL_DUCKDB_CHANNEL=edge")
-set(DUCKDB_EDGE_GIT_REF "b15358c371daf10dad799a43b6167f6ccdce84d8" CACHE STRING
+set(DUCKDB_EDGE_GIT_REF "" CACHE STRING
     "Git ref (commit SHA) for DUCKDB_EDGE_VERSION when it is not a tag")
 
 set(GIZMOSQL_DUCKDB_CHANNEL_EDGE 0)

@@ -31,6 +31,7 @@
 #endif
 
 #include <memory>
+#include <mutex>
 #include <regex>
 #include <string>
 #include <unordered_map>
@@ -212,6 +213,19 @@ inline bool TryFetch(duckdb::QueryResult& result, duckdb::unique_ptr<duckdb::Dat
 #endif
 }
 
+// ---- settings --------------------------------------------------------------
+
+// A memory_limit setting in bytes; an unlimited limit is the largest idx_t.
+// DuckDB 2.x's ParseMemoryLimit returns an empty optional_idx for unlimited;
+// 1.x returned DConstants::INVALID_INDEX (the same largest idx_t).
+inline duckdb::idx_t ParseMemoryLimit(const std::string& setting) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  return duckdb::DBConfig::ParseMemoryLimitOrMaximum(setting);
+#else
+  return duckdb::DBConfig::ParseMemoryLimit(setting);
+#endif
+}
+
 // ---- SQL text -------------------------------------------------------------
 
 // DuckDB 2.x's grammar takes a single identifier as a setting name
@@ -239,28 +253,92 @@ inline std::string QuoteDottedSettingName(const std::string& sql) {
 //
 // DuckDB 1.x: PreparedStatement::Execute() streams by default.
 // DuckDB 2.x: Execute() runs to completion and materializes the whole result;
-// streaming needs Submit() plus a QueryResultStream, which DuckDB only allows
-// for statements that do not complete before returning their result (DML,
-// DDL, ... are FORCED and stay materialized).
+// streaming needs Submit() plus a QueryResultStream. Only a SELECT that returns
+// rows and writes nothing streams (duckdb::StreamsByDefault with
+// reads_to_the_end = false): a client can stop reading a result early, and a
+// statement abandoned mid-stream is rolled back, so DML, DDL and a SELECT that
+// writes (e.g. a data-modifying CTE) stay materialized and run to completion.
+//
+// DuckDB 2.x also refuses any new statement on a connection while a stream is
+// open on it ("connection has an open result"), where 1.x closed the earlier
+// result. GizmoSQL keeps the 1.x behavior: a stream registers itself as its
+// connection's open result, and EndOpenResult() (called before every new
+// statement on a session connection, see TrackedDuckDBConnection::
+// ForStatement()) closes it; a later fetch from it then fails.
+class StatementResult;
+inline void EndOpenResult(duckdb::Connection& connection);
+
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+namespace detail {
+// A 2.x statement's result while it may hold its connection. Shared between
+// the StatementResult and the open-result registry, so EndOpenResult() can
+// close it without holding the registry lock (lock order: registry, then
+// `mutex`, never both at once).
+struct StatementStream {
+  // Held while the statement is submitted and driven to its first chunk, and
+  // while a chunk is fetched, so closing it waits for those.
+  std::mutex mutex;
+  duckdb::unique_ptr<duckdb::QueryResultStream<duckdb::ChunkFormat>> stream;
+  bool closed = false;
+};
+
+struct OpenResultRegistry {
+  std::mutex mutex;
+  std::unordered_map<const duckdb::ClientContext*, std::weak_ptr<StatementStream>>
+      by_context;
+};
+
+inline OpenResultRegistry& OpenResults() {
+  static OpenResultRegistry registry;
+  return registry;
+}
+}  // namespace detail
+#endif
+
 class StatementResult {
  public:
   // Wraps an already-produced result (e.g. Connection::Query()).
   explicit StatementResult(duckdb::unique_ptr<duckdb::QueryResult> result)
       : result_(std::move(result)) {}
 
+  StatementResult(const StatementResult&) = delete;
+  StatementResult& operator=(const StatementResult&) = delete;
+
+  ~StatementResult() {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    if (!state_ || !context_) return;
+    auto& registry = detail::OpenResults();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    auto it = registry.by_context.find(context_);
+    if (it != registry.by_context.end() && it->second.lock() == state_) {
+      registry.by_context.erase(it);
+    }
+#endif
+  }
+
   static std::unique_ptr<StatementResult> Execute(duckdb::PreparedStatement& stmt,
                                                   duckdb::vector<duckdb::Value>& values) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    auto result = std::unique_ptr<StatementResult>(new StatementResult(nullptr));
+    result->state_ = std::make_shared<detail::StatementStream>();
+    // Registered before Submit(): from then on the result may hold the
+    // connection, and a later statement must be able to close it.
+    if (auto context = stmt.TryGetContext()) {
+      result->context_ = context.get();
+      auto& registry = detail::OpenResults();
+      std::lock_guard<std::mutex> lock(registry.mutex);
+      registry.by_context[result->context_] = result->state_;
+    }
+    std::lock_guard<std::mutex> stream_lock(result->state_->mutex);
     auto submitted = stmt.Submit(values);
     if (submitted && !submitted->HasError() &&
-        submitted->GetStatementProperties().result_eagerness !=
-            duckdb::ResultEagerness::FORCED &&
+        duckdb::StreamsByDefault(stmt.GetStatementType(), *submitted,
+                                 /*reads_to_the_end=*/false) &&
         submitted->HasBufferedData()) {
-      auto streaming = std::unique_ptr<StatementResult>(new StatementResult(nullptr));
-      streaming->types_ = submitted->GetTypes();
-      streaming->names_ = Strs(submitted->GetNames());
-      streaming->time_zone_ = submitted->client_properties.time_zone;
-      streaming->stream_ =
+      result->types_ = submitted->GetTypes();
+      result->names_ = Strs(submitted->GetNames());
+      result->time_zone_ = submitted->client_properties.time_zone;
+      result->state_->stream =
           duckdb::make_uniq<duckdb::QueryResultStream<duckdb::ChunkFormat>>(
               std::move(submitted));
       // Like 1.x's Execute(), run the query here until its first chunk is
@@ -269,7 +347,7 @@ class StatementResult {
       // polls for client cancellation and the query timeout and interrupts
       // the connection — rather than later inside a DoGet fetch. An
       // interrupt ends this loop with EXECUTION_ERROR (recorded on the stream).
-      auto& stream = *streaming->stream_;
+      auto& stream = *result->state_->stream;
       while (true) {
         auto state = stream.ExecuteTask();
         if (duckdb::IsObservable(state)) break;
@@ -278,9 +356,13 @@ class StatementResult {
           stream.WaitForTask();
         }
       }
-      return streaming;
+      return result;
     }
-    return std::make_unique<StatementResult>(std::move(submitted));
+    // Run it to completion now: a submitted result that is not drained holds
+    // the connection (and, for DML, may not have run yet).
+    if (submitted && !submitted->HasError()) submitted->Complete();
+    result->result_ = std::move(submitted);
+    return result;
 #else
     return std::make_unique<StatementResult>(stmt.Execute(values));
 #endif
@@ -288,28 +370,28 @@ class StatementResult {
 
   bool HasError() const {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-    if (stream_) return stream_->HasError();
+    if (Streaming()) return state_->stream->HasError();
 #endif
     return result_->HasError();
   }
 
   const std::string& GetError() const {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-    if (stream_) return stream_->GetError();
+    if (Streaming()) return state_->stream->GetError();
 #endif
     return result_->GetError();
   }
 
   const duckdb::vector<duckdb::LogicalType>& Types() const {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-    if (stream_) return types_;
+    if (Streaming()) return types_;
 #endif
     return ResultTypes(*result_);
   }
 
   duckdb::vector<std::string> Names() const {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-    if (stream_) return names_;
+    if (Streaming()) return names_;
 #endif
     return ResultNames(*result_);
   }
@@ -317,7 +399,7 @@ class StatementResult {
   // The session time zone the result's TIMESTAMPTZ values are rendered in.
   const std::string& TimeZone() const {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-    if (stream_) return time_zone_;
+    if (Streaming()) return time_zone_;
 #endif
     return result_->client_properties.time_zone;
   }
@@ -325,15 +407,24 @@ class StatementResult {
   // Next chunk, or nullptr once exhausted. False (with `error`) on failure.
   bool TryFetch(duckdb::unique_ptr<duckdb::DataChunk>& chunk, duckdb::ErrorData& error) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-    if (stream_) {
+    if (Streaming()) {
+      std::lock_guard<std::mutex> lock(state_->mutex);
+      if (state_->closed) {
+        error = duckdb::ErrorData(
+            duckdb::ExceptionType::INVALID_INPUT,
+            "The result was closed because a later statement ran on the same session; a "
+            "session streams one result at a time.");
+        return false;
+      }
+      auto& stream = *state_->stream;
       try {
-        chunk = stream_->Fetch();
+        chunk = stream.Fetch();
       } catch (std::exception& ex) {
         error = duckdb::ErrorData(ex);
         return false;
       }
-      if (stream_->HasError()) {
-        error = stream_->GetErrorObject();
+      if (stream.HasError()) {
+        error = stream.GetErrorObject();
         return false;
       }
       return true;
@@ -343,14 +434,48 @@ class StatementResult {
   }
 
  private:
+  friend void EndOpenResult(duckdb::Connection& connection);
+
   duckdb::unique_ptr<duckdb::QueryResult> result_;
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-  duckdb::unique_ptr<duckdb::QueryResultStream<duckdb::ChunkFormat>> stream_;
+  // A stream is set once Execute() returns, and never reset.
+  bool Streaming() const { return state_ && state_->stream; }
+
+  std::shared_ptr<detail::StatementStream> state_;
+  // The connection this result is registered on (Execute() results only).
+  const duckdb::ClientContext* context_ = nullptr;
   duckdb::vector<duckdb::LogicalType> types_;
   duckdb::vector<std::string> names_;
   std::string time_zone_;
 #endif
 };
+
+// Closes the result an earlier statement left streaming on `connection`, so a
+// new statement can run on it (DuckDB 1.x did this itself); a later fetch from
+// that result fails. Call before running a statement on a session connection,
+// never from Interrupt() paths: it waits for a submit or fetch in progress.
+inline void EndOpenResult(duckdb::Connection& connection) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  std::shared_ptr<detail::StatementStream> state;
+  {
+    auto& registry = detail::OpenResults();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    auto it = registry.by_context.find(connection.context.get());
+    if (it == registry.by_context.end()) return;
+    state = it->second.lock();
+    registry.by_context.erase(it);
+  }
+  if (!state) return;
+  std::lock_guard<std::mutex> lock(state->mutex);
+  // No stream: the statement ran to completion and holds nothing.
+  if (state->stream && !state->closed) {
+    state->stream->Close();
+    state->closed = true;
+  }
+#else
+  (void)connection;
+#endif
+}
 
 // ---- parse tree ------------------------------------------------------------
 
