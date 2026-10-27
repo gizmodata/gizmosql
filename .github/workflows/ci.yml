@@ -468,7 +468,9 @@ jobs:
         run: |
           python3 -m venv /tmp/test_venv
           source /tmp/test_venv/bin/activate
-          pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb
+          # The local duckdb only builds test data; pinned like requirements.txt.
+          # Unpinned, duckdb 2.0.0's Python API broke test_bulk_ingest.py (Oct 2026).
+          pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb==1.5.6
 
           # Start server in background
           ./build/gizmosql_server${{ env.bin_suffix }} --password gizmosql_password &
@@ -829,7 +831,9 @@ jobs:
         run: |
           python3 -m venv /tmp/test_venv
           source /tmp/test_venv/bin/activate
-          pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb
+          # The local duckdb only builds test data; pinned like requirements.txt.
+          # Unpinned, duckdb 2.0.0's Python API broke test_bulk_ingest.py (Oct 2026).
+          pip install adbc-driver-gizmosql geopandas shapely pyarrow duckdb==1.5.6
 
           # Start server in background
           ./build/gizmosql_server${{ env.bin_suffix }} --password gizmosql_password &
