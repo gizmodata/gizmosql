@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.42.1] - 2026-10-27
+
 ### Changed
 - **Edge channel: DuckDB `v2.0.0`**, the official DuckDB 2.0 release (was the
   pre-release build `v2.0.0-alpha46057`). Edge now builds from the `v2.0.0` tag
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alpha's result-eagerness flag); DML, DDL and a SELECT with a data-modifying
   CTE are run to completion before their result is returned, so a client that
   stops reading early cannot roll back the write.
+- Added a prominent README notice that GizmoSQL is in maintenance mode, directing users to Hardcharger and its documentation.
 
 ### Fixed
 - **Edge: a session stayed blocked after a result it did not finish reading.**
@@ -32,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GizmoSQL now closes a session's open result before running its next
   statement, as on stable and LTS; reading further from the closed result fails
   with an error saying a later statement closed it.
-- Added a prominent README notice that GizmoSQL is in maintenance mode, directing users to Hardcharger and its documentation.
 
 ## [1.42.0] - 2026-10-15
 
