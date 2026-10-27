@@ -846,7 +846,7 @@ arrow::Status InstrumentationManager::InitializePostgresSchema() {
   // bypassing DuckDB — so DuckDB's catalog cache (populated at ATTACH) does not
   // yet know about them. Clear it so the USE below and the unqualified writes
   // can resolve the freshly-created objects.
-  auto clear_cache = conn.Query("CALL pg_clear_cache()");
+  auto clear_cache = conn.Query(compat::PostgresClearCacheSql());
   if (clear_cache->HasError()) {
     return arrow::Status::Invalid("Failed to refresh PostgreSQL catalog cache: ",
                                   clear_cache->GetError());

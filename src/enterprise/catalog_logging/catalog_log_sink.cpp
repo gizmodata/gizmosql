@@ -287,7 +287,7 @@ arrow::Status CatalogLogSink::InitializePostgresSchema() {
   // postgres_execute() created the objects directly in PostgreSQL, bypassing
   // DuckDB's catalog cache; refresh it so the USE below and the unqualified
   // INSERTs resolve them.
-  auto clear_cache = conn.Query("CALL pg_clear_cache()");
+  auto clear_cache = conn.Query(ddb::compat::PostgresClearCacheSql());
   if (clear_cache->HasError()) {
     return arrow::Status::Invalid("Failed to refresh PostgreSQL catalog cache: ",
                                   clear_cache->GetError());

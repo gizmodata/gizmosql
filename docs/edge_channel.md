@@ -55,10 +55,10 @@ An edge build marks itself everywhere it reports its version:
 
 ```text
 $ gizmosql_server_edge --version
-GizmoSQL Server CLI: v1.42.1-EDGE
+GizmoSQL Server CLI: v1.42.2-EDGE
 
 $ gizmosql_client_edge --version
-GizmoSQL Client v1.42.1-EDGE
+GizmoSQL Client v1.42.2-EDGE
 
 $ gizmosql_server_edge --print-duckdb-version
 v2.0.0
@@ -67,7 +67,7 @@ v2.0.0
 At startup it logs the channel and a warning:
 
 ```text
-INFO ... GizmoSQL server version: v1.42.1-EDGE - with engine: DuckDB (edge channel — DuckDB v2.0.0) - will listen on grpc+tcp://0.0.0.0:31337
+INFO ... GizmoSQL server version: v1.42.2-EDGE - with engine: DuckDB (edge channel — DuckDB v2.0.0) - will listen on grpc+tcp://0.0.0.0:31337
 WARN ... This is an EDGE channel build of GizmoSQL, on the newest DuckDB major (v2.0.0). It is EXPERIMENTAL and NOT meant for production workloads: behavior and extensions can change or break between releases, and database files it creates cannot be opened by the stable or LTS channel. Use the stable or LTS channel for production.
 ```
 
@@ -75,7 +75,7 @@ And from SQL:
 
 ```sql
 SELECT GIZMOSQL_VERSION();
--- v1.42.1-EDGE
+-- v1.42.2-EDGE
 ```
 
 ## Artifacts

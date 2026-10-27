@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.42.1] - 2026-10-27
+## [1.42.2] - 2026-10-27
+
+v1.42.1 was tagged but never released (its edge builds failed); its changes ship here.
 
 ### Changed
 - **Edge channel: DuckDB `v2.0.0`**, the official DuckDB 2.0 release (was the
@@ -35,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GizmoSQL now closes a session's open result before running its next
   statement, as on stable and LTS; reading further from the closed result fails
   with an error saying a later statement closed it.
+- **Edge: a PostgreSQL instrumentation or catalog-logging catalog failed at
+  startup** with `Table Function with name pg_clear_cache does not exist`. The
+  postgres extension for DuckDB 2.0.0 renamed `pg_clear_cache()` to
+  `postgres_clear_cache()`; edge now calls the new name (stable and LTS keep
+  the old one, which is all their extension has).
 
 ## [1.42.0] - 2026-10-15
 

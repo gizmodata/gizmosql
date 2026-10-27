@@ -286,6 +286,16 @@ elseif(NOT GIZMOSQL_SANITIZER STREQUAL "")
     message(FATAL_ERROR "GIZMOSQL_SANITIZER must be '', thread, or address (got '${GIZMOSQL_SANITIZER}')")
 endif()
 
+# DuckDB builds its own unittest runner by default, which GizmoSQL never uses,
+# and the C++ API tests DuckDB v2.0.0 added to it do not compile with MSVC
+# (C2248 in tools/cpp/tests). Edge skips it. Passed through this variable,
+# which DuckDB_CMakeLists.txt.in already expands, rather than edited into that
+# template: CI keys every channel's DuckDB cache on the template's hash, so the
+# stable and LTS caches stay valid.
+if(GIZMOSQL_DUCKDB_CHANNEL STREQUAL "edge")
+    string(APPEND GIZMOSQL_EP_DUCKDB_SANITIZER_ARGS " -DBUILD_UNITTESTS=OFF")
+endif()
+
 function(gizmosql_superbuild_check project_name stamp_dir superbuild_dir out_skip out_hash)
     set(inputs "${superbuild_dir}/CMakeLists.txt" ${ARGN})
     set(digest "generator=${CMAKE_GENERATOR}\nbuild_type=${CMAKE_BUILD_TYPE}\nsanitizer=${GIZMOSQL_SANITIZER}\n")

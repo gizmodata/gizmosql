@@ -228,6 +228,16 @@ inline duckdb::idx_t ParseMemoryLimit(const std::string& setting) {
 
 // ---- SQL text -------------------------------------------------------------
 
+// Refreshes the postgres extension's catalog cache. The extension for DuckDB
+// 2.x has only postgres_clear_cache(); for 1.x (1.4, 1.5) only pg_clear_cache().
+inline const char* PostgresClearCacheSql() {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  return "CALL postgres_clear_cache()";
+#else
+  return "CALL pg_clear_cache()";
+#endif
+}
+
 // DuckDB 2.x's grammar takes a single identifier as a setting name
 // (`SettingName <- Identifier`), so `SET [GLOBAL] gizmosql.x = ...` no longer
 // parses as written. Returns `sql` with a leading SET/RESET's dotted setting
