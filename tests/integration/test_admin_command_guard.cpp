@@ -688,7 +688,11 @@ TEST(AdminCommandGuard, CopyInsideCteIsGated) {
             "COPY TO (local filesystem)");
   EXPECT_EQ(Category("SELECT 1 UNION ALL (WITH c AS (COPY (SELECT 1) TO 'x.csv') SELECT 2)"),
             "COPY TO (local filesystem)");
-  EXPECT_FALSE(Gated("WITH c AS (COPY (SELECT 42) TO 's3://bucket/out.csv') SELECT 1"));
+  // A remote target in a CTE follows the same policy as a top-level COPY.
+  EXPECT_EQ(Category("WITH c AS (COPY (SELECT 42) TO 's3://bucket/out.csv') SELECT 1"),
+            "COPY TO (remote URL)");
+  EXPECT_FALSE(
+      GatedAllowingRemote("WITH c AS (COPY (SELECT 42) TO 's3://bucket/out.csv') SELECT 1"));
 }
 
 TEST(AdminCommandGuard, ConnectAndExternalResourceAreGated) {
