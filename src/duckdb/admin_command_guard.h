@@ -35,11 +35,24 @@
 //   * SET GLOBAL / RESET GLOBAL (any setting, DuckDB or GizmoSQL)
 //   * INSTALL / LOAD (extensions)
 //   * CHECKPOINT / FORCE CHECKPOINT
-//   * COPY ... TO/FROM a LOCAL file (remote object-storage/HTTP paths allowed)
+//   * COPY ... TO/FROM a LOCAL file, and — unless the server allows non-admin
+//     remote access (--allow-non-admin-remote-access) — a remote
+//     object-storage/HTTP URL too: a non-admin cannot create secrets, so any
+//     remote I/O it runs uses the SERVER's credentials and network position,
+//     which on a shared cluster reach every tenant's storage prefix
 //   * EXPORT DATABASE / IMPORT DATABASE (ANY destination — full-database
 //     egress/ingress is not bounded by object grants, so it is always gated)
 //   * read_*() / glob() / sniff_csv() table functions reading the LOCAL
-//     filesystem (remote object-storage/HTTP paths allowed), at any nesting
+//     filesystem (and remote URLs, as for COPY above), at any nesting
+//   * External-database table functions — postgres_query / postgres_execute /
+//     postgres_scan..., mysql_*, sqlite_* — and CALLs of them. They run raw SQL
+//     against an attached database (e.g. a DuckLake catalog's metadata
+//     Postgres) as that database's own role, outside catalog permissions
+//   * DuckLake functions that take files or metadata by name rather than by
+//     catalog grant: ducklake_add_data_files, ducklake_commit, and a direct
+//     ducklake_scan(...) call. (The other ducklake_*() functions are checked
+//     at bind time against the token's catalog access — see
+//     plan_access_guard.h.)
 //   * CREATE SECRET / DROP SECRET (all variants: OR REPLACE / PERSISTENT /
 //     TEMPORARY — secrets hold credentials)
 //   * duckdb_secrets() (always — it exposes secret material)
@@ -48,10 +61,15 @@
 // it is robust to whitespace/comments/case and to nesting (subqueries, CTEs,
 // joins, CTAS, INSERT ... SELECT, COPY (SELECT ...) TO).
 //
-// KNOWN LIMITATIONS (documented; the airtight fix is the GizmoSQL 2.0 in-binder
-// enforcement):
-//   * A view or macro that wraps a gated function is not inspected — selecting
-//     from it is not caught here.
+// This parse-time gate is the first of two layers. It refuses a statement
+// before DuckDB binds it (some table functions do work at bind time, e.g.
+// postgres_query prepares its SQL on the remote server). The second layer,
+// plan_access_guard.h, checks the BOUND plan of every statement a non-admin
+// session prepares, so it also sees what a view, a macro or a prepared-statement
+// parameter supplies — which this parse-time walk cannot.
+//
+// KNOWN LIMITATIONS of this parse-time layer (covered at bind time):
+//   * A view or macro that wraps a gated function is not inspected here.
 //   * Replacement scans of string-literal paths (SELECT * FROM '/etc/passwd')
 //     are caught by a path-shape heuristic, not by binding.
 //   * Note: the statement-type gates (ATTACH/DETACH/SET GLOBAL/INSTALL/LOAD/
@@ -64,6 +82,40 @@
 
 namespace gizmosql::ddb {
 
+/// Server policy that changes what the gate refuses.
+struct GateOptions {
+  /// Allow non-admin sessions to read and write remote object-storage / HTTP
+  /// URLs (--allow-non-admin-remote-access). Off by default: such I/O runs with
+  /// the server's credentials, not the session's.
+  bool allow_remote_paths = false;
+};
+
+// ---- Classification helpers shared with the bind-time plan guard ----------
+
+/// True if `path` starts with an object-storage / network scheme GizmoSQL
+/// recognizes (s3://, gs://, https://, hf://, ...). Case-insensitive.
+bool IsProvenRemotePath(const std::string& path);
+
+/// Table functions that read files named by their first argument (read_csv,
+/// read_parquet, glob, ...). `name_lower` must be lower-case.
+bool IsFileReadFunction(const std::string& name_lower);
+
+/// Table functions of the external-database scanners (postgres_*, mysql_*,
+/// sqlite_*). They run SQL on, or scan, an attached external database with
+/// that database's own credentials. `name_lower` must be lower-case.
+bool IsExternalDatabaseFunction(const std::string& name_lower);
+
+/// What a non-admin needs to call a ducklake_*() table function.
+enum class DuckLakeFunctionAccess {
+  kNotDuckLake,  // not a DuckLake function
+  kScan,         // ducklake_scan: the scan behind every DuckLake table; a direct
+                 // call with arguments reads arbitrary files -> admin only
+  kRead,         // reads a catalog's metadata: read access to its first argument
+  kWrite,        // changes a catalog: write access to its first argument
+  kAdmin,        // admin only (ducklake_add_data_files, ducklake_commit)
+};
+DuckLakeFunctionAccess ClassifyDuckLakeFunction(const std::string& name_lower);
+
 /// Classify `sql` for the non-admin admin-command gate. Returns a short, stable
 /// human-readable category describing the FIRST gated operation found (e.g.
 /// "ATTACH", "DETACH", "SET GLOBAL memory_limit", "INSTALL extension",
@@ -72,7 +124,8 @@ namespace gizmosql::ddb {
 /// std::nullopt if the statement is permitted for a non-admin session. A SQL
 /// string that fails to parse returns std::nullopt (DuckDB surfaces the real
 /// parse error during preparation).
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql);
+std::optional<std::string> ClassifyGatedCommand(const std::string& sql,
+                                                const GateOptions& options = {});
 
 /// `SET allow_unredacted_secrets = <value>` (or the PRAGMA form) for any role,
 /// or std::nullopt. Any value that is not a false constant matches (true, 1,
@@ -91,6 +144,7 @@ std::string GatedCommandDeniedMessage(const std::string& category);
 /// Convenience wrapper: arrow::Status::OK() if permitted for a non-admin
 /// session, otherwise a Flight PermissionDenied (Unauthorized) error naming the
 /// gated category.
-arrow::Status CheckNonAdminCommandAllowed(const std::string& sql);
+arrow::Status CheckNonAdminCommandAllowed(const std::string& sql,
+                                          const GateOptions& options = {});
 
 }  // namespace gizmosql::ddb

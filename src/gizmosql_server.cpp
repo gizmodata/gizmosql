@@ -173,6 +173,14 @@ int main(int argc, char** argv) {
              "The client must re-authenticate. Default is false (the session is recreated, "
              "as before). If not set, uses env var GIZMOSQL_REJECT_UNKNOWN_SESSIONS "
              "(1/true to enable). DuckDB backend only.")
+            ("allow-non-admin-remote-access", po::value<bool>()->default_value(false),
+             "Let non-admin sessions read and write remote object-storage / HTTP URLs "
+             "(read_parquet('s3://...'), COPY ... TO 'gs://...', SELECT * FROM "
+             "'https://...'). Such I/O runs with this server's credentials and network "
+             "position, so on a server shared by several tenants it reaches every "
+             "tenant's storage. Default is false: remote URLs are admin-only (local files "
+             "always are). If not set, uses env var GIZMOSQL_ALLOW_NON_ADMIN_REMOTE_ACCESS "
+             "(1/true to enable). DuckDB backend only.")
             ("block-unredacted-secrets", po::value<bool>()->default_value(true),
              "Reject SET allow_unredacted_secrets to any value other than false from every "
              "client, before DuckDB sees the statement. Default is true. Set to false to let "
@@ -532,6 +540,11 @@ int main(int argc, char** argv) {
           ? std::nullopt
           : std::optional(vm["reject-unknown-sessions"].as<bool>());
 
+  std::optional<bool> allow_non_admin_remote_access =
+      vm["allow-non-admin-remote-access"].defaulted()
+          ? std::nullopt
+          : std::optional(vm["allow-non-admin-remote-access"].as<bool>());
+
   std::string capture_query_profile = vm["capture-query-profile"].as<std::string>();
 
   std::string query_log_level =
@@ -655,5 +668,6 @@ int main(int argc, char** argv) {
       vm["enable-metrics"].defaulted() ? std::nullopt
                                        : std::optional(vm["enable-metrics"].as<bool>()),
       block_unredacted_secrets, block_sensitive_paths,
-      vm["sensitive-paths"].as<std::string>(), reject_unknown_sessions);
+      vm["sensitive-paths"].as<std::string>(), reject_unknown_sessions,
+      allow_non_admin_remote_access);
 }
