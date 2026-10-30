@@ -69,6 +69,82 @@
 
 namespace gizmosql::ddb {
 
+bool IsProvenRemotePath(const std::string& path) {
+  // Proven remote only if it begins with an object-storage / network scheme we
+  // recognize. Anything else — a bare path, a relative path, file://, or a
+  // non-literal/computed path — is treated as LOCAL. Fail closed.
+  static const std::array<const char*, 14> kRemoteSchemes = {
+      "s3://",   "s3a://",  "s3n://", "gs://",  "gcs://",    "r2://",   "az://",
+      "azure://","abfs://", "abfss://","http://","https://", "hf://",   "remote://"};
+  for (const char* scheme : kRemoteSchemes) {
+    const size_t n = std::char_traits<char>::length(scheme);
+    if (path.size() < n) continue;
+    bool match = true;
+    for (size_t i = 0; i < n; ++i) {
+      if (std::tolower(static_cast<unsigned char>(path[i])) != scheme[i]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return true;
+  }
+  return false;
+}
+
+bool IsFileReadFunction(const std::string& name_lower) {
+  // Table functions that read the files named by their first argument.
+  static const std::unordered_set<std::string> kFns = {
+      "read_csv",        "read_csv_auto",   "read_parquet",    "parquet_scan",
+      "read_json",       "read_json_auto",  "read_json_objects","read_ndjson",
+      "read_ndjson_auto","read_ndjson_objects","read_text",    "read_blob",
+      "glob",            "sniff_csv",       "parquet_metadata","parquet_schema",
+      "parquet_file_metadata","parquet_kv_metadata","read_text_auto",
+      "read_json_objects_auto", "read_ndjson_objects_auto", "parquet_bloom_probe",
+      // DuckDB 2.0
+      "read_single_csv_file", "read_single_json_file"};
+  return kFns.count(name_lower) > 0;
+}
+
+bool IsExternalDatabaseFunction(const std::string& name_lower) {
+  // postgres_scanner (postgres_query, postgres_execute, postgres_scan,
+  // postgres_scan_pushdown, postgres_attach, postgres_configure_pool, ...),
+  // mysql_scanner (mysql_query, mysql_execute, ...) and sqlite_scanner
+  // (sqlite_scan, sqlite_attach, ...). Each reaches an external database with
+  // that database's own credentials — for an attached catalog, the credentials
+  // GizmoSQL attached it with — past catalog permissions.
+  static const std::array<const char*, 3> kPrefixes = {"postgres_", "mysql_", "sqlite_"};
+  for (const char* prefix : kPrefixes) {
+    if (name_lower.rfind(prefix, 0) == 0) return true;
+  }
+  return false;
+}
+
+DuckLakeFunctionAccess ClassifyDuckLakeFunction(const std::string& name_lower) {
+  if (name_lower.rfind("ducklake_", 0) != 0) return DuckLakeFunctionAccess::kNotDuckLake;
+  if (name_lower == "ducklake_scan") return DuckLakeFunctionAccess::kScan;
+  // ducklake_add_data_files registers files at ANY path (e.g. another
+  // catalog's data prefix) into a table, after which the table serves them;
+  // ducklake_commit's first argument is a metadata schema, not a catalog.
+  if (name_lower == "ducklake_add_data_files" || name_lower == "ducklake_commit") {
+    return DuckLakeFunctionAccess::kAdmin;
+  }
+  // Metadata readers: the first argument is the catalog.
+  static const std::unordered_set<std::string> kReaders = {
+      "ducklake_snapshots",       "ducklake_table_info",
+      "ducklake_list_files",      "ducklake_current_snapshot",
+      "ducklake_last_committed_snapshot", "ducklake_options",
+      "ducklake_settings",        "ducklake_tags",
+      "ducklake_table_changes",   "ducklake_table_insertions",
+      "ducklake_table_deletions"};
+  if (kReaders.count(name_lower)) return DuckLakeFunctionAccess::kRead;
+  // Everything else (expire_snapshots, cleanup_old_files,
+  // delete_orphaned_files, merge_adjacent_files, rewrite_data_files,
+  // flush_inlined_data, set_option, set_commit_message, *_tag, and any
+  // function DuckLake adds later) changes the catalog named by its first
+  // argument. Fail closed: unknown means write.
+  return DuckLakeFunctionAccess::kWrite;
+}
+
 namespace {
 
 namespace dd = duckdb;
@@ -131,27 +207,13 @@ std::optional<std::string> StringConstant(const dd::ParsedExpression& expr) {
   return value.GetValue<std::string>();
 }
 
-// A path is "proven remote" only if it begins with an object-storage / network
-// scheme we recognize. Anything else — a bare path, a relative path, file://,
-// or a non-literal/computed path — is treated as LOCAL (and therefore gated for
-// non-admins). Fail closed: when we cannot prove a path is remote, we gate it.
-bool IsProvenRemotePath(const std::string& path_lower) {
-  static const std::array<const char*, 14> kRemoteSchemes = {
-      "s3://",   "s3a://",  "s3n://", "gs://",  "gcs://",    "r2://",   "az://",
-      "azure://","abfs://", "abfss://","http://","https://", "hf://",   "remote://"};
-  for (const char* scheme : kRemoteSchemes) {
-    if (path_lower.rfind(scheme, 0) == 0) return true;
-  }
-  return false;
-}
-
 // Heuristic for replacement scans: `SELECT * FROM '/path/file.parquet'`. A bare,
 // unqualified table reference whose name looks like a filesystem path or a
 // data-file name. Used only for non-admin BASE_TABLE refs.
 bool LooksLikeLocalFilePath(const std::string& name) {
   if (name.empty()) return false;
   const std::string low = ToLower(name);
-  if (IsProvenRemotePath(low)) return false;  // remote replacement scan is allowed
+  if (IsProvenRemotePath(low)) return false;  // remote: gated separately
   // Path separators or explicit local prefixes are a strong signal.
   if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos) {
     return true;
@@ -172,19 +234,8 @@ bool LooksLikeLocalFilePath(const std::string& name) {
   return false;
 }
 
-// Table functions that read the local filesystem when given a local path. Gated
-// only when the path argument is not a proven-remote URL.
-const std::unordered_set<std::string>& FsReadFunctions() {
-  static const std::unordered_set<std::string> kFns = {
-      "read_csv",        "read_csv_auto",   "read_parquet",    "parquet_scan",
-      "read_json",       "read_json_auto",  "read_json_objects","read_ndjson",
-      "read_ndjson_auto","read_ndjson_objects","read_text",    "read_blob",
-      "glob",            "sniff_csv",       "parquet_metadata","parquet_schema",
-      "parquet_file_metadata","parquet_kv_metadata","read_text_auto",
-      // DuckDB 2.0
-      "read_single_csv_file", "read_single_json_file"};
-  return kFns;
-}
+// A bare `FROM 's3://bucket/x.parquet'` replacement scan of a remote URL.
+bool LooksLikeRemoteFilePath(const std::string& name) { return IsProvenRemotePath(name); }
 
 // Table functions gated for non-admins regardless of arguments.
 const std::unordered_set<std::string>& AlwaysGatedFunctions() {
@@ -240,11 +291,34 @@ std::optional<std::string> CopyPathLiteral(const dd::CopyInfo& info) {
 }
 
 // COPY whose target is not a proven-remote path (COPY TO a local file, or any
-// COPY FROM the local filesystem). nullopt => remote target, allowed.
-std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
+// COPY FROM the local filesystem) is always gated. A remote target is gated
+// too unless the server allows non-admin remote access: COPY TO
+// 'gs://<shared bucket>/<another catalog's prefix>/...' writes with the
+// server's credentials, so one tenant could plant files in another's data.
+std::optional<std::string> CopyViolation(const dd::CopyInfo& info, bool allow_remote_paths) {
   auto path = CopyPathLiteral(info);
-  if (path && IsProvenRemotePath(ToLower(*path))) return std::nullopt;
+  if (path && IsProvenRemotePath(*path)) {
+    if (allow_remote_paths) return std::nullopt;
+    return info.is_from ? "COPY FROM (remote URL)" : "COPY TO (remote URL)";
+  }
   return info.is_from ? "COPY FROM (local filesystem)" : "COPY TO (local filesystem)";
+}
+
+// Name-only gates for a table function or CALL target: external-database
+// scanners and the admin-only DuckLake functions. Clients never need to write
+// ducklake_scan(...) — DuckDB uses it to scan DuckLake tables — and a direct
+// call reads arbitrary files, so it is admin-only here.
+std::optional<std::string> ExternalOrDuckLakeViolation(const std::string& name_lower) {
+  if (IsExternalDatabaseFunction(name_lower)) {
+    return name_lower + "() (external database access)";
+  }
+  switch (ClassifyDuckLakeFunction(name_lower)) {
+    case DuckLakeFunctionAccess::kScan:
+    case DuckLakeFunctionAccess::kAdmin:
+      return name_lower + "()";
+    default:
+      return std::nullopt;
+  }
 }
 
 // Searches a parsed query tree for a gated table function (read_*/duckdb_secrets)
@@ -257,6 +331,10 @@ std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
 // descend, so CheckExpr handles those. Sets `violation` to the first category
 // found and short-circuits thereafter.
 struct GatedFunctionWalker {
+  explicit GatedFunctionWalker(bool allow_remote_paths_p)
+      : allow_remote_paths(allow_remote_paths_p) {}
+
+  bool allow_remote_paths;
   std::optional<std::string> violation;
 
   // Drive a full walk of a query node. Safe to call recursively (only on
@@ -291,7 +369,7 @@ struct GatedFunctionWalker {
           violation = "COPY";
           return;
         }
-        if (auto v = LocalCopyViolation(*copy.info)) {
+        if (auto v = CopyViolation(*copy.info, allow_remote_paths)) {
           violation = v;
           return;
         }
@@ -340,6 +418,8 @@ struct GatedFunctionWalker {
       auto table_name = UnqualifiedTableName(ref.Cast<dd::BaseTableRef>());
       if (table_name && LooksLikeLocalFilePath(*table_name)) {
         violation = "reading a local file via FROM '" + *table_name + "'";
+      } else if (table_name && !allow_remote_paths && LooksLikeRemoteFilePath(*table_name)) {
+        violation = "reading a remote URL via FROM '" + *table_name + "'";
       }
     } else if (ref.type == dd::TableReferenceType::SUBQUERY) {
       // Its children were enumerated already; only the node edges are left.
@@ -380,17 +460,25 @@ struct GatedFunctionWalker {
       violation = name + "()";
       return;
     }
-    if (FsReadFunctions().count(name)) {
+    if (auto v = ExternalOrDuckLakeViolation(name)) {
+      violation = v;
+      return;
+    }
+    if (IsFileReadFunction(name)) {
       auto path = FirstStringLiteralArg(fe);
-      if (path && IsProvenRemotePath(ToLower(*path))) return;  // remote read allowed
+      if (path && IsProvenRemotePath(*path)) {
+        if (!allow_remote_paths) violation = name + "() (remote URL)";
+        return;
+      }
       violation = name + "() (local filesystem)";
     }
   }
 };
 
 // Walk the embedded query/select of a statement for gated table functions.
-std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt) {
-  GatedFunctionWalker walker;
+std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt,
+                                                          const GateOptions& options) {
+  GatedFunctionWalker walker(options.allow_remote_paths);
   switch (stmt.type) {
     case dd::StatementType::SELECT_STATEMENT: {
       auto& s = stmt.Cast<dd::SelectStatement>();
@@ -447,19 +535,20 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
 // (prepared statements are per-session/connection). Recurses into EXPLAIN too:
 // EXPLAIN ANALYZE executes the wrapped statement (COPY TO writes its file,
 // SET GLOBAL changes the setting, ...).
-std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
+std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt,
+                                             const GateOptions& options) {
     switch (stmt.type) {
       case dd::StatementType::PREPARE_STATEMENT: {
         auto& ps = stmt.Cast<dd::PrepareStatement>();
         if (ps.statement) {
-          if (auto v = ClassifyStatement(*ps.statement)) return v;
+          if (auto v = ClassifyStatement(*ps.statement, options)) return v;
         }
         break;
       }
       case dd::StatementType::EXPLAIN_STATEMENT: {
         auto& es = stmt.Cast<dd::ExplainStatement>();
         if (es.stmt) {
-          if (auto v = ClassifyStatement(*es.stmt)) return v;
+          if (auto v = ClassifyStatement(*es.stmt, options)) return v;
         }
         break;
       }
@@ -533,17 +622,20 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
               ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
           if (fname == "checkpoint" || fname == "force_checkpoint") return "CHECKPOINT";
           if (IsQuackFunction(fname)) return fname + "()";
+          // CALL postgres_execute('__ducklake_metadata_<other>', '...'),
+          // CALL ducklake_add_data_files(...), ...
+          if (auto v = ExternalOrDuckLakeViolation(fname)) return v;
         }
         break;  // other CALL functions allowed
       }
       case dd::StatementType::COPY_STATEMENT: {
         auto& cs = stmt.Cast<dd::CopyStatement>();
         if (cs.info) {
-          if (auto v = LocalCopyViolation(*cs.info)) return v;
-          // Remote COPY target is allowed, but a COPY (SELECT read_csv(...)) TO
-          // may still read the local filesystem — inspect the embedded query.
+          if (auto v = CopyViolation(*cs.info, options.allow_remote_paths)) return v;
+          // An allowed remote COPY target may still read a gated source
+          // (COPY (SELECT * FROM read_csv(...)) TO ...) — walk the query.
           if (cs.info->select_statement) {
-            GatedFunctionWalker walker;
+            GatedFunctionWalker walker(options.allow_remote_paths);
             walker.WalkNode(*cs.info->select_statement);
             if (walker.violation) return walker.violation;
           }
@@ -570,7 +662,7 @@ std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
     }
 
     // Embedded read_*/duckdb_secrets in SELECT / CTAS / INSERT ... SELECT.
-    if (auto v = WalkStatementForGatedFunctions(stmt)) return v;
+    if (auto v = WalkStatementForGatedFunctions(stmt, options)) return v;
     return std::nullopt;
 }
 
@@ -677,7 +769,8 @@ bool ContainsCaseInsensitive(const std::string& haystack,
 
 }  // namespace
 
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
+std::optional<std::string> ClassifyGatedCommand(const std::string& sql,
+                                                const GateOptions& options) {
   auto parser = compat::StandaloneParser();
   try {
     // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on
@@ -692,7 +785,7 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
 
   for (auto& stmt_ptr : parser.statements) {
     if (!stmt_ptr) continue;
-    if (auto v = ClassifyStatement(*stmt_ptr)) return v;
+    if (auto v = ClassifyStatement(*stmt_ptr, options)) return v;
   }
   return std::nullopt;
 }
@@ -737,14 +830,15 @@ bool IsSecretDirectorySet(const std::string& sql) {
 
 std::string GatedCommandDeniedMessage(const std::string& category) {
   return "Permission denied: GizmoSQL blocked " + category +
-         ", which requires the 'admin' role. GizmoSQL confines filesystem- and "
-         "instance-level commands to admins, so users sharing this server cannot read, "
-         "write or reconfigure the host. (Server operators: roles come from the token's "
-         "'role' claim)";
+         ", which requires the 'admin' role. GizmoSQL confines filesystem-, network-, "
+         "external-database- and instance-level commands to admins, so users sharing this "
+         "server cannot read, write or reconfigure the host or each other's catalogs. "
+         "(Server operators: roles come from the token's 'role' claim)";
 }
 
-arrow::Status CheckNonAdminCommandAllowed(const std::string& sql) {
-  auto category = ClassifyGatedCommand(sql);
+arrow::Status CheckNonAdminCommandAllowed(const std::string& sql,
+                                          const GateOptions& options) {
+  auto category = ClassifyGatedCommand(sql, options);
   if (!category) return arrow::Status::OK();
   return flight::MakeFlightError(flight::FlightStatusCode::Unauthorized,
                                  GatedCommandDeniedMessage(*category));

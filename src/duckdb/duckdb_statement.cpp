@@ -59,6 +59,7 @@
 #include "session_context.h"
 #include "shutdown_state.h"
 #include "admin_command_guard.h"
+#include "plan_access_guard.h"
 #include "gizmosql_telemetry.h"
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -958,7 +959,92 @@ class DirectExecutionAccessGuard : public duckdb::ClientContextState {
   bool is_internal_;
 };
 
+// The server policy the admin-command gate and plan guard apply.
+gizmosql::ddb::GateOptions GateOptionsFor(const ClientSession& session) {
+  gizmosql::ddb::GateOptions options;
+  if (auto server = GetServer(session)) {
+    options.allow_remote_paths = server->AllowNonAdminRemoteAccess();
+  }
+  return options;
+}
+
+// Bind-time half of the non-admin gate (see plan_access_guard.h). Registered on
+// a non-admin session's connection for the connection's whole life, so it sees
+// every statement DuckDB binds there: Create()'s prepare, the direct-execution
+// fallback, and re-binds at execution (DuckDB 2.x plans a statement with
+// unbound parameters only once their values are known).
+class PlanAccessGuardState : public duckdb::ClientContextState {
+ public:
+  static constexpr const char* kStateName = "gizmosql_plan_access_guard";
+
+  explicit PlanAccessGuardState(std::weak_ptr<ClientSession> session)
+      : session_(std::move(session)) {}
+
+  // OnFinalizePrepare is only called when some registered state can request a
+  // rebind; this one never does, it only rejects.
+  bool CanRequestRebind() override { return true; }
+
+  duckdb::RebindQueryInfo OnFinalizePrepare(duckdb::ClientContext& context,
+                                            duckdb::PreparedStatementData& prepared,
+                                            duckdb::PreparedStatementMode) override {
+    auto session = session_.lock();
+    if (!session) {
+      throw duckdb::PermissionException("Access denied: the session has ended.");
+    }
+    if (session->role == "admin") return duckdb::RebindQueryInfo::DO_NOT_REBIND;
+
+#ifdef GIZMOSQL_ENTERPRISE
+    std::shared_ptr<InstrumentationManager> instr_mgr;
+    std::string log_catalog;
+    if (auto server = GetServer(*session)) {
+      instr_mgr = server->GetInstrumentationManager();
+      log_catalog = server->GetLogCatalog();
+    }
+#endif
+    const auto& s = *session;
+    gizmosql::ddb::CatalogAccessCheck catalog_access =
+        [&](const std::string& catalog_arg, bool need_write) -> bool {
+      // The legacy readonly role never writes, whatever its catalog rules say.
+      if (need_write && s.role == "readonly") return false;
+#ifdef GIZMOSQL_ENTERPRISE
+      // Check the rules against the catalog the argument actually resolves to:
+      // DuckDB matches catalog names case-insensitively, the rules do not.
+      const auto catalog = gizmosql::ddb::CanonicalCatalogName(context, catalog_arg);
+      return need_write ? gizmosql::enterprise::HasWriteAccess(s, catalog, instr_mgr,
+                                                               log_catalog)
+                        : gizmosql::enterprise::HasReadAccess(s, catalog, instr_mgr,
+                                                              log_catalog);
+#else
+      (void)catalog_arg;
+      (void)context;
+      return true;  // Core has no per-catalog grants
+#endif
+    };
+
+    auto violation =
+        gizmosql::ddb::ClassifyPreparedPlan(prepared, GateOptionsFor(s), catalog_access);
+    if (!violation) return duckdb::RebindQueryInfo::DO_NOT_REBIND;
+
+    GIZMOSQL_LOGKV_SESSION(WARNING, session,
+                           "Client statement refused by the bind-time access guard",
+                           {"kind", "sql"}, {"status", "rejected"}, {"gated", *violation});
+    throw duckdb::PermissionException(gizmosql::ddb::GatedCommandDeniedMessage(*violation));
+  }
+
+ private:
+  std::weak_ptr<ClientSession> session_;
+};
+
 }  // namespace
+
+void InstallPlanAccessGuard(const std::shared_ptr<ClientSession>& client_session) {
+  if (!client_session || !client_session->connection) return;
+  if (client_session->role == "admin") return;
+  auto& context = *client_session->connection->Get().context;
+  context.registered_state->Insert(
+      PlanAccessGuardState::kStateName,
+      duckdb::make_shared_ptr<PlanAccessGuardState>(client_session));
+}
 
 arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::Create(
     const std::shared_ptr<ClientSession>& client_session, const std::string& handle,
@@ -1032,7 +1118,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   // non-admin roles. Internal/system queries are exempt. Admins and internal
   // queries skip the parse entirely (fast path).
   if (!is_internal && client_session->role != "admin") {
-    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql)) {
+    if (auto gated_category =
+            gizmosql::ddb::ClassifyGatedCommand(sql, GateOptionsFor(*client_session))) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Client attempted a gated admin command",
                              {"kind", "sql"}, {"status", "rejected"},

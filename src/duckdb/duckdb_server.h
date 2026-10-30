@@ -250,6 +250,12 @@ class DuckDBFlightSqlServer : public flight::sql::FlightSqlServerBase,
   void SetRejectUnknownSessions(bool reject);
   bool BlockUnredactedSecrets() const;
 
+  /// --allow-non-admin-remote-access: when false (the default), non-admin
+  /// sessions may not read or write remote object-storage / HTTP URLs, since
+  /// such I/O runs with the server's credentials and network position.
+  void SetAllowNonAdminRemoteAccess(bool allow);
+  bool AllowNonAdminRemoteAccess() const;
+
   arrow::Status SetPrintQueries(const ClientSession& client_session,
                                 const bool& enabled);
 

@@ -32,22 +32,39 @@
 #include "test_server_fixture.h"
 #include "test_util.h"
 
+#include <duckdb.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_context_state.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
+#include <duckdb/execution/physical_plan_generator.hpp>
+
 #include "admin_command_guard.h"
+#include "duckdb_compat.h"
+#include "plan_access_guard.h"
 
 using arrow::flight::sql::FlightSqlClient;
 using gizmosql::ddb::CheckNonAdminCommandAllowed;
 using gizmosql::ddb::ClassifyGatedCommand;
 using gizmosql::ddb::ClassifyUnredactedSecretsSet;
+using gizmosql::ddb::GateOptions;
 
 namespace {
 
-// True if `sql` is gated (would be rejected for a non-admin).
+// True if `sql` is gated (would be rejected for a non-admin) under the default
+// server policy (remote URLs admin-only).
 bool Gated(const std::string& sql) {
   return ClassifyGatedCommand(sql).has_value();
 }
 
 std::string Category(const std::string& sql) {
   return ClassifyGatedCommand(sql).value_or("");
+}
+
+// The same, on a server started with --allow-non-admin-remote-access.
+const GateOptions kAllowRemote{.allow_remote_paths = true};
+
+bool GatedAllowingRemote(const std::string& sql) {
+  return ClassifyGatedCommand(sql, kAllowRemote).has_value();
 }
 
 }  // namespace
@@ -209,7 +226,8 @@ TEST(AdminCommandGuard, HarmlessPragmaIsAllowed) {
 }
 
 // =============================================================================
-// COPY — local gated, remote allowed; nested reads still gated.
+// COPY — local always gated; remote gated unless the server allows it; nested
+// reads still gated.
 // =============================================================================
 
 TEST(AdminCommandGuard, CopyLocalIsGated) {
@@ -221,14 +239,29 @@ TEST(AdminCommandGuard, CopyLocalIsGated) {
   EXPECT_EQ(Category("COPY t FROM '/x.csv'"), "COPY FROM (local filesystem)");
 }
 
-TEST(AdminCommandGuard, CopyRemoteIsAllowed) {
-  EXPECT_FALSE(Gated("COPY my_table TO 's3://bucket/out.parquet' (FORMAT parquet)"));
-  EXPECT_FALSE(Gated("COPY my_table TO 'gs://bucket/out.parquet'"));
-  EXPECT_FALSE(Gated("COPY my_table FROM 'https://example.com/data.csv'"));
+TEST(AdminCommandGuard, CopyRemoteIsGatedByDefault) {
+  // A non-admin's remote COPY runs with the server's credentials, so on a
+  // shared bucket it can write into another catalog's data prefix.
+  EXPECT_EQ(Category("COPY my_table TO 's3://bucket/out.parquet' (FORMAT parquet)"),
+            "COPY TO (remote URL)");
+  EXPECT_EQ(Category("COPY my_table TO 'gs://bucket/out.parquet'"), "COPY TO (remote URL)");
+  EXPECT_EQ(Category("COPY my_table FROM 'https://example.com/data.csv'"),
+            "COPY FROM (remote URL)");
+  EXPECT_EQ(Category("COPY my_table TO 'GS://Bucket/Out.parquet'"), "COPY TO (remote URL)");
+}
+
+TEST(AdminCommandGuard, CopyRemoteIsAllowedWhenServerAllowsIt) {
+  EXPECT_FALSE(GatedAllowingRemote("COPY my_table TO 's3://bucket/out.parquet'"));
+  EXPECT_FALSE(GatedAllowingRemote("COPY my_table TO 'gs://bucket/out.parquet'"));
+  EXPECT_FALSE(GatedAllowingRemote("COPY my_table FROM 'https://example.com/data.csv'"));
+  // Local stays gated whatever the policy.
+  EXPECT_TRUE(GatedAllowingRemote("COPY my_table TO '/tmp/out.csv'"));
 }
 
 TEST(AdminCommandGuard, CopyRemoteButNestedLocalReadIsGated) {
-  // COPY target is remote (allowed) but it reads a local file in the subquery.
+  // COPY target is remote (allowed by policy) but it reads a local file.
+  EXPECT_TRUE(GatedAllowingRemote(
+      "COPY (SELECT * FROM read_csv('/etc/passwd')) TO 's3://bucket/out.parquet'"));
   EXPECT_TRUE(Gated(
       "COPY (SELECT * FROM read_csv('/etc/passwd')) TO 's3://bucket/out.parquet'"));
 }
@@ -252,7 +285,8 @@ TEST(AdminCommandGuard, ExportImportDatabaseAlwaysGated) {
 }
 
 // =============================================================================
-// read_* table functions — local gated, remote allowed, any nesting.
+// read_* table functions — local always gated, remote gated unless allowed,
+// any nesting.
 // =============================================================================
 
 TEST(AdminCommandGuard, ReadFunctionsLocalAreGated) {
@@ -266,11 +300,21 @@ TEST(AdminCommandGuard, ReadFunctionsLocalAreGated) {
   EXPECT_TRUE(Gated("SELECT * FROM parquet_scan('local.parquet')"));
 }
 
-TEST(AdminCommandGuard, ReadFunctionsRemoteAreAllowed) {
-  EXPECT_FALSE(Gated("SELECT * FROM read_parquet('s3://bucket/x.parquet')"));
-  EXPECT_FALSE(Gated("SELECT * FROM read_csv('https://example.com/data.csv')"));
-  EXPECT_FALSE(Gated("SELECT * FROM read_json('gs://bucket/data.json')"));
-  EXPECT_FALSE(Gated("SELECT * FROM glob('s3://bucket/*')"));
+TEST(AdminCommandGuard, ReadFunctionsRemoteAreGatedByDefault) {
+  // Finding 4 of the Summation report: outbound HTTP from the cluster.
+  EXPECT_EQ(Category("SELECT * FROM read_csv('https://example.com/')"),
+            "read_csv() (remote URL)");
+  EXPECT_EQ(Category("SELECT * FROM read_parquet('s3://bucket/x.parquet')"),
+            "read_parquet() (remote URL)");
+  EXPECT_TRUE(Gated("SELECT * FROM read_json('gs://bucket/data.json')"));
+  EXPECT_TRUE(Gated("SELECT * FROM glob('s3://bucket/*')"));
+}
+
+TEST(AdminCommandGuard, ReadFunctionsRemoteAreAllowedWhenServerAllowsIt) {
+  EXPECT_FALSE(GatedAllowingRemote("SELECT * FROM read_parquet('s3://bucket/x.parquet')"));
+  EXPECT_FALSE(GatedAllowingRemote("SELECT * FROM read_csv('https://example.com/data.csv')"));
+  EXPECT_FALSE(GatedAllowingRemote("SELECT * FROM read_json('gs://bucket/data.json')"));
+  EXPECT_FALSE(GatedAllowingRemote("SELECT * FROM glob('s3://bucket/*')"));
 }
 
 TEST(AdminCommandGuard, ReadFunctionsNonLiteralPathIsGated) {
@@ -347,9 +391,278 @@ TEST(AdminCommandGuard, LocalReplacementScanIsGated) {
   EXPECT_TRUE(Gated("SELECT * FROM 'subdir/file.json'"));
 }
 
-TEST(AdminCommandGuard, RemoteReplacementScanIsAllowed) {
-  EXPECT_FALSE(Gated("SELECT * FROM 's3://bucket/data.parquet'"));
-  EXPECT_FALSE(Gated("SELECT * FROM 'https://example.com/data.csv'"));
+TEST(AdminCommandGuard, RemoteReplacementScanIsGatedByDefault) {
+  EXPECT_EQ(Category("SELECT * FROM 's3://bucket/data.parquet'"),
+            "reading a remote URL via FROM 's3://bucket/data.parquet'");
+  EXPECT_TRUE(Gated("SELECT * FROM 'https://example.com/data.csv'"));
+  EXPECT_FALSE(GatedAllowingRemote("SELECT * FROM 's3://bucket/data.parquet'"));
+  EXPECT_FALSE(GatedAllowingRemote("SELECT * FROM 'https://example.com/data.csv'"));
+}
+
+// =============================================================================
+// External-database functions — postgres_*/mysql_*/sqlite_* are admin-only.
+// Finding 1 of the Summation report: postgres_query/postgres_execute reached
+// another catalog's DuckLake metadata Postgres as that catalog's own role.
+// =============================================================================
+
+TEST(AdminCommandGuard, ReportFinding1StatementsAreGated) {
+  const std::string meta = "'__ducklake_metadata_agc_staging_a9cf0fd1e2d43e1e_canary'";
+  EXPECT_EQ(Category("SELECT * FROM postgres_query(" + meta +
+                     ", 'select table_id, table_name, path from ducklake_table')"),
+            "postgres_query() (external database access)");
+  EXPECT_TRUE(Gated("SELECT * FROM postgres_query(" + meta +
+                    ", 'select current_user, current_database()')"));
+  EXPECT_TRUE(Gated("SELECT * FROM postgres_query(" + meta +
+                    ", 'select datname from pg_database')"));
+  EXPECT_EQ(Category("CALL postgres_execute(" + meta + ", 'select 1')"),
+            "postgres_execute() (external database access)");
+}
+
+TEST(AdminCommandGuard, ExternalDatabaseFunctionsAreGatedEverywhere) {
+  EXPECT_TRUE(Gated("SELECT * FROM postgres_scan('dbname=x', 'public', 't')"));
+  EXPECT_TRUE(Gated("SELECT * FROM POSTGRES_QUERY('pg', 'select 1')"));  // case
+  EXPECT_TRUE(Gated("SELECT * FROM mysql_query('my', 'select 1')"));
+  EXPECT_TRUE(Gated("SELECT * FROM sqlite_scan('/tmp/x.db', 't')"));
+  EXPECT_TRUE(Gated("CALL postgres_attach('dbname=x')"));
+  // Nesting, EXPLAIN ANALYZE (executes) and PREPARE.
+  EXPECT_TRUE(Gated("SELECT * FROM t WHERE id IN (SELECT 1 FROM postgres_query('pg', 'x'))"));
+  EXPECT_TRUE(Gated("WITH m AS (SELECT * FROM postgres_query('pg', 'x')) SELECT * FROM m"));
+  EXPECT_TRUE(Gated("EXPLAIN ANALYZE SELECT * FROM postgres_query('pg', 'x')"));
+  EXPECT_TRUE(Gated("PREPARE p AS SELECT * FROM postgres_query('pg', 'x')"));
+  EXPECT_TRUE(Gated("INSERT INTO t SELECT * FROM postgres_query('pg', 'x')"));
+  // Policy-independent.
+  EXPECT_TRUE(GatedAllowingRemote("SELECT * FROM postgres_query('pg', 'select 1')"));
+  // Selecting from an attached catalog's tables is not a function call.
+  EXPECT_FALSE(Gated("SELECT * FROM my_pg.public.orders"));
+  EXPECT_FALSE(Gated("SELECT 'postgres_query' AS s"));
+}
+
+// =============================================================================
+// DuckLake functions. Admin-only ones are refused at parse time; the
+// catalog-checked ones (finding 3) pass here and are checked at bind time
+// against the token's catalog access (see the plan-guard tests below).
+// =============================================================================
+
+TEST(AdminCommandGuard, DuckLakeAdminOnlyFunctionsAreGated) {
+  EXPECT_EQ(Category("CALL ducklake_add_data_files('lake', 't', 'gs://b/other/x.parquet')"),
+            "ducklake_add_data_files()");
+  EXPECT_TRUE(Gated("SELECT * FROM ducklake_add_data_files('lake', 't', 's3://b/x.parquet')"));
+  EXPECT_TRUE(Gated("SELECT * FROM ducklake_commit('meta', 1)"));
+  EXPECT_EQ(Category("SELECT * FROM ducklake_scan('gs://b/other/x.parquet')"),
+            "ducklake_scan()");
+}
+
+TEST(AdminCommandGuard, DuckLakeCatalogFunctionsAreLeftToTheBindTimeCheck) {
+  EXPECT_FALSE(Gated("SELECT * FROM ducklake_snapshots('lake_a')"));
+  EXPECT_FALSE(Gated("SELECT * FROM ducklake_list_files('lake_a', 't')"));
+  EXPECT_FALSE(Gated("CALL ducklake_expire_snapshots('lake_a', dry_run => true)"));
+}
+
+// =============================================================================
+// Bind-time classification of individual table function calls.
+// =============================================================================
+
+namespace {
+
+using gizmosql::ddb::ClassifyTableFunctionCall;
+using gizmosql::ddb::PlanTableFunctionCall;
+
+PlanTableFunctionCall Call(const std::string& name, std::vector<duckdb::Value> params = {}) {
+  PlanTableFunctionCall call;
+  call.name_lower = name;
+  for (auto& p : params) call.parameters.push_back(std::move(p));
+  return call;
+}
+
+// Token rules of the report: write on its own catalog, nothing else.
+bool OwnCatalogOnly(const std::string& catalog, bool /*need_write*/) {
+  return catalog == "lake_a";
+}
+bool ReadOnlyOwnCatalog(const std::string& catalog, bool need_write) {
+  return catalog == "lake_a" && !need_write;
+}
+
+std::string Bind(const PlanTableFunctionCall& call, const GateOptions& options = {},
+                 gizmosql::ddb::CatalogAccessCheck check = OwnCatalogOnly) {
+  return ClassifyTableFunctionCall(call, options, check).value_or("");
+}
+
+}  // namespace
+
+TEST(PlanAccessGuard, ExternalDatabaseFunctionsCalledWithArgumentsAreRefused) {
+  EXPECT_EQ(Bind(Call("postgres_query", {duckdb::Value("__ducklake_metadata_lake_b"),
+                                         duckdb::Value("select 1")})),
+            "postgres_query() (external database access)");
+  EXPECT_FALSE(Bind(Call("postgres_execute", {duckdb::Value("pg"), duckdb::Value("x")})).empty());
+  // DuckDB scans an attached Postgres/SQLite catalog's tables with these same
+  // functions, but with no arguments; those scans are left to catalog grants.
+  EXPECT_EQ(Bind(Call("postgres_scan")), "");
+  EXPECT_EQ(Bind(Call("sqlite_scan")), "");
+}
+
+TEST(PlanAccessGuard, DuckLakeFunctionsAreCheckedAgainstCatalogAccess) {
+  // Finding 3 of the Summation report.
+  EXPECT_EQ(Bind(Call("ducklake_list_files", {duckdb::Value("lake_b"), duckdb::Value("secret_b")})),
+            "ducklake_list_files() on catalog 'lake_b' (no read access to that catalog)");
+  EXPECT_FALSE(Bind(Call("ducklake_snapshots", {duckdb::Value("lake_b")})).empty());
+  EXPECT_FALSE(Bind(Call("ducklake_table_info", {duckdb::Value("lake_b")})).empty());
+  EXPECT_EQ(Bind(Call("ducklake_snapshots", {duckdb::Value("lake_a")})), "");
+  // Maintenance needs write.
+  EXPECT_EQ(Bind(Call("ducklake_expire_snapshots", {duckdb::Value("lake_a")})), "");
+  EXPECT_EQ(Bind(Call("ducklake_expire_snapshots", {duckdb::Value("lake_a")}), {},
+                 ReadOnlyOwnCatalog),
+            "ducklake_expire_snapshots() on catalog 'lake_a' (no write access to that "
+            "catalog)");
+  EXPECT_EQ(Bind(Call("ducklake_snapshots", {duckdb::Value("lake_a")}), {}, ReadOnlyOwnCatalog),
+            "");
+  // Unknown future ducklake_* functions need write (fail closed).
+  EXPECT_FALSE(Bind(Call("ducklake_some_new_function", {duckdb::Value("lake_a")}), {},
+                    ReadOnlyOwnCatalog)
+                   .empty());
+  // No constant catalog: fail closed.
+  EXPECT_FALSE(Bind(Call("ducklake_snapshots")).empty());
+  EXPECT_FALSE(Bind(Call("ducklake_snapshots", {duckdb::Value(42)})).empty());
+  EXPECT_FALSE(Bind(Call("ducklake_snapshots", {duckdb::Value()})).empty());
+}
+
+TEST(PlanAccessGuard, DuckLakeScanAndAdminFunctions) {
+  EXPECT_EQ(Bind(Call("ducklake_scan")), "");  // scan of a DuckLake table
+  EXPECT_EQ(Bind(Call("ducklake_scan", {duckdb::Value("gs://b/x.parquet")})), "ducklake_scan()");
+  EXPECT_EQ(Bind(Call("ducklake_add_data_files", {duckdb::Value("lake_a")})),
+            "ducklake_add_data_files()");
+  EXPECT_EQ(Bind(Call("ducklake_commit", {duckdb::Value("m")})), "ducklake_commit()");
+}
+
+TEST(PlanAccessGuard, FileReadsAndRemoteUrls) {
+  EXPECT_EQ(Bind(Call("read_csv", {duckdb::Value("/etc/passwd")})),
+            "read_csv() (local filesystem)");
+  EXPECT_EQ(Bind(Call("glob", {duckdb::Value("/etc/*")})), "glob() (local filesystem)");
+  EXPECT_EQ(Bind(Call("read_csv", {duckdb::Value("https://example.com/")})),
+            "read_csv() (remote URL)");
+  EXPECT_EQ(Bind(Call("read_csv", {duckdb::Value("https://example.com/")}), kAllowRemote), "");
+  // A list mixing remote and local paths is refused for its local entry.
+  auto mixed = duckdb::Value::LIST(
+      {duckdb::Value("s3://b/1.parquet"), duckdb::Value("/data/2.parquet")});
+  EXPECT_EQ(Bind(Call("read_parquet", {mixed}), kAllowRemote),
+            "read_parquet() (local filesystem)");
+  // No path we can read: fail closed.
+  EXPECT_FALSE(Bind(Call("read_parquet")).empty());
+  // Any other table function handed a URL.
+  EXPECT_EQ(Bind(Call("iceberg_scan", {duckdb::Value("s3://b/table")})),
+            "iceberg_scan() (remote URL)");
+  EXPECT_EQ(Bind(Call("iceberg_scan", {duckdb::Value("s3://b/table")}), kAllowRemote), "");
+  // Ordinary table functions.
+  EXPECT_EQ(Bind(Call("range", {duckdb::Value::BIGINT(10)})), "");
+  EXPECT_EQ(Bind(Call("seq_scan")), "");
+  EXPECT_EQ(Bind(Call("duckdb_tables")), "");
+}
+
+// =============================================================================
+// Bind-time guard on a real DuckDB connection: the plan walk sees through
+// macros, views and `?` parameters on every DuckDB channel.
+// =============================================================================
+
+namespace {
+
+// Applies the non-admin plan classification to every statement bound on the
+// connection, the way the server's per-session guard does.
+class TestPlanGuard : public duckdb::ClientContextState {
+ public:
+  bool CanRequestRebind() override { return true; }
+  duckdb::RebindQueryInfo OnFinalizePrepare(duckdb::ClientContext&,
+                                            duckdb::PreparedStatementData& prepared,
+                                            duckdb::PreparedStatementMode) override {
+    if (auto v = gizmosql::ddb::ClassifyPreparedPlan(prepared, GateOptions{},
+                                                     OwnCatalogOnly)) {
+      throw duckdb::PermissionException("blocked: " + *v);
+    }
+    return duckdb::RebindQueryInfo::DO_NOT_REBIND;
+  }
+};
+
+struct GuardedConnection {
+  duckdb::DuckDB db{nullptr};
+  duckdb::Connection admin{db};  // sets up objects without the guard
+  duckdb::Connection user{db};
+
+  GuardedConnection() {
+    user.context->registered_state->Insert("test_plan_guard",
+                                           duckdb::make_shared_ptr<TestPlanGuard>());
+  }
+  std::string Run(const std::string& sql) {
+    auto result = user.Query(sql);
+    return result->HasError() ? result->GetError() : "";
+  }
+};
+
+}  // namespace
+
+TEST(PlanAccessGuard, OrdinaryStatementsBindNormally) {
+  GuardedConnection c;
+  ASSERT_EQ(c.Run("CREATE TABLE t AS SELECT * FROM range(3) r(i)"), "");
+  EXPECT_EQ(c.Run("SELECT count(*) FROM t"), "");
+  EXPECT_EQ(c.Run("SELECT * FROM range(5) JOIN t ON range = t.i"), "");
+  EXPECT_EQ(c.Run("WITH x AS (SELECT * FROM t) SELECT * FROM x"), "");
+}
+
+TEST(PlanAccessGuard, MacroWrappingAGatedFunctionIsCaught) {
+  GuardedConnection c;
+  ASSERT_FALSE(c.admin.Query("CREATE MACRO lister(p) AS TABLE SELECT * FROM glob(p)")
+                   ->HasError());
+  const auto error = c.Run("SELECT * FROM lister('/gizmosql_no_such_dir/*')");
+  EXPECT_NE(error.find("glob() (local filesystem)"), std::string::npos) << error;
+}
+
+TEST(PlanAccessGuard, ViewWrappingAGatedFunctionIsCaught) {
+  GuardedConnection c;
+  ASSERT_FALSE(c.admin.Query("CREATE VIEW v AS SELECT * FROM glob('/gizmosql_no_such_dir/*')")
+                   ->HasError());
+  const auto error = c.Run("SELECT * FROM v");
+  EXPECT_NE(error.find("glob() (local filesystem)"), std::string::npos) << error;
+  // Nested inside a subquery and a CTE too.
+  EXPECT_NE(c.Run("SELECT * FROM range(1) WHERE EXISTS (SELECT 1 FROM v)"), "");
+  EXPECT_NE(c.Run("WITH w AS (SELECT * FROM v) SELECT * FROM w"), "");
+}
+
+// Token rules match catalog names case-sensitively, DuckDB resolves them
+// case-insensitively: with a deny-list rule ({lake_b: none}, {*: write}),
+// ducklake_snapshots('LAKE_B') must still be checked as lake_b.
+TEST(PlanAccessGuard, CatalogNamesAreResolvedAsDuckDBSpellsThem) {
+  struct Resolver : duckdb::ClientContextState {
+    std::string upper, mixed, missing;
+    bool CanRequestRebind() override { return true; }
+    duckdb::RebindQueryInfo OnFinalizePrepare(duckdb::ClientContext& context,
+                                              duckdb::PreparedStatementData&,
+                                              duckdb::PreparedStatementMode) override {
+      upper = gizmosql::ddb::CanonicalCatalogName(context, "LAKE_B");
+      mixed = gizmosql::ddb::CanonicalCatalogName(context, "Lake_B");
+      missing = gizmosql::ddb::CanonicalCatalogName(context, "no_such_catalog");
+      return duckdb::RebindQueryInfo::DO_NOT_REBIND;
+    }
+  };
+  duckdb::DuckDB db(nullptr);
+  duckdb::Connection con(db);
+  ASSERT_FALSE(con.Query("ATTACH ':memory:' AS lake_b")->HasError());
+  auto resolver = duckdb::make_shared_ptr<Resolver>();
+  con.context->registered_state->Insert("resolver", resolver);
+  ASSERT_FALSE(con.Query("SELECT 1")->HasError());
+  EXPECT_EQ(resolver->upper, "lake_b");
+  EXPECT_EQ(resolver->mixed, "lake_b");
+  EXPECT_EQ(resolver->missing, "no_such_catalog");
+}
+
+TEST(PlanAccessGuard, PreparedStatementParameterIsCaught) {
+  GuardedConnection c;
+  auto stmt = c.user.Prepare("SELECT * FROM glob(?)");
+  if (stmt->HasError()) {
+    GTEST_SKIP() << "this DuckDB cannot prepare glob(?), so a parameter cannot supply "
+                    "its path: "
+                 << stmt->GetError();
+  }
+  duckdb::vector<duckdb::Value> values{duckdb::Value("/gizmosql_no_such_dir/*")};
+  auto result = gizmosql::ddb::compat::ExecuteMaterialized(*stmt, values);
+  ASSERT_TRUE(result->HasError()) << "a `?` must not smuggle a path past the guard";
+  EXPECT_NE(result->GetError().find("glob()"), std::string::npos) << result->GetError();
 }
 
 // =============================================================================
@@ -375,7 +688,11 @@ TEST(AdminCommandGuard, CopyInsideCteIsGated) {
             "COPY TO (local filesystem)");
   EXPECT_EQ(Category("SELECT 1 UNION ALL (WITH c AS (COPY (SELECT 1) TO 'x.csv') SELECT 2)"),
             "COPY TO (local filesystem)");
-  EXPECT_FALSE(Gated("WITH c AS (COPY (SELECT 42) TO 's3://bucket/out.csv') SELECT 1"));
+  // A remote target in a CTE follows the same policy as a top-level COPY.
+  EXPECT_EQ(Category("WITH c AS (COPY (SELECT 42) TO 's3://bucket/out.csv') SELECT 1"),
+            "COPY TO (remote URL)");
+  EXPECT_FALSE(
+      GatedAllowingRemote("WITH c AS (COPY (SELECT 42) TO 's3://bucket/out.csv') SELECT 1"));
 }
 
 TEST(AdminCommandGuard, ConnectAndExternalResourceAreGated) {
@@ -530,6 +847,17 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForGatedCommands) {
            std::string("SELECT * FROM read_csv('/etc/passwd')"),
            std::string("SELECT * FROM duckdb_secrets()"),
            std::string("CHECKPOINT"),
+           // Summation report findings 1, 2 and 4 (refused before binding, so no
+           // Postgres server or bucket is needed).
+           std::string("SELECT * FROM postgres_query('__ducklake_metadata_other', "
+                       "'select datname from pg_database')"),
+           std::string("CALL postgres_execute('__ducklake_metadata_other', 'select 1')"),
+           std::string("COPY (SELECT 1 AS i) TO "
+                       "'gs://bucket/org/other-catalog/main/t/injected.parquet' "
+                       "(FORMAT parquet)"),
+           std::string("SELECT * FROM read_csv('https://example.com/')"),
+           std::string("SELECT * FROM 'https://example.com/data.csv'"),
+           std::string("CALL ducklake_add_data_files('lake', 't', 'gs://b/x.parquet')"),
        }) {
     auto st = ExecAs(GetPort(), analyst, sql);
     EXPECT_FALSE(st.ok()) << "non-admin should be rejected for: " << sql;
@@ -548,6 +876,33 @@ TEST_F(AdminGateServerFixture, NonAdminTokenAllowedForOrdinaryQueries) {
   EXPECT_TRUE(ExecAs(GetPort(), analyst, "SELECT * FROM range(10)").ok());
   // A harmless session SET is allowed for non-admins.
   EXPECT_TRUE(ExecAs(GetPort(), analyst, "SET search_path = 'main'").ok());
+}
+
+TEST_F(AdminGateServerFixture, ViewOrMacroWrappingAGatedFunctionIsRefusedAtBindTime) {
+  ASSERT_TRUE(IsServerReady());
+  // One token = one session, so the temp view and macro persist across calls.
+  const std::pair<std::string, std::string> analyst{
+      "authorization", "Bearer " + MintToken("wrapper_user", "analyst")};
+
+  // Defining them binds nothing the parse-time gate looks at...
+  ASSERT_TRUE(ExecAs(GetPort(), analyst,
+                     "CREATE OR REPLACE TEMP VIEW etc_files AS SELECT * FROM glob('/etc/*')")
+                  .ok());
+  ASSERT_TRUE(ExecAs(GetPort(), analyst,
+                     "CREATE OR REPLACE TEMP MACRO lister(p) AS TABLE SELECT * FROM glob(p)")
+                  .ok());
+
+  // ...but using them binds glob('/etc/*'), which the bind-time guard refuses.
+  for (const std::string& sql : {std::string("SELECT * FROM etc_files"),
+                                 std::string("SELECT * FROM lister('/etc/*')"),
+                                 std::string("SELECT count(*) FROM range(3), etc_files")}) {
+    auto st = ExecAs(GetPort(), analyst, sql);
+    EXPECT_FALSE(st.ok()) << "non-admin should be refused for: " << sql;
+    EXPECT_NE(st.ToString().find("glob() (local filesystem)"), std::string::npos)
+        << sql << " -> " << st.ToString();
+  }
+  // The session keeps working for ordinary statements afterwards.
+  EXPECT_TRUE(ExecAs(GetPort(), analyst, "SELECT * FROM range(3)").ok());
 }
 
 TEST_F(AdminGateServerFixture, AdminBasicAuthUnaffected) {

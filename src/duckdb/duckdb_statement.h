@@ -48,6 +48,12 @@ namespace gizmosql::ddb {
 bool CatalogExistsOnConnection(duckdb::Connection& connection,
                                const std::string& catalog_name);
 
+/// Registers the bind-time plan access guard (plan_access_guard.h) on a
+/// non-admin session's DuckDB connection, for the life of the connection. Every
+/// statement DuckDB prepares or re-binds on it is then checked. No-op for
+/// admin sessions. Call once, right after the session's connection is created.
+void InstallPlanAccessGuard(const std::shared_ptr<ClientSession>& client_session);
+
 #ifdef GIZMOSQL_ENTERPRISE
 class StatementInstrumentation;
 class ExecutionInstrumentation;

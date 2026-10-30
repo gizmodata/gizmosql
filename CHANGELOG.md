@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Non-admin sessions can no longer reach another catalog's metadata database.**
+  `postgres_query()`, `postgres_execute()` and the other `postgres_*`, `mysql_*`
+  and `sqlite_*` table functions (and `CALL`s of them) are admin-only. They ran
+  SQL on an attached database as the role GizmoSQL attached it with, so on a
+  shared server any token could read and rewrite another DuckLake catalog's
+  metadata (`__ducklake_metadata_<catalog>`) and list every database on the
+  metadata server. Scans of an attached Postgres/SQLite catalog's tables are
+  unaffected; catalog permissions govern them as before.
+- **Remote URLs are admin-only by default.** Non-admin `COPY … TO`/`FROM`,
+  `read_*()`, `glob()`, replacement scans (`FROM 'gs://…'`) and any other table
+  function given an object-storage or HTTP URL are refused. That I/O ran with the
+  server's credentials, so one tenant could plant files in another tenant's data
+  prefix, or use the server for outbound HTTP. **Behavior change:** deployments
+  that rely on non-admin tokens reading or writing remote URLs must start the
+  server with the new `--allow-non-admin-remote-access` /
+  `GIZMOSQL_ALLOW_NON_ADMIN_REMOTE_ACCESS=true`. Admins and basic-auth users are
+  unaffected.
+- **`ducklake_*()` functions now honor token catalog access.** Metadata readers
+  (`ducklake_snapshots`, `ducklake_table_info`, `ducklake_list_files`, …) need
+  read access to the catalog named by their first argument, and maintenance
+  functions (`ducklake_expire_snapshots`, `ducklake_set_option`, …) need write
+  access; previously any token could read another catalog's file list, snapshot
+  history and table statistics. `ducklake_add_data_files`, `ducklake_commit`
+  and direct `ducklake_scan(…)` calls are admin-only.
+- **The non-admin gate now also runs at bind time**, on the bound plan of every
+  statement a non-admin session prepares or re-binds. A view or macro wrapping a
+  gated function (`read_csv('/etc/passwd')`, `postgres_query(…)`), or a prepared
+  statement whose `?` parameter names another catalog, is now refused — the
+  parse-time gate could not see these.
+
 ## [1.42.2] - 2026-10-27
 
 v1.42.1 was tagged but never released (its edge builds failed); its changes ship here.

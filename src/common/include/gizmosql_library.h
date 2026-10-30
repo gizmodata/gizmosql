@@ -296,5 +296,12 @@ int RunFlightSQLServer(
     /// starting a new, empty session (--reject-unknown-sessions /
     /// GIZMOSQL_REJECT_UNKNOWN_SESSIONS). DuckDB backend only. nullopt = consult
     /// env var, then default false (lazily create the session, as before).
-    std::optional<bool> reject_unknown_sessions = std::nullopt);
+    std::optional<bool> reject_unknown_sessions = std::nullopt,
+    /// Let non-admin sessions read and write remote object-storage / HTTP URLs
+    /// (read_parquet('s3://...'), COPY ... TO 'gs://...', FROM 'https://...').
+    /// Such I/O runs with the server's credentials and network position, so on a
+    /// server shared by several tenants it reaches every tenant's storage
+    /// (--allow-non-admin-remote-access / GIZMOSQL_ALLOW_NON_ADMIN_REMOTE_ACCESS).
+    /// DuckDB backend only. nullopt = consult env var, then default false.
+    std::optional<bool> allow_non_admin_remote_access = std::nullopt);
 }

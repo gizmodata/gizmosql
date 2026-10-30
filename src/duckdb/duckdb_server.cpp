@@ -1016,6 +1016,7 @@ class DuckDBFlightSqlServer::Impl {
   int32_t max_sessions_ = 0;                  // 0 = unlimited; reject new sessions when at cap
   int32_t session_idle_timeout_seconds_ = 0;  // 0 = idle eviction off
   bool block_unredacted_secrets_ = true;
+  bool allow_non_admin_remote_access_ = false;
   std::shared_ptr<SensitivePathPolicy> sensitive_path_policy_;  // nullptr = guard off
 
   std::unordered_map<std::string, std::shared_ptr<ClientSession>> client_sessions_;
@@ -1270,6 +1271,9 @@ class DuckDBFlightSqlServer::Impl {
 
       new_session->connection =
           std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
+      // Non-admin sessions: check the bound plan of every statement prepared on
+      // this connection (views, macros and parameters included).
+      InstallPlanAccessGuard(new_session);
 
 #ifdef GIZMOSQL_ENTERPRISE
       gizmosql::enterprise::TrackMetricsSession(new_session);
@@ -1423,6 +1427,8 @@ class DuckDBFlightSqlServer::Impl {
   }
 
   void SetBlockUnredactedSecrets(bool block) { block_unredacted_secrets_ = block; }
+  void SetAllowNonAdminRemoteAccess(bool allow) { allow_non_admin_remote_access_ = allow; }
+  bool AllowNonAdminRemoteAccess() const { return allow_non_admin_remote_access_; }
   void SetRejectUnknownSessions(bool reject) { reject_unknown_sessions_ = reject; }
 
   // With --reject-unknown-sessions, a bearer token whose session is not live
@@ -3092,6 +3098,14 @@ void DuckDBFlightSqlServer::SetRejectUnknownSessions(bool reject) {
 
 bool DuckDBFlightSqlServer::BlockUnredactedSecrets() const {
   return impl_->BlockUnredactedSecrets();
+}
+
+void DuckDBFlightSqlServer::SetAllowNonAdminRemoteAccess(bool allow) {
+  impl_->SetAllowNonAdminRemoteAccess(allow);
+}
+
+bool DuckDBFlightSqlServer::AllowNonAdminRemoteAccess() const {
+  return impl_->AllowNonAdminRemoteAccess();
 }
 
 Status DuckDBFlightSqlServer::ExecuteSql(const std::string& sql) const {
