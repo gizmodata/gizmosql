@@ -1294,6 +1294,58 @@ TEST_F(CatalogAccessServerFixture, GetCatalogsRPCRespectsFiltering) {
 // statement in it must get the same access checks as a single statement, and
 // the batch must run exactly once.
 
+// ducklake_*() functions name their catalog as an argument (or qualifier), which
+// DuckDB does not report as a catalog read. A token confined to one catalog must
+// not be able to inspect or maintain another through them. The check runs before
+// the function is bound, so the ducklake extension need not be installed: a call
+// on the token's own catalog gets past the access check and fails later, for
+// lack of the function, with a different error.
+TEST_F(CatalogAccessServerFixture, DuckLakeFunctionsRespectCatalogAccess) {
+  SKIP_WITHOUT_LICENSE();  // Token-based catalog permissions require enterprise license
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog +
+                               R"(", "access": "write"}, {"catalog": "*", "access": "none"}])";
+  std::string token = CreateTestJWT("app_a", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // Another catalog: reads (inspection) and writes (maintenance) are refused.
+  for (const std::string sql :
+       {"SELECT * FROM ducklake_list_files('other_catalog', 'secret_b')",
+        "SELECT * FROM ducklake_snapshots('other_catalog')",
+        "SELECT * FROM ducklake_table_info('other_catalog')",
+        "SELECT * FROM other_catalog.snapshots()",
+        "CALL ducklake_expire_snapshots('other_catalog')",
+        "CALL other_catalog.set_option('x', 'y')",
+        "SELECT * FROM ducklake_snapshots((SELECT 'other_catalog'))"}) {
+    auto status = ExecuteAndConsume(*client, call_options, sql);
+    ASSERT_FALSE(status.ok()) << "token reached another catalog via: " << sql;
+    EXPECT_NE(status.ToString().find("Access denied"), std::string::npos)
+        << sql << " -> " << status.ToString();
+  }
+
+  // Its own catalog passes the access check (and then fails for lack of the
+  // extension, not for access).
+  auto own = ExecuteAndConsume(*client, call_options,
+                               "SELECT * FROM ducklake_snapshots('" + kDefaultCatalog + "')");
+  EXPECT_EQ(own.ToString().find("Access denied"), std::string::npos) << own.ToString();
+
+  // Read-only on a catalog is enough to inspect it but not to maintain it.
+  std::string ro_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}])";
+  std::string ro_token = CreateTestJWT("app_ro", "user", ro_access);
+  auto ro_options = GetCallOptionsWithToken(ro_token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto ro_client, CreateClientWithToken(ro_token));
+  auto inspect = ExecuteAndConsume(
+      *ro_client, ro_options, "SELECT * FROM ducklake_snapshots('" + kDefaultCatalog + "')");
+  EXPECT_EQ(inspect.ToString().find("Access denied"), std::string::npos) << inspect.ToString();
+  auto maintain = ExecuteAndConsume(
+      *ro_client, ro_options, "CALL ducklake_expire_snapshots('" + kDefaultCatalog + "')");
+  ASSERT_FALSE(maintain.ok());
+  EXPECT_NE(maintain.ToString().find("do not have write access"), std::string::npos)
+      << maintain.ToString();
+}
+
 namespace {
 // Row count of `table` as seen by the admin (system) user.
 int64_t AdminCountRows(int port, const std::string& username, const std::string& password,

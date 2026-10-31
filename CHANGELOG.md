@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Closed cross-catalog access for non-admin (token) users on a shared server.**
+  Found by a customer testing two DuckLake catalogs with per-catalog user tokens:
+  - `postgres_query`, `postgres_execute` and the other `postgres_*` / `mysql_*`
+    functions, plus `sqlite_scan` / `sqlite_attach`, are now admin-only (also
+    inside views, CTAS and `CREATE MACRO`). They ran as the *other* catalog's
+    metadata-database role, outside the token's `catalog_access`.
+  - `COPY … TO` is now admin-only for every destination, including object
+    storage (it used to be allowed for `s3://`/`gs://`/…), so a user can no
+    longer write into another catalog's data prefix.
+  - Reads of `http://`, `https://` and `hf://` URLs (`read_*()`, `COPY FROM`,
+    `FROM 'https://…'`) are now admin-only: they were an outbound-HTTP channel.
+    Object-storage reads (`s3://`, `gs://`, …) are unchanged.
+  - Enterprise: `ducklake_*` functions and `catalog.snapshots()`-style calls are
+    checked against the token's catalog access (read for inspection, write for
+    maintenance); `ducklake_add_data_files` is admin-only.
+  See [Admin Command Gating](docs/admin_command_gating.md).
+
+### Changed
+- **Behavior change:** non-admin users can no longer `COPY … TO` object storage
+  or read `http(s)://` URLs. Do it as an admin, or from the client.
+
 ## [1.42.2] - 2026-10-27
 
 v1.42.1 was tagged but never released (its edge builds failed); its changes ship here.

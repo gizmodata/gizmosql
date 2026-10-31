@@ -19,6 +19,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <arrow/status.h>
 
@@ -43,6 +44,12 @@
 //   * CREATE SECRET / DROP SECRET (all variants: OR REPLACE / PERSISTENT /
 //     TEMPORARY — secrets hold credentials)
 //   * duckdb_secrets() (always — it exposes secret material)
+//   * postgres_* / mysql_* functions, sqlite_scan/sqlite_attach (always — they
+//     reach attached databases outside the token's catalog access)
+//   * COPY ... TO any destination, and reads of http(s):// / hf:// URLs
+//     (server-side outbound HTTP) in read_*() / COPY FROM / replacement scans
+//   * ducklake_add_data_files (always); other DuckLake functions are checked
+//     against the token's catalog access by the caller (see ducklake_refs)
 //
 // Detection is parser-based (duckdb::Parser — no execution, no connection), so
 // it is robust to whitespace/comments/case and to nesting (subqueries, CTEs,
@@ -64,6 +71,15 @@
 
 namespace gizmosql::ddb {
 
+/// A DuckLake table function / CALL procedure found in a statement, with the
+/// catalog it addresses. Used to check the call against the token's catalog
+/// access (Enterprise): `ducklake_snapshots('lake')`, `CALL lake.set_option(...)`.
+struct DuckLakeFunctionRef {
+  std::string function;                // lower-case name, e.g. "ducklake_snapshots"
+  std::optional<std::string> catalog;  // nullopt: not a string literal (cannot verify)
+  bool writes = false;                 // maintenance/option changes need write access
+};
+
 /// Classify `sql` for the non-admin admin-command gate. Returns a short, stable
 /// human-readable category describing the FIRST gated operation found (e.g.
 /// "ATTACH", "DETACH", "SET GLOBAL memory_limit", "INSTALL extension",
@@ -84,6 +100,12 @@ std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql);
 /// PREPARE / EXPLAIN. With the sensitive-path guard on, clients may not move
 /// DuckDB's persistent-secret directory somewhere unprotected.
 bool IsSecretDirectorySet(const std::string& sql);
+
+/// As above, additionally collecting every DuckLake function reference found
+/// (`ducklake_*()` and `catalog.snapshots()`-style calls) into `ducklake_refs`
+/// when it is non-null. Only complete when the result is nullopt.
+std::optional<std::string> ClassifyGatedCommand(
+    const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs);
 
 /// Client-facing error text for a gated command, e.g. category "ATTACH".
 std::string GatedCommandDeniedMessage(const std::string& category);

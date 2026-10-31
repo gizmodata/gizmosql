@@ -1032,7 +1032,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
   // non-admin roles. Internal/system queries are exempt. Admins and internal
   // queries skip the parse entirely (fast path).
   if (!is_internal && client_session->role != "admin") {
-    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql)) {
+    std::vector<gizmosql::ddb::DuckLakeFunctionRef> ducklake_refs;
+    if (auto gated_category = gizmosql::ddb::ClassifyGatedCommand(sql, &ducklake_refs)) {
       GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
                              "Client attempted a gated admin command",
                              {"kind", "sql"}, {"status", "rejected"},
@@ -1051,6 +1052,47 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
       return arrow::flight::MakeFlightError(arrow::flight::FlightStatusCode::Unauthorized,
                                             gate_error_msg);
     }
+
+#ifdef GIZMOSQL_ENTERPRISE
+    // DuckLake functions (ducklake_snapshots('lake'), CALL lake.set_option(...))
+    // name their catalog as an argument, which DuckDB does not report as a
+    // catalog read, so check each one against the token's catalog access.
+    // A catalog that is not a string literal cannot be verified: refuse it.
+    if (!ducklake_refs.empty()) {
+      std::shared_ptr<InstrumentationManager> instr_mgr;
+      std::string log_catalog;
+      if (auto server = GetServer(*client_session)) {
+        instr_mgr = server->GetInstrumentationManager();
+        log_catalog = server->GetLogCatalog();
+      }
+      for (const auto& ref : ducklake_refs) {
+        std::string denied;
+        if (!ref.catalog) {
+          denied = "Access denied: " + ref.function +
+                   "() must name its catalog as a string literal.";
+        } else if (ref.writes ? !gizmosql::enterprise::HasWriteAccess(
+                                    *client_session, *ref.catalog, instr_mgr, log_catalog)
+                              : !gizmosql::enterprise::HasReadAccess(
+                                    *client_session, *ref.catalog, instr_mgr, log_catalog)) {
+          denied = "Access denied: You do not have " +
+                   std::string(ref.writes ? "write" : "read") + " access to catalog '" +
+                   *ref.catalog + "'.";
+        }
+        if (denied.empty()) continue;
+        GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                               "Access denied: DuckLake function on a catalog outside the "
+                               "token's catalog access",
+                               {"kind", "sql"}, {"status", "rejected"},
+                               {"function", ref.function}, {"statement_id", handle},
+                               {"sql", logged_sql});
+        if (instr_mgr) {
+          StatementInstrumentation(instr_mgr, handle, client_session->session_id, logged_sql,
+                                   flight_method, is_internal, denied);
+        }
+        return arrow::Status::Invalid(denied);
+      }
+    }
+#endif
   }
 
   // Get instance_id + cluster_id from the server for the
