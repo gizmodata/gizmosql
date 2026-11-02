@@ -1304,8 +1304,9 @@ TEST_F(CatalogAccessServerFixture, DuckLakeFunctionsRespectCatalogAccess) {
   SKIP_WITHOUT_LICENSE();  // Token-based catalog permissions require enterprise license
   ASSERT_TRUE(IsServerReady()) << "Server not ready";
 
-  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog +
-                               R"(", "access": "write"}, {"catalog": "*", "access": "none"}])";
+  std::string catalog_access =
+      R"([{"catalog": ")" + kDefaultCatalog +
+      R"(", "access": "write"}, {"catalog": "*", "access": "none"}])";
   std::string token = CreateTestJWT("app_a", "user", catalog_access);
   auto call_options = GetCallOptionsWithToken(token);
   ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
@@ -1327,20 +1328,25 @@ TEST_F(CatalogAccessServerFixture, DuckLakeFunctionsRespectCatalogAccess) {
 
   // Its own catalog passes the access check (and then fails for lack of the
   // extension, not for access).
-  auto own = ExecuteAndConsume(*client, call_options,
-                               "SELECT * FROM ducklake_snapshots('" + kDefaultCatalog + "')");
+  auto own =
+      ExecuteAndConsume(*client, call_options,
+                        "SELECT * FROM ducklake_snapshots('" + kDefaultCatalog + "')");
   EXPECT_EQ(own.ToString().find("Access denied"), std::string::npos) << own.ToString();
 
   // Read-only on a catalog is enough to inspect it but not to maintain it.
-  std::string ro_access = R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}])";
+  std::string ro_access =
+      R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "read"}])";
   std::string ro_token = CreateTestJWT("app_ro", "user", ro_access);
   auto ro_options = GetCallOptionsWithToken(ro_token);
   ASSERT_ARROW_OK_AND_ASSIGN(auto ro_client, CreateClientWithToken(ro_token));
-  auto inspect = ExecuteAndConsume(
-      *ro_client, ro_options, "SELECT * FROM ducklake_snapshots('" + kDefaultCatalog + "')");
-  EXPECT_EQ(inspect.ToString().find("Access denied"), std::string::npos) << inspect.ToString();
-  auto maintain = ExecuteAndConsume(
-      *ro_client, ro_options, "CALL ducklake_expire_snapshots('" + kDefaultCatalog + "')");
+  auto inspect =
+      ExecuteAndConsume(*ro_client, ro_options,
+                        "SELECT * FROM ducklake_snapshots('" + kDefaultCatalog + "')");
+  EXPECT_EQ(inspect.ToString().find("Access denied"), std::string::npos)
+      << inspect.ToString();
+  auto maintain =
+      ExecuteAndConsume(*ro_client, ro_options,
+                        "CALL ducklake_expire_snapshots('" + kDefaultCatalog + "')");
   ASSERT_FALSE(maintain.ok());
   EXPECT_NE(maintain.ToString().find("do not have write access"), std::string::npos)
       << maintain.ToString();
@@ -1486,8 +1492,8 @@ TEST_F(CatalogAccessServerFixture, ScopedTokenCannotEnumerateOtherCatalogs) {
   const std::string kOther = "other_tenant_lake";
   {
     arrow::flight::FlightClientOptions options;
-    ASSERT_ARROW_OK_AND_ASSIGN(auto location,
-                               arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto location, arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
     ASSERT_ARROW_OK_AND_ASSIGN(auto client,
                                arrow::flight::FlightClient::Connect(location, options));
     arrow::flight::FlightCallOptions sys_call_options;
@@ -1499,8 +1505,8 @@ TEST_F(CatalogAccessServerFixture, ScopedTokenCannotEnumerateOtherCatalogs) {
                                       "ATTACH IF NOT EXISTS ':memory:' AS " + kOther));
   }
 
-  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog +
-                               R"(", "access": "write"}])";
+  std::string catalog_access =
+      R"([{"catalog": ")" + kDefaultCatalog + R"(", "access": "write"}])";
   std::string token = CreateTestJWT("enumeration_user", "user", catalog_access);
   auto call_options = GetCallOptionsWithToken(token);
   ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));

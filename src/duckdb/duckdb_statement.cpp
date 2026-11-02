@@ -1070,24 +1070,25 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
         if (!ref.catalog) {
           denied = "Access denied: " + ref.function +
                    "() must name its catalog as a string literal.";
-        } else if (ref.writes ? !gizmosql::enterprise::HasWriteAccess(
-                                    *client_session, *ref.catalog, instr_mgr, log_catalog)
-                              : !gizmosql::enterprise::HasReadAccess(
-                                    *client_session, *ref.catalog, instr_mgr, log_catalog)) {
+        } else if (ref.writes
+                       ? !gizmosql::enterprise::HasWriteAccess(
+                             *client_session, *ref.catalog, instr_mgr, log_catalog)
+                       : !gizmosql::enterprise::HasReadAccess(
+                             *client_session, *ref.catalog, instr_mgr, log_catalog)) {
           denied = "Access denied: You do not have " +
                    std::string(ref.writes ? "write" : "read") + " access to catalog '" +
                    *ref.catalog + "'.";
         }
         if (denied.empty()) continue;
-        GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
-                               "Access denied: DuckLake function on a catalog outside the "
-                               "token's catalog access",
-                               {"kind", "sql"}, {"status", "rejected"},
-                               {"function", ref.function}, {"statement_id", handle},
-                               {"sql", logged_sql});
+        GIZMOSQL_LOGKV_SESSION(
+            WARNING, client_session,
+            "Access denied: DuckLake function on a catalog outside the "
+            "token's catalog access",
+            {"kind", "sql"}, {"status", "rejected"}, {"function", ref.function},
+            {"statement_id", handle}, {"sql", logged_sql});
         if (instr_mgr) {
-          StatementInstrumentation(instr_mgr, handle, client_session->session_id, logged_sql,
-                                   flight_method, is_internal, denied);
+          StatementInstrumentation(instr_mgr, handle, client_session->session_id,
+                                   logged_sql, flight_method, is_internal, denied);
         }
         return arrow::Status::Invalid(denied);
       }

@@ -230,11 +230,13 @@ TEST(AdminCommandGuard, CopyToRemoteIsGated) {
   EXPECT_EQ(Category("COPY (SELECT 1 AS i) TO 'gs://bucket/org/main/t/x.parquet' "
                      "(FORMAT parquet)"),
             "COPY TO (remote storage)");
-  EXPECT_EQ(Category("COPY my_table TO 'https://example.com/x'"), "COPY TO (remote storage)");
+  EXPECT_EQ(Category("COPY my_table TO 'https://example.com/x'"),
+            "COPY TO (remote storage)");
 }
 
 TEST(AdminCommandGuard, CopyFromObjectStorageAndNetworkUrlAreGated) {
-  EXPECT_EQ(Category("COPY my_table FROM 's3://bucket/data.csv'"), "COPY FROM (object storage)");
+  EXPECT_EQ(Category("COPY my_table FROM 's3://bucket/data.csv'"),
+            "COPY FROM (object storage)");
   EXPECT_TRUE(Gated("COPY my_table FROM 'gs://bucket/data.parquet' (FORMAT parquet)"));
   EXPECT_EQ(Category("COPY my_table FROM 'https://example.com/data.csv'"),
             "COPY FROM (network URL)");
@@ -288,15 +290,18 @@ TEST(AdminCommandGuard, ObjectStorageReadFunctionsAreGated) {
   EXPECT_TRUE(Gated("SELECT * FROM read_json('gs://bucket/data.json')"));
   EXPECT_TRUE(Gated("SELECT * FROM read_csv('gs://bucket/other_catalog/data/x.csv')"));
   EXPECT_TRUE(Gated("SELECT * FROM glob('gs://bucket/other_catalog/*')"));
-  EXPECT_TRUE(Gated("SELECT * FROM read_parquet(['gs://b/a.parquet', 'gs://b/c.parquet'])"));
-  EXPECT_TRUE(Gated("SELECT * FROM read_parquet('gs://b/a.parquet', hive_partitioning = true)"));
+  EXPECT_TRUE(
+      Gated("SELECT * FROM read_parquet(['gs://b/a.parquet', 'gs://b/c.parquet'])"));
+  EXPECT_TRUE(
+      Gated("SELECT * FROM read_parquet('gs://b/a.parquet', hive_partitioning = true)"));
   // Functions outside the read_* family still read through the same credentials.
   EXPECT_TRUE(Gated("SELECT * FROM delta_scan('s3://bucket/table')"));
   EXPECT_TRUE(Gated("SELECT * FROM iceberg_scan('s3://bucket/table')"));
   EXPECT_TRUE(Gated("SELECT * FROM read_xlsx('s3://bucket/a.xlsx')"));
   // Nested positions.
   EXPECT_TRUE(Gated("SELECT * FROM (SELECT * FROM read_parquet('gs://b/x.parquet')) s"));
-  EXPECT_TRUE(Gated("WITH t AS (SELECT * FROM read_parquet('s3://b/x.parquet')) SELECT * FROM t"));
+  EXPECT_TRUE(Gated(
+      "WITH t AS (SELECT * FROM read_parquet('s3://b/x.parquet')) SELECT * FROM t"));
 }
 
 TEST(AdminCommandGuard, ReadFunctionsNonLiteralPathIsGated) {
@@ -573,8 +578,8 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForGatedCommands) {
 // Postgres or bucket is needed.
 TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForCrossCatalogReach) {
   ASSERT_TRUE(IsServerReady());
-  const std::pair<std::string, std::string> user{
-      "authorization", "Bearer " + MintToken("app_a", "user")};
+  const std::pair<std::string, std::string> user{"authorization",
+                                                 "Bearer " + MintToken("app_a", "user")};
 
   for (const std::string& sql : {
            std::string("SELECT * FROM postgres_query('__ducklake_metadata_b', "
@@ -582,14 +587,17 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForCrossCatalogReach) {
            std::string("SELECT * FROM postgres_query('__ducklake_metadata_b', "
                        "'select datname from pg_database')"),
            std::string("CALL postgres_execute('__ducklake_metadata_b', 'select 1')"),
-           std::string("SELECT 1; CALL postgres_execute('__ducklake_metadata_b', 'select 1')"),
+           std::string(
+               "SELECT 1; CALL postgres_execute('__ducklake_metadata_b', 'select 1')"),
            std::string("CREATE VIEW v AS SELECT * FROM postgres_query('b', 'select 1')"),
-           std::string("COPY (SELECT 1 AS i) TO "
-                       "'gs://bucket/org/b/main/secret_b/injected.parquet' (FORMAT parquet)"),
+           std::string(
+               "COPY (SELECT 1 AS i) TO "
+               "'gs://bucket/org/b/main/secret_b/injected.parquet' (FORMAT parquet)"),
            std::string("COPY (SELECT 1 AS i) TO 's3://bucket/x.parquet'"),
            std::string("SELECT * FROM read_csv('https://example.com/')"),
            std::string("SELECT * FROM 'https://example.com/x.csv'"),
-           std::string("CALL ducklake_add_data_files('lake', 't', 'gs://other/x.parquet')"),
+           std::string(
+               "CALL ducklake_add_data_files('lake', 't', 'gs://other/x.parquet')"),
        }) {
     auto st = ExecAs(GetPort(), user, sql);
     EXPECT_FALSE(st.ok()) << "non-admin should be rejected for: " << sql;
@@ -601,15 +609,16 @@ TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForCrossCatalogReach) {
 TEST_F(AdminGateServerFixture, AdminIsNotBlockedFromCrossCatalogFunctions) {
   ASSERT_TRUE(IsServerReady());
   arrow::flight::FlightClientOptions options;
-  ASSERT_ARROW_OK_AND_ASSIGN(
-      auto loc, arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
   ASSERT_ARROW_OK_AND_ASSIGN(auto client,
                              arrow::flight::FlightClient::Connect(loc, options));
   ASSERT_ARROW_OK_AND_ASSIGN(
       auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
   // The gate does not fire for an admin; the call then fails on its own (no such
   // catalog / extension), which is a different error.
-  auto st = ExecAs(GetPort(), bearer, "SELECT * FROM postgres_query('no_such_db', 'select 1')");
+  auto st =
+      ExecAs(GetPort(), bearer, "SELECT * FROM postgres_query('no_such_db', 'select 1')");
   EXPECT_FALSE(st.ok());
   EXPECT_EQ(st.ToString().find("requires the 'admin' role"), std::string::npos)
       << st.ToString();
@@ -744,7 +753,8 @@ TEST(AdminCommandGuard, ExternalDatabaseFunctionsAreGated) {
   EXPECT_TRUE(Gated("SELECT * FROM (SELECT * FROM POSTGRES_QUERY('b', 'select 1')) t"));
   EXPECT_TRUE(Gated("CREATE TABLE t AS SELECT * FROM postgres_query('b', 'select 1')"));
   EXPECT_TRUE(Gated("CREATE VIEW v AS SELECT * FROM postgres_query('b', 'select 1')"));
-  EXPECT_TRUE(Gated("CREATE MACRO m() AS TABLE SELECT * FROM postgres_query('b', 'select 1')"));
+  EXPECT_TRUE(
+      Gated("CREATE MACRO m() AS TABLE SELECT * FROM postgres_query('b', 'select 1')"));
   EXPECT_FALSE(Gated("CREATE MACRO add1(x) AS x + 1"));
   EXPECT_FALSE(Gated("SELECT pg_typeof(1)"));
 }
@@ -759,12 +769,12 @@ TEST(AdminCommandGuard, NetworkUrlReadsAreGated) {
 
 TEST(AdminCommandGuard, DuckLakeFunctionsReportTheirCatalog) {
   std::vector<gizmosql::ddb::DuckLakeFunctionRef> refs;
-  EXPECT_FALSE(ClassifyGatedCommand(
-      "SELECT * FROM ducklake_list_files('lake_b', 'secret_b'); "
-      "SELECT * FROM lake_b.snapshots(); "
-      "CALL ducklake_expire_snapshots('lake_c', '2020-01-01'); "
-      "CALL lake_d.set_option('x', 'y')",
-      &refs));
+  EXPECT_FALSE(
+      ClassifyGatedCommand("SELECT * FROM ducklake_list_files('lake_b', 'secret_b'); "
+                           "SELECT * FROM lake_b.snapshots(); "
+                           "CALL ducklake_expire_snapshots('lake_c', '2020-01-01'); "
+                           "CALL lake_d.set_option('x', 'y')",
+                           &refs));
   ASSERT_EQ(refs.size(), 4u);
   EXPECT_EQ(refs[0].catalog, std::optional<std::string>("lake_b"));
   EXPECT_FALSE(refs[0].writes);
@@ -778,8 +788,8 @@ TEST(AdminCommandGuard, DuckLakeFunctionsReportTheirCatalog) {
 
 TEST(AdminCommandGuard, DuckLakeNonLiteralCatalogCannotBeVerified) {
   std::vector<gizmosql::ddb::DuckLakeFunctionRef> refs;
-  EXPECT_FALSE(ClassifyGatedCommand("SELECT * FROM ducklake_snapshots(current_database())",
-                                    &refs));
+  EXPECT_FALSE(ClassifyGatedCommand(
+      "SELECT * FROM ducklake_snapshots(current_database())", &refs));
   ASSERT_EQ(refs.size(), 1u);
   EXPECT_FALSE(refs[0].catalog.has_value());
 }
