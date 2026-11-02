@@ -23,11 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enterprise: `ducklake_*` functions and `catalog.snapshots()`-style calls are
     checked against the token's catalog access (read for inspection, write for
     maintenance); `ducklake_add_data_files` is admin-only.
+  - Object-storage reads are now admin-only too. `read_parquet('gs://…/<other
+    catalog's data prefix>/…')` ran on the server's own storage credentials and
+    returned another catalog's rows; the same went for `glob()`, `read_csv` /
+    `read_json`, `delta_scan` / `iceberg_scan` and other functions handed an
+    `s3://` / `gs://` path, `COPY … FROM` and `FROM 's3://…'`.
+  - Enterprise: a token with `catalog_access` rules no longer sees other
+    catalogs' names through `pragma_database_list`, `pragma_database_size()`,
+    `PRAGMA database_list` or `PRAGMA database_size` (`SHOW DATABASES` and
+    `duckdb_databases()` were already filtered).
   See [Admin Command Gating](docs/admin_command_gating.md).
 
 ### Changed
-- **Behavior change:** non-admin users can no longer `COPY … TO` object storage
-  or read `http(s)://` URLs. Do it as an admin, or from the client.
+- **Behavior change:** non-admin users can no longer `COPY … TO` object storage,
+  read `http(s)://` URLs, or read `s3://` / `gs://` / … paths directly. Do it as
+  an admin, or from the client. DuckLake tables themselves stay readable.
 
 ## [1.42.2] - 2026-10-27
 

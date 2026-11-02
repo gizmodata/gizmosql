@@ -301,6 +301,7 @@ When `catalog_access` rules are present in a token, GizmoSQL automatically filte
 - **`SHOW DATABASES`** / **`SHOW ALL TABLES`** — only return rows for authorized catalogs
 - **`information_schema.*` views** (`tables`, `columns`, `schemata`, etc.) — only return rows for authorized catalogs
 - **`duckdb_*()` table functions** (`duckdb_tables()`, `duckdb_databases()`, `duckdb_columns()`, etc.) — only return rows for authorized catalogs
+- **`pragma_database_list` / `pragma_database_size()`** and the `PRAGMA database_list` / `PRAGMA database_size` statements — only return rows for authorized catalogs
 - **Flight SQL metadata RPCs** (`GetCatalogs`, `GetDbSchemas`, `GetTables`) — automatically filtered since they go through the same SQL path
 
 The DuckDB internal catalogs `system` and `temp` are **always visible** regardless of access rules.

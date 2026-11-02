@@ -454,6 +454,17 @@ bool RewriteShowCommand(const std::string& sql, const std::string& filter_in,
     return true;
   }
 
+  // The PRAGMA spellings of the same listings (pragma_database_list /
+  // pragma_database_size also list every attached catalog).
+  if (upper == "PRAGMA DATABASE_LIST") {
+    rewritten = "SELECT * FROM pragma_database_list WHERE name " + filter_in;
+    return true;
+  }
+  if (upper == "PRAGMA DATABASE_SIZE") {
+    rewritten = "SELECT * FROM pragma_database_size() WHERE database_name " + filter_in;
+    return true;
+  }
+
   // SHOW SCHEMAS shows schemas across all catalogs and needs filtering. Use
   // duckdb_schemas() instead of `SELECT * FROM (SHOW SCHEMAS)` because the
   // latter only parses on DuckDB v1.5+ (1.4 rejects `SHOW SCHEMAS` as a
@@ -509,6 +520,12 @@ const std::vector<MetadataPattern>& GetMetadataPatterns() {
       {"duckdb_schemas()", "database_name", true},
       {"duckdb_sequences()", "database_name", true},
       {"duckdb_types()", "database_name", true},
+      // PRAGMA table functions that list every attached catalog. The call form
+      // comes first so `pragma_database_list()` is not matched by the bare name.
+      {"pragma_database_list()", "name", true},
+      {"pragma_database_list", "name", false},
+      {"pragma_database_size()", "database_name", true},
+      {"pragma_database_size", "database_name", false},
   };
   return patterns;
 }

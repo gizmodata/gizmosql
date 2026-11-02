@@ -1473,3 +1473,71 @@ TEST_F(CatalogAccessServerFixture, ReadOnlyPrincipalsCanRunPivot) {
 #endif
   }
 }
+
+// ============================================================================
+// Enumeration: a catalog-scoped token must not learn other catalogs' names
+// through any metadata surface, not only SHOW DATABASES / duckdb_databases().
+// ============================================================================
+
+TEST_F(CatalogAccessServerFixture, ScopedTokenCannotEnumerateOtherCatalogs) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady()) << "Server not ready";
+
+  const std::string kOther = "other_tenant_lake";
+  {
+    arrow::flight::FlightClientOptions options;
+    ASSERT_ARROW_OK_AND_ASSIGN(auto location,
+                               arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                               arrow::flight::FlightClient::Connect(location, options));
+    arrow::flight::FlightCallOptions sys_call_options;
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto bearer, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+    sys_call_options.headers.push_back(bearer);
+    FlightSqlClient sql_client(std::move(client));
+    ASSERT_ARROW_OK(ExecuteAndConsume(sql_client, sys_call_options,
+                                      "ATTACH IF NOT EXISTS ':memory:' AS " + kOther));
+  }
+
+  std::string catalog_access = R"([{"catalog": ")" + kDefaultCatalog +
+                               R"(", "access": "write"}])";
+  std::string token = CreateTestJWT("enumeration_user", "user", catalog_access);
+  auto call_options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  const std::vector<std::string> queries = {
+      "SELECT database_name FROM duckdb_databases()",
+      "SELECT * FROM duckdb_databases()",
+      "SELECT * FROM duckdb_databases() d",
+      "WITH d AS (SELECT * FROM duckdb_databases()) SELECT * FROM d",
+      "SELECT * FROM pragma_database_list",
+      "SELECT * FROM pragma_database_list()",
+      "PRAGMA database_list",
+      "SELECT * FROM pragma_database_size()",
+      "PRAGMA database_size",
+      "SELECT * FROM (SHOW DATABASES)",
+      "SHOW DATABASES",
+      "SHOW ALL TABLES",
+      "SELECT catalog_name FROM information_schema.schemata",
+      "SELECT database_name, schema_name FROM duckdb_schemas()",
+      "SELECT database_name FROM duckdb_tables()",
+      "SELECT database_name FROM duckdb_settings() WHERE false UNION ALL "
+      "SELECT database_name FROM duckdb_databases()",
+      "SELECT current_database()",
+      "SELECT * FROM duckdb_dependencies()",
+      "SELECT * FROM duckdb_temporary_files()",
+      "SELECT * FROM duckdb_memory()",
+  };
+  for (const auto& q : queries) {
+    auto table_result = ExecuteToTable(*client, call_options, q);
+    if (!table_result.ok()) continue;  // refused is fine
+    auto table = *table_result;
+    for (int c = 0; c < table->num_columns(); ++c) {
+      if (table->column(c)->type()->id() != arrow::Type::STRING) continue;
+      for (const auto& v : GetColumnValues(table, c)) {
+        EXPECT_EQ(v.find(kOther), std::string::npos)
+            << "'" << kOther << "' leaked via: " << q << " (value: " << v << ")";
+      }
+    }
+  }
+}

@@ -252,6 +252,30 @@ std::optional<std::string> FirstStringLiteralArg(const dd::FunctionExpression& f
   return StringConstant(*first);
 }
 
+// The first string literal among a call's arguments (positional or named,
+// including strings inside a list) that names a proven-remote path, if any.
+std::optional<std::string> RemoteLiteralArg(const dd::FunctionExpression& fe) {
+  std::optional<std::string> found;
+  std::function<void(dd::ParsedExpression&)> visit = [&](dd::ParsedExpression& e) {
+    if (found) return;
+    if (auto lit = StringConstant(e)) {
+      if (IsProvenRemotePath(ToLower(*lit))) found = *lit;
+      return;
+    }
+    dd::ParsedExpressionIterator::EnumerateChildren(
+        e, [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+          if (child) visit(*child);
+        });
+  };
+  // EnumerateChildren is the 1.x/2.x-neutral way to reach the call's arguments.
+  dd::ParsedExpressionIterator::EnumerateChildren(
+      const_cast<dd::FunctionExpression&>(fe),
+      [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+        if (child) visit(*child);
+      });
+  return found;
+}
+
 // Extract a literal path from a COPY/EXPORT target (info.file_path, or a string
 // constant in info.file_path_expression). nullopt => non-literal/unknown.
 std::optional<std::string> CopyPathLiteral(const dd::CopyInfo& info) {
@@ -260,10 +284,10 @@ std::optional<std::string> CopyPathLiteral(const dd::CopyInfo& info) {
   return std::nullopt;
 }
 
-// COPY statements a non-admin may not run. COPY TO is always gated: the server's
-// object-storage credentials are shared by every catalog it hosts, so a user
-// could otherwise write into another catalog's data prefix. COPY FROM is gated
-// for local paths and for network (HTTP) URLs; object-storage reads are allowed.
+// COPY statements a non-admin may not run. The server's object-storage
+// credentials are shared by every catalog it hosts, so a user naming a path
+// could otherwise write into, or read from, another catalog's data prefix: COPY
+// is gated for every destination and source (local, object storage, network).
 std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
   auto path = CopyPathLiteral(info);
   const std::string lower = path ? ToLower(*path) : std::string();
@@ -271,8 +295,10 @@ std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
   if (!info.is_from) {
     return remote ? "COPY TO (remote storage)" : "COPY TO (local filesystem)";
   }
-  if (remote && !IsNetworkPath(lower)) return std::nullopt;
-  return remote ? "COPY FROM (network URL)" : "COPY FROM (local filesystem)";
+  if (remote) {
+    return IsNetworkPath(lower) ? "COPY FROM (network URL)" : "COPY FROM (object storage)";
+  }
+  return "COPY FROM (local filesystem)";
 }
 
 // Functions that reach another database through the server's own connection
@@ -430,6 +456,8 @@ struct GatedFunctionWalker {
       auto table_name = UnqualifiedTableName(ref.Cast<dd::BaseTableRef>());
       if (table_name && IsNetworkPath(ToLower(*table_name))) {
         violation = "reading a network URL via FROM '" + *table_name + "'";
+      } else if (table_name && IsProvenRemotePath(ToLower(*table_name))) {
+        violation = "reading object storage via FROM '" + *table_name + "'";
       } else if (table_name && LooksLikeLocalFilePath(*table_name)) {
         violation = "reading a local file via FROM '" + *table_name + "'";
       }
@@ -475,18 +503,15 @@ struct GatedFunctionWalker {
       violation = v;
       return;
     }
-    if (FsReadFunctions().count(name)) {
-      auto path = FirstStringLiteralArg(fe);
-      if (path) {
-        const std::string lower = ToLower(*path);
-        if (IsNetworkPath(lower)) {
-          violation = name + "() (network URL)";
-          return;
-        }
-        if (IsProvenRemotePath(lower)) return;  // object-storage read allowed
-      }
-      violation = name + "() (local filesystem)";
+    // Any table function handed a remote path (read_parquet, glob, delta_scan,
+    // iceberg_scan, read_xlsx, ...) reads through the server's own credentials,
+    // for whichever catalog's prefix the path names.
+    if (auto remote = RemoteLiteralArg(fe)) {
+      violation = name + (IsNetworkPath(ToLower(*remote)) ? "() (network URL)"
+                                                          : "() (object storage)");
+      return;
     }
+    if (FsReadFunctions().count(name)) violation = name + "() (local filesystem)";
   }
 };
 

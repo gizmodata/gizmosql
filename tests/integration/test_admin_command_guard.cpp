@@ -233,8 +233,9 @@ TEST(AdminCommandGuard, CopyToRemoteIsGated) {
   EXPECT_EQ(Category("COPY my_table TO 'https://example.com/x'"), "COPY TO (remote storage)");
 }
 
-TEST(AdminCommandGuard, CopyFromObjectStorageIsAllowedButNetworkUrlIsNot) {
-  EXPECT_FALSE(Gated("COPY my_table FROM 's3://bucket/data.csv'"));
+TEST(AdminCommandGuard, CopyFromObjectStorageAndNetworkUrlAreGated) {
+  EXPECT_EQ(Category("COPY my_table FROM 's3://bucket/data.csv'"), "COPY FROM (object storage)");
+  EXPECT_TRUE(Gated("COPY my_table FROM 'gs://bucket/data.parquet' (FORMAT parquet)"));
   EXPECT_EQ(Category("COPY my_table FROM 'https://example.com/data.csv'"),
             "COPY FROM (network URL)");
 }
@@ -278,10 +279,24 @@ TEST(AdminCommandGuard, ReadFunctionsLocalAreGated) {
   EXPECT_TRUE(Gated("SELECT * FROM parquet_scan('local.parquet')"));
 }
 
-TEST(AdminCommandGuard, ReadFunctionsRemoteAreAllowed) {
-  EXPECT_FALSE(Gated("SELECT * FROM read_parquet('s3://bucket/x.parquet')"));
-  EXPECT_FALSE(Gated("SELECT * FROM read_json('gs://bucket/data.json')"));
-  EXPECT_FALSE(Gated("SELECT * FROM glob('s3://bucket/*')"));
+// The server's object-storage credentials are shared by every catalog it hosts,
+// so a non-admin naming an s3:// or gs:// path could read another catalog's data
+// prefix. Direct object-storage reads are admin-only, whatever the function.
+TEST(AdminCommandGuard, ObjectStorageReadFunctionsAreGated) {
+  EXPECT_EQ(Category("SELECT * FROM read_parquet('s3://bucket/x.parquet')"),
+            "read_parquet() (object storage)");
+  EXPECT_TRUE(Gated("SELECT * FROM read_json('gs://bucket/data.json')"));
+  EXPECT_TRUE(Gated("SELECT * FROM read_csv('gs://bucket/other_catalog/data/x.csv')"));
+  EXPECT_TRUE(Gated("SELECT * FROM glob('gs://bucket/other_catalog/*')"));
+  EXPECT_TRUE(Gated("SELECT * FROM read_parquet(['gs://b/a.parquet', 'gs://b/c.parquet'])"));
+  EXPECT_TRUE(Gated("SELECT * FROM read_parquet('gs://b/a.parquet', hive_partitioning = true)"));
+  // Functions outside the read_* family still read through the same credentials.
+  EXPECT_TRUE(Gated("SELECT * FROM delta_scan('s3://bucket/table')"));
+  EXPECT_TRUE(Gated("SELECT * FROM iceberg_scan('s3://bucket/table')"));
+  EXPECT_TRUE(Gated("SELECT * FROM read_xlsx('s3://bucket/a.xlsx')"));
+  // Nested positions.
+  EXPECT_TRUE(Gated("SELECT * FROM (SELECT * FROM read_parquet('gs://b/x.parquet')) s"));
+  EXPECT_TRUE(Gated("WITH t AS (SELECT * FROM read_parquet('s3://b/x.parquet')) SELECT * FROM t"));
 }
 
 TEST(AdminCommandGuard, ReadFunctionsNonLiteralPathIsGated) {
@@ -358,8 +373,9 @@ TEST(AdminCommandGuard, LocalReplacementScanIsGated) {
   EXPECT_TRUE(Gated("SELECT * FROM 'subdir/file.json'"));
 }
 
-TEST(AdminCommandGuard, RemoteReplacementScanIsAllowed) {
-  EXPECT_FALSE(Gated("SELECT * FROM 's3://bucket/data.parquet'"));
+TEST(AdminCommandGuard, RemoteReplacementScanIsGated) {
+  EXPECT_TRUE(Gated("SELECT * FROM 's3://bucket/data.parquet'"));
+  EXPECT_TRUE(Gated("SELECT * FROM 'gs://bucket/other_catalog/data.parquet'"));
   EXPECT_TRUE(Gated("SELECT * FROM 'https://example.com/data.csv'"));
 }
 
@@ -738,7 +754,7 @@ TEST(AdminCommandGuard, NetworkUrlReadsAreGated) {
             "read_csv() (network URL)");
   EXPECT_TRUE(Gated("SELECT * FROM read_parquet('http://169.254.169.254/x')"));
   EXPECT_TRUE(Gated("SELECT * FROM read_json('hf://datasets/x/y.json')"));
-  EXPECT_FALSE(Gated("SELECT * FROM read_parquet('s3://bucket/x.parquet')"));
+  EXPECT_TRUE(Gated("SELECT * FROM read_parquet('s3://bucket/x.parquet')"));
 }
 
 TEST(AdminCommandGuard, DuckLakeFunctionsReportTheirCatalog) {

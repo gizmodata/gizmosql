@@ -65,22 +65,26 @@ staged with `PREPARE`:
 | **Quack remote protocol** functions (always) | `CALL quack_serve(…)`, `SELECT * FROM quack_query(…)`, `SELECT quack_cancel(…)` |
 | **`postgres_*` / `mysql_*` functions, `sqlite_scan` / `sqlite_attach`** (always; also inside views, CTAS and `CREATE MACRO`) — they reach attached databases (e.g. a DuckLake catalog's metadata Postgres) as that database's own role, outside the token's catalog access | `postgres_query('db', '…')`, `CALL postgres_execute('db', '…')` |
 | **`COPY … TO`** any destination, including object storage | `COPY t TO 'gs://bucket/prefix/x.parquet'` |
+| **Reads of object storage** (`s3://`, `gs://`, `r2://`, `az://`, …) by any function, `COPY … FROM` or replacement scan — they run on the server's own storage credentials, shared by every catalog | `read_parquet('gs://bucket/other_catalog/x.parquet')`, `glob('s3://bucket/*')`, `COPY t FROM 's3://…'`, `FROM 's3://…/x.parquet'` |
 | **Reads of network URLs** (`http://`, `https://`, `hf://`) — outbound HTTP from the server | `read_csv('https://example.com/')`, `COPY t FROM 'https://…'`, `FROM 'https://…/x.csv'` |
 | **`ducklake_add_data_files`** (always) | `CALL ducklake_add_data_files('lake', 't', 'gs://…')` |
 | **`CONNECT` / `DISCONNECT` / `EXTERNAL RESOURCE`** (edge channel, DuckDB 2.0) — `CONNECT` attaches its target and forwards raw SQL to it | `CONNECT 'other.db'`, `CREATE EXTERNAL RESOURCE …` |
 
 ### Local vs. remote
 
-For filesystem reads and `COPY`, the gate distinguishes **local** from
-**remote object-storage / HTTP** paths. Non-admins **may** read from
-object-storage URLs — `s3://`, `s3a://`, `gs://`/`gcs://`, `r2://`, `az://`/
-`azure://`/`abfs://`/`abfss://` — but **not** local paths, **not** network URLs
-(`http://`, `https://`, `hf://`: outbound HTTP from the server's network position),
-and `COPY … TO` is refused for every destination: the server's object-storage
-credentials are shared by all catalogs, so a `COPY` could write into another
-catalog's data prefix. A path that cannot be *proven* remote (a bare/relative path, `file://`, or
-a computed/non-literal path) is treated as local and **gated** — the gate fails
-closed.
+Non-admins cannot name a path directly: not a local path, not a network URL
+(`http://`, `https://`, `hf://`: outbound HTTP from the server's network
+position), and not an object-storage URL (`s3://`, `s3a://`, `gs://`/`gcs://`,
+`r2://`, `az://`/`azure://`/`abfs://`/`abfss://`). Object-storage reads run on
+the server's own storage credentials, which are shared by all catalogs, so
+`read_parquet('gs://bucket/<other catalog's data prefix>/…')` would return
+another catalog's rows. This covers every table function handed such a literal
+(`read_*`, `glob`, `delta_scan`, `iceberg_scan`, …), `COPY … FROM`, and
+`FROM 's3://…'`; `COPY … TO` is refused for every destination for the same
+reason. Reading a DuckLake catalog's tables through SQL is unaffected: the
+extension reads its own data files internally. A path that cannot be *proven*
+remote (a bare/relative path, `file://`, or a computed/non-literal path) is
+treated as local and **gated** — the gate fails closed.
 
 **`EXPORT DATABASE` and `IMPORT DATABASE` are the exception: they are gated for
 non-admins regardless of destination (local *or* remote).** `EXPORT DATABASE`
@@ -90,10 +94,8 @@ full-database egress; `IMPORT DATABASE` runs arbitrary DDL + DML from a dump.
 Both are admin-only.
 
 ```sql
--- non-admin: allowed (object-storage reads)
+-- non-admin: rejected (object-storage reads, writes to any path, network URLs)
 SELECT * FROM read_parquet('s3://bucket/data.parquet');
-
--- non-admin: rejected (writes to any path, network URLs)
 COPY my_table TO 's3://bucket/out.parquet';
 SELECT * FROM read_csv('https://example.com/');
 
