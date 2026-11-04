@@ -73,6 +73,25 @@ bool HasWriteAccess(const ClientSession& client_session, const std::string& cata
                     const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager = nullptr,
                     const std::string& log_catalog = "");
 
+/// Whether the session's token scopes it to specific catalogs: a non-admin whose
+/// token carries catalog_access rules, on a server licensed for catalog
+/// permissions. Such a session may only reach remote (object) storage under the
+/// data path of a catalog it has access to (see RemotePathScope); it gets a scope
+/// registered on its connection when it is created.
+bool IsCatalogScopedSession(const ClientSession& client_session);
+
+/// Refreshes the allowed remote-storage prefixes of a catalog-scoped session
+/// from the DuckLake catalogs attached right now: each one the token may read
+/// contributes its `data_path` for reads, each one it may write for writes.
+/// Run before each client statement (an administrator can attach a catalog while
+/// the session is open), on the session's connection, ahead of the statement.
+/// No-op for sessions that are not catalog-scoped. On any error the prefixes are
+/// emptied, so remote storage stays closed to the session.
+void RefreshRemotePathScope(
+    const std::shared_ptr<ClientSession>& client_session,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+    const std::string& log_catalog);
+
 /// Check catalog-level write access for all databases a statement will modify.
 /// This is an enterprise feature that requires a valid license with catalog_permissions.
 ///

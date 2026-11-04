@@ -10,6 +10,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include "gizmosql_logging.h"
+#include "sensitive_path_guard.h"
 #include "session_context.h"
 #include "system_catalog.h"
 #include "enterprise/enterprise_features.h"
@@ -122,6 +123,76 @@ CatalogAccessLevel GetCatalogAccess(
 
   // No matching rule - deny access
   return CatalogAccessLevel::kNone;
+}
+
+bool IsCatalogScopedSession(const ClientSession& client_session) {
+  return client_session.role != "admin" && !client_session.catalog_access.empty() &&
+         EnterpriseFeatures::Instance().IsCatalogPermissionsAvailable();
+}
+
+namespace {
+
+std::string QuoteLiteral(const std::string& value) {
+  return "'" + boost::replace_all_copy(value, "'", "''") + "'";
+}
+
+// The data path of one attached DuckLake catalog; empty if it cannot be read.
+// ducklake_settings() is DuckLake 1.0; the catalog.options() table function
+// carries the same data_path row on the older extension the LTS channel loads.
+std::string DuckLakeDataPath(duckdb::Connection& connection, const std::string& catalog) {
+  for (const auto& sql :
+       {"SELECT data_path FROM ducklake_settings(" + QuoteLiteral(catalog) + ")",
+        "SELECT value FROM \"" + boost::replace_all_copy(catalog, "\"", "\"\"") +
+            "\".options() WHERE option_name = 'data_path'"}) {
+    auto result = connection.Query(sql);
+    if (result->HasError()) continue;
+    for (auto& row : *result) {
+      if (!row.IsNull(0)) return row.GetValue<std::string>(0);
+    }
+  }
+  return "";
+}
+
+}  // namespace
+
+void RefreshRemotePathScope(
+    const std::shared_ptr<ClientSession>& client_session,
+    const std::shared_ptr<gizmosql::ddb::InstrumentationManager>& instrumentation_manager,
+    const std::string& log_catalog) {
+  if (!IsCatalogScopedSession(*client_session) || !client_session->connection) return;
+  auto& connection = client_session->connection->Get();
+  const auto scope =
+      connection.context->registered_state->Get<gizmosql::ddb::RemotePathScope>(
+          gizmosql::ddb::RemotePathScope::kStateName);
+  if (!scope) return;
+
+  std::vector<std::string> read_prefixes;
+  std::vector<std::string> write_prefixes;
+  auto catalogs = connection.Query(
+      "SELECT database_name FROM duckdb_databases() WHERE type = 'ducklake'");
+  if (catalogs->HasError()) {
+    scope->SetPrefixes({}, {});
+    return;
+  }
+  std::vector<std::string> names;
+  for (auto& row : *catalogs) names.push_back(row.GetValue<std::string>(0));
+  for (const auto& name : names) {
+    const auto access =
+        GetCatalogAccess(name, client_session->role, client_session->catalog_access,
+                         instrumentation_manager, log_catalog);
+    if (access < CatalogAccessLevel::kRead) continue;
+    const auto data_path = DuckLakeDataPath(connection, name);
+    if (data_path.empty()) {
+      GIZMOSQL_LOGKV_SESSION(WARNING, client_session,
+                             "Could not read the data path of a DuckLake catalog; remote "
+                             "storage under it stays closed to this session",
+                             {"catalog", name});
+      continue;
+    }
+    read_prefixes.push_back(data_path);
+    if (access >= CatalogAccessLevel::kWrite) write_prefixes.push_back(data_path);
+  }
+  scope->SetPrefixes(std::move(read_prefixes), std::move(write_prefixes));
 }
 
 bool HasReadAccess(const ClientSession& client_session, const std::string& catalog_name,

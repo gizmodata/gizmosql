@@ -16,6 +16,9 @@
 // under the License.
 
 #include <gtest/gtest.h>
+
+#include <filesystem>
+#include <unistd.h>
 #include <algorithm>
 #include <set>
 #include <thread>
@@ -1312,13 +1315,13 @@ TEST_F(CatalogAccessServerFixture, DuckLakeFunctionsRespectCatalogAccess) {
   ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
 
   // Another catalog: reads (inspection) and writes (maintenance) are refused.
+  // (`other_catalog.snapshots()` only addresses DuckLake when other_catalog is an
+  // attached DuckLake catalog; RemotePathScopeFixture covers that spelling.)
   for (const std::string sql :
        {"SELECT * FROM ducklake_list_files('other_catalog', 'secret_b')",
         "SELECT * FROM ducklake_snapshots('other_catalog')",
         "SELECT * FROM ducklake_table_info('other_catalog')",
-        "SELECT * FROM other_catalog.snapshots()",
         "CALL ducklake_expire_snapshots('other_catalog')",
-        "CALL other_catalog.set_option('x', 'y')",
         "SELECT * FROM ducklake_snapshots((SELECT 'other_catalog'))"}) {
     auto status = ExecuteAndConsume(*client, call_options, sql);
     ASSERT_FALSE(status.ok()) << "token reached another catalog via: " << sql;
@@ -1546,4 +1549,321 @@ TEST_F(CatalogAccessServerFixture, ScopedTokenCannotEnumerateOtherCatalogs) {
       }
     }
   }
+}
+
+// ============================================================================
+// Remote storage: a catalog-scoped session reaches object storage only under the
+// data path of a catalog its token grants access to. The file system enforces it,
+// so it does not matter which SQL names the path.
+// ============================================================================
+
+class RemotePathScopeFixture
+    : public gizmosql::testing::ServerTestFixture<RemotePathScopeFixture> {
+ public:
+  static gizmosql::testing::TestServerConfig GetConfig() {
+    return {
+        .database_filename = "remote_scope_test.db",
+        .port = 31678,
+        .health_port = 31679,
+        .username = "tester",
+        .password = "tester",
+    };
+  }
+
+ protected:
+  static constexpr const char* kOwnLake = "scope_own";
+  static constexpr const char* kOtherLake = "scope_other";
+  static constexpr const char* kOwnPrefix = "s3://scope-bucket/own/";
+  static constexpr const char* kOtherPrefix = "s3://scope-bucket/other/";
+
+  arrow::Result<std::unique_ptr<FlightSqlClient>> CreateClientWithToken(
+      const std::string&) {
+    arrow::flight::FlightClientOptions options;
+    ARROW_ASSIGN_OR_RAISE(auto location,
+                          arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+    ARROW_ASSIGN_OR_RAISE(auto client,
+                          arrow::flight::FlightClient::Connect(location, options));
+    return std::make_unique<FlightSqlClient>(std::move(client));
+  }
+
+  arrow::flight::FlightCallOptions GetCallOptionsWithToken(const std::string& token) {
+    arrow::flight::FlightCallOptions call_options;
+    call_options.headers.push_back({"authorization", "Bearer " + token});
+    return call_options;
+  }
+
+  // Where the DuckLake metadata files live: per process, and removed afterwards (a
+  // file written by one DuckDB version cannot be opened by an older one).
+  static const std::filesystem::path& MetadataDir() {
+    struct Dir {
+      std::filesystem::path path =
+          std::filesystem::temp_directory_path() /
+          ("gizmosql_remote_scope_" + std::to_string(::getpid()));
+      Dir() {
+        std::filesystem::remove_all(path);
+        std::filesystem::create_directories(path);
+      }
+      ~Dir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+      }
+    };
+    static const Dir dir;
+    return dir.path;
+  }
+
+  // Two DuckLake catalogs with data paths on object storage, attached by an admin.
+  // Returns why not (the test is then skipped) if the setup cannot be done here,
+  // e.g. the ducklake extension cannot be installed; "" on success.
+  std::string AttachLakes() {
+    arrow::flight::FlightClientOptions options;
+    auto location = arrow::flight::Location::ForGrpcTcp("localhost", GetPort());
+    auto client = arrow::flight::FlightClient::Connect(*location, options);
+    auto bearer = (*client)->AuthenticateBasicToken({}, GetUsername(), GetPassword());
+    arrow::flight::FlightCallOptions admin;
+    admin.headers.push_back(*bearer);
+    FlightSqlClient sql(std::move(*client));
+    std::vector<std::string> steps = {"INSTALL ducklake", "LOAD ducklake"};
+    const auto& dir = MetadataDir();
+    for (const auto& [name, prefix] :
+         {std::pair{kOwnLake, kOwnPrefix}, std::pair{kOtherLake, kOtherPrefix}}) {
+      steps.push_back(std::string("ATTACH IF NOT EXISTS 'ducklake:") +
+                      (dir / (std::string(name) + ".ducklake")).string() + "' AS " +
+                      name + " (DATA_PATH '" + prefix + "')");
+    }
+    // Keep any request that does pass the guard on this machine.
+    for (const char* setting :
+         {"SET GLOBAL s3_endpoint = '127.0.0.1:1'", "SET GLOBAL s3_use_ssl = false",
+          "SET GLOBAL s3_url_style = 'path'"}) {
+      steps.push_back(setting);
+    }
+    for (const auto& step : steps) {
+      if (auto status = ExecuteAndConsume(sql, admin, step); !status.ok()) {
+        return step + " -> " + status.ToString();
+      }
+    }
+    return "";
+  }
+
+  std::string ScopedToken(const std::string& user, const std::string& access) {
+    return CreateTestJWT(user, "user",
+                         std::string(R"([{"catalog": ")") + kOwnLake +
+                             R"(", "access": ")" + access +
+                             R"("}, {"catalog": "*", "access": "none"}])");
+  }
+
+  // Own lake plus the server's default catalog, where a view, schema or macro lives.
+  std::string ScopedTokenWithDefaultCatalog(const std::string& user) {
+    return CreateTestJWT(
+        user, "user",
+        std::string(R"([{"catalog": ")") + kOwnLake +
+            R"(", "access": "write"}, {"catalog": "remote_scope_test", "access": "write"}, )" +
+            R"({"catalog": "*", "access": "none"}])");
+  }
+
+  // The statement's error text, or "" if it succeeded.
+  std::string Error(FlightSqlClient& client,
+                    const arrow::flight::FlightCallOptions& options,
+                    const std::string& sql) {
+    auto status = ExecuteAndConsume(client, options, sql);
+    return status.ok() ? "" : status.ToString();
+  }
+};
+
+template <>
+std::shared_ptr<arrow::flight::sql::FlightSqlServerBase>
+    gizmosql::testing::ServerTestFixture<RemotePathScopeFixture>::server_{};
+template <>
+std::thread
+    gizmosql::testing::ServerTestFixture<RemotePathScopeFixture>::server_thread_{};
+template <>
+std::atomic<bool>
+    gizmosql::testing::ServerTestFixture<RemotePathScopeFixture>::server_ready_{false};
+template <>
+gizmosql::testing::TestServerConfig
+    gizmosql::testing::ServerTestFixture<RemotePathScopeFixture>::config_{};
+
+// The file system's refusal ("blocked access to") or, for a path DuckDB computes
+// from a function, the text gate's refusal ("blocked read_parquet() ...").
+constexpr const char* kBlocked = "GizmoSQL blocked";
+
+// Every way of naming another catalog's data prefix is refused, because the file
+// system sees the path whatever SQL produced it.
+TEST_F(RemotePathScopeFixture, ScopedTokenCannotReadAnotherCatalogsStorage) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  const auto token = ScopedToken("scoped_reader", "read");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+  const std::string other = std::string(kOtherPrefix) + "x.parquet";
+
+  const std::vector<std::string> attempts = {
+      "SELECT * FROM read_parquet('" + other + "')",
+      "SELECT * FROM glob('" + std::string(kOtherPrefix) + "*')",
+      "SELECT * FROM read_csv('" + std::string(kOtherPrefix) + "x.csv')",
+      "SELECT * FROM '" + other + "'",
+      "COPY (SELECT 1 AS a) TO '" + std::string(kOtherPrefix) +
+          "x.parquet' (FORMAT parquet)",
+      // Indirect: the text of the statement does not contain the path at all.
+      "SELECT * FROM query('SELECT * FROM read_parquet(''" + other + "'')')",
+      "SELECT * FROM read_parquet(concat('s3', '://scope-bucket/other/x.parquet'))",
+      "SELECT * FROM read_parquet(chr(115) || '3://scope-bucket/other/x.parquet')",
+      // Not under the data path on a segment boundary, or leaving it through "..".
+      "SELECT * FROM read_parquet('s3://scope-bucket/own_other/x.parquet')",
+      "SELECT * FROM read_parquet('s3://scope-bucket/own/../other/x.parquet')",
+      "SELECT * FROM read_parquet('S3://SCOPE-BUCKET/own/x.parquet')",
+  };
+  for (const auto& sql : attempts) {
+    const auto error = Error(*client, options, sql);
+    EXPECT_NE(error.find(kBlocked), std::string::npos)
+        << "not refused by the file system: " << sql << " -> " << error;
+  }
+
+  // A macro hides the path from the statement that uses it. DuckDB binds the body
+  // when the macro is created, so the refusal may already come then; either way
+  // the macro cannot be used to read the other catalog.
+  const auto created = Error(
+      *client, options,
+      "CREATE TEMP MACRO scope_m() AS TABLE SELECT * FROM read_parquet('" + other + "')");
+  const auto used =
+      created.empty() ? Error(*client, options, "SELECT * FROM scope_m()") : created;
+  EXPECT_NE(used.find(kBlocked), std::string::npos) << used;
+}
+
+// The token's own catalog still works: its data path is allowed (the request then
+// fails for want of an object store, not because GizmoSQL refused it).
+TEST_F(RemotePathScopeFixture, ScopedTokenKeepsItsOwnCatalogsStorage) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  const auto token = ScopedToken("scoped_owner", "write");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  for (const std::string sql :
+       {"SELECT * FROM read_parquet('" + std::string(kOwnPrefix) + "x.parquet')",
+        "SELECT * FROM glob('" + std::string(kOwnPrefix) + "*')",
+        "COPY (SELECT 1 AS a) TO '" + std::string(kOwnPrefix) +
+            "x.parquet' (FORMAT parquet)"}) {
+    const auto error = Error(*client, options, sql);
+    EXPECT_EQ(error.find(kBlocked), std::string::npos) << sql << " -> " << error;
+  }
+}
+
+// Reading only grants reading: writing into the catalog's prefix needs write access.
+TEST_F(RemotePathScopeFixture, ReadAccessDoesNotAllowWritingToTheCatalogsStorage) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  const auto token = ScopedToken("scoped_read_only", "read");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  EXPECT_EQ(
+      Error(*client, options,
+            "SELECT * FROM read_parquet('" + std::string(kOwnPrefix) + "x.parquet')")
+          .find(kBlocked),
+      std::string::npos);
+  const auto write = Error(*client, options,
+                           "COPY (SELECT 1 AS a) TO '" + std::string(kOwnPrefix) +
+                               "x.parquet' (FORMAT parquet)");
+  EXPECT_NE(write.find(kBlocked), std::string::npos) << write;
+}
+
+// The restriction is for sessions the token scopes. A non-admin token without
+// catalog_access rules (a single-tenant server) keeps object-storage access, and
+// so does an admin.
+TEST_F(RemotePathScopeFixture, UnscopedSessionsKeepObjectStorage) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  const auto token = CreateTestJWT("unscoped_user", "user");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+  for (const std::string sql :
+       {"SELECT * FROM read_parquet('" + std::string(kOtherPrefix) + "x.parquet')",
+        "COPY (SELECT 1 AS a) TO '" + std::string(kOtherPrefix) +
+            "x.parquet' (FORMAT parquet)"}) {
+    const auto error = Error(*client, options, sql);
+    EXPECT_EQ(error.find(kBlocked), std::string::npos) << sql << " -> " << error;
+  }
+}
+
+// A view runs with the access of whoever selects from it, not of its creator, so a
+// scoped user may not create one around a DuckLake call; a plain view is fine.
+TEST_F(RemotePathScopeFixture, ViewCannotWrapADuckLakeCall) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  const auto token = ScopedTokenWithDefaultCatalog("scoped_view_user");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+  const auto error = Error(*client, options,
+                           std::string("CREATE OR REPLACE VIEW scope_v AS SELECT * FROM "
+                                       "ducklake_snapshots('") +
+                               kOwnLake + "')");
+  EXPECT_NE(error.find("cannot wrap"), std::string::npos) << error;
+  EXPECT_EQ(
+      Error(*client, options, "CREATE OR REPLACE VIEW scope_plain AS SELECT 1 AS x"), "");
+}
+
+// delta/iceberg read object storage through their own client, outside the file
+// system scope, so a catalog-scoped session may not call them (directly, through
+// query(), or in a macro). An unscoped non-admin session is not affected.
+TEST_F(RemotePathScopeFixture, OwnStorageClientFunctionsAreRefusedWhenScoped) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  const auto token = ScopedTokenWithDefaultCatalog("scoped_delta_user");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+  for (const char* sql :
+       {"SELECT * FROM delta_scan('s3://scope-bucket/other/t')",
+        "SELECT * FROM iceberg_scan('s3://scope-bucket/other/t')",
+        "SELECT * FROM query('SELECT * FROM delta_scan(''s3://scope-bucket/other/t'')')",
+        "CREATE OR REPLACE MACRO scope_d() AS TABLE SELECT * FROM "
+        "delta_scan('s3://scope-bucket/other/t')"}) {
+    const auto error = Error(*client, options, sql);
+    EXPECT_NE(error.find("its own client"), std::string::npos) << sql << ": " << error;
+  }
+
+  // No catalog_access rules: not scoped, so the function is not refused here
+  // (it fails later for want of the extension or the table, not by the gate).
+  const auto unscoped = CreateTestJWT("unscoped_delta_user", "user");
+  auto unscoped_options = GetCallOptionsWithToken(unscoped);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto unscoped_client, CreateClientWithToken(unscoped));
+  const auto error = Error(*unscoped_client, unscoped_options,
+                           "SELECT * FROM delta_scan('s3://scope-bucket/other/t')");
+  EXPECT_EQ(error.find("its own client"), std::string::npos) << error;
+}
+
+// `schema.settings()` is a user function when the qualifier is not a DuckLake
+// catalog: it is not refused as a DuckLake call on a catalog the token cannot see.
+TEST_F(RemotePathScopeFixture, QualifiedUserFunctionIsNotTreatedAsDuckLake) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  const auto token = ScopedTokenWithDefaultCatalog("scoped_macro_user");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+  ASSERT_EQ(Error(*client, options, "CREATE SCHEMA IF NOT EXISTS myschema"), "");
+  EXPECT_EQ(Error(*client, options, "CREATE OR REPLACE MACRO myschema.settings() AS 42"),
+            "");
+  const auto error = Error(*client, options, "SELECT myschema.settings()");
+  EXPECT_EQ(error.find("Access denied"), std::string::npos) << error;
+  // A real DuckLake catalog of another tenant still is refused.
+  const auto other = Error(*client, options,
+                           std::string("SELECT * FROM ") + kOtherLake + ".snapshots()");
+  EXPECT_NE(other.find("Access denied"), std::string::npos) << other;
+  const auto other_write = Error(
+      *client, options, std::string("CALL ") + kOtherLake + ".set_option('x', 'y')");
+  EXPECT_NE(other_write.find("Access denied"), std::string::npos) << other_write;
 }

@@ -304,6 +304,8 @@ When `catalog_access` rules are present in a token, GizmoSQL automatically filte
 - **`pragma_database_list` / `pragma_database_size()`** and the `PRAGMA database_list` / `PRAGMA database_size` statements — only return rows for authorized catalogs
 - **Flight SQL metadata RPCs** (`GetCatalogs`, `GetDbSchemas`, `GetTables`) — automatically filtered since they go through the same SQL path
 
+A catalog-scoped token also confines **object-storage access** (`s3://`, `gs://`, …): such a session can only read or write remote paths under the `data_path` of a DuckLake catalog its rules grant access to, so it cannot reach another catalog's files with the server's storage credentials. See [Admin Command Gating](admin_command_gating.md#remote-storage-for-catalog-scoped-sessions-enterprise).
+
 The DuckDB internal catalogs `system` and `temp` are **always visible** regardless of access rules.
 
 Tokens without `catalog_access` rules are unaffected — all catalogs remain visible (backward compatible).
