@@ -18,7 +18,6 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
-#include <unistd.h>
 #include <algorithm>
 #include <set>
 #include <thread>
@@ -1592,13 +1591,14 @@ class RemotePathScopeFixture
     return call_options;
   }
 
-  // Where the DuckLake metadata files live: per process, and removed afterwards (a
-  // file written by one DuckDB version cannot be opened by an older one).
+  // Where the DuckLake metadata files live: unique per run (a random suffix, which
+  // needs no OS-specific process-id call), and removed afterwards (a file written
+  // by one DuckDB version cannot be opened by an older one).
   static const std::filesystem::path& MetadataDir() {
     struct Dir {
       std::filesystem::path path =
           std::filesystem::temp_directory_path() /
-          ("gizmosql_remote_scope_" + std::to_string(::getpid()));
+          ("gizmosql_remote_scope_" + std::to_string(std::random_device{}()));
       Dir() {
         std::filesystem::remove_all(path);
         std::filesystem::create_directories(path);
