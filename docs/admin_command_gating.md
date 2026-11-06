@@ -63,17 +63,54 @@ staged with `PREPARE`:
 | **`CREATE SECRET` / `DROP SECRET`** (all variants) | `CREATE [OR REPLACE] [PERSISTENT\|TEMPORARY] SECRET …`, `DROP SECRET …` |
 | **`duckdb_secrets()`** (always) | `SELECT * FROM duckdb_secrets()` |
 | **Quack remote protocol** functions (always) | `CALL quack_serve(…)`, `SELECT * FROM quack_query(…)`, `SELECT quack_cancel(…)` |
+| **`postgres_*` / `mysql_*` functions, `sqlite_scan` / `sqlite_attach`** (always; also inside views, CTAS and `CREATE MACRO`) — they reach attached databases (e.g. a DuckLake catalog's metadata Postgres) as that database's own role, outside the token's catalog access | `postgres_query('db', '…')`, `CALL postgres_execute('db', '…')` |
+| **Reads and writes of network URLs** (`http://`, `https://`, `hf://`) — outbound HTTP from the server; any table function, `COPY`, replacement scan | `read_csv('https://example.com/')`, `delta_scan('https://…')`, `COPY t TO/FROM 'https://…'`, `FROM 'https://…/x.csv'` |
+| **`query('…')` with SQL that is not a string literal**; **`json_execute_serialized_sql`** — they run SQL the checks cannot read | `query(some_column)`, `json_execute_serialized_sql(…)` |
+| **A `CREATE VIEW` that wraps a DuckLake function** (Enterprise) — it would run with the access of whoever selects from it | `CREATE VIEW v AS SELECT * FROM ducklake_snapshots('lake')` |
+| **`ducklake_add_data_files`** (always) | `CALL ducklake_add_data_files('lake', 't', 'gs://…')` |
 | **`CONNECT` / `DISCONNECT` / `EXTERNAL RESOURCE`** (edge channel, DuckDB 2.0) — `CONNECT` attaches its target and forwards raw SQL to it | `CONNECT 'other.db'`, `CREATE EXTERNAL RESOURCE …` |
 
 ### Local vs. remote
 
-For filesystem reads and `COPY`, the gate distinguishes **local** from
-**remote object-storage / HTTP** paths. Non-admins **may** read from and write to
-proven-remote URLs — `s3://`, `s3a://`, `gs://`/`gcs://`, `r2://`, `az://`/
-`azure://`/`abfs://`/`abfss://`, `http://`, `https://`, `hf://` — but **not** local
-paths. A path that cannot be *proven* remote (a bare/relative path, `file://`, or
-a computed/non-literal path) is treated as local and **gated** — the gate fails
-closed.
+Non-admins cannot name a **local** path or a **network** URL (`http://`,
+`https://`, `hf://`: outbound HTTP from the server's network position), in any
+table function, `COPY` or replacement scan, however deeply nested, including
+inside a `query('…')` string. A path that cannot be *proven* remote (a
+bare/relative path, `file://`, or a computed/non-literal path) is treated as
+local and **gated**: the gate fails closed. `query('…')` is checked as the SQL it
+runs; a `query()` whose argument is not a string literal is refused.
+
+**Object storage** (`s3://`, `s3a://`, `gs://`/`gcs://`, `r2://`,
+`az://`/`azure://`/`abfs://`/`abfss://`) is *not* decided by this text gate:
+paths can be built by a macro, `query()` or a computed argument, which text
+inspection cannot follow. It is enforced where every path is seen, in the file
+system, and only for sessions the token scopes (below).
+
+### Remote storage for catalog-scoped sessions (Enterprise)
+
+Object-storage credentials belong to the server and are shared by every catalog it
+hosts, so a token user who could name any `gs://…` path could read another
+catalog's data (`read_parquet('gs://bucket/<other catalog>/…')`) or write into it
+(`COPY … TO`). For a **catalog-scoped session** (a non-admin whose token carries
+`catalog_access` rules, on a server licensed for catalog permissions) GizmoSQL
+therefore refuses any remote path that is not under the **`data_path` of a
+DuckLake catalog the token may access**: a catalog readable for reads, writable
+for writes. It applies to every way of naming a path (`read_*`, `glob`,
+`COPY`, replacement scans, macros, `query()`, computed paths)
+because it is the file system that refuses, and DuckLake's own reads and writes of
+its data files, which go through the same file system, are allowed by the same
+rule. The allowed paths are recomputed before each statement, so a catalog an
+administrator attaches while the session is open is picked up.
+
+- Sessions that are **not** catalog-scoped keep object storage: admins, and
+  non-admin tokens without `catalog_access` rules (a single-tenant server).
+- A `role: admin` token is never scoped, even with `catalog_access` rules.
+- Extensions that read object storage with their own client rather than through
+  DuckDB's file system would escape that check, so a catalog-scoped session may not
+  call `delta_*()` or `iceberg_*()` at all (directly, inside `query()`, or in a
+  macro that names them). Other sessions are unaffected.
+- A catalog whose data path cannot be read is treated as having none, so storage
+  under it stays closed to scoped sessions (a warning is logged).
 
 **`EXPORT DATABASE` and `IMPORT DATABASE` are the exception: they are gated for
 non-admins regardless of destination (local *or* remote).** `EXPORT DATABASE`
@@ -83,9 +120,9 @@ full-database egress; `IMPORT DATABASE` runs arbitrary DDL + DML from a dump.
 Both are admin-only.
 
 ```sql
--- non-admin: allowed (remote object storage, bounded reads/writes)
-SELECT * FROM read_parquet('s3://bucket/data.parquet');
-COPY my_table TO 's3://bucket/out.parquet';
+-- non-admin: rejected (network URLs)
+SELECT * FROM read_csv('https://example.com/');
+SELECT * FROM query('SELECT * FROM read_csv(''https://example.com/'')');
 
 -- non-admin: rejected (local filesystem)
 SELECT * FROM read_csv('/etc/passwd');
@@ -94,6 +131,10 @@ COPY my_table TO '/tmp/out.csv';
 -- non-admin: rejected (full-database egress/ingress — local OR remote)
 EXPORT DATABASE 's3://bucket/dump';
 IMPORT DATABASE '/tmp/dump';
+
+-- catalog-scoped session (token with catalog_access rules):
+SELECT * FROM read_parquet('gs://bucket/other_catalog/x.parquet'); -- rejected
+SELECT * FROM my_catalog.my_table;                                  -- allowed
 ```
 
 ### What is *not* gated
@@ -150,3 +191,15 @@ The gate is part of the server's query path and applies to every client
 (JDBC, ADBC, Python, CLI, UI). There is no flag to disable it; it is a baseline
 security control. It composes with the Enterprise per-catalog permissions
 (`catalog_access`) — both run before a statement executes.
+
+## DuckLake functions and catalog access (Enterprise)
+
+`ducklake_*` table functions and procedures take the catalog as an argument
+(`ducklake_snapshots('lake')`, `ducklake_list_files('lake', 't')`) or as a
+qualifier (`CALL lake.set_option(…)`, `FROM lake.snapshots()`). For non-admin
+sessions with `catalog_access` rules, each is checked against the token: **read**
+access for inspection functions (`snapshots`, `table_info`, `list_files`,
+`table_insertions`, `table_deletions`, `table_changes`, `settings`, `options`,
+`get_option`, `current_snapshot`, `last_committed_snapshot`) and **write** access
+for everything else (`expire_snapshots`, `merge_adjacent_files`, `set_option`, …).
+A catalog that is not a string literal cannot be verified and is refused.

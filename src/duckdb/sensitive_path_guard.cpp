@@ -25,6 +25,8 @@
 #include <system_error>
 
 #include <arrow/flight/types.h>
+#include <duckdb/common/file_opener.hpp>
+#include <duckdb/main/client_context.hpp>
 
 #ifndef _WIN32
 #include <pwd.h>
@@ -191,6 +193,71 @@ void SensitivePathPolicy::AddSecretDirectory(const std::string& path) {
   if (!path.empty()) AddProtectedPath(path, kDuckDBSecrets);
 }
 
+namespace {
+// Ends every RemotePathScope refusal, so SensitivePathRefusal can cut the
+// client-facing message out of DuckDB's error text.
+const std::string kRemoteScopeEnd = "catalog its token grants access to.";
+
+// The scheme is case-insensitive; the rest of the URL is not.
+std::string LowerScheme(const std::string& url) {
+  const auto pos = url.find("://");
+  if (pos == std::string::npos) return url;
+  std::string out = url;
+  for (size_t i = 0; i < pos; ++i) {
+    out[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(out[i])));
+  }
+  return out;
+}
+
+bool HasDotDotSegment(const std::string& url) {
+  const auto scheme_end = url.find("://");
+  size_t pos = scheme_end == std::string::npos ? 0 : scheme_end + 3;
+  while (pos <= url.size()) {
+    const auto next = url.find('/', pos);
+    const auto segment = url.substr(pos, next == std::string::npos ? next : next - pos);
+    if (segment == "..") return true;
+    if (next == std::string::npos) break;
+    pos = next + 1;
+  }
+  return false;
+}
+}  // namespace
+
+void RemotePathScope::SetPrefixes(std::vector<std::string> read_prefixes,
+                                  std::vector<std::string> write_prefixes) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  read_prefixes_ = std::move(read_prefixes);
+  write_prefixes_ = std::move(write_prefixes);
+}
+
+bool RemotePathScope::PathIsUnder(const std::string& path, const std::string& prefix) {
+  if (path.empty() || prefix.empty() || HasDotDotSegment(path)) return false;
+  const std::string p = LowerScheme(path);
+  std::string q = LowerScheme(prefix);
+  if (q.back() != '/') q += '/';
+  // The prefix itself ("gs://b/own", no trailing slash) counts as inside it.
+  if (p.size() + 1 == q.size() && q.compare(0, p.size(), p) == 0) return true;
+  return p.compare(0, q.size(), q) == 0;
+}
+
+bool RemotePathScope::Allows(const std::string& path, bool for_write) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& prefix : for_write ? write_prefixes_ : read_prefixes_) {
+    if (PathIsUnder(path, prefix)) return true;
+  }
+  return false;
+}
+
+std::string RemotePathScope::DeniedMessage(const std::string& path, bool for_write) {
+  return "GizmoSQL blocked access to '" + path +
+         "' (remote storage outside the catalogs this session may " +
+         (for_write ? "write" : "read") +
+         "). Object-storage credentials belong to the server, so a session whose "
+         "token carries catalog_access rules can only reach storage under the data "
+         "path of a " +
+         kRemoteScopeEnd;
+}
+
 std::optional<std::string> SensitivePathPolicy::Check(const std::string& path) const {
   if (path.empty() || IsRemote(path)) return std::nullopt;
   const auto candidates = Keys(StripFileScheme(path));
@@ -219,13 +286,16 @@ std::string SensitivePathPolicy::DeniedMessage(const std::string& path,
 
 std::optional<arrow::Status> SensitivePathRefusal(const std::string& duckdb_error) {
   static const std::string kStart = "GizmoSQL blocked access to ";
-  static const std::string kEnd = "--block-sensitive-paths)";
+  static const std::string kEnds[] = {"--block-sensitive-paths)", kRemoteScopeEnd};
   const auto start = duckdb_error.find(kStart);
   if (start == std::string::npos) return std::nullopt;
-  const auto end = duckdb_error.find(kEnd, start);
-  const std::string message = end == std::string::npos
-                                  ? duckdb_error.substr(start)
-                                  : duckdb_error.substr(start, end + kEnd.size() - start);
+  std::string message = duckdb_error.substr(start);
+  for (const auto& kEnd : kEnds) {
+    if (const auto end = duckdb_error.find(kEnd, start); end != std::string::npos) {
+      message = duckdb_error.substr(start, end + kEnd.size() - start);
+      break;
+    }
+  }
   return arrow::flight::MakeFlightError(arrow::flight::FlightStatusCode::Unauthorized,
                                         "Permission denied: " + message);
 }
@@ -237,16 +307,30 @@ SensitivePathGuardFileSystem::SensitivePathGuardFileSystem(
 
 bool SensitivePathGuardFileSystem::IsProtected(const dd::string& path,
                                                dd::optional_ptr<dd::FileOpener> opener) {
+  if (!policy_) return false;
   // Expand ~ with DuckDB's own rules (home_directory setting), exactly as the
   // local file system will, so changing home_directory cannot dodge the check.
   return policy_->Check(dd::FileSystem::ExpandPath(path, opener)).has_value();
 }
 
 void SensitivePathGuardFileSystem::Enforce(const dd::string& path,
-                                           dd::optional_ptr<dd::FileOpener> opener) {
-  const auto expanded = dd::FileSystem::ExpandPath(path, opener);
-  if (auto category = policy_->Check(expanded)) {
-    throw dd::PermissionException(SensitivePathPolicy::DeniedMessage(path, *category));
+                                           dd::optional_ptr<dd::FileOpener> opener,
+                                           bool for_write) {
+  if (policy_) {
+    const auto expanded = dd::FileSystem::ExpandPath(path, opener);
+    if (auto category = policy_->Check(expanded)) {
+      throw dd::PermissionException(SensitivePathPolicy::DeniedMessage(path, *category));
+    }
+  }
+  if (!IsRemote(path)) return;
+  // A session without the scope (admins, rule-less tokens, the server's own
+  // connections, which have no client context here) is not restricted.
+  const auto context = dd::FileOpener::TryGetClientContext(opener);
+  if (!context) return;
+  const auto scope =
+      context->registered_state->Get<RemotePathScope>(RemotePathScope::kStateName);
+  if (scope && !scope->Allows(path, for_write)) {
+    throw dd::PermissionException(RemotePathScope::DeniedMessage(path, for_write));
   }
 }
 
@@ -259,7 +343,7 @@ void SensitivePathGuardFileSystem::EnforceGlobPrefix(
 dd::unique_ptr<dd::FileHandle> SensitivePathGuardFileSystem::OpenFileExtended(
     const dd::OpenFileInfo& file, dd::FileOpenFlags flags,
     dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(file.path, opener);
+  Enforce(file.path, opener, flags.OpenForWriting());
   return dd::VirtualFileSystem::OpenFileExtended(file, flags, opener);
 }
 
@@ -271,21 +355,21 @@ bool SensitivePathGuardFileSystem::DirectoryExists(
 
 void SensitivePathGuardFileSystem::CreateDirectory(
     const dd::string& directory, dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(directory, opener);
+  Enforce(directory, opener, true);
   dd::VirtualFileSystem::CreateDirectory(directory, opener);
 }
 
 void SensitivePathGuardFileSystem::RemoveDirectory(
     const dd::string& directory, dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(directory, opener);
+  Enforce(directory, opener, true);
   dd::VirtualFileSystem::RemoveDirectory(directory, opener);
 }
 
 void SensitivePathGuardFileSystem::MoveFile(const dd::string& source,
                                             const dd::string& target,
                                             dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(source, opener);
-  Enforce(target, opener);
+  Enforce(source, opener, true);
+  Enforce(target, opener, true);
   dd::VirtualFileSystem::MoveFile(source, target, opener);
 }
 
@@ -303,19 +387,19 @@ bool SensitivePathGuardFileSystem::IsPipe(const dd::string& filename,
 
 void SensitivePathGuardFileSystem::RemoveFile(const dd::string& filename,
                                               dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(filename, opener);
+  Enforce(filename, opener, true);
   dd::VirtualFileSystem::RemoveFile(filename, opener);
 }
 
 bool SensitivePathGuardFileSystem::TryRemoveFile(
     const dd::string& filename, dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(filename, opener);
+  Enforce(filename, opener, true);
   return dd::VirtualFileSystem::TryRemoveFile(filename, opener);
 }
 
 void SensitivePathGuardFileSystem::RemoveFiles(const dd::vector<dd::string>& filenames,
                                                dd::optional_ptr<dd::FileOpener> opener) {
-  for (const auto& filename : filenames) Enforce(filename, opener);
+  for (const auto& filename : filenames) Enforce(filename, opener, true);
   dd::VirtualFileSystem::RemoveFiles(filenames, opener);
 }
 
@@ -336,20 +420,20 @@ dd::optional<dd::FileMetadata> SensitivePathGuardFileSystem::GetStatsIfExists(
 bool SensitivePathGuardFileSystem::CreateDirectoryExtended(
     const dd::string& directory, const dd::CreateDirectoryOptions& options,
     dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(directory, opener);
+  Enforce(directory, opener, true);
   return dd::VirtualFileSystem::CreateDirectoryExtended(directory, options, opener);
 }
 
 void SensitivePathGuardFileSystem::CreateDirectoriesRecursive(
     const dd::string& path, dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(path, opener);
+  Enforce(path, opener, true);
   dd::VirtualFileSystem::CreateDirectoriesRecursive(path, opener);
 }
 
 bool SensitivePathGuardFileSystem::RemoveDirectoryExtended(
     const dd::string& directory, const dd::RemoveDirectoryOptions& options,
     dd::optional_ptr<dd::FileOpener> opener) {
-  Enforce(directory, opener);
+  Enforce(directory, opener, true);
   return dd::VirtualFileSystem::RemoveDirectoryExtended(directory, options, opener);
 }
 #endif

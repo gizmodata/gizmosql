@@ -36,6 +36,7 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/explain_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -103,6 +104,17 @@ const dd::ParsedExpression* FirstPositionalArg(const dd::FunctionExpression& fe)
 #endif
 }
 
+// The catalog/schema qualifier of a call: `my_lake` in `my_lake.snapshots()`.
+std::string FunctionQualifierOf(const dd::FunctionExpression& fe) {
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+  const auto& name = fe.GetQualifiedName();
+  if (!Str(name.Catalog()).empty()) return Str(name.Catalog());
+  return Str(name.Schema());
+#else
+  return fe.catalog.empty() ? fe.schema : fe.catalog;
+#endif
+}
+
 dd::SelectStatement* SubqueryOf(dd::SubqueryExpression& sub) {
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
   return sub.SubqueryMutable().get();
@@ -143,6 +155,15 @@ bool IsProvenRemotePath(const std::string& path_lower) {
     if (path_lower.rfind(scheme, 0) == 0) return true;
   }
   return false;
+}
+
+// Paths that make the server itself open an outbound HTTP connection. Unlike
+// object-storage URLs (which go through the credentials the operator mounted),
+// these let a client use the server's network position: SSRF against internal
+// endpoints and the cloud metadata service, and a data-exfiltration channel.
+bool IsNetworkPath(const std::string& path_lower) {
+  return path_lower.rfind("http://", 0) == 0 || path_lower.rfind("https://", 0) == 0 ||
+         path_lower.rfind("hf://", 0) == 0;
 }
 
 // Heuristic for replacement scans: `SELECT * FROM '/path/file.parquet'`. A bare,
@@ -188,7 +209,9 @@ const std::unordered_set<std::string>& FsReadFunctions() {
 
 // Table functions gated for non-admins regardless of arguments.
 const std::unordered_set<std::string>& AlwaysGatedFunctions() {
-  static const std::unordered_set<std::string> kFns = {"duckdb_secrets"};
+  // json_execute_serialized_sql runs serialized SQL the parser never sees as text.
+  static const std::unordered_set<std::string> kFns = {"duckdb_secrets",
+                                                       "json_execute_serialized_sql"};
   return kFns;
 }
 
@@ -231,6 +254,30 @@ std::optional<std::string> FirstStringLiteralArg(const dd::FunctionExpression& f
   return StringConstant(*first);
 }
 
+// The first string literal among a call's arguments (positional or named,
+// including strings inside a list) that names a network URL, if any.
+std::optional<std::string> NetworkLiteralArg(const dd::FunctionExpression& fe) {
+  std::optional<std::string> found;
+  std::function<void(dd::ParsedExpression&)> visit = [&](dd::ParsedExpression& e) {
+    if (found) return;
+    if (auto lit = StringConstant(e)) {
+      if (IsNetworkPath(ToLower(*lit))) found = *lit;
+      return;
+    }
+    dd::ParsedExpressionIterator::EnumerateChildren(
+        e, [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+          if (child) visit(*child);
+        });
+  };
+  // EnumerateChildren is the 1.x/2.x-neutral way to reach the call's arguments.
+  dd::ParsedExpressionIterator::EnumerateChildren(
+      const_cast<dd::FunctionExpression&>(fe),
+      [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+        if (child) visit(*child);
+      });
+  return found;
+}
+
 // Extract a literal path from a COPY/EXPORT target (info.file_path, or a string
 // constant in info.file_path_expression). nullopt => non-literal/unknown.
 std::optional<std::string> CopyPathLiteral(const dd::CopyInfo& info) {
@@ -239,13 +286,125 @@ std::optional<std::string> CopyPathLiteral(const dd::CopyInfo& info) {
   return std::nullopt;
 }
 
-// COPY whose target is not a proven-remote path (COPY TO a local file, or any
-// COPY FROM the local filesystem). nullopt => remote target, allowed.
+// COPY statements a non-admin may not run at the text level: local paths and
+// network (HTTP) URLs. Object-storage COPY (s3://, gs://, ...) is allowed here;
+// for a session whose token carries catalog_access rules the file system limits
+// it to the data paths of that token's catalogs (RemotePathScope), whatever SQL
+// names the path.
 std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
   auto path = CopyPathLiteral(info);
-  if (path && IsProvenRemotePath(ToLower(*path))) return std::nullopt;
+  const std::string lower = path ? ToLower(*path) : std::string();
+  const bool remote = path && IsProvenRemotePath(lower);
+  if (remote && !IsNetworkPath(lower)) return std::nullopt;
+  if (remote) return info.is_from ? "COPY FROM (network URL)" : "COPY TO (network URL)";
   return info.is_from ? "COPY FROM (local filesystem)" : "COPY TO (local filesystem)";
 }
+
+// Functions that reach another database through the server's own connection
+// settings (postgres_scanner / mysql_scanner / sqlite_scanner). They address an
+// attached catalog by name and run as that catalog's database role, outside the
+// token's catalog_access rules, so they are admin-only.
+bool IsExternalDatabaseFunction(const std::string& name_lower) {
+  return name_lower.rfind("postgres_", 0) == 0 || name_lower.rfind("mysql_", 0) == 0 ||
+         name_lower == "sqlite_scan" || name_lower == "sqlite_attach" ||
+         name_lower == "pg_clear_cache";
+}
+
+// DuckLake table functions / CALL procedures, spelled `ducklake_x('catalog', ...)`
+// or `catalog.x(...)`.
+const std::unordered_set<std::string>& DuckLakeReadMethods() {
+  static const std::unordered_set<std::string> kFns = {
+      "snapshots", "table_info", "list_files", "table_insertions", "table_deletions",
+      "table_changes", "settings", "options", "get_option", "current_snapshot",
+      "last_committed_snapshot",
+      // Branch functions of customer
+      // DuckLake builds (read-only ones;
+      // any other ducklake_* is a write).
+      "branches", "current_branch", "branch_table"};
+  return kFns;
+}
+
+const std::unordered_set<std::string>& DuckLakeWriteMethods() {
+  static const std::unordered_set<std::string> kFns = {
+      "merge_adjacent_files", "expire_snapshots",
+      "cleanup_old_files",    "delete_orphaned_files",
+      "flush_inlined_data",   "rewrite_data_files",
+      "set_option",           "add_data_files"};
+  return kFns;
+}
+
+bool ContainsCaseInsensitive(const std::string& haystack, const std::string& needle);
+
+// Extensions with their own object-store client (delta kernel, iceberg): they
+// read s3:// / gs:// without going through DuckDB's file system, so the
+// RemotePathScope cannot see them.
+bool IsOwnStorageClientFunction(const std::string& name_lower) {
+  return name_lower.rfind("delta_", 0) == 0 || name_lower.rfind("iceberg_", 0) == 0;
+}
+
+void AddOwnStorageRef(const std::string& function,
+                      std::vector<DuckLakeFunctionRef>* refs) {
+  if (!refs) return;
+  const bool seen = std::any_of(refs->begin(), refs->end(), [&](const auto& r) {
+    return r.own_storage_client && r.function == function;
+  });
+  if (seen) return;
+  DuckLakeFunctionRef ref;
+  ref.function = function;
+  ref.own_storage_client = true;
+  refs->push_back(std::move(ref));
+}
+
+// A macro body is not walked, so look for these functions by name.
+void NoteMacroOwnStorageMentions(const std::string& sql,
+                                 std::vector<DuckLakeFunctionRef>* refs) {
+  for (const char* name : {"delta_", "iceberg_"}) {
+    if (ContainsCaseInsensitive(sql, name)) {
+      AddOwnStorageRef(std::string(name) + "*", refs);
+    }
+  }
+}
+
+// Checks one function call: returns a violation category if it is admin-only,
+// and records any DuckLake catalog it addresses into `refs` (if given).
+std::optional<std::string> CheckFunctionCall(const dd::FunctionExpression& fe,
+                                             std::vector<DuckLakeFunctionRef>* refs) {
+  const std::string name = ToLower(FunctionNameOf(fe));
+  if (IsQuackFunction(name) || IsExternalDatabaseFunction(name)) return name + "()";
+
+  if (IsOwnStorageClientFunction(name)) AddOwnStorageRef(name, refs);
+
+  const std::string qualifier = FunctionQualifierOf(fe);
+  const bool prefixed = name.rfind("ducklake_", 0) == 0;
+  const std::string method = prefixed ? name.substr(9) : name;
+  if (!prefixed && qualifier.empty()) return std::nullopt;
+  const bool is_write = DuckLakeWriteMethods().count(method) > 0;
+  if (!prefixed && !is_write && DuckLakeReadMethods().count(method) == 0) {
+    return std::nullopt;
+  }
+  // add_data_files registers arbitrary file paths in a catalog, so a user could
+  // pull another tenant's data files into their own catalog.
+  if (method == "add_data_files") return name + "()";
+  if (refs) {
+    DuckLakeFunctionRef ref;
+    ref.function = name;
+    ref.writes = is_write || (prefixed && DuckLakeReadMethods().count(method) == 0);
+    ref.catalog =
+        prefixed ? FirstStringLiteralArg(fe) : std::optional<std::string>(qualifier);
+    ref.qualified = !prefixed;
+    // A table function is visited both as a ref and as an expression.
+    const bool seen = std::any_of(refs->begin(), refs->end(), [&](const auto& r) {
+      return r.function == ref.function && r.catalog == ref.catalog &&
+             r.writes == ref.writes;
+    });
+    if (!seen) refs->push_back(std::move(ref));
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> ClassifyNestedSql(
+    const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs);
+std::optional<std::string> MacroMentionsGatedFunction(const std::string& sql);
 
 // Searches a parsed query tree for a gated table function (read_*/duckdb_secrets)
 // or a local-file replacement scan. DuckDB's ParsedExpressionIterator does the
@@ -258,6 +417,7 @@ std::optional<std::string> LocalCopyViolation(const dd::CopyInfo& info) {
 // found and short-circuits thereafter.
 struct GatedFunctionWalker {
   std::optional<std::string> violation;
+  std::vector<DuckLakeFunctionRef>* ducklake_refs = nullptr;
 
   // Drive a full walk of a query node. Safe to call recursively (only on
   // genuinely-nested subquery expressions, which are finite and acyclic).
@@ -338,7 +498,9 @@ struct GatedFunctionWalker {
       if (!violation && tf.subquery && tf.subquery->node) WalkNode(*tf.subquery->node);
     } else if (ref.type == dd::TableReferenceType::BASE_TABLE) {
       auto table_name = UnqualifiedTableName(ref.Cast<dd::BaseTableRef>());
-      if (table_name && LooksLikeLocalFilePath(*table_name)) {
+      if (table_name && IsNetworkPath(ToLower(*table_name))) {
+        violation = "reading a network URL via FROM '" + *table_name + "'";
+      } else if (table_name && LooksLikeLocalFilePath(*table_name)) {
         violation = "reading a local file via FROM '" + *table_name + "'";
       }
     } else if (ref.type == dd::TableReferenceType::SUBQUERY) {
@@ -353,9 +515,9 @@ struct GatedFunctionWalker {
   void CheckExpr(dd::ParsedExpression& expr) {
     if (violation) return;
     if (expr.GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
-      const std::string name = ToLower(FunctionNameOf(expr.Cast<dd::FunctionExpression>()));
-      if (IsQuackFunction(name)) {
-        violation = name + "()";
+      if (auto v =
+              CheckFunctionCall(expr.Cast<dd::FunctionExpression>(), ducklake_refs)) {
+        violation = v;
         return;
       }
     }
@@ -376,21 +538,49 @@ struct GatedFunctionWalker {
     }
     const auto& fe = tf.function->Cast<dd::FunctionExpression>();
     const std::string name = ToLower(FunctionNameOf(fe));
-    if (AlwaysGatedFunctions().count(name) || IsQuackFunction(name)) {
+    if (AlwaysGatedFunctions().count(name)) {
       violation = name + "()";
       return;
     }
+    if (auto v = CheckFunctionCall(fe, ducklake_refs)) {
+      violation = v;
+      return;
+    }
+    // Any table function handed a network URL makes the server open an outbound
+    // HTTP connection, whichever function it is.
+    if (auto url = NetworkLiteralArg(fe)) {
+      violation = name + "() (network URL)";
+      return;
+    }
+    // query('<sql>') runs its argument as SQL: check that text like a statement
+    // of its own, or the checks above are skipped for whatever it names.
+    if (name == "query") {
+      const auto nested = FirstStringLiteralArg(fe);
+      if (!nested) {
+        violation = "query() (SQL that is not a string literal)";
+        return;
+      }
+      if (auto v = ClassifyNestedSql(*nested, ducklake_refs)) {
+        violation = v;
+        return;
+      }
+    }
     if (FsReadFunctions().count(name)) {
       auto path = FirstStringLiteralArg(fe);
-      if (path && IsProvenRemotePath(ToLower(*path))) return;  // remote read allowed
-      violation = name + "() (local filesystem)";
+      // Object storage is allowed here (and limited per session by the file
+      // system); anything not provably remote is the local filesystem.
+      if (!path || !IsProvenRemotePath(ToLower(*path))) {
+        violation = name + "() (local filesystem)";
+      }
     }
   }
 };
 
 // Walk the embedded query/select of a statement for gated table functions.
-std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt) {
+std::optional<std::string> WalkStatementForGatedFunctions(
+    dd::SQLStatement& stmt, std::vector<DuckLakeFunctionRef>* ducklake_refs) {
   GatedFunctionWalker walker;
+  walker.ducklake_refs = ducklake_refs;
   switch (stmt.type) {
     case dd::StatementType::SELECT_STATEMENT: {
       auto& s = stmt.Cast<dd::SelectStatement>();
@@ -432,6 +622,21 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
       if (s.info && s.info->type == dd::CatalogType::TABLE_ENTRY) {
         auto& ti = s.info->Cast<dd::CreateTableInfo>();
         if (ti.query && ti.query->node) walker.WalkNode(*ti.query->node);
+      } else if (s.info && s.info->type == dd::CatalogType::VIEW_ENTRY) {
+        // A view would otherwise wrap a gated function for later use.
+        auto& vi = s.info->Cast<dd::CreateViewInfo>();
+        if (vi.query && vi.query->node) {
+          // A DuckLake call in a view runs with the access of whoever selects from
+          // it, not of whoever created it, so the caller refuses views that wrap
+          // one (DuckLakeFunctionRef::in_view).
+          std::vector<DuckLakeFunctionRef> view_refs;
+          walker.ducklake_refs = ducklake_refs ? &view_refs : nullptr;
+          walker.WalkNode(*vi.query->node);
+          for (auto& ref : view_refs) {
+            ref.in_view = true;
+            ducklake_refs->push_back(std::move(ref));
+          }
+        }
       }
       break;
     }
@@ -447,131 +652,170 @@ std::optional<std::string> WalkStatementForGatedFunctions(dd::SQLStatement& stmt
 // (prepared statements are per-session/connection). Recurses into EXPLAIN too:
 // EXPLAIN ANALYZE executes the wrapped statement (COPY TO writes its file,
 // SET GLOBAL changes the setting, ...).
-std::optional<std::string> ClassifyStatement(dd::SQLStatement& stmt) {
-    switch (stmt.type) {
-      case dd::StatementType::PREPARE_STATEMENT: {
-        auto& ps = stmt.Cast<dd::PrepareStatement>();
-        if (ps.statement) {
-          if (auto v = ClassifyStatement(*ps.statement)) return v;
-        }
-        break;
+std::optional<std::string> ClassifyStatement(
+    dd::SQLStatement& stmt, std::vector<DuckLakeFunctionRef>* ducklake_refs) {
+  switch (stmt.type) {
+    case dd::StatementType::PREPARE_STATEMENT: {
+      auto& ps = stmt.Cast<dd::PrepareStatement>();
+      if (ps.statement) {
+        if (auto v = ClassifyStatement(*ps.statement, ducklake_refs)) return v;
       }
-      case dd::StatementType::EXPLAIN_STATEMENT: {
-        auto& es = stmt.Cast<dd::ExplainStatement>();
-        if (es.stmt) {
-          if (auto v = ClassifyStatement(*es.stmt)) return v;
-        }
-        break;
-      }
-      case dd::StatementType::ATTACH_STATEMENT:
-        return "ATTACH";
-#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
-      // DuckDB 2.0: CONNECT attaches its target (a file path or a postgres:/
-      // sqlite:/quack: URI) and then forwards the session's raw SQL to it,
-      // past these AST checks and catalog permissions — so it is ATTACH-class.
-      // EXTERNAL RESOURCE provisions compute; PASSTHROUGH is raw SQL for a
-      // CONNECTed target.
-      case dd::StatementType::CONNECT_STATEMENT:
-        return "CONNECT";
-      case dd::StatementType::DISCONNECT_STATEMENT:
-        return "DISCONNECT";
-      case dd::StatementType::EXTERNAL_RESOURCE_STATEMENT:
-        return "EXTERNAL RESOURCE";
-      case dd::StatementType::PASSTHROUGH_STATEMENT:
-        return "passthrough SQL";
-#endif
-      case dd::StatementType::DETACH_STATEMENT:
-        return "DETACH";
-      case dd::StatementType::CREATE_STATEMENT: {
-        // CREATE SECRET (incl. OR REPLACE / PERSISTENT / TEMPORARY — all parse
-        // as a CreateStatement with a SECRET_ENTRY catalog type). Secrets hold
-        // credentials, so creating them is admin-only. Other CREATE statements
-        // (incl. CTAS) fall through to the gated-function walk below.
-        auto& cs = stmt.Cast<dd::CreateStatement>();
-        if (cs.info && cs.info->type == dd::CatalogType::SECRET_ENTRY) {
-          return "CREATE SECRET";
-        }
-        break;
-      }
-      case dd::StatementType::DROP_STATEMENT: {
-        // DROP SECRET (incl. IF EXISTS / PERSISTENT / TEMPORARY — all parse as a
-        // DropStatement with a SECRET_ENTRY catalog type). Other DROPs allowed.
-        auto& ds = stmt.Cast<dd::DropStatement>();
-        if (ds.info && ds.info->type == dd::CatalogType::SECRET_ENTRY) {
-          return "DROP SECRET";
-        }
-        break;
-      }
-      case dd::StatementType::LOAD_STATEMENT: {
-        auto& ls = stmt.Cast<dd::LoadStatement>();
-        const bool is_load = ls.info && ls.info->load_type == dd::LoadType::LOAD;
-        return is_load ? "LOAD extension" : "INSTALL extension";
-      }
-      case dd::StatementType::SET_STATEMENT: {
-        auto& ss = stmt.Cast<dd::SetStatement>();
-        const std::string verb =
-            ss.set_type == dd::SetType::RESET ? "RESET GLOBAL " : "SET GLOBAL ";
-        if (ss.scope == dd::SetScope::GLOBAL) {
-          return verb + Str(ss.name);  // explicit GLOBAL: any setting
-        }
-        // Bare SET/RESET (scope AUTOMATIC) of a dangerous global-only setting
-        // changes it for the whole instance — gate it too. Explicit SESSION /
-        // LOCAL, and bare SET of harmless session settings, are allowed.
-        if (ss.scope == dd::SetScope::AUTOMATIC &&
-            IsDangerousGlobalSetting(ToLower(Str(ss.name)))) {
-          return verb + Str(ss.name);
-        }
-        break;
-      }
-      case dd::StatementType::CALL_STATEMENT: {
-        // CHECKPOINT / FORCE CHECKPOINT are parsed as CALL checkpoint() /
-        // CALL force_checkpoint().
-        auto& call = stmt.Cast<dd::CallStatement>();
-        if (call.function &&
-            call.function->GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
-          const std::string fname =
-              ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
-          if (fname == "checkpoint" || fname == "force_checkpoint") return "CHECKPOINT";
-          if (IsQuackFunction(fname)) return fname + "()";
-        }
-        break;  // other CALL functions allowed
-      }
-      case dd::StatementType::COPY_STATEMENT: {
-        auto& cs = stmt.Cast<dd::CopyStatement>();
-        if (cs.info) {
-          if (auto v = LocalCopyViolation(*cs.info)) return v;
-          // Remote COPY target is allowed, but a COPY (SELECT read_csv(...)) TO
-          // may still read the local filesystem — inspect the embedded query.
-          if (cs.info->select_statement) {
-            GatedFunctionWalker walker;
-            walker.WalkNode(*cs.info->select_statement);
-            if (walker.violation) return walker.violation;
-          }
-        }
-        break;
-      }
-      case dd::StatementType::EXPORT_STATEMENT:
-        // EXPORT DATABASE dumps the ENTIRE database (every schema/table) to a
-        // location — full-database egress, NOT bounded by object grants — so it
-        // is gated unconditionally, local or remote.
-        return "EXPORT DATABASE";
-      case dd::StatementType::PRAGMA_STATEMENT: {
-        // IMPORT DATABASE is parsed as `PRAGMA import_database('dir')`. It runs
-        // arbitrary DDL + DML from a dump (and reads the filesystem), so it is
-        // gated unconditionally, local or remote. Other pragmas are allowed.
-        auto& ps = stmt.Cast<dd::PragmaStatement>();
-        if (ps.info && ToLower(Str(ps.info->name)) == "import_database") {
-          return "IMPORT DATABASE";
-        }
-        break;
-      }
-      default:
-        break;
+      break;
     }
+    case dd::StatementType::EXPLAIN_STATEMENT: {
+      auto& es = stmt.Cast<dd::ExplainStatement>();
+      if (es.stmt) {
+        if (auto v = ClassifyStatement(*es.stmt, ducklake_refs)) return v;
+      }
+      break;
+    }
+    case dd::StatementType::ATTACH_STATEMENT:
+      return "ATTACH";
+#if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
+    // DuckDB 2.0: CONNECT attaches its target (a file path or a postgres:/
+    // sqlite:/quack: URI) and then forwards the session's raw SQL to it,
+    // past these AST checks and catalog permissions — so it is ATTACH-class.
+    // EXTERNAL RESOURCE provisions compute; PASSTHROUGH is raw SQL for a
+    // CONNECTed target.
+    case dd::StatementType::CONNECT_STATEMENT:
+      return "CONNECT";
+    case dd::StatementType::DISCONNECT_STATEMENT:
+      return "DISCONNECT";
+    case dd::StatementType::EXTERNAL_RESOURCE_STATEMENT:
+      return "EXTERNAL RESOURCE";
+    case dd::StatementType::PASSTHROUGH_STATEMENT:
+      return "passthrough SQL";
+#endif
+    case dd::StatementType::DETACH_STATEMENT:
+      return "DETACH";
+    case dd::StatementType::CREATE_STATEMENT: {
+      // CREATE SECRET (incl. OR REPLACE / PERSISTENT / TEMPORARY — all parse
+      // as a CreateStatement with a SECRET_ENTRY catalog type). Secrets hold
+      // credentials, so creating them is admin-only. Other CREATE statements
+      // (incl. CTAS) fall through to the gated-function walk below.
+      auto& cs = stmt.Cast<dd::CreateStatement>();
+      if (cs.info && cs.info->type == dd::CatalogType::SECRET_ENTRY) {
+        return "CREATE SECRET";
+      }
+      if (cs.info && (cs.info->type == dd::CatalogType::MACRO_ENTRY ||
+                      cs.info->type == dd::CatalogType::TABLE_MACRO_ENTRY)) {
+        return "CREATE MACRO";  // refined to a pass-through by ClassifyGatedCommand
+      }
+      break;
+    }
+    case dd::StatementType::DROP_STATEMENT: {
+      // DROP SECRET (incl. IF EXISTS / PERSISTENT / TEMPORARY — all parse as a
+      // DropStatement with a SECRET_ENTRY catalog type). Other DROPs allowed.
+      auto& ds = stmt.Cast<dd::DropStatement>();
+      if (ds.info && ds.info->type == dd::CatalogType::SECRET_ENTRY) {
+        return "DROP SECRET";
+      }
+      break;
+    }
+    case dd::StatementType::LOAD_STATEMENT: {
+      auto& ls = stmt.Cast<dd::LoadStatement>();
+      const bool is_load = ls.info && ls.info->load_type == dd::LoadType::LOAD;
+      return is_load ? "LOAD extension" : "INSTALL extension";
+    }
+    case dd::StatementType::SET_STATEMENT: {
+      auto& ss = stmt.Cast<dd::SetStatement>();
+      const std::string verb =
+          ss.set_type == dd::SetType::RESET ? "RESET GLOBAL " : "SET GLOBAL ";
+      if (ss.scope == dd::SetScope::GLOBAL) {
+        return verb + Str(ss.name);  // explicit GLOBAL: any setting
+      }
+      // Bare SET/RESET (scope AUTOMATIC) of a dangerous global-only setting
+      // changes it for the whole instance — gate it too. Explicit SESSION /
+      // LOCAL, and bare SET of harmless session settings, are allowed.
+      if (ss.scope == dd::SetScope::AUTOMATIC &&
+          IsDangerousGlobalSetting(ToLower(Str(ss.name)))) {
+        return verb + Str(ss.name);
+      }
+      break;
+    }
+    case dd::StatementType::CALL_STATEMENT: {
+      // CHECKPOINT / FORCE CHECKPOINT are parsed as CALL checkpoint() /
+      // CALL force_checkpoint().
+      auto& call = stmt.Cast<dd::CallStatement>();
+      if (call.function &&
+          call.function->GetExpressionClass() == dd::ExpressionClass::FUNCTION) {
+        const std::string fname =
+            ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
+        if (fname == "checkpoint" || fname == "force_checkpoint") return "CHECKPOINT";
+        if (auto v = CheckFunctionCall(call.function->Cast<dd::FunctionExpression>(),
+                                       ducklake_refs)) {
+          return v;
+        }
+      }
+      break;  // other CALL functions allowed
+    }
+    case dd::StatementType::COPY_STATEMENT: {
+      auto& cs = stmt.Cast<dd::CopyStatement>();
+      if (cs.info) {
+        if (auto v = LocalCopyViolation(*cs.info)) return v;
+        // Remote COPY target is allowed, but a COPY (SELECT read_csv(...)) TO
+        // may still read the local filesystem — inspect the embedded query.
+        if (cs.info->select_statement) {
+          GatedFunctionWalker walker;
+          walker.ducklake_refs = ducklake_refs;
+          walker.WalkNode(*cs.info->select_statement);
+          if (walker.violation) return walker.violation;
+        }
+      }
+      break;
+    }
+    case dd::StatementType::EXPORT_STATEMENT:
+      // EXPORT DATABASE dumps the ENTIRE database (every schema/table) to a
+      // location — full-database egress, NOT bounded by object grants — so it
+      // is gated unconditionally, local or remote.
+      return "EXPORT DATABASE";
+    case dd::StatementType::PRAGMA_STATEMENT: {
+      // IMPORT DATABASE is parsed as `PRAGMA import_database('dir')`. It runs
+      // arbitrary DDL + DML from a dump (and reads the filesystem), so it is
+      // gated unconditionally, local or remote. Other pragmas are allowed.
+      auto& ps = stmt.Cast<dd::PragmaStatement>();
+      if (ps.info && ToLower(Str(ps.info->name)) == "import_database") {
+        return "IMPORT DATABASE";
+      }
+      break;
+    }
+    default:
+      break;
+  }
 
-    // Embedded read_*/duckdb_secrets in SELECT / CTAS / INSERT ... SELECT.
-    if (auto v = WalkStatementForGatedFunctions(stmt)) return v;
+  // Embedded read_*/duckdb_secrets in SELECT / CTAS / INSERT ... SELECT.
+  if (auto v = WalkStatementForGatedFunctions(stmt, ducklake_refs)) return v;
+  return std::nullopt;
+}
+
+// The SQL text a query('...') call runs, checked as statements of their own.
+// Unparseable text is left for DuckDB to report; nesting is capped, so a
+// query() inside a query() string cannot recurse without bound.
+std::optional<std::string> ClassifyNestedSql(
+    const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs) {
+  static thread_local int depth = 0;
+  constexpr int kMaxDepth = 4;
+  if (depth >= kMaxDepth) return "query() nested too deeply";
+  struct DepthGuard {
+    DepthGuard() { ++depth; }
+    ~DepthGuard() { --depth; }
+  } guard;
+  auto parser = compat::StandaloneParser();
+  try {
+    parser.ParseQuery(sql);
+  } catch (...) {
     return std::nullopt;
+  }
+  for (auto& stmt_ptr : parser.statements) {
+    if (!stmt_ptr) continue;
+    if (auto v = ClassifyStatement(*stmt_ptr, ducklake_refs)) {
+      // A macro inside query() is refined by name, as at the top level.
+      if (*v != "CREATE MACRO") return v;
+      NoteMacroOwnStorageMentions(sql, ducklake_refs);
+      return MacroMentionsGatedFunction(sql);
+    }
+  }
+  return std::nullopt;
 }
 
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
@@ -675,9 +919,25 @@ bool ContainsCaseInsensitive(const std::string& haystack,
                      }) != haystack.end();
 }
 
+// A CREATE MACRO / CREATE FUNCTION whose text names a function that is gated
+// regardless of its arguments. Over-matches (it also trips on a string literal),
+// which is the safe direction for a security gate.
+std::optional<std::string> MacroMentionsGatedFunction(const std::string& sql) {
+  static const std::array<const char*, 8> kNames = {
+      "postgres_",      "mysql_", "sqlite_scan",    "sqlite_attach",
+      "pg_clear_cache", "quack_", "duckdb_secrets", "ducklake_"};
+  for (const char* name : kNames) {
+    if (ContainsCaseInsensitive(sql, name)) {
+      return "CREATE MACRO referencing " + std::string(name) + "*";
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
-std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
+std::optional<std::string> ClassifyGatedCommand(
+    const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs) {
   auto parser = compat::StandaloneParser();
   try {
     // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on
@@ -692,9 +952,21 @@ std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
 
   for (auto& stmt_ptr : parser.statements) {
     if (!stmt_ptr) continue;
-    if (auto v = ClassifyStatement(*stmt_ptr)) return v;
+    auto v = ClassifyStatement(*stmt_ptr, ducklake_refs);
+    if (v && *v == "CREATE MACRO") {
+      // Macro bodies are not walked (their structure differs per DuckDB major),
+      // so a macro that mentions an admin-only family of functions is refused
+      // by name; any other macro is fine.
+      NoteMacroOwnStorageMentions(sql, ducklake_refs);
+      v = MacroMentionsGatedFunction(sql);
+    }
+    if (v) return v;
   }
   return std::nullopt;
+}
+
+std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
+  return ClassifyGatedCommand(sql, nullptr);
 }
 
 std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql) {

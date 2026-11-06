@@ -283,3 +283,65 @@ TEST_F(SensitivePathGuardOffFixture, GuardOffAllowsAccess) {
 }
 
 #endif  // !_WIN32
+
+// ---------------------------------------------------------------------------
+// RemotePathScope: which remote paths a catalog-scoped session may reach.
+// ---------------------------------------------------------------------------
+
+using gizmosql::ddb::RemotePathScope;
+
+TEST(RemotePathScopeTest, PathIsUnderItsPrefixOnASegmentBoundary) {
+  EXPECT_TRUE(RemotePathScope::PathIsUnder("s3://b/own/x.parquet", "s3://b/own/"));
+  EXPECT_TRUE(RemotePathScope::PathIsUnder("s3://b/own/main/t/x.parquet", "s3://b/own"));
+  EXPECT_TRUE(RemotePathScope::PathIsUnder("s3://b/own/*.parquet", "s3://b/own/"));
+  EXPECT_TRUE(RemotePathScope::PathIsUnder("s3://b/own", "s3://b/own/"));
+  EXPECT_TRUE(RemotePathScope::PathIsUnder("s3://b/own/", "s3://b/own"));
+  // Another catalog, a sibling sharing a name prefix, and the bucket itself.
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/other/x.parquet", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/own_other/x.parquet", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/ownx", "s3://b/own"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/*/x.parquet", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://other/own/x.parquet", "s3://b/own/"));
+}
+
+TEST(RemotePathScopeTest, DotDotNeverMatches) {
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/own/../other/x", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/own/..", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/own/a/../../other/x", "s3://b/own/"));
+  // A name that merely contains dots is fine.
+  EXPECT_TRUE(RemotePathScope::PathIsUnder("s3://b/own/a..b/x", "s3://b/own/"));
+}
+
+TEST(RemotePathScopeTest, SchemeIsCaseInsensitiveTheRestIsNot) {
+  EXPECT_TRUE(RemotePathScope::PathIsUnder("S3://b/own/x", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://B/own/x", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/OWN/x", "s3://b/own/"));
+  // A different scheme is a different location, even for the same bucket.
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("gs://b/own/x", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("", "s3://b/own/"));
+  EXPECT_FALSE(RemotePathScope::PathIsUnder("s3://b/own/x", ""));
+}
+
+TEST(RemotePathScopeTest, ReadsAndWritesAreTrackedSeparately) {
+  RemotePathScope scope;
+  // A new scope is closed: nothing is allowed until the statement layer fills it.
+  EXPECT_FALSE(scope.Allows("s3://b/own/x", false));
+  scope.SetPrefixes({"s3://b/own/", "gs://g/lake/"}, {"s3://b/own/"});
+  EXPECT_TRUE(scope.Allows("s3://b/own/x", false));
+  EXPECT_TRUE(scope.Allows("gs://g/lake/x", false));
+  EXPECT_TRUE(scope.Allows("s3://b/own/x", true));
+  EXPECT_FALSE(scope.Allows("gs://g/lake/x", true));  // readable, not writable
+  EXPECT_FALSE(scope.Allows("s3://b/other/x", false));
+  scope.SetPrefixes({}, {});
+  EXPECT_FALSE(scope.Allows("s3://b/own/x", false));
+}
+
+TEST(RemotePathScopeTest, RefusalIsReportedToTheClientAsPermissionDenied) {
+  const auto message = RemotePathScope::DeniedMessage("s3://b/other/x", false);
+  const auto status = gizmosql::ddb::SensitivePathRefusal("Permission Error: " + message +
+                                                          "\n\nLINE 1: SELECT ...");
+  ASSERT_TRUE(status.has_value());
+  EXPECT_NE(status->message().find("s3://b/other/x"), std::string::npos);
+  EXPECT_EQ(status->message().find("LINE 1"), std::string::npos);
+}
