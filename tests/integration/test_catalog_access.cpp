@@ -1556,6 +1556,21 @@ TEST_F(CatalogAccessServerFixture, ScopedTokenCannotEnumerateOtherCatalogs) {
 // so it does not matter which SQL names the path.
 // ============================================================================
 
+// True when built with ThreadSanitizer (GCC and Clang spellings).
+constexpr bool UnderThreadSanitizer() {
+#if defined(__SANITIZE_THREAD__)
+  return true;
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  return true;
+#else
+  return false;
+#endif
+#else
+  return false;
+#endif
+}
+
 class RemotePathScopeFixture
     : public gizmosql::testing::ServerTestFixture<RemotePathScopeFixture> {
  public:
@@ -1616,6 +1631,10 @@ class RemotePathScopeFixture
   // Returns why not (the test is then skipped) if the setup cannot be done here,
   // e.g. the ducklake extension cannot be installed; "" on success.
   std::string AttachLakes() {
+    if (UnderThreadSanitizer()) {
+      return "the DuckLake extension is a prebuilt, uninstrumented binary: "
+             "ThreadSanitizer reports false races in it";
+    }
     arrow::flight::FlightClientOptions options;
     auto location = arrow::flight::Location::ForGrpcTcp("localhost", GetPort());
     auto client = arrow::flight::FlightClient::Connect(*location, options);
@@ -1815,7 +1834,7 @@ TEST_F(RemotePathScopeFixture, ViewCannotWrapADuckLakeCall) {
 
 // delta/iceberg read object storage through their own client, outside the file
 // system scope, so a catalog-scoped session may not call them (directly, through
-// query(), or in a macro). An unscoped non-admin session is not affected.
+// query(), or in a macro). Refused before binding, so no extension is loaded.
 TEST_F(RemotePathScopeFixture, OwnStorageClientFunctionsAreRefusedWhenScoped) {
   SKIP_WITHOUT_LICENSE();
   ASSERT_TRUE(IsServerReady());
@@ -1833,15 +1852,8 @@ TEST_F(RemotePathScopeFixture, OwnStorageClientFunctionsAreRefusedWhenScoped) {
     const auto error = Error(*client, options, sql);
     EXPECT_NE(error.find("its own client"), std::string::npos) << sql << ": " << error;
   }
-
-  // No catalog_access rules: not scoped, so the function is not refused here
-  // (it fails later for want of the extension or the table, not by the gate).
-  const auto unscoped = CreateTestJWT("unscoped_delta_user", "user");
-  auto unscoped_options = GetCallOptionsWithToken(unscoped);
-  ASSERT_ARROW_OK_AND_ASSIGN(auto unscoped_client, CreateClientWithToken(unscoped));
-  const auto error = Error(*unscoped_client, unscoped_options,
-                           "SELECT * FROM delta_scan('s3://scope-bucket/other/t')");
-  EXPECT_EQ(error.find("its own client"), std::string::npos) << error;
+  // (The unscoped case is deliberately not run here: it would auto-load the delta
+  // extension and reach the network. IsCatalogScopedSession() gates the refusal.)
 }
 
 // `schema.settings()` is a user function when the qualifier is not a DuckLake
