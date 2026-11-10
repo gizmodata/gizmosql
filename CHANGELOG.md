@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.42.3] - 2026-11-10
+
+### Security
+- **Closed indirect routes past the admin command gate.** A non-admin (token)
+  user could reach every gated function, including the ones gated below
+  (`postgres_query`, `ducklake_*`, `delta_*`) and the ones gated on earlier
+  releases (`duckdb_secrets()`, local file reads), without naming it where the
+  gate looked:
+  - through a table or scalar macro that passes its argument on
+    (`CREATE MACRO m(s) AS TABLE SELECT * FROM query(s)`, then
+    `SELECT * FROM m('SELECT * FROM postgres_query(…)')`). Macro bodies are now
+    checked like a statement when the macro is created, and SQL text or a local
+    path handed to any table function as a string is checked where it is used;
+  - through `CALL` (`CALL read_csv('/etc/passwd')`, `CALL duckdb_secrets()`,
+    `CALL query('…')`), which is now held to the table-function rules;
+  - through `query_table('<file>')` and `PRAGMA json_execute_serialized_sql`;
+  - through statement forms the parser walk does not reach: `DESCRIBE` /
+    `SUMMARIZE` / `SHOW (…)`, `PIVOT`, `SET VARIABLE v = (SELECT …)`,
+    `CREATE TYPE … AS ENUM (SELECT …)`, and on DuckDB 1.x `UPDATE` / `DELETE` /
+    `MERGE`. The gate now fails closed: a statement that names more calls of a
+    gated function than the walk inspected is refused.
+  Macros that already exist are not re-checked: after upgrading a shared server,
+  review them with the query in
+  [Admin Command Gating](docs/admin_command_gating.md#known-limitations-and-the-20-fix).
+- Enterprise: a catalog-scoped session can no longer call `delta_*()` / `iceberg_*()`
+  (their extensions read object storage with their own client, outside the file
+  system check), including through `query()` or a macro that names them.
+- DuckLake branch functions of customer builds (`ducklake_branches`,
+  `ducklake_current_branch`, `ducklake_branch_table`) are checked against the
+  token's read access; every other `ducklake_*` call, including the other branch
+  functions, needs write access.
+- **Closed cross-catalog access for non-admin (token) users on a shared server.**
+  Found by a customer testing two DuckLake catalogs with per-catalog user tokens:
+  - `postgres_query`, `postgres_execute` and the other `postgres_*` / `mysql_*`
+    functions, plus `sqlite_scan` / `sqlite_attach`, are now admin-only (also
+    inside views, CTAS and `CREATE MACRO`). They ran as the *other* catalog's
+    metadata-database role, outside the token's `catalog_access`.
+  - Reads and writes of `http://`, `https://` and `hf://` URLs (any table
+    function, `COPY`, `FROM 'https://…'`) are now admin-only: they were an
+    outbound-HTTP channel.
+  - Enterprise: **a session whose token carries `catalog_access` rules can only
+    reach object storage under the `data_path` of a DuckLake catalog its token
+    grants access to** (read access for reads, write for writes). Before, any
+    `read_parquet('gs://…/<other catalog>/…')`, `glob()`, `COPY`, macro or
+    `query()` ran on the server's own storage credentials and returned or
+    overwrote another catalog's files. It is enforced in the file system, so it
+    holds however the path is spelled; DuckLake's own reads and writes of its data
+    files are allowed by the same rule. Admins and tokens without `catalog_access`
+    rules (a single-tenant server) keep object storage.
+  - Enterprise: `ducklake_*` functions and `catalog.snapshots()`-style calls are
+    checked against the token's catalog access (read for inspection, write for
+    maintenance); `ducklake_add_data_files` is admin-only. `x.settings()` is only
+    treated as a DuckLake call when `x` is an attached DuckLake catalog (a user
+    function in a schema called `x` is no longer refused), and a view that wraps a
+    DuckLake call is refused (it would run with the access of whoever queries it,
+    not its creator).
+  - Enterprise: a token with `catalog_access` rules no longer sees other
+    catalogs' names through `pragma_database_list`, `pragma_database_size()`,
+    `PRAGMA database_list` or `PRAGMA database_size` (`SHOW DATABASES` and
+    `duckdb_databases()` were already filtered).
+  - `query('<sql>')` is checked as the SQL it runs (it let a non-admin reach
+    `postgres_query`, local files and `ducklake_*` past the checks, also on
+    earlier releases); a `query()` with SQL that is not a string literal, and
+    `json_execute_serialized_sql`, are refused for non-admins.
+  See [Admin Command Gating](docs/admin_command_gating.md).
+
+### Changed
+- **Behavior change:** a non-admin can no longer create a macro whose body passes
+  a parameter to a file-reading function or to `query()` / `query_table()`
+  (`read_parquet(p)`, `query(s)`), nor one that reads a local file or network
+  URL; macros over literal object-storage paths and ordinary macros are
+  unaffected. In the statement forms listed above, a gated function is refused
+  unless it reads a literal object-storage path.
+- **Behavior change:** non-admin users can no longer `COPY … TO` a local path or
+  read or write `http(s)://` / `hf://` URLs; do it as an admin, or from the client.
+  Object-storage `COPY` and `s3://` / `gs://` reads are unchanged, except for
+  catalog-scoped sessions (Enterprise), which are limited to their catalogs' data
+  paths as above.
+- The file system wrapper behind the sensitive-path guard is now installed on
+  Enterprise builds even with `--block-sensitive-paths false`, because it also
+  applies the remote-storage rule above.
+
 ## [1.42.2] - 2026-10-27
 
 v1.42.1 was tagged but never released (its edge builds failed); its changes ship here.

@@ -19,6 +19,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <arrow/status.h>
 
@@ -35,14 +36,30 @@
 //   * SET GLOBAL / RESET GLOBAL (any setting, DuckDB or GizmoSQL)
 //   * INSTALL / LOAD (extensions)
 //   * CHECKPOINT / FORCE CHECKPOINT
-//   * COPY ... TO/FROM a LOCAL file (remote object-storage/HTTP paths allowed)
+//   * COPY ... TO/FROM a LOCAL file or a network URL
 //   * EXPORT DATABASE / IMPORT DATABASE (ANY destination — full-database
 //     egress/ingress is not bounded by object grants, so it is always gated)
 //   * read_*() / glob() / sniff_csv() table functions reading the LOCAL
-//     filesystem (remote object-storage/HTTP paths allowed), at any nesting
+//     filesystem, at any nesting
 //   * CREATE SECRET / DROP SECRET (all variants: OR REPLACE / PERSISTENT /
 //     TEMPORARY — secrets hold credentials)
 //   * duckdb_secrets() (always — it exposes secret material)
+//   * postgres_* / mysql_* functions, sqlite_scan/sqlite_attach (always — they
+//     reach attached databases outside the token's catalog access)
+//   * reads and writes of http(s):// / hf:// URLs (server-side outbound HTTP) in
+//     any table function / COPY / replacement scan
+//   * query('<sql>'): its SQL is checked like a statement of its own; a query()
+//     whose argument is not a string literal is refused. json_execute_serialized_sql
+//     (always)
+//   * Object storage (s3://, gs://, ...) is NOT decided here. For a session scoped
+//     by catalog_access rules, SensitivePathGuardFileSystem limits remote paths to
+//     the data paths of the token's catalogs (RemotePathScope), whatever SQL names
+//     them (macros, query(), computed paths)
+//   * delta_*()/iceberg_*() (and macros naming them) are reported in ducklake_refs
+//     as own_storage_client: their extensions use their own object-store client,
+//     so the caller refuses them for catalog-scoped sessions
+//   * ducklake_add_data_files (always); other DuckLake functions are checked
+//     against the token's catalog access by the caller (see ducklake_refs)
 //
 // Detection is parser-based (duckdb::Parser — no execution, no connection), so
 // it is robust to whitespace/comments/case and to nesting (subqueries, CTEs,
@@ -50,8 +67,20 @@
 //
 // KNOWN LIMITATIONS (documented; the airtight fix is the GizmoSQL 2.0 in-binder
 // enforcement):
-//   * A view or macro that wraps a gated function is not inspected — selecting
-//     from it is not caught here.
+//   * A non-admin cannot create a view or macro around a gated function: both
+//     bodies are walked like a statement, and a macro body that passes a
+//     parameter on as a path or as SQL (read_csv(p), query(s)) is refused. The
+//     body of a view or macro that already exists (created by an admin, or
+//     before this check) is not inspected when it is used; only a path or SQL
+//     text the caller passes to it as a string literal is, and the file system
+//     still applies to the paths it opens.
+//   * CALL f(...) is held to the table-function rules, and a statement that
+//     names more calls of a function these checks care about than the walk
+//     inspected is refused (DESCRIBE / SUMMARIZE, PIVOT, SET VARIABLE,
+//     CREATE TYPE ... AS ENUM (SELECT ...), UPDATE / DELETE / MERGE on 1.x):
+//     the gate fails closed for statement forms it cannot walk.
+//   * A table function outside these lists (an extension's reader) is refused
+//     for a literal local path or network URL, not for a computed one.
 //   * Replacement scans of string-literal paths (SELECT * FROM '/etc/passwd')
 //     are caught by a path-shape heuristic, not by binding.
 //   * Note: the statement-type gates (ATTACH/DETACH/SET GLOBAL/INSTALL/LOAD/
@@ -63,6 +92,26 @@
 // for non-admin, non-internal client statements).
 
 namespace gizmosql::ddb {
+
+/// A DuckLake table function / CALL procedure found in a statement, with the
+/// catalog it addresses. Used to check the call against the token's catalog
+/// access (Enterprise): `ducklake_snapshots('lake')`, `CALL lake.set_option(...)`.
+struct DuckLakeFunctionRef {
+  std::string function;                // lower-case name, e.g. "ducklake_snapshots"
+  std::optional<std::string> catalog;  // nullopt: not a string literal (cannot verify)
+  bool writes = false;                 // maintenance/option changes need write access
+  /// Spelled `catalog.method(...)` rather than `ducklake_method('catalog', ...)`.
+  /// The qualifier may be any schema, so the caller only applies the check when
+  /// it names an attached DuckLake catalog (`someschema.settings()` is a user function).
+  bool qualified = false;
+  /// Found inside a CREATE VIEW. A view runs with the access of whoever selects
+  /// from it, not whoever created it, so the caller refuses such a view.
+  bool in_view = false;
+  /// A function of an extension that talks to object storage through its own
+  /// client (delta_scan, iceberg_scan, ...), which the file system wrapper never
+  /// sees. The caller refuses it for catalog-scoped sessions; `catalog` is unused.
+  bool own_storage_client = false;
+};
 
 /// Classify `sql` for the non-admin admin-command gate. Returns a short, stable
 /// human-readable category describing the FIRST gated operation found (e.g.
@@ -84,6 +133,12 @@ std::optional<std::string> ClassifyUnredactedSecretsSet(const std::string& sql);
 /// PREPARE / EXPLAIN. With the sensitive-path guard on, clients may not move
 /// DuckDB's persistent-secret directory somewhere unprotected.
 bool IsSecretDirectorySet(const std::string& sql);
+
+/// As above, additionally collecting every DuckLake function reference found
+/// (`ducklake_*()` and `catalog.snapshots()`-style calls) into `ducklake_refs`
+/// when it is non-null. Only complete when the result is nullopt.
+std::optional<std::string> ClassifyGatedCommand(
+    const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs);
 
 /// Client-facing error text for a gated command, e.g. category "ATTACH".
 std::string GatedCommandDeniedMessage(const std::string& category);

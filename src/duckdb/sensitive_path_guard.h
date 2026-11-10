@@ -35,6 +35,7 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <string>
@@ -106,10 +107,53 @@ class SensitivePathPolicy {
 /// std::nullopt, and the caller reports the error as usual.
 std::optional<arrow::Status> SensitivePathRefusal(const std::string& duckdb_error);
 
+/// Limits the remote (object-storage / network) paths a catalog-scoped session
+/// may touch to the data paths of the catalogs its token grants access to.
+///
+/// Object-storage credentials belong to the server, so without this a token
+/// user could name another catalog's data prefix (`read_parquet('gs://…')`, a
+/// macro, `query('…')`, a computed path) and read it with the server's own
+/// credentials. DuckLake itself reads and writes its data files through the same
+/// file system on the querying session's behalf, so remote paths cannot simply
+/// be refused: a path is allowed when it lies under the `data_path` of a catalog
+/// the session can read (or write, for writes).
+///
+/// Registered on a session's connection (ClientContext::registered_state) only
+/// for sessions the rules apply to; a context without it is unrestricted. It
+/// starts with no allowed prefixes, so a scoped session fails closed until the
+/// statement layer fills them in.
+class RemotePathScope : public duckdb::ClientContextState {
+ public:
+  static constexpr const char* kStateName = "gizmosql_remote_path_scope";
+
+  /// Replaces the allowed prefixes. Called before each statement of the session,
+  /// because an administrator can attach a catalog while the session is open.
+  void SetPrefixes(std::vector<std::string> read_prefixes,
+                   std::vector<std::string> write_prefixes);
+
+  /// Whether `path` (a remote URL) lies under an allowed prefix.
+  bool Allows(const std::string& path, bool for_write) const;
+
+  /// `path` is `prefix` or inside it, on a path-segment boundary. Paths with
+  /// `..` segments never match.
+  static bool PathIsUnder(const std::string& path, const std::string& prefix);
+
+  /// The client-facing error for a refused path.
+  static std::string DeniedMessage(const std::string& path, bool for_write);
+
+ private:
+  mutable std::mutex mutex_;
+  std::vector<std::string> read_prefixes_;
+  std::vector<std::string> write_prefixes_;
+};
+
 /// DuckDB VirtualFileSystem that refuses protected paths and hides them from
-/// directory listings and glob results.
+/// directory listings and glob results, and applies RemotePathScope to remote
+/// paths.
 class SensitivePathGuardFileSystem : public duckdb::VirtualFileSystem {
  public:
+  /// `policy` may be null (--block-sensitive-paths false): only the
+  /// RemotePathScope check then applies.
   SensitivePathGuardFileSystem(std::shared_ptr<const SensitivePathPolicy> policy,
                                duckdb::unique_ptr<duckdb::FileSystem>&& inner);
 
@@ -169,9 +213,11 @@ class SensitivePathGuardFileSystem : public duckdb::VirtualFileSystem {
 #endif
 
  private:
-  /// Throws duckdb::PermissionException if `path` is protected.
+  /// Throws duckdb::PermissionException if `path` is protected, or is a remote
+  /// path outside the session's RemotePathScope. `for_write` selects which
+  /// catalogs' data paths the scope compares against.
   void Enforce(const duckdb::string& path,
-               duckdb::optional_ptr<duckdb::FileOpener> opener);
+               duckdb::optional_ptr<duckdb::FileOpener> opener, bool for_write = false);
   bool IsProtected(const duckdb::string& path,
                    duckdb::optional_ptr<duckdb::FileOpener> opener);
   /// Refuses a glob whose fixed leading directory is protected.

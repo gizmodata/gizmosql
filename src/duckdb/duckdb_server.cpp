@@ -1270,6 +1270,15 @@ class DuckDBFlightSqlServer::Impl {
 
       new_session->connection =
           std::make_shared<gizmosql::TrackedDuckDBConnection>(*db_instance_);
+#ifdef GIZMOSQL_ENTERPRISE
+      // A token scoped by catalog_access rules may only reach remote storage under
+      // its catalogs' data paths (see RemotePathScope). The statement layer fills
+      // the allowed prefixes in before each statement.
+      if (gizmosql::enterprise::IsCatalogScopedSession(*new_session)) {
+        new_session->connection->Get().context->registered_state->Insert(
+            RemotePathScope::kStateName, duckdb::make_shared_ptr<RemotePathScope>());
+      }
+#endif
 
 #ifdef GIZMOSQL_ENTERPRISE
       gizmosql::enterprise::TrackMetricsSession(new_session);
@@ -2990,9 +2999,18 @@ Result<std::shared_ptr<DuckDBFlightSqlServer>> DuckDBFlightSqlServer::Create(
   // Every file a query touches goes through config.file_system, so the guard
   // installed here sees read_*/glob/COPY/ATTACH/replacement-scan paths for every
   // role. DuckDB's secret manager uses its own local file system and is unaffected.
-  if (sensitive_path_policy) {
+  // The same wrapper applies RemotePathScope to catalog-scoped sessions (Enterprise),
+  // so it is installed even when --block-sensitive-paths is off (null policy).
+#ifdef GIZMOSQL_ENTERPRISE
+  constexpr bool kScopeRemotePaths = true;
+#else
+  constexpr bool kScopeRemotePaths = false;
+#endif
+  if (sensitive_path_policy || kScopeRemotePaths) {
     config.file_system = duckdb::make_uniq<SensitivePathGuardFileSystem>(
         sensitive_path_policy, duckdb::FileSystem::CreateLocal());
+  }
+  if (sensitive_path_policy) {
     GIZMOSQL_LOG(INFO) << "Sensitive-path guard enabled: credential and system files "
                           "on this host are blocked for every client";
   }
