@@ -626,6 +626,86 @@ TEST_F(AdminGateServerFixture, AdminIsNotBlockedFromCrossCatalogFunctions) {
       << st.ToString();
 }
 
+// The same functions reached indirectly: through a table macro that passes its
+// argument on to query() or read_text(), through CALL, and through statement forms
+// that carry a query (SUMMARIZE, SET VARIABLE, UPDATE). The macros are created by
+// an admin, so the refusal has to come from the statement that uses them.
+TEST_F(AdminGateServerFixture, NonAdminTokenRejectedForIndirectRoutes) {
+  ASSERT_TRUE(IsServerReady());
+  arrow::flight::FlightClientOptions options;
+  ASSERT_ARROW_OK_AND_ASSIGN(auto loc,
+                             arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client,
+                             arrow::flight::FlightClient::Connect(loc, options));
+  ASSERT_ARROW_OK_AND_ASSIGN(
+      auto admin, client->AuthenticateBasicToken({}, GetUsername(), GetPassword()));
+  // An admin may create such macros, and they work for the admin.
+  ASSERT_ARROW_OK(
+      ExecAs(GetPort(), admin,
+             "CREATE OR REPLACE MACRO route_sql(s) AS TABLE SELECT * FROM query(s)"));
+  ASSERT_ARROW_OK(ExecAs(
+      GetPort(), admin,
+      "CREATE OR REPLACE MACRO route_file(p) AS TABLE SELECT * FROM read_text(p)"));
+  ASSERT_ARROW_OK(
+      ExecAs(GetPort(), admin,
+             "SELECT * FROM route_sql('SELECT count(*) FROM duckdb_secrets()')"));
+  ASSERT_ARROW_OK(ExecAs(GetPort(), admin, "CALL duckdb_secrets()"));
+
+  const std::pair<std::string, std::string> user{"authorization",
+                                                 "Bearer " + MintToken("app_a", "user")};
+  for (const std::string& sql : {
+           std::string(
+               "SELECT * FROM route_sql('SELECT count(*) FROM duckdb_secrets()')"),
+           std::string("SELECT * FROM route_sql('SELECT * FROM postgres_query(''b'', "
+                       "''select 1'')')"),
+           std::string(
+               "SELECT * FROM route_sql('SELECT * FROM read_text(''/etc/hosts'')')"),
+           std::string("SELECT * FROM route_file('/etc/hosts')"),
+           std::string(
+               "CREATE OR REPLACE TEMP MACRO mine(s) AS TABLE SELECT * FROM query(s)"),
+           std::string("CREATE OR REPLACE TEMP MACRO mine(p) AS TABLE "
+                       "SELECT * FROM read_text(p)"),
+           std::string("CREATE OR REPLACE TEMP MACRO mine() AS TABLE SELECT * FROM "
+                       "query('SELECT count(*) FROM duckdb_' || 'secrets()')"),
+           std::string("CREATE OR REPLACE TEMP MACRO mine(s) AS "
+                       "(SELECT count(*) FROM query(s))"),
+           std::string("CALL duckdb_secrets()"),
+           std::string("CALL read_text('/etc/hosts')"),
+           std::string("CALL glob('/etc/*')"),
+           std::string("CALL query('SELECT count(*) FROM duckdb_secrets()')"),
+           std::string("CALL postgres_query('b', 'select 1')"),
+           std::string("SELECT * FROM query_table('/etc/hosts.csv')"),
+           std::string("SUMMARIZE SELECT * FROM read_text('/etc/hosts')"),
+           std::string("DESCRIBE SELECT * FROM postgres_query('b', 'select 1')"),
+           std::string(
+               "SET VARIABLE leaked = (SELECT content FROM read_text('/etc/hosts'))"),
+           std::string("CREATE TEMP TABLE route_t AS SELECT 'a' AS x; UPDATE route_t SET "
+                       "x = (SELECT content FROM read_text('/etc/hosts'))"),
+       }) {
+    auto st = ExecAs(GetPort(), user, sql);
+    EXPECT_FALSE(st.ok()) << "non-admin should be rejected for: " << sql;
+    EXPECT_NE(st.ToString().find("requires the 'admin' role"), std::string::npos)
+        << sql << " -> " << st.ToString();
+  }
+
+  // The same forms without a gated function still work for the non-admin.
+  for (const std::string& sql : {
+           std::string("CREATE OR REPLACE TEMP MACRO fine(x) AS x + 1"),
+           std::string("CREATE OR REPLACE TEMP MACRO fine_t(n) AS TABLE "
+                       "SELECT * FROM range(n)"),
+           std::string("SELECT * FROM fine_t(3)"),
+           std::string("SELECT * FROM route_sql('SELECT 42 AS answer')"),
+           std::string("DESCRIBE SELECT 1 AS x"),
+           std::string("SUMMARIZE SELECT 1 AS x"),
+           std::string("SET VARIABLE harmless = (SELECT 42)"),
+           std::string(
+               "SELECT 'CALL duckdb_secrets() and read_text(''/etc/hosts'')' AS s"),
+       }) {
+    auto st = ExecAs(GetPort(), user, sql);
+    EXPECT_TRUE(st.ok()) << sql << " -> " << st.ToString();
+  }
+}
+
 TEST_F(AdminGateServerFixture, NonAdminTokenAllowedForOrdinaryQueries) {
   ASSERT_TRUE(IsServerReady());
   const std::pair<std::string, std::string> analyst{
@@ -906,4 +986,210 @@ TEST(AdminCommandGuard, DuckLakeNonLiteralCatalogCannotBeVerified) {
 TEST(AdminCommandGuard, DuckLakeAddDataFilesIsGated) {
   EXPECT_TRUE(Gated("CALL ducklake_add_data_files('lake', 't', 'gs://other/x.parquet')"));
   EXPECT_TRUE(Gated("CALL lake.add_data_files('t', 'gs://other/x.parquet')"));
+}
+
+// =============================================================================
+// Indirect routes: macros, CALL, query_table, and statement forms the walker
+// does not reach.
+// =============================================================================
+
+// A macro runs its body for whoever calls it, so the body is held to the same
+// rules as a statement. A body that passes a parameter on as a path or as SQL is
+// refused: the parameter is not a string literal.
+TEST(AdminCommandGuard, MacroBodiesAreChecked) {
+  EXPECT_TRUE(Gated("CREATE MACRO m(s) AS TABLE SELECT * FROM query(s)"));
+  EXPECT_TRUE(
+      Gated("CREATE OR REPLACE TEMP MACRO m(p) AS TABLE SELECT * FROM read_csv(p)"));
+  EXPECT_TRUE(
+      Gated("CREATE MACRO m() AS TABLE SELECT * FROM "
+            "query('SELECT * FROM duckdb_' || 'secrets()')"));
+  EXPECT_TRUE(Gated("CREATE MACRO m(s := 'SELECT 1') AS TABLE SELECT * FROM query(s)"));
+  EXPECT_TRUE(Gated("CREATE MACRO m(s) AS (SELECT count(*) FROM query(s))"));
+  EXPECT_TRUE(
+      Gated("CREATE MACRO m() AS (SELECT count(*) FROM read_csv('/etc/passwd'))"));
+  EXPECT_TRUE(Gated("CREATE MACRO m() AS TABLE SELECT * FROM glob('/etc/*')"));
+  EXPECT_TRUE(Gated("CREATE MACRO m(t) AS TABLE SELECT * FROM query_table(t)"));
+  EXPECT_TRUE(
+      Gated("CREATE MACRO m() AS TABLE SELECT * FROM read_csv('https://a/b.csv')"));
+  // Ordinary macros are untouched.
+  EXPECT_FALSE(Gated("CREATE MACRO add1(x) AS x + 1"));
+  EXPECT_FALSE(Gated("CREATE MACRO recent(n) AS TABLE SELECT * FROM orders LIMIT n"));
+  EXPECT_FALSE(Gated("CREATE MACRO firsts(n) AS TABLE SELECT * FROM range(n)"));
+  EXPECT_FALSE(Gated("CREATE MACRO total() AS (SELECT sum(amount) FROM orders)"));
+  EXPECT_FALSE(Gated(
+      "CREATE MACRO lake() AS TABLE SELECT * FROM read_parquet('s3://b/x.parquet')"));
+  EXPECT_FALSE(Gated("CREATE MACRO one() AS TABLE SELECT * FROM query('SELECT 1 AS x')"));
+}
+
+// CALL f(...) returns f's rows, like SELECT * FROM f(...).
+TEST(AdminCommandGuard, CallIsHeldToTheTableFunctionRules) {
+  EXPECT_EQ(Category("CALL duckdb_secrets()"), "duckdb_secrets()");
+  EXPECT_EQ(Category("CALL read_csv('/etc/passwd')"), "read_csv() (local filesystem)");
+  EXPECT_TRUE(Gated("CALL glob('/etc/*')"));
+  EXPECT_TRUE(Gated("CALL read_text(getvariable('p'))"));
+  EXPECT_TRUE(Gated("CALL read_csv('https://example.com/x.csv')"));
+  EXPECT_TRUE(Gated("CALL query('SELECT * FROM duckdb_secrets()')"));
+  EXPECT_TRUE(Gated("CALL query(getvariable('s'))"));
+  EXPECT_TRUE(Gated("CALL json_execute_serialized_sql(json_serialize_sql('SELECT 1'))"));
+  EXPECT_TRUE(Gated("PRAGMA json_execute_serialized_sql('{}')"));
+  EXPECT_TRUE(Gated("CALL some_function((SELECT count(*) FROM duckdb_secrets()))"));
+  EXPECT_FALSE(Gated("CALL pragma_table_info('t')"));
+  EXPECT_FALSE(Gated("CALL read_parquet('s3://bucket/x.parquet')"));
+  EXPECT_FALSE(Gated("CALL query('SELECT 1 AS x')"));
+  EXPECT_FALSE(Gated("PRAGMA table_info('t')"));
+}
+
+// query_table('<name>') resolves a name like FROM does, so a path is a file read.
+TEST(AdminCommandGuard, QueryTableNamesAreChecked) {
+  EXPECT_EQ(Category("SELECT * FROM query_table('/etc/passwd')"),
+            "query_table() (local filesystem)");
+  EXPECT_TRUE(Gated("SELECT * FROM query_table('data.csv')"));
+  EXPECT_TRUE(Gated("SELECT * FROM query_table(['t', '/tmp/x.parquet'], true)"));
+  EXPECT_TRUE(Gated("SELECT * FROM query_table('https://example.com/x.csv')"));
+  EXPECT_TRUE(Gated("SELECT * FROM query_table(getvariable('t'))"));
+  EXPECT_FALSE(Gated("SELECT * FROM query_table('orders')"));
+  EXPECT_FALSE(Gated("SELECT * FROM query_table(['orders', 'returns'], true)"));
+}
+
+// A table function these checks do not know (an extension's reader, a table macro)
+// may hand its string argument to read_csv() or query().
+TEST(AdminCommandGuard, StringArgumentsOfAnyTableFunctionAreChecked) {
+  EXPECT_TRUE(Gated("SELECT * FROM m('SELECT count(*) FROM duckdb_secrets()')"));
+  EXPECT_TRUE(
+      Gated("SELECT * FROM m('SELECT * FROM postgres_query(''b'', ''select 1'')')"));
+  EXPECT_TRUE(Gated("SELECT * FROM m(s := 'SELECT * FROM read_csv(''/etc/passwd'')')"));
+  EXPECT_TRUE(Gated("SELECT * FROM m('COPY (SELECT 1) TO ''/tmp/x.csv''')"));
+  EXPECT_TRUE(Gated("SELECT * FROM r('/etc/passwd')"));
+  EXPECT_TRUE(Gated("SELECT * FROM read_xlsx('/data/book.xlsx')"));
+  EXPECT_TRUE(Gated("SELECT * FROM read_json_objects_auto('events.json')"));
+  EXPECT_TRUE(Gated("SELECT * FROM st_read('file:///data/shapes.shp')"));
+  EXPECT_TRUE(Gated("SELECT * FROM r(['~/notes.txt'])"));
+  EXPECT_TRUE(Gated("CALL r('C:\\Users\\x\\data.csv')"));
+  // Ordinary arguments are untouched.
+  EXPECT_FALSE(Gated("SELECT * FROM m('SELECT 42 AS answer')"));
+  EXPECT_FALSE(Gated("SELECT * FROM in_zone('America/New_York')"));
+  EXPECT_FALSE(Gated("SELECT * FROM greet('hello world')"));
+  EXPECT_FALSE(Gated("SELECT * FROM since('2026-01-01 00:00:00')"));
+  EXPECT_FALSE(Gated("SELECT * FROM range(10)"));
+  EXPECT_FALSE(Gated("SELECT * FROM delta_scan('s3://bucket/table')"));
+  EXPECT_FALSE(Gated("SELECT * FROM generate_series(1, 5)"));
+
+  // DuckLake calls inside such a string are reported like any other.
+  std::vector<gizmosql::ddb::DuckLakeFunctionRef> refs;
+  EXPECT_FALSE(ClassifyGatedCommand(
+      "SELECT * FROM m('SELECT * FROM ducklake_snapshots(''other'')')", &refs));
+  ASSERT_EQ(refs.size(), 1u);
+  EXPECT_EQ(refs[0].catalog, std::optional<std::string>("other"));
+}
+
+// Statement forms the walker does not reach fail closed: a call it did not inspect
+// is refused, whatever statement carries it.
+TEST(AdminCommandGuard, CallsInUninspectedStatementFormsAreRefused) {
+  for (const char* sql : {
+           "DESCRIBE SELECT * FROM read_csv('/etc/passwd')",
+           "SUMMARIZE SELECT * FROM read_csv('/etc/passwd')",
+           "SHOW (SELECT * FROM read_csv('/etc/passwd'))",
+           "SELECT * FROM (DESCRIBE SELECT * FROM read_csv('/etc/passwd'))",
+           "SET VARIABLE v = (SELECT column0 FROM read_csv('/etc/passwd'))",
+           "CREATE TYPE e AS ENUM (SELECT column0 FROM read_csv('/etc/passwd'))",
+           "PIVOT (SELECT * FROM read_csv('/etc/passwd')) ON column0 USING count(*)",
+           "UPDATE t SET x = (SELECT count(*) FROM duckdb_secrets())",
+           "UPDATE t SET x = r.a FROM read_csv('/etc/passwd') r",
+           "DELETE FROM t WHERE x IN (SELECT a FROM postgres_query('b', 'select 1'))",
+           "DELETE FROM t USING read_csv('/etc/passwd') r WHERE t.x = r.a",
+           "MERGE INTO t USING read_csv('/etc/passwd') r ON t.x = r.a "
+           "WHEN NOT MATCHED THEN INSERT VALUES (r.a)",
+           "DESCRIBE SELECT * FROM query('SELECT * FROM duckdb_secrets()')",
+           "SUMMARIZE SELECT * FROM read_parquet('https://example.com/x.parquet')",
+           "DESCRIBE SELECT * FROM read_parquet(getvariable('p'))",
+           "DESCRIBE SELECT * FROM read_parquet('s3://b/x' || '.parquet')",
+           // A replacement scan names no function at all.
+           "SUMMARIZE '/etc/passwd'",
+           "DESCRIBE 'data.csv'",
+           "DESCRIBE SELECT * FROM '/etc/passwd'",
+           "SUMMARIZE SELECT * FROM \"/etc/passwd\"",
+           "SUMMARIZE SELECT * FROM 'https://example.com/x.csv'",
+           "UPDATE t SET x = s.a FROM '/etc/passwd' s",
+           "UPDATE t SET x = s.a FROM u JOIN v ON true, '/etc/passwd' s",
+           "DELETE FROM t USING '~/x.csv' s WHERE t.x = s.a",
+           "MERGE INTO t USING 'data.parquet' s ON t.x = s.a "
+           "WHEN NOT MATCHED THEN INSERT VALUES (s.a)",
+           "PIVOT '/data/x.csv' ON a USING count(*)",
+           "SET VARIABLE v = (SELECT a FROM t, '/etc/passwd')",
+           // However the call is spelled.
+           "DESCRIBE SELECT * FROM \"read_csv\"('/etc/passwd')",
+           "DESCRIBE SELECT * FROM READ_CSV /* c */ ('/etc/passwd')",
+           "DESCRIBE SELECT * FROM main.read_csv('/etc/passwd')",
+           "DESCRIBE SELECT 'it''s' AS q, * FROM read_csv('/etc/passwd')",
+           "DESCRIBE SELECT E'\\'' AS q, * FROM read_csv('/etc/passwd')",
+           "DESCRIBE SELECT $$x$$ AS q, * FROM read_csv('/etc/passwd')",
+           "DESCRIBE SELECT 1 -- c\n FROM read_csv('/etc/passwd')",
+       }) {
+    EXPECT_TRUE(Gated(sql)) << sql;
+  }
+}
+
+// The same forms stay usable when they name no gated call, when the name only
+// appears in a string or a comment, and for literal object-storage reads (which
+// is all the walker would have asked of them).
+TEST(AdminCommandGuard, UninspectedStatementFormsWithoutGatedCallsAreAllowed) {
+  for (const char* sql : {
+           "DESCRIBE SELECT 1 AS x",
+           "SUMMARIZE SELECT * FROM orders",
+           "SET VARIABLE v = (SELECT max(id) FROM orders)",
+           "CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy')",
+           "PIVOT orders ON region USING sum(amount)",
+           "UPDATE t SET x = (SELECT max(id) FROM orders)",
+           "DELETE FROM t WHERE x IN (SELECT id FROM returns)",
+           "MERGE INTO t USING staged s ON t.id = s.id WHEN NOT MATCHED THEN INSERT *",
+           "DESCRIBE SELECT * FROM read_parquet('s3://bucket/x.parquet')",
+           "SUMMARIZE SELECT * FROM read_parquet('gs://bucket/dir/*.parquet', "
+           "hive_partitioning = true)",
+           "MERGE INTO t USING read_parquet('s3://bucket/staged/*.parquet') s "
+           "ON t.id = s.id WHEN NOT MATCHED THEN INSERT *",
+           "UPDATE t SET note = 'see read_csv(''/etc/passwd'') and duckdb_secrets()'",
+           "DESCRIBE SELECT 'CALL query(1)' AS s",
+           "DESCRIBE SELECT $$ read_csv('/etc/passwd') $$ AS s",
+           "DESCRIBE SELECT E'read_csv(\\'/etc/passwd\\')' AS s",
+           "DESCRIBE SELECT 1 AS x -- read_csv('/etc/passwd')",
+           "DESCRIBE SELECT 1 /* duckdb_secrets() */ AS x",
+           "DESCRIBE SELECT 1 AS \"read_csv\"",
+           "DESCRIBE SELECT * FROM 's3://bucket/x.parquet'",
+           "UPDATE t SET path = '/data/x.csv', note = 'a, /b.csv' WHERE id = 1",
+           "UPDATE t SET x = 1 FROM u WHERE u.path IN ('/a.csv', '/b.csv')",
+           "DELETE FROM t WHERE path = '/data/x.csv'",
+           "SUMMARIZE SELECT '/etc/passwd' AS p, 'x.csv' AS q FROM orders",
+           "SELECT * FROM unnest(['report.csv', '/tmp/x.txt'])",
+           "SELECT * FROM orders, returns WHERE orders.file = '/x.csv'",
+           "SELECT query, glob FROM audit_log WHERE query IN ('a', 'b')",
+           "INSERT INTO t SELECT * FROM read_parquet('s3://bucket/x.parquet')",
+           "WITH c AS (SELECT * FROM read_parquet('s3://b/x.parquet')) SELECT * FROM c "
+           "WHERE id IN (SELECT id FROM read_parquet('s3://b/y.parquet'))",
+       }) {
+    EXPECT_FALSE(Gated(sql)) << sql << " -> " << Category(sql);
+  }
+}
+
+// delta/iceberg calls in an uninspected form are still reported, so the caller
+// can refuse them for catalog-scoped sessions.
+TEST(AdminCommandGuard, OwnStorageClientCallsInUninspectedFormsAreReported) {
+  std::vector<gizmosql::ddb::DuckLakeFunctionRef> refs;
+  EXPECT_FALSE(
+      ClassifyGatedCommand("DESCRIBE SELECT * FROM delta_scan('s3://b/t')", &refs));
+  ASSERT_FALSE(refs.empty());
+  EXPECT_TRUE(refs[0].own_storage_client);
+  refs.clear();
+  // A DuckLake call must either be reported for the token check (DuckDB 2.x, whose
+  // DESCRIBE the walker reaches) or be refused outright (DuckDB 1.x).
+  auto described =
+      ClassifyGatedCommand("DESCRIBE SELECT * FROM ducklake_snapshots('other')", &refs);
+  EXPECT_TRUE(
+      described.has_value() ||
+      (refs.size() == 1 && refs[0].catalog == std::optional<std::string>("other")));
+  refs.clear();
+  auto summarized =
+      ClassifyGatedCommand("SUMMARIZE SELECT * FROM other_lake.snapshots()", &refs);
+  EXPECT_TRUE(summarized.has_value() ||
+              (refs.size() == 1 && refs[0].qualified &&
+               refs[0].catalog == std::optional<std::string>("other_lake")));
 }

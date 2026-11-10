@@ -67,10 +67,20 @@
 //
 // KNOWN LIMITATIONS (documented; the airtight fix is the GizmoSQL 2.0 in-binder
 // enforcement):
-//   * A view that wraps a DuckLake function is refused at creation (Enterprise).
-//     A view or macro that wraps any other gated function is not inspected —
-//     selecting from it is not caught here, except that the file system still
-//     applies to the paths it opens.
+//   * A non-admin cannot create a view or macro around a gated function: both
+//     bodies are walked like a statement, and a macro body that passes a
+//     parameter on as a path or as SQL (read_csv(p), query(s)) is refused. The
+//     body of a view or macro that already exists (created by an admin, or
+//     before this check) is not inspected when it is used; only a path or SQL
+//     text the caller passes to it as a string literal is, and the file system
+//     still applies to the paths it opens.
+//   * CALL f(...) is held to the table-function rules, and a statement that
+//     names more calls of a function these checks care about than the walk
+//     inspected is refused (DESCRIBE / SUMMARIZE, PIVOT, SET VARIABLE,
+//     CREATE TYPE ... AS ENUM (SELECT ...), UPDATE / DELETE / MERGE on 1.x):
+//     the gate fails closed for statement forms it cannot walk.
+//   * A table function outside these lists (an extension's reader) is refused
+//     for a literal local path or network URL, not for a computed one.
 //   * Replacement scans of string-literal paths (SELECT * FROM '/etc/passwd')
 //     are caught by a path-shape heuristic, not by binding.
 //   * Note: the statement-type gates (ATTACH/DETACH/SET GLOBAL/INSTALL/LOAD/

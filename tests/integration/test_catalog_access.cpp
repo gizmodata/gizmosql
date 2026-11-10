@@ -1879,3 +1879,73 @@ TEST_F(RemotePathScopeFixture, QualifiedUserFunctionIsNotTreatedAsDuckLake) {
       *client, options, std::string("CALL ") + kOtherLake + ".set_option('x', 'y')");
   EXPECT_NE(other_write.find("Access denied"), std::string::npos) << other_write;
 }
+
+// The checks on DuckLake and delta/iceberg calls also hold when the call is
+// handed to a table macro as SQL text, or sits in a statement form the parser
+// walk does not reach. The macro is created by an admin, so the refusal has to
+// come from the scoped user's own statement.
+TEST_F(RemotePathScopeFixture, IndirectRoutesAreRefusedWhenScoped) {
+  SKIP_WITHOUT_LICENSE();
+  ASSERT_TRUE(IsServerReady());
+  if (const auto why = AttachLakes(); !why.empty()) GTEST_SKIP() << why;
+
+  {
+    arrow::flight::FlightClientOptions client_options;
+    ASSERT_ARROW_OK_AND_ASSIGN(
+        auto location, arrow::flight::Location::ForGrpcTcp("localhost", GetPort()));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto admin_client, arrow::flight::FlightClient::Connect(
+                                                      location, client_options));
+    ASSERT_ARROW_OK_AND_ASSIGN(auto bearer, admin_client->AuthenticateBasicToken(
+                                                {}, GetUsername(), GetPassword()));
+    arrow::flight::FlightCallOptions admin;
+    admin.headers.push_back(bearer);
+    FlightSqlClient admin_sql(std::move(admin_client));
+    ASSERT_ARROW_OK(ExecuteAndConsume(
+        admin_sql, admin,
+        "CREATE OR REPLACE MACRO scope_route(s) AS TABLE SELECT * FROM query(s)"));
+  }
+
+  const auto token = ScopedTokenWithDefaultCatalog("scoped_route_user");
+  auto options = GetCallOptionsWithToken(token);
+  ASSERT_ARROW_OK_AND_ASSIGN(auto client, CreateClientWithToken(token));
+
+  // The macro itself is usable.
+  EXPECT_EQ(Error(*client, options, "SELECT * FROM scope_route('SELECT 42 AS answer')"),
+            "");
+
+  const auto other_lake = Error(
+      *client, options,
+      std::string("SELECT * FROM scope_route('SELECT * FROM ducklake_snapshots(''") +
+          kOtherLake + "'')')");
+  EXPECT_NE(other_lake.find("Access denied"), std::string::npos) << other_lake;
+
+  const auto own_client = Error(*client, options,
+                                "SELECT * FROM scope_route('SELECT * FROM "
+                                "delta_scan(''s3://scope-bucket/other/t'')')");
+  EXPECT_NE(own_client.find("its own client"), std::string::npos) << own_client;
+
+  const auto described_delta = Error(
+      *client, options, "DESCRIBE SELECT * FROM delta_scan('s3://scope-bucket/other/t')");
+  EXPECT_NE(described_delta.find("its own client"), std::string::npos) << described_delta;
+
+  // Refused outright on DuckDB 1.x (a statement form the walk does not reach), by
+  // the token's catalog access on 2.x (which walks DESCRIBE / SUMMARIZE).
+  for (const std::string sql :
+       {std::string("DESCRIBE SELECT * FROM ") + kOtherLake + ".snapshots()",
+        std::string("SUMMARIZE SELECT * FROM ducklake_snapshots('") + kOtherLake +
+            "')"}) {
+    const auto error = Error(*client, options, sql);
+    EXPECT_TRUE(error.find("requires the 'admin' role") != std::string::npos ||
+                error.find("Access denied") != std::string::npos)
+        << sql << " -> " << error;
+  }
+  for (const std::string sql :
+       {std::string(
+            "CREATE OR REPLACE TEMP MACRO mine(s) AS TABLE SELECT * FROM query(s)"),
+        std::string("CALL query('SELECT * FROM ducklake_add_data_files(''") + kOwnLake +
+            "'', ''t'', ''s3://scope-bucket/other/x.parquet'')')"}) {
+    const auto error = Error(*client, options, sql);
+    EXPECT_NE(error.find("requires the 'admin' role"), std::string::npos)
+        << sql << " -> " << error;
+  }
+}

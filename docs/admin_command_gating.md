@@ -165,16 +165,63 @@ SELECT 1; ATTACH 'x.db' AS x;        -- one gated statement gates the batch
 The check runs only for non-admin, non-internal statements; admins and internal
 queries skip it entirely.
 
+### Indirect routes
+
+A gated function is refused however the statement reaches it:
+
+| Route | Example (refused for non-admins) |
+|---|---|
+| **`CALL`** — it returns the function's rows like `SELECT * FROM f(…)` | `CALL read_csv('/etc/passwd')`, `CALL duckdb_secrets()`, `CALL query('…')` |
+| **A macro body** — checked when the macro is created. A body that passes a parameter on as a path or as SQL is refused, because the parameter is not a string literal | `CREATE MACRO m(s) AS TABLE SELECT * FROM query(s)`, `CREATE MACRO r(p) AS TABLE SELECT * FROM read_csv(p)` |
+| **SQL or a path handed to any table function** — an existing table macro may pass its argument on to `query()` or `read_csv()` | `SELECT * FROM m('SELECT * FROM duckdb_secrets()')`, `SELECT * FROM r('/etc/passwd')` |
+| **`query_table('<name>')`** with a name that is a file, a URL or not a literal | `SELECT * FROM query_table('/data/x.csv')` |
+| **`PRAGMA json_execute_serialized_sql`** | `PRAGMA json_execute_serialized_sql('…')` |
+| **Statement forms that carry a query** | `SUMMARIZE SELECT * FROM read_csv('/etc/passwd')`, `SET VARIABLE v = (SELECT … FROM read_text('/etc/hosts'))`, `UPDATE t SET x = (SELECT … FROM duckdb_secrets())` |
+
+The last row is a **fail-closed** rule. The parser walk covers the statement forms
+listed under *How it works*; SQL has more places a call can sit (`DESCRIBE` /
+`SUMMARIZE`, `PIVOT`, `SET VARIABLE`, `CREATE TYPE … AS ENUM (SELECT …)`, and on
+DuckDB 1.x `UPDATE` / `DELETE` / `MERGE`). So the gate also counts, from the
+statement's tokens, every call of a function it cares about, and refuses the
+statement if it names more of them than the walk inspected. Names inside string
+constants and comments do not count. One exception keeps object storage usable in
+those places: a file-reading function whose every call in the statement reads a
+literal object-storage path is allowed, since that is all the walk would have
+required (`MERGE INTO t USING read_parquet('s3://bucket/staged/*.parquet') …`,
+`DESCRIBE SELECT * FROM read_parquet('s3://bucket/x.parquet')`).
+
 ## Known limitations (and the 2.0 fix)
 
 These are inherent to a parse-time gate and are resolved by the binding-level
 enforcement in GizmoSQL 2.0:
 
-- **Views / macros.** A view or macro that *wraps* a gated function is not
-  inspected — selecting from it is not caught. (Creating such a wrapper still
-  requires running the gated function once, which is itself gated.) `PREPARE`
-  that stages a gated statement *is* caught (at prepare time), so the
+- **Views / macros that already exist.** A non-admin cannot *create* a view or
+  macro around a gated function (see [Indirect routes](#indirect-routes)), but
+  the body of one that already exists is not inspected when it is used. That
+  covers views and macros an admin created, and any created by a non-admin on a
+  release before this check. Only what the caller passes in is checked: a path
+  or SQL text given as a string literal. A macro that needs no such argument
+  (`CREATE MACRO leak() AS TABLE SELECT * FROM read_csv('/some/file')`) runs for
+  whoever may call it. After upgrading, review the macros on a shared server:
+
+  ```sql
+  SELECT database_name, schema_name, function_name, macro_definition
+  FROM duckdb_functions()
+  WHERE function_type IN ('macro', 'table_macro') AND NOT internal;
+  ```
+
+  `PREPARE` that stages a gated statement *is* caught (at prepare time), so the
   `PREPARE`/`EXECUTE` indirection is closed.
+- **Functions the gate does not know.** A table function outside the lists above
+  (an extension's reader such as `read_xlsx` or `st_read`) is refused when a
+  string argument plainly names a local file or a network URL, but not when the
+  path is computed (`read_xlsx('/data/' || 'book.xlsx')`). The sensitive-path
+  guard and, for catalog-scoped sessions, the remote-storage rule still apply to
+  whatever file it opens.
+- **Names that look like calls.** The fail-closed check reads `name(` in the
+  statement text, so a table or alias named after a gated function and followed
+  by a column list (`INSERT INTO glob (a, b) …`) is refused in the statement
+  forms the gate cannot walk. Renaming the table or alias avoids it.
 - **Replacement scans** of string-literal paths are caught by a path-shape
   heuristic, not by binding, so an unusual real table named like a file path
   could be mis-flagged (rare).

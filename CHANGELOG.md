@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Closed indirect routes past the admin command gate.** A non-admin (token)
+  user could reach every gated function, including the ones gated below
+  (`postgres_query`, `ducklake_*`, `delta_*`) and the ones gated on earlier
+  releases (`duckdb_secrets()`, local file reads), without naming it where the
+  gate looked:
+  - through a table or scalar macro that passes its argument on
+    (`CREATE MACRO m(s) AS TABLE SELECT * FROM query(s)`, then
+    `SELECT * FROM m('SELECT * FROM postgres_query(…)')`). Macro bodies are now
+    checked like a statement when the macro is created, and SQL text or a local
+    path handed to any table function as a string is checked where it is used;
+  - through `CALL` (`CALL read_csv('/etc/passwd')`, `CALL duckdb_secrets()`,
+    `CALL query('…')`), which is now held to the table-function rules;
+  - through `query_table('<file>')` and `PRAGMA json_execute_serialized_sql`;
+  - through statement forms the parser walk does not reach: `DESCRIBE` /
+    `SUMMARIZE` / `SHOW (…)`, `PIVOT`, `SET VARIABLE v = (SELECT …)`,
+    `CREATE TYPE … AS ENUM (SELECT …)`, and on DuckDB 1.x `UPDATE` / `DELETE` /
+    `MERGE`. The gate now fails closed: a statement that names more calls of a
+    gated function than the walk inspected is refused.
+  Macros that already exist are not re-checked: after upgrading a shared server,
+  review them with the query in
+  [Admin Command Gating](docs/admin_command_gating.md#known-limitations-and-the-20-fix).
 - Enterprise: a catalog-scoped session can no longer call `delta_*()` / `iceberg_*()`
   (their extensions read object storage with their own client, outside the file
   system check), including through `query()` or a macro that names them.
@@ -51,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   See [Admin Command Gating](docs/admin_command_gating.md).
 
 ### Changed
+- **Behavior change:** a non-admin can no longer create a macro whose body passes
+  a parameter to a file-reading function or to `query()` / `query_table()`
+  (`read_parquet(p)`, `query(s)`), nor one that reads a local file or network
+  URL; macros over literal object-storage paths and ordinary macros are
+  unaffected. In the statement forms listed above, a gated function is refused
+  unless it reads a literal object-storage path.
 - **Behavior change:** non-admin users can no longer `COPY … TO` a local path or
   read or write `http(s)://` / `hf://` URLs; do it as an admin, or from the client.
   Object-storage `COPY` and `s3://` / `gs://` reads are unchanged, except for

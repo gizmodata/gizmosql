@@ -1101,8 +1101,8 @@ arrow::Result<std::shared_ptr<DuckDBStatement>> DuckDBStatement::CreateImpl(
         if (!denied.empty()) {
           // own-storage-client refusal above
         } else if (ref.in_view) {
-          denied = "Access denied: a view cannot wrap " + ref.function +
-                   "(): it would run with the access of whoever queries the view.";
+          denied = "Access denied: a view or macro cannot wrap " + ref.function +
+                   "(): it would run with the access of whoever queries it.";
         } else if (!ref.catalog) {
           denied = "Access denied: " + ref.function +
                    "() must name its catalog as a string literal.";

@@ -21,6 +21,7 @@
 #include <array>
 #include <cctype>
 #include <functional>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <duckdb.hpp>
@@ -37,6 +38,10 @@
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <duckdb/function/macro_function.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/explain_statement.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -193,6 +198,36 @@ bool LooksLikeLocalFilePath(const std::string& name) {
   return false;
 }
 
+// A string that plainly names a local file: an absolute, home-relative or
+// dot-relative path, a file:// URL, a Windows drive or UNC path, or a name with a
+// data-file extension. Narrower than LooksLikeLocalFilePath (a bare '/' inside
+// the text is not enough: 'America/New_York' is an ordinary argument), because it
+// is applied to the string arguments of every table function, whatever its name.
+bool LooksLikeExplicitLocalPath(const std::string& text) {
+  if (text.empty()) return false;
+  const std::string low = ToLower(text);
+  if (IsProvenRemotePath(low)) return false;
+  for (const char* prefix : {"/", "~", "./", "../", ".\\", "..\\", "\\\\", "file:"}) {
+    if (low.rfind(prefix, 0) == 0) return true;
+  }
+  if (low.size() >= 3 && std::isalpha(static_cast<unsigned char>(low[0])) &&
+      low[1] == ':' && (low[2] == '\\' || low[2] == '/')) {
+    return true;
+  }
+  static const std::array<const char*, 26> kExts = {
+      ".csv",   ".tsv",   ".txt",     ".parquet", ".pq",  ".json",   ".ndjson",
+      ".jsonl", ".arrow", ".feather", ".gz",      ".zst", ".bz2",    ".xz",
+      ".orc",   ".avro",  ".xlsx",    ".xls",     ".db",  ".duckdb", ".sqlite",
+      ".shp",   ".gpkg",  ".geojson", ".arrows",  ".ipc"};
+  for (const char* ext : kExts) {
+    const std::string e(ext);
+    if (low.size() > e.size() && low.compare(low.size() - e.size(), e.size(), e) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Table functions that read the local filesystem when given a local path. Gated
 // only when the path argument is not a proven-remote URL.
 const std::unordered_set<std::string>& FsReadFunctions() {
@@ -205,6 +240,15 @@ const std::unordered_set<std::string>& FsReadFunctions() {
       // DuckDB 2.0
       "read_single_csv_file", "read_single_json_file"};
   return kFns;
+}
+
+// Built-in table functions that only expand the values they are given, so a
+// string argument is data, never a path or SQL (unnest(['report.csv'])).
+bool IsValueTableFunction(const std::string& name_lower) {
+  static const std::unordered_set<std::string> kFns = {
+      "unnest",     "range",     "generate_series", "repeat",
+      "repeat_row", "json_each", "json_tree",       "regexp_split_to_table"};
+  return kFns.count(name_lower) > 0;
 }
 
 // Table functions gated for non-admins regardless of arguments.
@@ -365,10 +409,65 @@ void NoteMacroOwnStorageMentions(const std::string& sql,
   }
 }
 
+// ---- which calls the checks have looked at ----------------------------------
+//
+// The walker below only reaches the parts of a statement it knows how to walk.
+// SQL has many more places a call can sit (DESCRIBE / SUMMARIZE, PIVOT,
+// SET VARIABLE, CREATE TYPE ... AS ENUM (SELECT ...), UPDATE / DELETE / MERGE on
+// DuckDB 1.x, and whatever a later DuckDB adds), and a call the walker never saw
+// would run unchecked. So every call to a function these checks care about is
+// counted twice: once when the walker inspects it (CallAudit), once by reading
+// the statement's tokens (ScanCallTokens). A statement that names more such
+// calls than the walker inspected is refused (UninspectedCallViolation): the gate
+// fails closed for statement forms it cannot read.
+
+// The key a call is counted under, or nullopt if these checks do not care about
+// the function. `qualified`: written `x.name(...)`.
+std::optional<std::string> AuditedCallKey(const std::string& name_lower, bool qualified) {
+  if (AlwaysGatedFunctions().count(name_lower) || FsReadFunctions().count(name_lower) ||
+      name_lower == "query" || name_lower == "query_table" ||
+      IsQuackFunction(name_lower) || IsExternalDatabaseFunction(name_lower) ||
+      IsOwnStorageClientFunction(name_lower) || name_lower.rfind("ducklake_", 0) == 0) {
+    return name_lower;
+  }
+  if (qualified && (DuckLakeReadMethods().count(name_lower) ||
+                    DuckLakeWriteMethods().count(name_lower))) {
+    return "." + name_lower;
+  }
+  return std::nullopt;
+}
+
+struct CallAudit {
+  std::unordered_map<std::string, int> inspected;
+  std::unordered_set<const dd::FunctionExpression*> seen;
+};
+
+// The audit of the SQL text being classified on this thread (a query('...')
+// string gets one of its own).
+thread_local CallAudit* current_call_audit = nullptr;
+
+struct ScopedCallAudit {
+  explicit ScopedCallAudit(CallAudit* audit) : previous(current_call_audit) {
+    current_call_audit = audit;
+  }
+  ~ScopedCallAudit() { current_call_audit = previous; }
+  CallAudit* previous;
+};
+
+void NoteInspectedCall(const dd::FunctionExpression& fe) {
+  if (!current_call_audit) return;
+  // A table function is visited both as a ref and as an expression.
+  if (!current_call_audit->seen.insert(&fe).second) return;
+  const auto key =
+      AuditedCallKey(ToLower(FunctionNameOf(fe)), !FunctionQualifierOf(fe).empty());
+  if (key) ++current_call_audit->inspected[*key];
+}
+
 // Checks one function call: returns a violation category if it is admin-only,
 // and records any DuckLake catalog it addresses into `refs` (if given).
 std::optional<std::string> CheckFunctionCall(const dd::FunctionExpression& fe,
                                              std::vector<DuckLakeFunctionRef>* refs) {
+  NoteInspectedCall(fe);
   const std::string name = ToLower(FunctionNameOf(fe));
   if (IsQuackFunction(name) || IsExternalDatabaseFunction(name)) return name + "()";
 
@@ -536,7 +635,14 @@ struct GatedFunctionWalker {
     if (!tf.function || tf.function->GetExpressionClass() != dd::ExpressionClass::FUNCTION) {
       return;
     }
-    const auto& fe = tf.function->Cast<dd::FunctionExpression>();
+    CheckTableFunctionCall(tf.function->Cast<dd::FunctionExpression>());
+  }
+
+  // A call in table-function position: a FROM-clause table function, or the
+  // function of a CALL statement (CALL read_csv('/etc/passwd') returns its rows).
+  void CheckTableFunctionCall(const dd::FunctionExpression& fe) {
+    if (violation) return;
+    NoteInspectedCall(fe);
     const std::string name = ToLower(FunctionNameOf(fe));
     if (AlwaysGatedFunctions().count(name)) {
       violation = name + "()";
@@ -572,7 +678,89 @@ struct GatedFunctionWalker {
       if (!path || !IsProvenRemotePath(ToLower(*path))) {
         violation = name + "() (local filesystem)";
       }
+      return;
     }
+    if (name == "query") return;  // its SQL was classified above
+    // query_table('<name>') resolves each name like a FROM clause does, so a file
+    // path is read as a replacement scan.
+    if (name == "query_table") {
+      violation = QueryTableViolation(fe);
+      return;
+    }
+    // Any other table function, including one these checks have never heard of
+    // (an extension's reader, a user's table macro that passes its argument on
+    // to read_csv() or query()): its string arguments must not plainly name a
+    // local file, nor be SQL that the checks would refuse as a statement.
+    if (FunctionQualifierOf(fe).empty() && IsValueTableFunction(name)) return;
+    violation = OpaqueTableFunctionViolation(fe, name);
+  }
+
+  // query_table(): every table name must be a literal that is not a file.
+  std::optional<std::string> QueryTableViolation(const dd::FunctionExpression& fe) {
+    std::optional<std::string> found;
+    std::function<void(dd::ParsedExpression&)> visit = [&](dd::ParsedExpression& e) {
+      if (found) return;
+      if (auto lit = StringConstant(e)) {
+        const std::string low = ToLower(*lit);
+        if (IsNetworkPath(low)) {
+          found = "query_table() (network URL)";
+        } else if (!IsProvenRemotePath(low) && LooksLikeLocalFilePath(*lit)) {
+          found = "query_table() (local filesystem)";
+        }
+        return;
+      }
+      const auto expression_class = e.GetExpressionClass();
+      if (expression_class == dd::ExpressionClass::CONSTANT) return;
+      // A list of names (['a', 'b']) and the keywords true / false, which DuckDB
+      // parses as casts of a constant.
+      const bool container =
+          expression_class == dd::ExpressionClass::CAST ||
+          expression_class == dd::ExpressionClass::OPERATOR ||
+          (expression_class == dd::ExpressionClass::FUNCTION &&
+           ToLower(FunctionNameOf(e.Cast<dd::FunctionExpression>())) == "list_value");
+      if (container) {
+        dd::ParsedExpressionIterator::EnumerateChildren(
+            e, [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+              if (child) visit(*child);
+            });
+        return;
+      }
+      found = "query_table() (table name that is not a string literal)";
+    };
+    dd::ParsedExpressionIterator::EnumerateChildren(
+        const_cast<dd::FunctionExpression&>(fe),
+        [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+          if (child) visit(*child);
+        });
+    return found;
+  }
+
+  std::optional<std::string> OpaqueTableFunctionViolation(
+      const dd::FunctionExpression& fe, const std::string& name) {
+    std::optional<std::string> found;
+    std::function<void(dd::ParsedExpression&)> visit = [&](dd::ParsedExpression& e) {
+      if (found) return;
+      if (auto lit = StringConstant(e)) {
+        if (LooksLikeExplicitLocalPath(*lit)) {
+          found = name + "() (local filesystem)";
+        } else if (lit->find_first_of(" \t\r\n") != std::string::npos) {
+          if (auto v = ClassifyNestedSql(*lit, ducklake_refs)) {
+            found = "SQL passed to " + name + "(): " + *v;
+          }
+        }
+        return;
+      }
+      dd::ParsedExpressionIterator::EnumerateChildren(
+          e, [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+            if (child) visit(*child);
+          });
+    };
+    dd::ParsedExpressionIterator::EnumerateChildren(
+        const_cast<dd::FunctionExpression&>(fe),
+        [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+          if (child) visit(*child);
+        });
+    return found;
   }
 };
 
@@ -699,7 +887,34 @@ std::optional<std::string> ClassifyStatement(
       }
       if (cs.info && (cs.info->type == dd::CatalogType::MACRO_ENTRY ||
                       cs.info->type == dd::CatalogType::TABLE_MACRO_ENTRY)) {
-        return "CREATE MACRO";  // refined to a pass-through by ClassifyGatedCommand
+        // A macro runs its body for whoever calls it, with the caller's
+        // arguments, so the body is held to the same rules as a statement. That
+        // refuses a body that passes a parameter on as a path or as SQL
+        // (read_csv(p), query(s)): neither is a string literal.
+        auto& mi = cs.info->Cast<dd::CreateMacroInfo>();
+        std::vector<DuckLakeFunctionRef> body_refs;
+        GatedFunctionWalker walker;
+        walker.ducklake_refs = ducklake_refs ? &body_refs : nullptr;
+        for (auto& macro : mi.macros) {
+          if (!macro) continue;
+          for (auto& entry : macro->default_parameters) {
+            if (entry.second) walker.CheckExpr(*entry.second);
+          }
+          if (macro->type == dd::MacroType::TABLE_MACRO) {
+            auto& table_macro = macro->Cast<dd::TableMacroFunction>();
+            if (table_macro.query_node) walker.WalkNode(*table_macro.query_node);
+          } else {
+            auto& scalar_macro = macro->Cast<dd::ScalarMacroFunction>();
+            if (scalar_macro.expression) walker.CheckExpr(*scalar_macro.expression);
+          }
+        }
+        if (walker.violation) return "CREATE MACRO wrapping " + *walker.violation;
+        // Like a view, a macro runs with the access of whoever calls it.
+        for (auto& ref : body_refs) {
+          if (!ref.own_storage_client) ref.in_view = true;
+          ducklake_refs->push_back(std::move(ref));
+        }
+        return "CREATE MACRO";  // refined to a pass-through by ClassifySqlText
       }
       break;
     }
@@ -742,10 +957,20 @@ std::optional<std::string> ClassifyStatement(
         const std::string fname =
             ToLower(FunctionNameOf(call.function->Cast<dd::FunctionExpression>()));
         if (fname == "checkpoint" || fname == "force_checkpoint") return "CHECKPOINT";
-        if (auto v = CheckFunctionCall(call.function->Cast<dd::FunctionExpression>(),
-                                       ducklake_refs)) {
-          return v;
+        // CALL f(...) returns f's rows like SELECT * FROM f(...), so f is held to
+        // the table-function rules (CALL read_csv('/etc/passwd'), CALL
+        // duckdb_secrets(), CALL query('...')).
+        auto& fe = call.function->Cast<dd::FunctionExpression>();
+        GatedFunctionWalker walker;
+        walker.ducklake_refs = ducklake_refs;
+        walker.CheckTableFunctionCall(fe);
+        if (!walker.violation) {
+          dd::ParsedExpressionIterator::EnumerateChildren(
+              fe, [&](dd::unique_ptr<dd::ParsedExpression>& child) {
+                if (child) walker.CheckExpr(*child);
+              });
         }
+        if (walker.violation) return walker.violation;
       }
       break;  // other CALL functions allowed
     }
@@ -777,6 +1002,11 @@ std::optional<std::string> ClassifyStatement(
       if (ps.info && ToLower(Str(ps.info->name)) == "import_database") {
         return "IMPORT DATABASE";
       }
+      // PRAGMA json_execute_serialized_sql('...') is the same function as the
+      // table function of that name.
+      if (ps.info && AlwaysGatedFunctions().count(ToLower(Str(ps.info->name)))) {
+        return ToLower(Str(ps.info->name)) + "()";
+      }
       break;
     }
     default:
@@ -788,9 +1018,14 @@ std::optional<std::string> ClassifyStatement(
   return std::nullopt;
 }
 
-// The SQL text a query('...') call runs, checked as statements of their own.
-// Unparseable text is left for DuckDB to report; nesting is capped, so a
-// query() inside a query() string cannot recurse without bound.
+std::optional<std::string> ClassifySqlText(
+    const std::string& sql, const std::string& parse_text,
+    std::vector<DuckLakeFunctionRef>* ducklake_refs);
+
+// The SQL text a query('...') call runs (or a string handed to a table function
+// that may pass it on to one), checked as statements of their own. Unparseable
+// text is left for DuckDB to report; nesting is capped, so a query() inside a
+// query() string cannot recurse without bound.
 std::optional<std::string> ClassifyNestedSql(
     const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs) {
   static thread_local int depth = 0;
@@ -800,22 +1035,7 @@ std::optional<std::string> ClassifyNestedSql(
     DepthGuard() { ++depth; }
     ~DepthGuard() { --depth; }
   } guard;
-  auto parser = compat::StandaloneParser();
-  try {
-    parser.ParseQuery(sql);
-  } catch (...) {
-    return std::nullopt;
-  }
-  for (auto& stmt_ptr : parser.statements) {
-    if (!stmt_ptr) continue;
-    if (auto v = ClassifyStatement(*stmt_ptr, ducklake_refs)) {
-      // A macro inside query() is refined by name, as at the top level.
-      if (*v != "CREATE MACRO") return v;
-      NoteMacroOwnStorageMentions(sql, ducklake_refs);
-      return MacroMentionsGatedFunction(sql);
-    }
-  }
-  return std::nullopt;
+  return ClassifySqlText(sql, sql, ducklake_refs);
 }
 
 #if GIZMOSQL_DUCKDB_MAJOR_VERSION >= 2
@@ -934,15 +1154,314 @@ std::optional<std::string> MacroMentionsGatedFunction(const std::string& sql) {
   return std::nullopt;
 }
 
-}  // namespace
+// ---- reading a statement's calls from its tokens ----------------------------
 
-std::optional<std::string> ClassifyGatedCommand(
-    const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs) {
+struct Lexeme {
+  enum Kind { kIdentifier, kDot, kOpenParen, kString, kOther };
+  Kind kind;
+  std::string
+      text;  // identifier: lower-case name; string: raw literal; other: the character
+};
+
+bool IsIdentifierStart(unsigned char c) {
+  return std::isalpha(c) || c == '_' || c >= 0x80;
+}
+bool IsIdentifierPart(unsigned char c) {
+  return std::isalnum(c) || c == '_' || c == '$' || c >= 0x80;
+}
+
+// Lexes sql[pos, end) (text DuckDB's tokenizer did not mark as a string constant)
+// into `out`. Comments are skipped. Strings are still recognized, in case a
+// tokenizer reports one under another type.
+void LexCode(const std::string& sql, size_t pos, size_t end, std::vector<Lexeme>& out) {
+  while (pos < end) {
+    const unsigned char c = static_cast<unsigned char>(sql[pos]);
+    if (std::isspace(c)) {
+      ++pos;
+    } else if (c == '-' && pos + 1 < end && sql[pos + 1] == '-') {
+      while (pos < end && sql[pos] != '\n') ++pos;
+    } else if (c == '/' && pos + 1 < end && sql[pos + 1] == '*') {
+      int depth = 1;
+      pos += 2;
+      while (pos < end && depth > 0) {
+        if (sql[pos] == '/' && pos + 1 < end && sql[pos + 1] == '*') {
+          ++depth;
+          pos += 2;
+        } else if (sql[pos] == '*' && pos + 1 < end && sql[pos + 1] == '/') {
+          --depth;
+          pos += 2;
+        } else {
+          ++pos;
+        }
+      }
+    } else if (c == '"') {
+      std::string name;
+      ++pos;
+      while (pos < end) {
+        if (sql[pos] == '"') {
+          if (pos + 1 < end && sql[pos + 1] == '"') {
+            name += '"';
+            pos += 2;
+            continue;
+          }
+          ++pos;
+          break;
+        }
+        name += sql[pos++];
+      }
+      out.push_back({Lexeme::kIdentifier, ToLower(name)});
+    } else if (c == '\'') {
+      // E'...' strings take backslash escapes.
+      const bool escapes = !out.empty() && out.back().kind == Lexeme::kIdentifier &&
+                           out.back().text == "e" && pos > 0 &&
+                           (sql[pos - 1] == 'e' || sql[pos - 1] == 'E');
+      const size_t begin = pos++;
+      while (pos < end) {
+        if (escapes && sql[pos] == '\\' && pos + 1 < end) {
+          pos += 2;
+        } else if (sql[pos] == '\'') {
+          if (pos + 1 < end && sql[pos + 1] == '\'') {
+            pos += 2;
+            continue;
+          }
+          ++pos;
+          break;
+        } else {
+          ++pos;
+        }
+      }
+      if (escapes) out.pop_back();
+      out.push_back(
+          {Lexeme::kString, escapes ? std::string() : sql.substr(begin, pos - begin)});
+    } else if (c == '$') {
+      // $tag$ ... $tag$
+      size_t tag_end = pos + 1;
+      while (tag_end < end &&
+             IsIdentifierPart(static_cast<unsigned char>(sql[tag_end])) &&
+             sql[tag_end] != '$') {
+        ++tag_end;
+      }
+      const bool is_tag =
+          tag_end < end && sql[tag_end] == '$' &&
+          (tag_end == pos + 1 || !std::isdigit(static_cast<unsigned char>(sql[pos + 1])));
+      if (!is_tag) {
+        out.push_back({Lexeme::kOther, "$"});
+        ++pos;
+        continue;
+      }
+      const std::string tag = sql.substr(pos, tag_end + 1 - pos);
+      const auto close = sql.find(tag, tag_end + 1);
+      pos = (close == std::string::npos || close >= end) ? end : close + tag.size();
+      out.push_back({Lexeme::kString, std::string()});
+    } else if (IsIdentifierStart(c)) {
+      const size_t begin = pos;
+      while (pos < end && IsIdentifierPart(static_cast<unsigned char>(sql[pos]))) ++pos;
+      out.push_back({Lexeme::kIdentifier, ToLower(sql.substr(begin, pos - begin))});
+    } else if (std::isdigit(c)) {
+      while (pos < end && IsIdentifierPart(static_cast<unsigned char>(sql[pos]))) ++pos;
+      out.push_back({Lexeme::kOther, "0"});
+    } else {
+      out.push_back({c == '.'   ? Lexeme::kDot
+                     : c == '(' ? Lexeme::kOpenParen
+                                : Lexeme::kOther,
+                     std::string(1, static_cast<char>(c))});
+      ++pos;
+    }
+  }
+}
+
+// The text of a plain '...' literal lexeme; nullopt for any other spelling
+// (E'...', $$...$$), whose text is not decoded here.
+std::optional<std::string> PlainLiteralValue(const Lexeme& lexeme) {
+  const auto& raw = lexeme.text;
+  if (lexeme.kind != Lexeme::kString || raw.size() < 2 || raw.front() != '\'') {
+    return std::nullopt;
+  }
+  std::string value;
+  for (size_t k = 1; k + 1 < raw.size(); ++k) {
+    value += raw[k];
+    if (raw[k] == '\'') ++k;  // '' is one quote
+  }
+  return value;
+}
+
+bool IsTableKeyword(const std::string& word) {
+  static const std::unordered_set<std::string> kWords = {"from",     "join",      "using",
+                                                         "describe", "summarize", "pivot",
+                                                         "unpivot",  "table",     "show"};
+  return kWords.count(word) > 0;
+}
+
+// Whether lexemes[i] stands where a table name does: right after FROM / JOIN /
+// USING / DESCRIBE / SUMMARIZE / PIVOT / ..., or later in the same FROM list.
+bool InTablePosition(const std::vector<Lexeme>& lexemes, size_t i) {
+  if (i == 0) return false;
+  const auto& previous = lexemes[i - 1];
+  if (previous.kind == Lexeme::kIdentifier) return IsTableKeyword(previous.text);
+  if (previous.kind != Lexeme::kOther || previous.text != ",") return false;
+  // After a comma: walk back through this parenthesis level to the clause keyword.
+  static const std::unordered_set<std::string> kOtherClauses = {
+      "select", "where", "set",  "values",  "group",  "order",  "by",       "having",
+      "limit",  "when",  "then", "qualify", "window", "offset", "returning"};
+  int depth = 0;
+  for (size_t j = i - 1; j-- > 0;) {
+    const auto& lexeme = lexemes[j];
+    if (lexeme.kind == Lexeme::kOther && lexeme.text == ")") {
+      ++depth;
+    } else if (lexeme.kind == Lexeme::kOpenParen) {
+      if (depth == 0) return false;
+      --depth;
+    } else if (depth == 0 && lexeme.kind == Lexeme::kIdentifier) {
+      if (lexeme.text == "from" || lexeme.text == "join" || lexeme.text == "using") {
+        return true;
+      }
+      if (kOtherClauses.count(lexeme.text)) return false;
+    }
+  }
+  return false;
+}
+
+// A call these checks care about, as written in the statement text.
+struct CallToken {
+  std::string key;   // AuditedCallKey
+  std::string name;  // lower-case function name
+  // The first argument, when it is a plain '...' literal and the whole argument.
+  std::optional<std::string> first_literal;
+};
+
+// Every `name(` in the statement text whose name these checks care about. String
+// constants and comments are not code and are skipped; DuckDB's own tokenizer
+// says where the string constants are. nullopt: the text could not be tokenized.
+std::optional<std::vector<CallToken>> ScanCallTokens(
+    const std::string& sql, std::optional<std::string>* file_as_table) {
+  dd::vector<dd::SimplifiedToken> tokens;
+  try {
+    tokens = dd::Parser::Tokenize(sql);
+  } catch (...) {
+    return std::nullopt;
+  }
+  std::vector<Lexeme> lexemes;
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    const size_t begin = tokens[i].start;
+    const size_t end = i + 1 < tokens.size() ? tokens[i + 1].start : sql.size();
+    if (begin > end || end > sql.size()) return std::nullopt;
+    const auto type = tokens[i].type;
+    if (type == dd::SimplifiedTokenType::SIMPLIFIED_TOKEN_COMMENT) continue;
+    if (type == dd::SimplifiedTokenType::SIMPLIFIED_TOKEN_STRING_CONSTANT &&
+        sql[begin] != '"') {
+      // Keep the literal itself, without what follows it up to the next token.
+      std::string literal;
+      if (sql[begin] == '\'') {
+        size_t pos = begin + 1;
+        while (pos < end) {
+          if (sql[pos] == '\'') {
+            if (pos + 1 < end && sql[pos + 1] == '\'') {
+              pos += 2;
+              continue;
+            }
+            ++pos;
+            break;
+          }
+          ++pos;
+        }
+        literal = sql.substr(begin, pos - begin);
+      }
+      lexemes.push_back({Lexeme::kString, std::move(literal)});
+      continue;
+    }
+    LexCode(sql, begin, end, lexemes);
+  }
+
+  std::vector<CallToken> calls;
+  for (size_t i = 0; i + 1 < lexemes.size(); ++i) {
+    if (lexemes[i].kind != Lexeme::kIdentifier ||
+        lexemes[i + 1].kind != Lexeme::kOpenParen) {
+      continue;
+    }
+    const bool qualified = i >= 2 && lexemes[i - 1].kind == Lexeme::kDot &&
+                           lexemes[i - 2].kind == Lexeme::kIdentifier;
+    const auto key = AuditedCallKey(lexemes[i].text, qualified);
+    if (!key) continue;
+    CallToken call{*key, lexemes[i].text, std::nullopt};
+    if (i + 3 < lexemes.size() && lexemes[i + 3].kind == Lexeme::kOther &&
+        (lexemes[i + 3].text == "," || lexemes[i + 3].text == ")")) {
+      call.first_literal = PlainLiteralValue(lexemes[i + 2]);
+    }
+    calls.push_back(std::move(call));
+  }
+
+  // FROM 'file.csv' (a replacement scan) names no function at all, so look for a
+  // string or quoted name that stands where a table does and names a file or URL.
+  for (size_t i = 0; i < lexemes.size() && !*file_as_table; ++i) {
+    const auto& lexeme = lexemes[i];
+    if (lexeme.kind != Lexeme::kString && lexeme.kind != Lexeme::kIdentifier) continue;
+    if (i + 1 < lexemes.size() && (lexemes[i + 1].kind == Lexeme::kOpenParen ||
+                                   lexemes[i + 1].kind == Lexeme::kDot)) {
+      continue;  // a call, or the qualifier of a name
+    }
+    if (!InTablePosition(lexemes, i)) continue;
+    if (lexeme.kind == Lexeme::kIdentifier) {
+      const auto& name = lexeme.text;
+      if (IsNetworkPath(name) || LooksLikeExplicitLocalPath(name)) *file_as_table = name;
+      continue;
+    }
+    const auto value = PlainLiteralValue(lexeme);
+    if (!value) {
+      *file_as_table = "a string that is not a plain literal";
+    } else if (IsNetworkPath(ToLower(*value)) || LooksLikeExplicitLocalPath(*value)) {
+      *file_as_table = *value;
+    }
+  }
+  return calls;
+}
+
+// Refuses a statement that names more calls of a function these checks care
+// about than the walker inspected: the rest sit somewhere the walker does not
+// reach. One exception keeps object-storage reads usable in those places
+// (MERGE ... USING read_parquet('s3://...') on DuckDB 1.x, DESCRIBE SELECT ...
+// FROM read_parquet('s3://...')): a file-reading function is fine when every
+// call of it in the statement reads a literal object-storage path, which is all
+// the walker would have required of it.
+std::optional<std::string> UninspectedCallViolation(
+    const std::string& sql, const CallAudit& audit,
+    std::vector<DuckLakeFunctionRef>* ducklake_refs) {
+  std::optional<std::string> file_as_table;
+  const auto calls = ScanCallTokens(sql, &file_as_table);
+  if (!calls) return "SQL that cannot be tokenized";
+  if (file_as_table) return "reading a file or URL via FROM '" + *file_as_table + "'";
+  std::unordered_map<std::string, int> written;
+  for (const auto& call : *calls) ++written[call.key];
+  for (const auto& [key, count] : written) {
+    const auto it = audit.inspected.find(key);
+    if (count <= (it == audit.inspected.end() ? 0 : it->second)) continue;
+    std::string name;
+    bool literal_object_storage = true;
+    for (const auto& call : *calls) {
+      if (call.key != key) continue;
+      name = call.name;
+      const std::string low = call.first_literal ? ToLower(*call.first_literal) : "";
+      if (!call.first_literal || !IsProvenRemotePath(low) || IsNetworkPath(low)) {
+        literal_object_storage = false;
+      }
+    }
+    const bool reader = FsReadFunctions().count(name) || IsOwnStorageClientFunction(name);
+    if (reader && literal_object_storage && key == name) {
+      if (IsOwnStorageClientFunction(name)) AddOwnStorageRef(name, ducklake_refs);
+      continue;
+    }
+    return name + "() in a statement form GizmoSQL cannot inspect";
+  }
+  return std::nullopt;
+}
+
+// Classifies every statement in `sql` (parsed from `parse_text`), then checks
+// that no call went uninspected.
+std::optional<std::string> ClassifySqlText(
+    const std::string& sql, const std::string& parse_text,
+    std::vector<DuckLakeFunctionRef>* ducklake_refs) {
   auto parser = compat::StandaloneParser();
   try {
-    // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on
-    // DuckDB 2.x, whose grammar only parses it quoted.
-    parser.ParseQuery(compat::QuoteDottedSettingName(sql));
+    parser.ParseQuery(parse_text);
   } catch (...) {
     // Unparseable here — let DuckDB surface the real parse error during
     // preparation. (The standalone parser uses the same core grammar as the
@@ -950,19 +1469,30 @@ std::optional<std::string> ClassifyGatedCommand(
     return std::nullopt;
   }
 
+  CallAudit audit;
+  ScopedCallAudit scoped_audit(&audit);
   for (auto& stmt_ptr : parser.statements) {
     if (!stmt_ptr) continue;
     auto v = ClassifyStatement(*stmt_ptr, ducklake_refs);
     if (v && *v == "CREATE MACRO") {
-      // Macro bodies are not walked (their structure differs per DuckDB major),
-      // so a macro that mentions an admin-only family of functions is refused
-      // by name; any other macro is fine.
+      // The body was walked (ClassifyStatement). On top of that, a macro that
+      // mentions an admin-only family of functions anywhere in its text is
+      // refused by name.
       NoteMacroOwnStorageMentions(sql, ducklake_refs);
       v = MacroMentionsGatedFunction(sql);
     }
     if (v) return v;
   }
-  return std::nullopt;
+  return UninspectedCallViolation(sql, audit, ducklake_refs);
+}
+
+}  // namespace
+
+std::optional<std::string> ClassifyGatedCommand(
+    const std::string& sql, std::vector<DuckLakeFunctionRef>* ducklake_refs) {
+  // A dotted setting name (SET GLOBAL gizmosql.x) must still classify on
+  // DuckDB 2.x, whose grammar only parses it quoted.
+  return ClassifySqlText(sql, compat::QuoteDottedSettingName(sql), ducklake_refs);
 }
 
 std::optional<std::string> ClassifyGatedCommand(const std::string& sql) {
