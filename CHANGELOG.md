@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.42.3] - 2026-11-10
+
 ### Security
 - **Closed indirect routes past the admin command gate.** A non-admin (token)
   user could reach every gated function, including the ones gated below
