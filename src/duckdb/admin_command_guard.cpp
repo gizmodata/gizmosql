@@ -820,9 +820,11 @@ std::optional<std::string> WalkStatementForGatedFunctions(
           std::vector<DuckLakeFunctionRef> view_refs;
           walker.ducklake_refs = ducklake_refs ? &view_refs : nullptr;
           walker.WalkNode(*vi.query->node);
-          for (auto& ref : view_refs) {
-            ref.in_view = true;
-            ducklake_refs->push_back(std::move(ref));
+          if (ducklake_refs) {
+            for (auto& ref : view_refs) {
+              ref.in_view = true;
+              ducklake_refs->push_back(std::move(ref));
+            }
           }
         }
       }
@@ -910,9 +912,11 @@ std::optional<std::string> ClassifyStatement(
         }
         if (walker.violation) return "CREATE MACRO wrapping " + *walker.violation;
         // Like a view, a macro runs with the access of whoever calls it.
-        for (auto& ref : body_refs) {
-          if (!ref.own_storage_client) ref.in_view = true;
-          ducklake_refs->push_back(std::move(ref));
+        if (ducklake_refs) {
+          for (auto& ref : body_refs) {
+            if (!ref.own_storage_client) ref.in_view = true;
+            ducklake_refs->push_back(std::move(ref));
+          }
         }
         return "CREATE MACRO";  // refined to a pass-through by ClassifySqlText
       }
