@@ -1019,6 +1019,13 @@ TEST(AdminCommandGuard, MacroBodiesAreChecked) {
   EXPECT_FALSE(Gated(
       "CREATE MACRO lake() AS TABLE SELECT * FROM read_parquet('s3://b/x.parquet')"));
   EXPECT_FALSE(Gated("CREATE MACRO one() AS TABLE SELECT * FROM query('SELECT 1 AS x')"));
+  // Defining a macro that shares a name with a gated function is not a call of it.
+  EXPECT_FALSE(Gated("CREATE OR REPLACE MACRO myschema.settings() AS 42"));
+  EXPECT_FALSE(Gated("CREATE MACRO IF NOT EXISTS sniff_csv(x) AS x + 1"));
+  EXPECT_FALSE(Gated("CREATE FUNCTION main.snapshots() AS TABLE SELECT 1 AS x"));
+  EXPECT_TRUE(Gated("CREATE MACRO sniff_csv(p) AS TABLE SELECT * FROM read_csv(p)"));
+  EXPECT_TRUE(
+      Gated("CREATE MACRO s.settings() AS (SELECT count(*) FROM duckdb_secrets())"));
 }
 
 // CALL f(...) returns f's rows, like SELECT * FROM f(...).

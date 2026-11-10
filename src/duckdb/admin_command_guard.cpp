@@ -1380,6 +1380,17 @@ std::optional<std::vector<CallToken>> ScanCallTokens(
     }
     const bool qualified = i >= 2 && lexemes[i - 1].kind == Lexeme::kDot &&
                            lexemes[i - 2].kind == Lexeme::kIdentifier;
+    // CREATE MACRO name(...) defines `name`; it does not call it.
+    size_t chain = i;
+    while (chain >= 2 && lexemes[chain - 1].kind == Lexeme::kDot &&
+           lexemes[chain - 2].kind == Lexeme::kIdentifier) {
+      chain -= 2;
+    }
+    if (chain >= 1 && lexemes[chain - 1].kind == Lexeme::kIdentifier &&
+        (lexemes[chain - 1].text == "macro" || lexemes[chain - 1].text == "function" ||
+         lexemes[chain - 1].text == "exists")) {
+      continue;
+    }
     const auto key = AuditedCallKey(lexemes[i].text, qualified);
     if (!key) continue;
     CallToken call{*key, lexemes[i].text, std::nullopt};
