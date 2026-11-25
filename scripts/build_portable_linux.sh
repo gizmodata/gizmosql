@@ -53,7 +53,8 @@ dnf install -y --setopt=install_weak_deps=False \
     libcurl-devel \
     zlib-devel \
     perl-IPC-Cmd \
-    perl-Pod-Html
+    perl-Pod-Html \
+    perl-Time-Piece
 
 # ---------------------------------------------------------------------------
 # Static OpenSSL 3 (cpp-httplib v0.16+ and jwt-cpp need >= 3.0; EL8 ships
