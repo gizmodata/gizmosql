@@ -230,6 +230,18 @@ echo "=== Phase 2: Cross-compiling for iOS ARM64 ==="
 mkdir -p "${IOS_LIB_BUILD_DIR}"
 cd "${IOS_LIB_BUILD_DIR}"
 
+# Point every find_package(OpenSSL), including the one in Arrow's bundled gRPC
+# (the root CMakeLists forwards these into the Arrow ExternalProject), at the
+# iOS OpenSSL from Phase 1.7. Left to search, it finds Homebrew's default
+# `openssl`, which is OpenSSL 4 on current macOS images, and the bundled gRPC
+# does not compile against OpenSSL 4 (const X509_NAME from
+# X509_CRL_get_issuer). The DuckDB superbuild forwards no OpenSSL arguments,
+# and its postgres_scanner (bundled libpq) breaks on OpenSSL 4 too
+# (ASN1_STRING_data is gone), so also export OPENSSL_ROOT_DIR: FindOpenSSL
+# reads it from the environment, which every nested CMake inherits.
+IOS_OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR="${OPENSSL_INSTALL}" -DOPENSSL_USE_STATIC_LIBS=TRUE)
+export OPENSSL_ROOT_DIR="${OPENSSL_INSTALL}"
+
 # The first configure may fail on a fresh DuckDB clone: our root
 # CMakeLists.txt builds DuckDB inline via execute_process(cmake --build),
 # and DuckDB's libduckdb.dylib link pulls in httpfs, which we need to
@@ -246,6 +258,7 @@ cmake "${REPO_ROOT}" \
     -DWITH_OPENTELEMETRY=OFF \
     -DARROW_SIMD_LEVEL=NONE \
     -DARROW_RUNTIME_SIMD_LEVEL=NONE \
+    "${IOS_OPENSSL_ARGS[@]}" \
     || echo "(initial configure failed — extensions will be patched in Phase 2.5)"
 
 # -------------------------------------------------------
@@ -440,7 +453,8 @@ if [ "${NEED_RECONFIGURE}" = "1" ]; then
         -DGIZMOSQL_ENTERPRISE=OFF \
         -DWITH_OPENTELEMETRY=OFF \
         -DARROW_SIMD_LEVEL=NONE \
-        -DARROW_RUNTIME_SIMD_LEVEL=NONE
+        -DARROW_RUNTIME_SIMD_LEVEL=NONE \
+        "${IOS_OPENSSL_ARGS[@]}"
 fi
 
 # Defensive: nuke cached gizmosqlserver .o files if the DuckDB headers
