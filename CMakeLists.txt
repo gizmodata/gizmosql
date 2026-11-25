@@ -53,7 +53,7 @@ set(DUCKDB_LTS_VERSION "v1.4.5" CACHE STRING
 # ("<commit10>/<version>") and keep DUCKDB_CLI_STAGED in .github/workflows/ci.yml
 # in sync. For a tagged release (as now), DUCKDB_EDGE_GIT_REF is "" and the
 # version tag is checked out.
-set(DUCKDB_EDGE_VERSION "v2.0.0" CACHE STRING
+set(DUCKDB_EDGE_VERSION "v2.0.1" CACHE STRING
     "DuckDB version used by GIZMOSQL_DUCKDB_CHANNEL=edge")
 set(DUCKDB_EDGE_GIT_REF "" CACHE STRING
     "Git ref (commit SHA) for DUCKDB_EDGE_VERSION when it is not a tag")
