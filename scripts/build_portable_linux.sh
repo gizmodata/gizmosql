@@ -31,7 +31,7 @@ REPO_ROOT="${REPO_ROOT:-/work}"
 DEPS_PREFIX="${REPO_ROOT}/${BUILD_DIR}/portable-deps"
 NPROC=$(nproc)
 
-OPENSSL_VERSION=3.5.1
+OPENSSL_VERSION=3.5.9
 BOOST_VERSION=1.89.0
 
 # The workspace (and any cache-restored ExternalProject clones) are owned by
