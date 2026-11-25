@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.42.4] - 2026-11-25
+
+### Security
+- **OpenSSL 3.5.9** (was 3.5.1) in the Linux release binaries and every Docker
+  image (all built from the portable Linux binaries), and in the iOS app (was
+  3.5.0). These builds link OpenSSL statically, so they carried the old
+  version's known vulnerabilities; 3.5.4 through 3.5.9 fix about 60 CVEs.
+  OpenSSL 3.5 is a long-term-support line. The macOS (Homebrew `openssl@3`) and
+  Windows (vcpkg) builds already take the current OpenSSL 3 at build time.
+
+### Changed
+- **Apache Arrow 26.0.1** (was 26.0.0) on every channel. A bug-fix release; for a
+  Flight SQL server the notable fix is that reading an invalid map array from
+  Arrow IPC no longer crashes ([GH-54936](https://github.com/apache/arrow/issues/54936)).
+  It also bundles Thrift 0.24.0 and Brotli 1.2.1.
+- **Edge channel: DuckDB v2.0.1** (was v2.0.0), DuckDB's first bug-fix release of
+  2.0 ([release notes](https://github.com/duckdb/duckdb/releases/tag/v2.0.1)).
+  Edge images ship the v2.0.1 `duckdb` CLI, and runtime `INSTALL`/`LOAD` fetch
+  extensions from `extensions.duckdb.org/v2.0.1/`. Edge remains experimental and
+  not for production. The stable (DuckDB v1.5.6) and LTS (v1.4.5) channels are
+  unchanged.
+
 ## [1.42.3] - 2026-11-10
 
 ### Security
