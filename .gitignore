@@ -44,3 +44,6 @@ xcuserdata/
 # Local design scratch docs (kept out of the repo)
 statement-queuing-design.md
 *.lic
+
+# Driver libraries staged by docker/adbc-edge/prepare-adbc-drivers.py
+docker/adbc-edge/drivers/
