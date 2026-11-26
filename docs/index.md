@@ -656,6 +656,10 @@ docker run -e TLS_ENABLED="0" -e GIZMOSQL_PASSWORD="secret" \
 docker run --rm gizmodata/gizmosql:latest-slim-adbc ls /etc/adbc/drivers
 ```
 
+The edge channel has its own `-adbc` tags (`gizmodata/gizmosql-edge:latest-adbc`,
+`:latest-slim-adbc`), with drivers matched to DuckDB 2.0: see the
+[edge channel](edge_channel.md) page.
+
 To customize the driver set, build [`Dockerfile-adbc.ci`](https://github.com/gizmodata/gizmosql/blob/main/Dockerfile-adbc.ci)
 with your own `BASE_IMAGE` / `ADBC_DRIVERS` build args.
 

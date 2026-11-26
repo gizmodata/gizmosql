@@ -1730,6 +1730,23 @@ jobs:
             ${{ !contains(github.ref_name, '-duckdb') && format('{0}:latest{1}-adbc', env.DOCKERHUB_IMAGE_NAME, matrix.sfx) || '' }}
             ${{ !contains(github.ref_name, '-duckdb') && format('{0}:latest{1}-adbc', env.GITHUB_IMAGE_NAME, matrix.sfx) || '' }}
 
+  # The edge channel's "-adbc" tags (gizmodata/gizmosql-edge:{<version>,latest}{,-slim}-adbc)
+  # carry DuckDB 2.0's driver pins (Quack 1.x), built and smoke-tested per architecture the
+  # way Hardcharger's are. It waits for create-release because it checks the release is
+  # published and moves latest-adbc only when this tag is the newest release.
+  build-adbc-edge-images:
+    name: Build edge "-adbc" image tags
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [update-image-manifest, create-release]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/adbc-edge-images.yml
+    with:
+      version: ${{ github.ref_name }}
+      publish: true
+    secrets: inherit
+
   update-homebrew-tap:
     name: Update Homebrew tap (stable + LTS + edge formulas)
     if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-duckdb')

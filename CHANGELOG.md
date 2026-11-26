@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Edge channel `-adbc` images**: `gizmodata/gizmosql-edge:<version>-adbc` and
+  `:<version>-slim-adbc`, plus `latest-adbc` and `latest-slim-adbc` (Docker Hub
+  and GHCR), built on every release. They carry the same drivers and versions as
+  Hardcharger's ADBC images (DuckDB 2.0): dbc's ten drivers plus GizmoData's
+  GizmoSQL 2.0.18, Oracle 1.1.0, Db2 0.3.0 and Quack 1.1.0, which speaks DuckDB
+  2.0's Quack protocol. Each architecture is smoke-tested before its tags are
+  published. The v1.42.4 edge `-adbc` images were published from a temporary
+  branch ahead of this change.
+
 ## [1.42.4] - 2026-11-25
 
 ### Security

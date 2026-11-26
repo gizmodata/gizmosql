@@ -88,6 +88,7 @@ SELECT GIZMOSQL_VERSION();
 | Windows MSI   | `GizmoSQL-<arch>-edge.msi` *(amd64, arm64)* — installs as "GizmoSQL Edge (experimental)" in `C:\Program Files\GizmoSQL Edge`, side by side with stable and LTS |
 | Docker (Hub)  | `gizmodata/gizmosql-edge:<ver>` *(+ `-slim`)*     |
 | Docker (GHCR) | `ghcr.io/gizmodata/gizmosql-edge:<ver>`           |
+| Docker + ADBC drivers | `gizmodata/gizmosql-edge:<ver>-adbc` *(+ `-slim-adbc`, `latest-adbc`, `latest-slim-adbc`; also on GHCR)*: see below |
 | Homebrew      | `gizmodata/tap` → `gizmosql-edge`                 |
 
 The iOS app is stable-only.
@@ -112,6 +113,24 @@ docker run --name gizmosql-edge \
 
 The image's `duckdb` CLI is the matching DuckDB release (v2.0.1), so it can
 open the v2.0-format files the server creates.
+
+### Docker with ADBC drivers (`-adbc` tags)
+
+Like the stable channel's `-adbc` images ([ADBC Driver Images](index.md)),
+each edge release also publishes `gizmodata/gizmosql-edge:<ver>-adbc` (full
+base) and `:<ver>-slim-adbc` (slim base), plus `latest-adbc` and
+`latest-slim-adbc`, on Docker Hub and GHCR. They carry the same drivers and
+versions as Hardcharger's ADBC images, which also run DuckDB 2.0:
+`bigquery`, `databricks`, `exasol`, `flightsql`, `mssql`, `mysql`,
+`postgresql`, `redshift`, `snowflake` and `trino` via `dbc`, plus GizmoData's
+`gizmosql`, `oracle`, `db2` and `quack` drivers. The Quack driver here is 1.x,
+which speaks DuckDB 2.0's Quack protocol; the stable images carry 0.1.x for
+DuckDB 1.5. Each architecture is smoke-tested before its tags are published.
+
+```bash
+# List the bundled drivers
+docker run --rm --entrypoint ls gizmodata/gizmosql-edge:latest-slim-adbc /etc/adbc/drivers
+```
 
 ### Homebrew (macOS / Linux)
 

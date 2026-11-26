@@ -1,0 +1,182 @@
+# Edge channel "-adbc" images, built like Hardcharger's (its .github/workflows/adbc-images.yml):
+# each architecture is built on its own runner, smoke-tested (docker/adbc-edge/test-adbc.sh),
+# and pushed by digest only after it passes; the publish job then joins the two
+# architectures into the tags
+#   gizmodata/gizmosql-edge:<version>-adbc       (full base)
+#   gizmodata/gizmosql-edge:<version>-slim-adbc  (slim base)
+# plus latest-adbc / latest-slim-adbc when <version> is the newest release, on Docker Hub
+# and ghcr.io.
+#
+# ci.yml calls this on each release tag, after the edge base images and the GitHub release
+# are published. Dispatch it by hand to rebuild just the driver layer of a release, or to
+# retry. Stable and LTS keep ci.yml's build-adbc-images job (Dockerfile-adbc.ci).
+name: ADBC edge images
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Released GizmoSQL version (vX.Y.Z)
+        required: true
+        type: string
+      publish:
+        description: Publish the -adbc tags after every architecture passes
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released GizmoSQL version (vX.Y.Z)
+        required: true
+        type: string
+      publish:
+        description: Publish the -adbc tags after every architecture passes
+        type: boolean
+        default: false
+permissions:
+  contents: read
+env:
+  VERSION: ${{ inputs.version }}
+  PUBLISH: ${{ inputs.publish }}
+concurrency:
+  group: adbc-edge-images-${{ inputs.version }}
+  cancel-in-progress: false
+jobs:
+  build:
+    name: Build and test (${{ matrix.variant }}, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [full, slim]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - variant: full
+            sfx: ""
+          - variant: slim
+            sfx: "-slim"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SFX: ${{ matrix.sfx }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate the release
+        run: |
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Not a release version: $VERSION" >&2; exit 1
+          fi
+          draft=$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          if [ "$draft" != false ]; then
+            echo "$VERSION is not a published release" >&2; exit 1
+          fi
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Pin the released edge base image by digest
+        run: |
+          digest=$(docker buildx imagetools inspect "ghcr.io/gizmodata/gizmosql-edge:${VERSION}${SFX}" --format '{{.Manifest.Digest}}')
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "No digest for ghcr.io/gizmodata/gizmosql-edge:${VERSION}${SFX}: $digest" >&2; exit 1
+          fi
+          echo "BASE_IMAGE=ghcr.io/gizmodata/gizmosql-edge@$digest" >> "$GITHUB_ENV"
+          echo "Base: ghcr.io/gizmodata/gizmosql-edge:${VERSION}${SFX} = $digest"
+      - name: Stage and verify native driver release assets
+        run: python3 docker/adbc-edge/prepare-adbc-drivers.py --output docker/adbc-edge/drivers --arch '${{ matrix.arch }}'
+      - name: Build the ADBC image
+        run: docker buildx build --load --build-arg "BASE_IMAGE=$BASE_IMAGE" -f docker/adbc-edge/Dockerfile -t gizmosql-edge-adbc docker/adbc-edge
+      - name: Smoke-test every driver and query GizmoSQL
+        run: bash docker/adbc-edge/test-adbc.sh gizmosql-edge-adbc
+      - uses: docker/login-action@v4
+        if: env.PUBLISH == 'true'
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      - name: Push the tested architecture by digest
+        if: env.PUBLISH == 'true'
+        run: |
+          docker buildx build --build-arg "BASE_IMAGE=$BASE_IMAGE" -f docker/adbc-edge/Dockerfile \
+            --provenance=mode=max --sbom=true \
+            --output 'type=image,"name=ghcr.io/gizmodata/gizmosql-edge,docker.io/gizmodata/gizmosql-edge",push-by-digest=true,name-canonical=true,push=true' \
+            --metadata-file metadata.json docker/adbc-edge
+          mkdir -p digests
+          digest=$(jq -r '."containerimage.digest"' metadata.json)
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "No pushed digest: $digest" >&2; exit 1
+          fi
+          touch "digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v7
+        if: env.PUBLISH == 'true'
+        with:
+          name: adbc-edge-digest-${{ matrix.variant }}-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+  publish:
+    name: Publish -adbc tags (${{ matrix.variant }})
+    if: inputs.publish
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            sfx: ""
+          - variant: slim
+            sfx: "-slim"
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SFX: ${{ matrix.sfx }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: adbc-edge-digest-${{ matrix.variant }}-amd64
+          path: digests
+      - uses: actions/download-artifact@v8
+        with:
+          name: adbc-edge-digest-${{ matrix.variant }}-arm64
+          path: digests
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      - name: Publish multi-architecture tags
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          digests=(digests/*)
+          if [ "${#digests[@]}" -ne 2 ]; then
+            echo "Expected 2 digests, found ${#digests[@]}: ${digests[*]}" >&2; exit 1
+          fi
+          for repo in ghcr.io/gizmodata/gizmosql-edge docker.io/gizmodata/gizmosql-edge; do
+            tags=(--tag "$repo:${VERSION}${SFX}-adbc")
+            # An older version's rebuild, or a special pre-release (-duckdb<ver>, never the
+            # latest release), must never replace latest-adbc.
+            if [ "$latest" = "$VERSION" ]; then
+              tags+=(--tag "$repo:latest${SFX}-adbc")
+            fi
+            sources=()
+            for digest in "${digests[@]}"; do sources+=("$repo@sha256:${digest##*/}"); done
+            echo "Creating ${tags[*]} from ${sources[*]}"
+            docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+            docker buildx imagetools inspect "$repo:${VERSION}${SFX}-adbc"
+          done
